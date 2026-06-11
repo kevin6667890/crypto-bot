@@ -1,0 +1,18 @@
+aiohttp>=3.9.0
+websockets>=12.0
+pandas>=2.0.0
+numpy>=1.24.0
+pandas-ta-classic>=0.5.0
+mplfinance>=0.12.0
+python-dotenv>=1.0.0
+pyyaml>=6.0
+rich>=13.0.0
+pytz>=2024.0
+ccxt>=4.0.0
+
+# 回测与图表分析（backtest/）
+matplotlib>=3.7.0
+requests>=2.31.0
+
+# 模拟盘可视化面板（dashboard/）
+customtkinter>=5.2.0

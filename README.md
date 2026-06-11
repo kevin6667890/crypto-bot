@@ -5,6 +5,12 @@ A production-deployed algorithmic trading signal system for ETH/USDT with AI-pow
 ![Python](https://img.shields.io/badge/Python-3.10+-blue)
 ![License](https://img.shields.io/badge/License-MIT-green)
 ![Status](https://img.shields.io/badge/Status-Live-brightgreen)
+[![Live Demo](https://img.shields.io/badge/Live%20Demo-Streamlit-FF4B4B)](https://crypto-bot-kagmts7lraqwzmkumfeeqx.streamlit.app)
+
+---
+
+## 🌐 Live Demo
+👉 [View Interactive Dashboard](https://crypto-bot-kagmts7lraqwzmkumfeeqx.streamlit.app)
 
 ---
 

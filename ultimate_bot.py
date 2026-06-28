@@ -14,7 +14,7 @@ import sqlite3
 import re
 import xml.etree.ElementTree as ET
 from collections import deque
-from typing import Any, Dict, List, Optional
+from typing import Dict, List, Optional
 import pathlib
 
 import pandas as pd
@@ -26,13 +26,6 @@ from dotenv import load_dotenv
 from rich.live import Live
 from rich.text import Text
 
-try:
-    import pandas_ta_classic as ta
-except ImportError:
-    try:
-        import pandas_ta_classic_classic as ta
-    except ImportError:
-        pass
 
 # ==========================================
 # Strategy engine
@@ -47,11 +40,22 @@ try:
     )
 except ImportError as e:
     logging.error(f"rules_blueprint import failed: {e}")
-    def get_market_session(*a, **k): return {"status": "OPEN", "min_score": 70}
-    def blueprint_compute_indicators(df): return df
-    def analyze_trend_structure(*a, **k): return {"direction": "UP"}
-    def calculate_signal_score(*a, **k): return 80, "OK"
-    def generate_trade_plan(*a, **k): return {"action": "LONG", "entry": 100.0, "sl": 90.0, "tp1": 120.0, "risk_usd": 10.0}
+
+    def get_market_session(*a, **k):
+        return {"status": "OPEN", "min_score": 70}
+
+    def blueprint_compute_indicators(df):
+        return df
+
+    def analyze_trend_structure(*a, **k):
+        return {"direction": "UP"}
+
+    def calculate_signal_score(*a, **k):
+        return 80, "OK"
+
+    def generate_trade_plan(*a, **k):
+        return {"action": "LONG", "entry": 100.0, "sl": 90.0, "tp1": 120.0, "risk_usd": 10.0}
+
 
 # ==========================================
 # Environment variables
@@ -59,9 +63,9 @@ except ImportError as e:
 load_dotenv(dotenv_path=pathlib.Path(__file__).parent / ".env")
 
 DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY", "")
-SERVERCHAN_KEY   = os.getenv("SERVERCHAN_KEY", "")
-BASE_URL         = "https://fapi.binance.com"
-WS_FORCE_URL     = "wss://fstream.binance.com/ws/!forceOrder@arr"
+SERVERCHAN_KEY = os.getenv("SERVERCHAN_KEY", "")
+BASE_URL = "https://fapi.binance.com"
+WS_FORCE_URL = "wss://fstream.binance.com/ws/!forceOrder@arr"
 
 os.makedirs("logs", exist_ok=True)
 logging.basicConfig(
@@ -69,6 +73,7 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(message)s",
 )
+
 
 # ==========================================
 # Utility functions
@@ -81,11 +86,14 @@ def load_config() -> Optional[Dict]:
         logging.error(f"config load error: {e}")
         return {}
 
+
 def utc_now_iso() -> str:
     return datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat()
 
+
 def utc_now() -> datetime.datetime:
     return datetime.datetime.now(datetime.timezone.utc)
+
 
 # ==========================================
 # Paper trading recorder
@@ -117,12 +125,12 @@ class PaperTrader:
             """)
             # Backwards compatibility for old table schema
             for col, defn in [
-                ("be_trigger",   "REAL DEFAULT 0"),
-                ("be_moved",     "INTEGER DEFAULT 0"),
-                ("exit_price",   "REAL DEFAULT 0"),
-                ("pnl_r",        "REAL DEFAULT 0"),
+                ("be_trigger", "REAL DEFAULT 0"),
+                ("be_moved", "INTEGER DEFAULT 0"),
+                ("exit_price", "REAL DEFAULT 0"),
+                ("pnl_r", "REAL DEFAULT 0"),
                 ("close_reason", "TEXT DEFAULT ''"),
-                ("close_time",   "TEXT DEFAULT ''"),
+                ("close_time", "TEXT DEFAULT ''"),
             ]:
                 try:
                     conn.execute(f"ALTER TABLE trades ADD COLUMN {col} {defn}")
@@ -169,9 +177,9 @@ class PaperTrader:
         closed = self._query_closed("close_time LIKE ?", (f"{today}%",))
         with sqlite3.connect(self.db_path) as conn:
             open_count = conn.execute("SELECT COUNT(*) FROM trades WHERE status='OPEN'").fetchone()[0]
-        wins   = [t for t in closed if t["status"] == "WIN"]
+        wins = [t for t in closed if t["status"] == "WIN"]
         losses = [t for t in closed if t["status"] == "LOSS"]
-        bes    = [t for t in closed if t["status"] == "BE"]
+        bes = [t for t in closed if t["status"] == "BE"]
         return {
             "total": len(closed), "wins": len(wins), "losses": len(losses), "be": len(bes),
             "total_r": sum(t["pnl_r"] for t in closed), "open": open_count,
@@ -181,13 +189,13 @@ class PaperTrader:
         closed = self._query_closed()
         with sqlite3.connect(self.db_path) as conn:
             open_count = conn.execute("SELECT COUNT(*) FROM trades WHERE status='OPEN'").fetchone()[0]
-        wins   = [t for t in closed if t["status"] == "WIN"]
+        wins = [t for t in closed if t["status"] == "WIN"]
         losses = [t for t in closed if t["status"] == "LOSS"]
-        bes    = [t for t in closed if t["status"] == "BE"]
-        total_r   = sum(t["pnl_r"] for t in closed)
-        win_rate  = len(wins) / len(closed) * 100 if closed else 0
-        loss_sum  = abs(sum(t["pnl_r"] for t in losses)) if losses else 0
-        pf        = sum(t["pnl_r"] for t in wins) / loss_sum if loss_sum > 0 else 999
+        bes = [t for t in closed if t["status"] == "BE"]
+        total_r = sum(t["pnl_r"] for t in closed)
+        win_rate = len(wins) / len(closed) * 100 if closed else 0
+        loss_sum = abs(sum(t["pnl_r"] for t in losses)) if losses else 0
+        pf = sum(t["pnl_r"] for t in wins) / loss_sum if loss_sum > 0 else 999
         return {
             "total": len(closed), "wins": len(wins), "losses": len(losses), "be": len(bes),
             "total_r": total_r, "win_rate": win_rate, "pf": pf, "open": open_count,
@@ -199,6 +207,7 @@ class PaperTrader:
             return [dict(r) for r in conn.execute(
                 "SELECT * FROM trades WHERE status!='OPEN' ORDER BY close_time DESC LIMIT ?", (n,)
             )]
+
 
 # ==========================================
 # WeChat push notifications
@@ -232,14 +241,15 @@ class ServerChanNotifier:
     async def send_photo_bytes(self, session, photo_bytes: bytes, caption: str = "", **kwargs):
         await self.send_message(session, caption)
 
+
 # ==========================================
 # DeepSeek client
 # ==========================================
 class DeepSeekClient:
     def __init__(self, api_key: str):
-        self.api_key  = api_key
+        self.api_key = api_key
         self.base_url = "https://api.deepseek.com/v1"
-        self.model    = "deepseek-chat"
+        self.model = "deepseek-chat"
 
     async def chat(self, prompt: str, max_tokens: int = 600) -> str:
         """Send a single chat request and return the text response"""
@@ -264,15 +274,16 @@ class DeepSeekClient:
             logging.error(f"DeepSeek error: {e}")
             return ""
 
+
 # ==========================================
 # Macro news monitor
 # ==========================================
 NEWS_SOURCES = [
-    ("CoinDesk",      "https://www.coindesk.com/arc/outboundfeeds/rss/"),
+    ("CoinDesk", "https://www.coindesk.com/arc/outboundfeeds/rss/"),
     ("CoinTelegraph", "https://cointelegraph.com/rss"),
     ("Reuters Macro", "https://feeds.reuters.com/reuters/businessNews"),
-    ("Fed Watch",     "https://feeds.content.dowjones.io/public/rss/mw_realtimeheadline"),
-    ("CryptoSlate",   "https://cryptoslate.com/feed/"),
+    ("Fed Watch", "https://feeds.content.dowjones.io/public/rss/mw_realtimeheadline"),
+    ("CryptoSlate", "https://cryptoslate.com/feed/"),
 ]
 
 # Keywords that trigger alerts (Chinese/English)
@@ -285,11 +296,12 @@ MACRO_KEYWORDS = [
     "美元指数", "国债", "收益率", "地缘", "贸易战", "关税", "机构",
 ]
 
+
 class MacroNewsMonitor:
     def __init__(self, notifier: ServerChanNotifier, deepseek: DeepSeekClient):
-        self.notifier  = notifier
-        self.deepseek  = deepseek
-        self.seen_ids: set = set()   # IDs of already-pushed articles, to prevent duplicates
+        self.notifier = notifier
+        self.deepseek = deepseek
+        self.seen_ids: set = set()
         self.last_atr_ratio: float = 1.0
 
     def _is_important(self, title: str, summary: str) -> bool:
@@ -332,9 +344,9 @@ Format: Impact:XX | Level:XX | Advice:XX"""
                         title = title_el.text.strip() if title_el is not None and title_el.text else ""
 
                         # Extract summary
-                        desc_el = (item.find("description") or
-                                   item.find("{http://www.w3.org/2005/Atom}summary") or
-                                   item.find("{http://www.w3.org/2005/Atom}content"))
+                        desc_el = (item.find("description")
+                                   or item.find("{http://www.w3.org/2005/Atom}summary")
+                                   or item.find("{http://www.w3.org/2005/Atom}content"))
                         summary = ""
                         if desc_el is not None and desc_el.text:
                             # Strip HTML tags
@@ -364,7 +376,7 @@ Format: Impact:XX | Level:XX | Advice:XX"""
                 return
             atr_now = float(df["atr"].iloc[-1])
             atr_avg = float(df["atr"].tail(20).mean())
-            ratio   = atr_now / atr_avg if atr_avg > 0 else 1.0
+            ratio = atr_now / atr_avg if atr_avg > 0 else 1.0
             self.last_atr_ratio = ratio
 
             if ratio >= 2.0:  # ATR exceeds 2x the average
@@ -382,15 +394,16 @@ Please answer briefly (within 2 lines):
         except Exception as e:
             logging.error(f"ATR check error: {e}")
 
+
 # ==========================================
 # Daily market report & strategy review
 # ==========================================
 class DailyReporter:
     def __init__(self, notifier: ServerChanNotifier, deepseek: DeepSeekClient, paper_trader: PaperTrader):
-        self.notifier     = notifier
-        self.deepseek     = deepseek
+        self.notifier = notifier
+        self.deepseek = deepseek
         self.paper_trader = paper_trader
-        self.last_daily_date:  Optional[str] = None
+        self.last_daily_date: Optional[str] = None
         self.last_weekly_date: Optional[str] = None
 
     async def send_daily_report(self, df_15m: pd.DataFrame, df_4h: pd.DataFrame, curr_price: float):
@@ -404,19 +417,23 @@ class DailyReporter:
 
         self.last_daily_date = today_str
         summary = self.paper_trader.get_daily_summary()
-        all_s   = self.paper_trader.get_all_summary()
+        all_s = self.paper_trader.get_all_summary()
 
         # ETH 24h price data
         try:
-            open_24h  = float(df_15m["close"].iloc[-96]) if len(df_15m) >= 96 else curr_price
-            chg_24h   = (curr_price - open_24h) / open_24h * 100
-            high_24h  = float(df_15m["high"].tail(96).max())
-            low_24h   = float(df_15m["low"].tail(96).min())
-            atr_now   = float(df_4h["atr"].iloc[-1]) if "atr" in df_4h.columns else 0
+            open_24h = float(df_15m["close"].iloc[-96]) if len(df_15m) >= 96 else curr_price
+            chg_24h = (curr_price - open_24h) / open_24h * 100
+            high_24h = float(df_15m["high"].tail(96).max())
+            low_24h = float(df_15m["low"].tail(96).min())
+            atr_now = float(df_4h["atr"].iloc[-1]) if "atr" in df_4h.columns else 0
             ema20_now = float(df_15m["ema20"].iloc[-1]) if "ema20" in df_15m.columns else 0
         except Exception:
-            open_24h = curr_price; chg_24h = 0; high_24h = curr_price
-            low_24h  = curr_price; atr_now = 0; ema20_now = 0
+            open_24h = curr_price
+            chg_24h = 0
+            high_24h = curr_price
+            low_24h = curr_price
+            atr_now = 0
+            ema20_now = 0
 
         chg_str = f"+{chg_24h:.2f}%" if chg_24h >= 0 else f"{chg_24h:.2f}%"
 
@@ -455,7 +472,7 @@ Requirements:
 
         # Paper trading data for today
         today_r_str = f"+{summary['total_r']:.2f}R" if summary['total_r'] >= 0 else f"{summary['total_r']:.2f}R"
-        all_r_str   = f"+{all_s['total_r']:.2f}R"   if all_s['total_r'] >= 0   else f"{all_s['total_r']:.2f}R"
+        all_r_str = f"+{all_s['total_r']:.2f}R" if all_s['total_r'] >= 0 else f"{all_s['total_r']:.2f}R"
 
         report = (
             f"📊 ETH Daily Report {today_str}\n"
@@ -483,7 +500,7 @@ Requirements:
 
         self.last_weekly_date = week_str
         recent = self.paper_trader.get_recent_closed(20)
-        all_s  = self.paper_trader.get_all_summary()
+        all_s = self.paper_trader.get_all_summary()
 
         if not recent:
             await self.notifier.send("📋 Weekly Review", "No completed paper trades this week")
@@ -527,6 +544,7 @@ Do not use words like "buy"/"sell\""""
         await self.notifier.send("📋 Weekly Strategy Review", report)
         logging.info("Weekly review sent")
 
+
 # ==========================================
 # Closing trade commentary (DeepSeek single-trade analysis)
 # ==========================================
@@ -537,12 +555,12 @@ async def analyze_closed_trade(
     curr_atr: float,
 ):
     """Generate a one-line commentary after each paper trade closes"""
-    pnl_r     = trade.get("pnl_r", 0)
-    action    = trade.get("action", "?")
-    entry     = trade.get("entry", 0)
-    exit_p    = trade.get("exit_price", 0)
-    reason    = trade.get("close_reason", "")
-    be_moved  = trade.get("be_moved", 0)
+    pnl_r = trade.get("pnl_r", 0)
+    action = trade.get("action", "?")
+    entry = trade.get("entry", 0)
+    exit_p = trade.get("exit_price", 0)
+    reason = trade.get("close_reason", "")
+    be_moved = trade.get("be_moved", 0)
 
     result_word = "盈利" if pnl_r > 0 else ("保本" if abs(pnl_r) < 0.05 else "亏损")
 
@@ -556,7 +574,7 @@ In 1-2 sentences, comment on this trade: was the entry well-placed? What could b
     if not comment:
         return
 
-    emoji   = "✅" if pnl_r > 0 else ("➖" if abs(pnl_r) < 0.05 else "❌")
+    emoji = "✅" if pnl_r > 0 else ("➖" if abs(pnl_r) < 0.05 else "❌")
     pnl_str = f"+{pnl_r:.2f}R" if pnl_r >= 0 else f"{pnl_r:.2f}R"
 
     await notifier.send(
@@ -564,15 +582,16 @@ In 1-2 sentences, comment on this trade: was the entry well-placed? What could b
         f"Direction:{action} | {result_word}\nEntry:{entry:.2f} → Exit:{exit_p:.2f}\nReason:{reason}\n\nComment: {comment.strip()}"
     )
 
+
 # ==========================================
 # Order flow components
 # ==========================================
 class TacticalIntelligence:
     def __init__(self, symbol: str, cvd_window_minutes: int = 5):
-        self.symbol        = symbol.replace("/", "").lower()
+        self.symbol = symbol.replace("/", "").lower()
         self.cvd_window_ms = cvd_window_minutes * 60 * 1000
-        self.cvd_window    = deque()
-        self.cvd_rolling   = 0.0
+        self.cvd_window = deque()
+        self.cvd_rolling = 0.0
 
     async def socket_handler(self):
         url = f"wss://fstream.binance.com/ws/{self.symbol}@aggTrade"
@@ -580,10 +599,10 @@ class TacticalIntelligence:
             try:
                 async with websockets.connect(url, ping_interval=20, ping_timeout=20) as ws:
                     while True:
-                        msg  = await ws.recv()
+                        msg = await ws.recv()
                         data = json.loads(msg)
                         p, q, maker = float(data["p"]), float(data["q"]), data["m"]
-                        ts  = int(data.get("T", int(time.time() * 1000)))
+                        ts = int(data.get("T", int(time.time() * 1000)))
                         val = -(p * q) if maker else (p * q)
                         self.cvd_window.append((ts, val))
                         self.cvd_rolling += val
@@ -593,9 +612,10 @@ class TacticalIntelligence:
             except Exception:
                 await asyncio.sleep(2)
 
+
 class WhaleDetector:
     def __init__(self, symbol: str):
-        self.symbol       = symbol.upper()
+        self.symbol = symbol.upper()
         self.whale_signal = "⚖️ Stable"
 
     async def fetch_oi_loop(self, session: aiohttp.ClientSession):
@@ -619,11 +639,12 @@ class WhaleDetector:
                 pass
             await asyncio.sleep(10)
 
+
 class LiquidationRadarPro:
     def __init__(self, symbol: str, window_minutes: int = 5):
-        self.clean_symbol = symbol.replace("USDC","").replace("USDT","").upper()
-        self.liq_history  = deque()
-        self.window_ms    = window_minutes * 60 * 1000
+        self.clean_symbol = symbol.replace("USDC", "").replace("USDT", "").upper()
+        self.liq_history = deque()
+        self.window_ms = window_minutes * 60 * 1000
 
     async def socket_handler(self):
         while True:
@@ -641,13 +662,14 @@ class LiquidationRadarPro:
                 await asyncio.sleep(2)
 
     def get_analysis(self) -> dict:
-        l5 = sum(i["p"]*i["q"] for i in self.liq_history if i["S"] == "BUY")
-        s5 = sum(i["p"]*i["q"] for i in self.liq_history if i["S"] == "SELL")
+        l5 = sum(i["p"] * i["q"] for i in self.liq_history if i["S"] == "BUY")
+        s5 = sum(i["p"] * i["q"] for i in self.liq_history if i["S"] == "SELL")
         return {"long_5m_usd": l5, "short_5m_usd": s5}
+
 
 class FundingRateTracker:
     def __init__(self, symbol: str):
-        self.symbol       = symbol.upper()
+        self.symbol = symbol.upper()
         self.funding_rate = 0.0
 
     async def fetch_loop(self, session: aiohttp.ClientSession):
@@ -663,6 +685,7 @@ class FundingRateTracker:
                 pass
             await asyncio.sleep(300)
 
+
 # ==========================================
 # Data fetching
 # ==========================================
@@ -675,51 +698,57 @@ async def fetch_klines(session: aiohttp.ClientSession, symbol: str, interval: st
             ) as res:
                 data = await res.json()
                 if isinstance(data, list) and data:
-                    cols = ["ts","open","high","low","close","volume","ct","q","t","tb","tq","i"]
+                    cols = ["ts", "open", "high", "low", "close", "volume", "ct", "q", "t", "tb", "tq", "i"]
                     df = pd.DataFrame(data, columns=cols)
-                    df[["open","high","low","close","volume"]] = df[["open","high","low","close","volume"]].astype(float)
+                    df[["open", "high", "low", "close", "volume"]] = df[["open", "high", "low", "close", "volume"]].astype(float)
                     df["ts"] = pd.to_datetime(df["ts"], unit="ms")
                     return df
         except Exception:
             await asyncio.sleep(1)
     return pd.DataFrame()
 
+
 def get_vpvr_poc(df: pd.DataFrame) -> float:
     if df.empty or "high" not in df.columns:
         return 0.0
     try:
-        lo, hi    = df["low"].min(), df["high"].max()
-        edges     = np.linspace(lo, hi, 37)
-        vol_bins  = np.zeros(36)
+        lo, hi = df["low"].min(), df["high"].max()
+        edges = np.linspace(lo, hi, 37)
+        vol_bins = np.zeros(36)
         for _, r in df.iterrows():
-            i0 = max(0, min(35, int(np.searchsorted(edges, r["low"],  side="right") - 1)))
+            i0 = max(0, min(35, int(np.searchsorted(edges, r["low"], side="right") - 1)))
             i1 = max(0, min(35, int(np.searchsorted(edges, r["high"], side="left"))))
-            if i1 < i0: i0, i1 = i1, i0
+            if i1 < i0:
+                i0, i1 = i1, i0
             cnt = max(1, i1 - i0 + 1)
-            vol_bins[i0:i1+1] += r["volume"] / cnt
+            vol_bins[i0:i1 + 1] += r["volume"] / cnt
         poc_idx = int(np.argmax(vol_bins))
-        return float((edges[poc_idx] + edges[poc_idx+1]) / 2)
+        return float((edges[poc_idx] + edges[poc_idx + 1]) / 2)
     except Exception:
         return 0.0
+
 
 def generate_chart_bytes(df: pd.DataFrame, symbol: str, plan: dict, poc: float) -> Optional[bytes]:
     if df.empty:
         return None
     try:
-        dp = df.rename(columns={"open":"Open","high":"High","low":"Low","close":"Close","volume":"Volume"})
+        dp = df.rename(columns={"open": "Open", "high": "High", "low": "Low", "close": "Close", "volume": "Volume"})
         dp.set_index("ts", inplace=True)
         subset = dp.tail(50).copy()
         mc = mpf.make_marketcolors(up="#089981", down="#f23645", inherit=True)
-        s  = mpf.make_mpf_style(marketcolors=mc, style="nightclouds", y_on_right=True)
+        s = mpf.make_mpf_style(marketcolors=mc, style="nightclouds", y_on_right=True)
         hlines_data, colors, widths, styles = [], [], [], []
         for val, col, w, st in [
             (plan.get("entry", 0), "white", 1, "-"),
-            (plan.get("sl", 0),    "red",   1.5, "--"),
-            (plan.get("tp1", 0),   "green", 1.5, "--"),
-            (poc,                  "yellow",1,   "-"),
+            (plan.get("sl", 0), "red", 1.5, "--"),
+            (plan.get("tp1", 0), "green", 1.5, "--"),
+            (poc, "yellow", 1, "-"),
         ]:
             if val and val > 0:
-                hlines_data.append(val); colors.append(col); widths.append(w); styles.append(st)
+                hlines_data.append(val)
+                colors.append(col)
+                widths.append(w)
+                styles.append(st)
         hlines = dict(hlines=hlines_data, colors=colors, linewidths=widths, linestyle=styles)
         buf = io.BytesIO()
         mpf.plot(subset, type="candle", style=s, hlines=hlines,
@@ -729,6 +758,7 @@ def generate_chart_bytes(df: pd.DataFrame, symbol: str, plan: dict, poc: float) 
         return buf.read()
     except Exception:
         return None
+
 
 # ==========================================
 # Paper trading background monitor
@@ -748,14 +778,14 @@ async def paper_trading_watcher(
                 curr_price = float((await res.json())["price"])
 
             for t in paper_trader.get_open_trades():
-                tid        = t["id"]
-                action     = t["action"]
-                entry      = float(t["entry"])
-                sl         = float(t["sl"])
-                tp         = float(t["tp"])
+                tid = t["id"]
+                action = t["action"]
+                entry = float(t["entry"])
+                sl = float(t["sl"])
+                tp = float(t["tp"])
                 be_trigger = float(t.get("be_trigger") or 0)
-                be_moved   = int(t.get("be_moved") or 0)
-                init_dist  = abs(entry - sl)
+                be_moved = int(t.get("be_moved") or 0)
+                init_dist = abs(entry - sl)
 
                 # Breakeven trigger
                 if be_trigger > 0 and not be_moved:
@@ -771,24 +801,28 @@ async def paper_trading_watcher(
 
                 # Exit detection
                 close_reason = None
-                exit_price   = curr_price
+                exit_price = curr_price
                 if action == "LONG":
                     if curr_price <= sl:
-                        close_reason = "保本" if be_moved else "止损"; exit_price = sl
+                        close_reason = "保本" if be_moved else "止损"
+                        exit_price = sl
                     elif curr_price >= tp:
-                        close_reason = "止盈"; exit_price = tp
+                        close_reason = "止盈"
+                        exit_price = tp
                 else:
                     if curr_price >= sl:
-                        close_reason = "保本" if be_moved else "止损"; exit_price = sl
+                        close_reason = "保本" if be_moved else "止损"
+                        exit_price = sl
                     elif curr_price <= tp:
-                        close_reason = "止盈"; exit_price = tp
+                        close_reason = "止盈"
+                        exit_price = tp
 
                 if close_reason:
                     pnl_r = ((exit_price - entry) / init_dist if action == "LONG"
                              else (entry - exit_price) / init_dist) if init_dist > 0 else 0.0
                     paper_trader.close_trade(tid, exit_price, close_reason, pnl_r)
 
-                    emoji   = "✅" if pnl_r > 0 else ("➖" if abs(pnl_r) < 0.05 else "❌")
+                    emoji = "✅" if pnl_r > 0 else ("➖" if abs(pnl_r) < 0.05 else "❌")
                     pnl_str = f"+{pnl_r:.2f}R" if pnl_r >= 0 else f"{pnl_r:.2f}R"
                     await notifier.send(
                         f"{emoji} Paper Trade #{tid} Closed {pnl_str}",
@@ -806,26 +840,27 @@ async def paper_trading_watcher(
 
         await asyncio.sleep(10)
 
+
 # ==========================================
 # Main flow
 # ==========================================
 async def async_main():
     print("🚀 Ultimate Bot V9 starting...")
 
-    cfg              = load_config() or {}
-    main_symbol      = "ETH/USDT"
-    main_symbol_b    = "ETHUSDT"
+    cfg = load_config() or {}
+    main_symbol = "ETH/USDT"
+    main_symbol_b = "ETHUSDT"
 
     paper_trader = PaperTrader()
-    notifier     = ServerChanNotifier()
-    deepseek     = DeepSeekClient(DEEPSEEK_API_KEY)
+    notifier = ServerChanNotifier()
+    deepseek = DeepSeekClient(DEEPSEEK_API_KEY)
     news_monitor = MacroNewsMonitor(notifier, deepseek)
-    reporter     = DailyReporter(notifier, deepseek, paper_trader)
+    reporter = DailyReporter(notifier, deepseek, paper_trader)
 
     tactical = TacticalIntelligence(main_symbol_b)
-    radar    = LiquidationRadarPro(main_symbol_b)
-    whale    = WhaleDetector(main_symbol_b)
-    funding  = FundingRateTracker(main_symbol_b)
+    radar = LiquidationRadarPro(main_symbol_b)
+    whale = WhaleDetector(main_symbol_b)
+    funding = FundingRateTracker(main_symbol_b)
 
     asyncio.create_task(tactical.socket_handler())
     asyncio.create_task(radar.socket_handler())
@@ -842,15 +877,13 @@ async def async_main():
             "Backtest: 2-year PF 2.60 | Annual return +46% | Max drawdown 4.1%",
         )
 
-        last_candle:    dict  = {}
+        last_candle: dict = {}
         last_news_check: float = 0.0
-        pending_signals: list  = []
+        pending_signals: list = []
 
         with Live(Text("Scanning..."), refresh_per_second=2, screen=False) as live:
             while True:
                 try:
-                    now = utc_now()
-
                     # ── News check (every 30 minutes) ─────────────────────────
                     if time.time() - last_news_check > 1800:
                         last_news_check = time.time()
@@ -868,8 +901,8 @@ async def async_main():
                     # ── Fetch klines ──────────────────────────────────────
                     df_c, df_m, df_l = await asyncio.gather(
                         fetch_klines(req_session, main_symbol_b, "15m", 300),
-                        fetch_klines(req_session, main_symbol_b, "1h",  300),
-                        fetch_klines(req_session, main_symbol_b, "4h",  300),
+                        fetch_klines(req_session, main_symbol_b, "1h", 300),
+                        fetch_klines(req_session, main_symbol_b, "4h", 300),
                     )
                     if df_c.empty or df_m.empty or df_l.empty:
                         await asyncio.sleep(5)
@@ -881,8 +914,7 @@ async def async_main():
 
                     curr_price = float(df_c.iloc[-1]["close"])
                     current_ts = df_c.iloc[-1]["ts"]
-                    ema20_now  = float(df_c.iloc[-1].get("ema20", 0) or 0)
-                    atr_now    = float(df_c.iloc[-1].get("atr",   0) or 0)
+                    ema20_now = float(df_c.iloc[-1].get("ema20", 0) or 0)
 
                     # ── ATR extreme market alert ───────────────────────────────
                     asyncio.create_task(
@@ -895,7 +927,7 @@ async def async_main():
 
                     # ── Check pending signals (EMA20 pullback) ────────────────────
                     triggered_sigs = []
-                    expired_sigs   = []
+                    expired_sigs = []
 
                     for sig in pending_signals:
                         age_min = (current_ts - sig["signal_ts"]).total_seconds() / 60
@@ -913,25 +945,24 @@ async def async_main():
                     for sig in triggered_sigs:
                         pending_signals.remove(sig)
 
-                        new_entry   = curr_price
-                        sl_dist     = abs(sig["original_entry"] - sig["original_sl"])
+                        new_entry = curr_price
+                        sl_dist = abs(sig["original_entry"] - sig["original_sl"])
                         if sl_dist == 0:
                             continue
 
                         if sig["action"] == "LONG":
-                            new_sl  = new_entry - sl_dist
-                            new_tp  = new_entry + sl_dist * 3.0
-                            new_be  = new_entry + sl_dist * 1.0
+                            new_sl = new_entry - sl_dist
+                            new_tp = new_entry + sl_dist * 3.0
+                            new_be = new_entry + sl_dist * 1.0
                         else:
-                            new_sl  = new_entry + sl_dist
-                            new_tp  = new_entry - sl_dist * 3.0
-                            new_be  = new_entry - sl_dist * 1.0
+                            new_sl = new_entry + sl_dist
+                            new_tp = new_entry - sl_dist * 3.0
+                            new_be = new_entry - sl_dist * 1.0
 
                         plan = {**sig["plan"], "entry": new_entry, "sl": new_sl,
                                 "tp1": new_tp, "breakeven_trigger": new_be}
 
-                        rr   = abs(new_tp - new_entry) / sl_dist
-                        poc  = get_vpvr_poc(df_c.tail(100))
+                        rr = abs(new_tp - new_entry) / sl_dist
 
                         await notifier.send(
                             f"🎯 Pullback Signal Triggered {sig['action']}",
@@ -950,7 +981,7 @@ async def async_main():
                         logging.info(f"Paper trade #{tid} opened: {sig['action']} @ {new_entry:.2f}")
 
                     # ── Signal generation ───────────────────────────────────────
-                    trend     = analyze_trend_structure(df_l, df_m, df_c)
+                    trend = analyze_trend_structure(df_l, df_m, df_c)
                     min_score = session_info.get("min_score", 70)
 
                     suffix = f" | Pending:{len(pending_signals)}" if pending_signals else ""
@@ -968,14 +999,14 @@ async def async_main():
                             if plan and plan.get("tp1") and plan["tp1"] != 0:
                                 plan["entry"] = curr_price
                                 pending_signals.append({
-                                    "signal_ts":     current_ts,
-                                    "signal_price":  curr_price,
-                                    "action":        plan["action"],
+                                    "signal_ts": current_ts,
+                                    "signal_price": curr_price,
+                                    "action": plan["action"],
                                     "original_entry": plan["entry"],
-                                    "original_sl":    plan["sl"],
-                                    "score":          score,
-                                    "min_score":      min_score,
-                                    "plan":           plan,
+                                    "original_sl": plan["sl"],
+                                    "score": score,
+                                    "min_score": min_score,
+                                    "plan": plan,
                                 })
                                 live.update(Text(
                                     f"⏳ Waiting for EMA20 pullback: {plan['action']} @ {curr_price:.2f} "
@@ -990,6 +1021,7 @@ async def async_main():
                     logging.error(f"Main loop error: {e}")
                     live.update(Text(f"❌ Error: {e} (retrying in 5s)", style="bold red"))
                     await asyncio.sleep(5)
+
 
 if __name__ == "__main__":
     try:

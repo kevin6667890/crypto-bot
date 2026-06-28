@@ -6,7 +6,6 @@ import pandas as pd
 import pandas_ta_classic as ta
 from datetime import datetime
 import pytz
-import logging
 import math  # used for safe NaN checks instead of numpy's isnan
 
 
@@ -88,9 +87,9 @@ def compute_indicators(df: pd.DataFrame) -> pd.DataFrame:
 def _extract_swings(series_high, series_low, lookback=60):
     """Extract recent swing highs/lows (used for structure analysis)"""
     h = series_high.tail(lookback)
-    l = series_low.tail(lookback)
+    lows_series = series_low.tail(lookback)
     highs = h[(h.shift(1) < h) & (h.shift(-1) < h)]
-    lows = l[(l.shift(1) > l) & (l.shift(-1) > l)]
+    lows = lows_series[(lows_series.shift(1) > lows_series) & (lows_series.shift(-1) > lows_series)]
     return highs.dropna().tail(2).values, lows.dropna().tail(2).values
 
 
@@ -283,9 +282,6 @@ def generate_trade_plan(df_15m, trend_info, score, session_state, cfg):
     tp1_r_fallback = float(plan_cfg.get("tp1_r_fallback", 1.4))
     tp2_r = float(plan_cfg.get("tp2_r", 2.4))
     min_tp2_headroom_atr = float(plan_cfg.get("min_tp2_headroom_atr", 0.6))
-
-    # degraded risk multiplier (default 0.25R)
-    degrade_risk_mult = float(plan_cfg.get("degrade_risk_mult", 0.25)) if degraded else 1.0
 
     max_stop_pct = max_stop_pct_trend if is_trend else max_stop_pct_range
     atr_mult = atr_mult_trend if is_trend else atr_mult_range

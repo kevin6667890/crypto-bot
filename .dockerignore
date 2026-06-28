@@ -1,0 +1,10 @@
+.env
+__pycache__
+.venv
+venv
+*.pkl
+*.db
+logs/
+data_cache/
+*.png
+.git/

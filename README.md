@@ -6,6 +6,8 @@ A production-deployed algorithmic trading signal system for ETH/USDT with AI-pow
 ![License](https://img.shields.io/badge/License-MIT-green)
 ![Status](https://img.shields.io/badge/Status-Live-brightgreen)
 [![Live Demo](https://img.shields.io/badge/Live%20Demo-Streamlit-FF4B4B)](https://crypto-bot-kagmts7lraqwzmkumfeeqx.streamlit.app)
+![Tests](https://github.com/kevin6667890/crypto-bot/actions/workflows/ci.yml/badge.svg)
+![Docker](https://img.shields.io/badge/Docker-Ready-2496ED)
 
 ---
 
@@ -128,6 +130,24 @@ crypto-bot/
 ├── .env.example
 └── requirements.txt
 ```
+
+---
+
+## Development
+
+### Running Tests
+```bash
+pip install pytest pytest-asyncio
+pytest tests/ -v
+```
+
+### Docker
+```bash
+docker-compose up -d
+```
+
+### CI/CD
+All pushes to main trigger automated tests via GitHub Actions.
 
 ---
 

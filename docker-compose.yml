@@ -1,0 +1,19 @@
+services:
+  crypto-bot:
+    build: .
+    env_file: .env
+    volumes:
+      - ./logs:/app/logs
+      - ./data_cache:/app/data_cache
+    restart: unless-stopped
+
+  dashboard:
+    build: .
+    env_file: .env
+    command: streamlit run dashboard/streamlit_app.py
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./logs:/app/logs
+      - ./data_cache:/app/data_cache
+    restart: unless-stopped

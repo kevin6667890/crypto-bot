@@ -20,6 +20,7 @@ import {
   demoSnapshot,
   fetchEthSnapshot,
   fetchSignalAnalysis,
+  REAL_BACKTEST_TRADES,
   generateDemoTrades,
   generateOrderBook,
   headlineMetrics,

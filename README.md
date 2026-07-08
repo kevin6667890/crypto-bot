@@ -1,5 +1,7 @@
 # ETH/USDT Quant Terminal
 
+🌐 **Live Demo:** [Crypto-Bot Streamlit Dashboard](https://crypto-bot.streamlit.app/) *(Replace with your actual Streamlit Cloud URL)*
+
 ![Python](https://img.shields.io/badge/Python-3.10+-blue) ![React](https://img.shields.io/badge/Frontend-React_Terminal-00B37E) ![Status](https://img.shields.io/badge/Status-Research_Demo-brightgreen) ![Docker](https://img.shields.io/badge/Docker-Ready-2496ED)
 
 An algorithmic trading research system for ETH/USDT. Features multi-timeframe signal generation, backtesting, SQLite paper trade tracking, DeepSeek AI reviews, and a sleek React-based terminal dashboard.
@@ -24,7 +26,7 @@ npm install
 npm run dev
 # Open http://127.0.0.1:5173
 ```
-*Note: A legacy Streamlit wrapper is also available in `dashboard/streamlit_app.py`.*
+*Note: To run the Streamlit wrapper locally, use `streamlit run dashboard/streamlit_app.py`.*
 
 ## 📈 Strategy Overview
 **Multi-Timeframe EMA20 Pullback**
@@ -38,6 +40,8 @@ npm run dev
 | **Profit Factor** | 2.60 | **Win Rate** | 33.8% |
 | **Annual Return** | +46.43% | **Total Trades** | 68 |
 | **Max Drawdown** | 4.14% | **Risk/Reward** | 1:3 |
+
+![Backtest Results](docs/backtest_results.png)
 
 *See full strategy evolution and details in [docs/backtest_results.md](docs/backtest_results.md).*
 

@@ -26,13 +26,13 @@ st.set_page_config(
 st.markdown(
     """
     <style>
-    .stApp { background: #f7f8fa; }
-    .block-container { padding: 0 !important; max-width: none !important; }
+    .stApp { background: #f7f8fa; overflow: hidden; }
+    .block-container { padding: 0 !important; max-width: none !important; margin: 0 !important; }
     header[data-testid="stHeader"],
     [data-testid="stToolbar"],
     footer,
     #MainMenu { display: none !important; }
-    iframe { display: block; }
+    iframe { display: block; height: 100vh !important; border: none !important; }
     </style>
     """,
     unsafe_allow_html=True,

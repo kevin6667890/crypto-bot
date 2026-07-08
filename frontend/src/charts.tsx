@@ -13,7 +13,7 @@ const chartTheme = {
     horzLines: { color: "rgba(17, 24, 39, 0.06)" },
   },
   rightPriceScale: { borderColor: "rgba(17, 24, 39, 0.1)" },
-  timeScale: { borderColor: "rgba(17, 24, 39, 0.1)", timeVisible: true },
+  timeScale: { borderColor: "rgba(17, 24, 39, 0.1)", timeVisible: true, fixLeftEdge: true, fixRightEdge: true },
   crosshair: {
     vertLine: { color: "rgba(0, 179, 126, 0.28)" },
     horzLine: { color: "rgba(0, 179, 126, 0.28)" },

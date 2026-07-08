@@ -142,7 +142,6 @@ nav a:hover {
 }
 
 .health-list {
-  margin-top: auto;
   display: grid;
   gap: 14px;
 }

@@ -9,10 +9,16 @@ venv/
 *.png
 *.jpg
 !docs/backtest_results.png
+!docs/dashboard_preview.png
 backtest_outputs/
 backtest_img/
 mini_bt_outputs/
 dist/
+!frontend/dist/
+!frontend/dist/**
+node_modules/
+frontend/node_modules/
+*.tsbuildinfo
 *.pyc
 .idea/
 trades_*.csv

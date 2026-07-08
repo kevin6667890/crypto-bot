@@ -194,23 +194,7 @@ export function generateCandles(): Candle[] {
 }
 
 export function generateEquityCurve() {
-  const points = [];
-  let equity = 7500;
-  const start = Math.floor(Date.now() / 1000) - 86_400 * 110;
-
-  for (let i = 0; i < 110; i += 1) {
-    const pulse = Math.sin(i / 6) * 18 + Math.cos(i / 13) * 28;
-    const step = 20.4 + pulse;
-    equity = Math.max(7200, equity + step);
-    if ([22, 41, 73, 91].includes(i)) equity -= 190;
-    points.push({
-      time: (start + i * 86_400) as UTCTimestamp,
-      value: Number(equity.toFixed(2)),
-    });
-  }
-
-  points[points.length - 1].value = 10982;
-  return points;
+  return [{"time": 1720250220, "value": 7412.41}, {"time": 1720631820, "value": 7400.12}, {"time": 1721083080, "value": 7609.89}, {"time": 1721314080, "value": 7597.28}, {"time": 1721584260, "value": 7508.02}, {"time": 1722736920, "value": 7495.34}, {"time": 1723642440, "value": 7408.04}, {"time": 1725140700, "value": 7387.37}, {"time": 1725205440, "value": 7374.98}, {"time": 1727021760, "value": 7361.29}, {"time": 1729434600, "value": 7565.24}, {"time": 1730035440, "value": 7470.29}, {"time": 1730645520, "value": 7680.43}, {"time": 1733082600, "value": 7667.72}, {"time": 1733647200, "value": 7574.92}, {"time": 1733709600, "value": 7486.61}, {"time": 1736598360, "value": 7399.22}, {"time": 1738101180, "value": 7608.76}, {"time": 1738179540, "value": 7595.88}, {"time": 1742125500, "value": 7807.96}, {"time": 1745549580, "value": 7716.97}, {"time": 1745719080, "value": 7627.11}, {"time": 1746914100, "value": 7843.46}, {"time": 1748967720, "value": 7829.0}, {"time": 1749045840, "value": 7737.73}, {"time": 1749966240, "value": 7724.77}, {"time": 1750372380, "value": 7711.82}, {"time": 1751231040, "value": 7697.9}, {"time": 1751553180, "value": 7685.17}, {"time": 1752065100, "value": 7902.99}, {"time": 1752324120, "value": 7810.83}, {"time": 1752464520, "value": 8032.18}, {"time": 1753609980, "value": 8018.88}, {"time": 1754792640, "value": 8005.63}, {"time": 1755092400, "value": 7992.41}, {"time": 1755828540, "value": 7978.96}, {"time": 1756059480, "value": 8205.1}, {"time": 1757593800, "value": 8109.44}, {"time": 1757985480, "value": 8095.82}, {"time": 1758773880, "value": 8325.13}, {"time": 1758809700, "value": 8311.02}, {"time": 1759067700, "value": 8287.51}, {"time": 1759780680, "value": 8522.4}, {"time": 1760548080, "value": 8763.71}, {"time": 1761662400, "value": 8749.18}, {"time": 1761759420, "value": 8734.52}, {"time": 1762184940, "value": 8981.84}, {"time": 1763655120, "value": 9236.11}, {"time": 1763730540, "value": 9127.92}, {"time": 1764802080, "value": 9386.81}, {"time": 1765553640, "value": 9651.7}, {"time": 1765755120, "value": 9920.07}, {"time": 1766322240, "value": 9895.28}, {"time": 1767365280, "value": 10172.06}, {"time": 1767575220, "value": 10452.25}, {"time": 1768092780, "value": 10400.04}, {"time": 1768890720, "value": 10689.79}, {"time": 1769186160, "value": 10564.93}, {"time": 1769356920, "value": 10844.61}, {"time": 1769959620, "value": 11151.57}, {"time": 1773606600, "value": 11455.74}, {"time": 1773994200, "value": 11321.97}, {"time": 1774360320, "value": 11190.0}, {"time": 1775742480, "value": 11055.27}, {"time": 1776333900, "value": 11036.97}, {"time": 1777889160, "value": 11018.7}, {"time": 1778075100, "value": 11000.4}, {"time": 1778614380, "value": 10981.95}] as { time: UTCTimestamp, value: number }[];
 }
 
 export async function fetchEthCandles(interval = "15m", limit = 160): Promise<Candle[]> {

@@ -109,6 +109,33 @@ function Panel({
 }
 
 function SystemRail() {
+  const [activeSection, setActiveSection] = useState(navItems[0][1]);
+
+  useEffect(() => {
+    const handleScroll = () => {
+      let current = navItems[0][1];
+      let minDistance = Infinity;
+
+      navItems.forEach(([_, target]) => {
+        const element = document.getElementById(target);
+        if (element) {
+          const rect = element.getBoundingClientRect();
+          // Distance from top of viewport. We add an offset to trigger slightly before it hits the exact top.
+          const distance = Math.abs(rect.top - 100); 
+          
+          if (distance < minDistance) {
+            minDistance = distance;
+            current = target;
+          }
+        }
+      });
+      setActiveSection(current);
+    };
+
+    window.addEventListener("scroll", handleScroll);
+    return () => window.removeEventListener("scroll", handleScroll);
+  }, []);
+
   const checks = [
     ["Scanner", "10s", "online"],
     ["Binance REST", "30s TTL", "online"],
@@ -127,14 +154,15 @@ function SystemRail() {
       </div>
       <nav>
         <span className="nav-label">Jump to section</span>
-        {navItems.map(([label, target], index) => (
+        {navItems.map(([label, target]) => (
           <a 
             key={target} 
             href={`#${target}`} 
-            className={index === 0 ? "active" : ""}
+            className={activeSection === target ? "active" : ""}
             onClick={(e) => {
               e.preventDefault();
               document.getElementById(target)?.scrollIntoView({ behavior: 'smooth' });
+              setActiveSection(target);
             }}
           >
             {label}

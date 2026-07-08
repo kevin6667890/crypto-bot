@@ -190,7 +190,7 @@ function Header({
         <div className="header-actions">
           <button className={`primary-btn ${isConnected ? "connected" : ""}`} onClick={onLoginClick}>
             <ShieldCheck size={16} />
-            {isConnected ? `Connected to ${isConnected}` : "Connect Exchange API"}
+            {isConnected ? `Connected to ${isConnected} (Disconnect)` : "Connect Exchange API"}
           </button>
           <div className="header-badges">
             <span className="badge">V3 Strategy</span>
@@ -516,7 +516,19 @@ export default function App() {
             }}
           />
         )}
-        <Header snapshot={snapshot} loading={loadingMarket} onRefresh={refreshMarket} onLoginClick={() => setShowLogin(true)} isConnected={connectedExchange} />
+        <Header
+          snapshot={snapshot}
+          loading={loadingMarket}
+          onRefresh={refreshMarket}
+          onLoginClick={() => {
+            if (connectedExchange) {
+              setConnectedExchange(null);
+            } else {
+              setShowLogin(true);
+            }
+          }}
+          isConnected={connectedExchange}
+        />
         <CommandCenter signal={signal} loadingSignal={loadingSignal} />
         <div id="strategy">
           <StrategyLab />

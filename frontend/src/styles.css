@@ -61,6 +61,7 @@ a {
   flex-direction: column;
   gap: 18px;
   overflow-y: auto;
+  align-self: start;
 }
 
 .brand-block {
@@ -511,8 +512,7 @@ main {
 }
 
 .trade-table {
-  max-height: 560px;
-  overflow: auto;
+  border: 1px solid var(--line);
 }
 
 .trade-table .table-head {

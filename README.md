@@ -1,6 +1,6 @@
 # ETH/USDT Quant Terminal
 
-🌐 **Live Demo:** [Crypto-Bot Streamlit Dashboard](https://crypto-bot.streamlit.app/) *(Replace with your actual Streamlit Cloud URL)*
+🌐 **Live Demo:** [Crypto-Bot Streamlit Dashboard](https://crypto-bot-kagmts7lraqwzmkumfeeqx.streamlit.app/)
 
 ![Python](https://img.shields.io/badge/Python-3.10+-blue) ![React](https://img.shields.io/badge/Frontend-React_Terminal-00B37E) ![Status](https://img.shields.io/badge/Status-Research_Demo-brightgreen) ![Docker](https://img.shields.io/badge/Docker-Ready-2496ED)
 

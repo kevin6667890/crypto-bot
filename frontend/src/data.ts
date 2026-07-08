@@ -456,3 +456,4446 @@ function formatDateTime(date: Date) {
   const minute = String(date.getMinutes()).padStart(2, "0");
   return `${year}-${month}-${day} ${hour}:${minute}`;
 }
+
+export const REAL_BACKTEST_TRADES: DemoTrade[] = [
+  {
+    "id": 1,
+    "time": "2024-06-24 09:30:00",
+    "side": "SHORT",
+    "entry": 3414.8,
+    "exit": 3333.09,
+    "result": "WIN",
+    "r": 2.39,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 2,
+    "time": "2024-06-26 19:35:00",
+    "side": "SHORT",
+    "entry": 3386.48,
+    "exit": 3386.48,
+    "result": "BE",
+    "r": -0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 3,
+    "time": "2024-06-28 14:40:00",
+    "side": "LONG",
+    "entry": 3417.64,
+    "exit": 3417.64,
+    "result": "BE",
+    "r": 0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 4,
+    "time": "2024-07-04 01:38:00",
+    "side": "SHORT",
+    "entry": 3329.88,
+    "exit": 3250.26,
+    "result": "WIN",
+    "r": 2.39,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 5,
+    "time": "2024-07-07 13:43:00",
+    "side": "SHORT",
+    "entry": 3041.59,
+    "exit": 2968.74,
+    "result": "WIN",
+    "r": 2.4,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 6,
+    "time": "2024-07-11 03:18:00",
+    "side": "LONG",
+    "entry": 3114.3,
+    "exit": 3076.81,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 7,
+    "time": "2024-07-11 12:50:00",
+    "side": "LONG",
+    "entry": 3134.23,
+    "exit": 3209.6,
+    "result": "WIN",
+    "r": 2.4,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 8,
+    "time": "2024-07-14 14:30:00",
+    "side": "LONG",
+    "entry": 3175.23,
+    "exit": 3175.23,
+    "result": "BE",
+    "r": 0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 9,
+    "time": "2024-07-15 06:24:00",
+    "side": "LONG",
+    "entry": 3270.01,
+    "exit": 3348.69,
+    "result": "WIN",
+    "r": 2.41,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 10,
+    "time": "2024-07-15 19:22:00",
+    "side": "LONG",
+    "entry": 3348.65,
+    "exit": 3429.0,
+    "result": "WIN",
+    "r": 2.4,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 11,
+    "time": "2024-07-16 05:23:00",
+    "side": "LONG",
+    "entry": 3443.63,
+    "exit": 3443.63,
+    "result": "BE",
+    "r": 0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 12,
+    "time": "2024-07-18 14:33:00",
+    "side": "LONG",
+    "entry": 3447.03,
+    "exit": 3447.03,
+    "result": "BE",
+    "r": 0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 13,
+    "time": "2024-07-21 07:02:00",
+    "side": "LONG",
+    "entry": 3478.54,
+    "exit": 3478.54,
+    "result": "BE",
+    "r": 0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 14,
+    "time": "2024-07-21 17:51:00",
+    "side": "LONG",
+    "entry": 3503.75,
+    "exit": 3463.73,
+    "result": "LOSS",
+    "r": -1.14,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 15,
+    "time": "2024-07-22 06:37:00",
+    "side": "LONG",
+    "entry": 3521.2,
+    "exit": 3478.85,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 16,
+    "time": "2024-07-24 21:12:00",
+    "side": "SHORT",
+    "entry": 3429.84,
+    "exit": 3347.75,
+    "result": "WIN",
+    "r": 2.39,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 17,
+    "time": "2024-07-25 01:07:00",
+    "side": "SHORT",
+    "entry": 3352.93,
+    "exit": 3273.01,
+    "result": "WIN",
+    "r": 2.38,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 18,
+    "time": "2024-07-25 05:38:00",
+    "side": "SHORT",
+    "entry": 3193.74,
+    "exit": 3193.74,
+    "result": "BE",
+    "r": -0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 19,
+    "time": "2024-07-25 20:56:00",
+    "side": "SHORT",
+    "entry": 3146.02,
+    "exit": 3146.02,
+    "result": "BE",
+    "r": -0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 20,
+    "time": "2024-07-27 20:45:00",
+    "side": "SHORT",
+    "entry": 3255.16,
+    "exit": 3255.16,
+    "result": "BE",
+    "r": -0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 21,
+    "time": "2024-07-29 04:03:00",
+    "side": "LONG",
+    "entry": 3278.52,
+    "exit": 3357.63,
+    "result": "WIN",
+    "r": 2.41,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 22,
+    "time": "2024-07-29 14:14:00",
+    "side": "LONG",
+    "entry": 3361.65,
+    "exit": 3321.24,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 23,
+    "time": "2024-07-29 21:39:00",
+    "side": "SHORT",
+    "entry": 3291.83,
+    "exit": 3331.23,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 24,
+    "time": "2024-07-30 14:58:00",
+    "side": "LONG",
+    "entry": 3342.19,
+    "exit": 3301.9,
+    "result": "LOSS",
+    "r": -1.21,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 25,
+    "time": "2024-07-30 20:41:00",
+    "side": "SHORT",
+    "entry": 3276.31,
+    "exit": 3276.31,
+    "result": "BE",
+    "r": -0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 26,
+    "time": "2024-07-31 19:28:00",
+    "side": "LONG",
+    "entry": 3313.37,
+    "exit": 3273.48,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 27,
+    "time": "2024-08-01 04:27:00",
+    "side": "SHORT",
+    "entry": 3238.6,
+    "exit": 3161.27,
+    "result": "WIN",
+    "r": 2.39,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 28,
+    "time": "2024-08-01 16:34:00",
+    "side": "SHORT",
+    "entry": 3171.47,
+    "exit": 3095.49,
+    "result": "WIN",
+    "r": 2.4,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 29,
+    "time": "2024-08-01 20:01:00",
+    "side": "SHORT",
+    "entry": 3099.72,
+    "exit": 3136.86,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 30,
+    "time": "2024-08-03 01:10:00",
+    "side": "SHORT",
+    "entry": 2995.76,
+    "exit": 2924.38,
+    "result": "WIN",
+    "r": 2.38,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 31,
+    "time": "2024-08-04 02:33:00",
+    "side": "SHORT",
+    "entry": 2892.64,
+    "exit": 2927.25,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 32,
+    "time": "2024-08-04 17:10:00",
+    "side": "SHORT",
+    "entry": 2838.71,
+    "exit": 2770.86,
+    "result": "WIN",
+    "r": 2.39,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 33,
+    "time": "2024-08-05 00:55:00",
+    "side": "SHORT",
+    "entry": 2630.05,
+    "exit": 2567.48,
+    "result": "WIN",
+    "r": 2.38,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 34,
+    "time": "2024-08-07 01:42:00",
+    "side": "SHORT",
+    "entry": 2451.77,
+    "exit": 2481.09,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 35,
+    "time": "2024-08-07 13:32:00",
+    "side": "SHORT",
+    "entry": 2481.79,
+    "exit": 2481.79,
+    "result": "BE",
+    "r": -0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 36,
+    "time": "2024-08-07 15:53:00",
+    "side": "SHORT",
+    "entry": 2415.74,
+    "exit": 2415.74,
+    "result": "BE",
+    "r": -0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 37,
+    "time": "2024-08-07 21:03:00",
+    "side": "SHORT",
+    "entry": 2352.79,
+    "exit": 2352.79,
+    "result": "BE",
+    "r": -0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 38,
+    "time": "2024-08-11 11:01:00",
+    "side": "LONG",
+    "entry": 2664.63,
+    "exit": 2664.63,
+    "result": "BE",
+    "r": 0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 39,
+    "time": "2024-08-13 19:21:00",
+    "side": "LONG",
+    "entry": 2710.59,
+    "exit": 2677.89,
+    "result": "LOSS",
+    "r": -1.21,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 40,
+    "time": "2024-08-14 12:52:00",
+    "side": "LONG",
+    "entry": 2755.13,
+    "exit": 2721.88,
+    "result": "LOSS",
+    "r": -1.21,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 41,
+    "time": "2024-08-25 23:48:00",
+    "side": "LONG",
+    "entry": 2774.26,
+    "exit": 2745.98,
+    "result": "LOSS",
+    "r": -1.02,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 42,
+    "time": "2024-08-27 14:13:00",
+    "side": "SHORT",
+    "entry": 2642.77,
+    "exit": 2579.61,
+    "result": "WIN",
+    "r": 2.39,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 43,
+    "time": "2024-08-27 21:37:00",
+    "side": "SHORT",
+    "entry": 2599.66,
+    "exit": 2537.77,
+    "result": "WIN",
+    "r": 2.38,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 44,
+    "time": "2024-08-31 21:36:00",
+    "side": "SHORT",
+    "entry": 2517.97,
+    "exit": 2517.97,
+    "result": "BE",
+    "r": -0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 45,
+    "time": "2024-09-01 09:37:00",
+    "side": "SHORT",
+    "entry": 2492.39,
+    "exit": 2492.39,
+    "result": "BE",
+    "r": -0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 46,
+    "time": "2024-09-01 15:38:00",
+    "side": "SHORT",
+    "entry": 2467.94,
+    "exit": 2467.94,
+    "result": "BE",
+    "r": -0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 47,
+    "time": "2024-09-03 14:47:00",
+    "side": "SHORT",
+    "entry": 2509.44,
+    "exit": 2449.48,
+    "result": "WIN",
+    "r": 2.39,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 48,
+    "time": "2024-09-04 00:59:00",
+    "side": "SHORT",
+    "entry": 2457.39,
+    "exit": 2398.68,
+    "result": "WIN",
+    "r": 2.39,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 49,
+    "time": "2024-09-06 01:41:00",
+    "side": "SHORT",
+    "entry": 2400.11,
+    "exit": 2400.11,
+    "result": "BE",
+    "r": -0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 50,
+    "time": "2024-09-06 20:34:00",
+    "side": "SHORT",
+    "entry": 2249.44,
+    "exit": 2195.49,
+    "result": "WIN",
+    "r": 2.4,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 51,
+    "time": "2024-09-08 22:16:00",
+    "side": "SHORT",
+    "entry": 2266.1,
+    "exit": 2293.24,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 52,
+    "time": "2024-09-11 01:25:00",
+    "side": "LONG",
+    "entry": 2365.94,
+    "exit": 2365.94,
+    "result": "BE",
+    "r": 0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 53,
+    "time": "2024-09-18 18:00:00",
+    "side": "SHORT",
+    "entry": 2327.79,
+    "exit": 2327.79,
+    "result": "BE",
+    "r": -0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 54,
+    "time": "2024-09-19 07:11:00",
+    "side": "LONG",
+    "entry": 2370.35,
+    "exit": 2427.55,
+    "result": "WIN",
+    "r": 2.41,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 55,
+    "time": "2024-09-21 04:25:00",
+    "side": "LONG",
+    "entry": 2562.3,
+    "exit": 2531.43,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 56,
+    "time": "2024-09-21 23:40:00",
+    "side": "LONG",
+    "entry": 2556.16,
+    "exit": 2611.14,
+    "result": "WIN",
+    "r": 2.15,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 57,
+    "time": "2024-09-23 03:21:00",
+    "side": "LONG",
+    "entry": 2610.62,
+    "exit": 2673.53,
+    "result": "WIN",
+    "r": 2.41,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 58,
+    "time": "2024-09-23 21:20:00",
+    "side": "LONG",
+    "entry": 2677.1,
+    "exit": 2644.87,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 59,
+    "time": "2024-09-24 11:41:00",
+    "side": "LONG",
+    "entry": 2653.57,
+    "exit": 2621.67,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 60,
+    "time": "2024-09-25 05:00:00",
+    "side": "LONG",
+    "entry": 2656.47,
+    "exit": 2624.45,
+    "result": "LOSS",
+    "r": -1.21,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 61,
+    "time": "2024-09-27 08:24:00",
+    "side": "LONG",
+    "entry": 2607.81,
+    "exit": 2670.54,
+    "result": "WIN",
+    "r": 2.41,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 62,
+    "time": "2024-09-28 08:51:00",
+    "side": "LONG",
+    "entry": 2666.33,
+    "exit": 2666.33,
+    "result": "BE",
+    "r": 0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 63,
+    "time": "2024-10-01 13:33:00",
+    "side": "LONG",
+    "entry": 2637.75,
+    "exit": 2606.02,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 64,
+    "time": "2024-10-01 15:06:00",
+    "side": "SHORT",
+    "entry": 2555.55,
+    "exit": 2494.36,
+    "result": "WIN",
+    "r": 2.39,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 65,
+    "time": "2024-10-01 18:10:00",
+    "side": "SHORT",
+    "entry": 2486.2,
+    "exit": 2515.87,
+    "result": "LOSS",
+    "r": -1.19,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 66,
+    "time": "2024-10-02 16:05:00",
+    "side": "SHORT",
+    "entry": 2443.93,
+    "exit": 2473.15,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 67,
+    "time": "2024-10-03 09:04:00",
+    "side": "SHORT",
+    "entry": 2376.61,
+    "exit": 2319.69,
+    "result": "WIN",
+    "r": 2.4,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 68,
+    "time": "2024-10-03 23:01:00",
+    "side": "SHORT",
+    "entry": 2328.72,
+    "exit": 2356.53,
+    "result": "LOSS",
+    "r": -1.19,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 69,
+    "time": "2024-10-06 13:04:00",
+    "side": "SHORT",
+    "entry": 2406.64,
+    "exit": 2435.42,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 70,
+    "time": "2024-10-07 09:15:00",
+    "side": "LONG",
+    "entry": 2501.91,
+    "exit": 2471.87,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 71,
+    "time": "2024-10-11 22:21:00",
+    "side": "LONG",
+    "entry": 2439.17,
+    "exit": 2439.17,
+    "result": "BE",
+    "r": 0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 72,
+    "time": "2024-10-14 14:29:00",
+    "side": "LONG",
+    "entry": 2550.19,
+    "exit": 2611.54,
+    "result": "WIN",
+    "r": 2.41,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 73,
+    "time": "2024-10-16 13:39:00",
+    "side": "LONG",
+    "entry": 2608.59,
+    "exit": 2608.59,
+    "result": "BE",
+    "r": 0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 74,
+    "time": "2024-10-18 20:21:00",
+    "side": "LONG",
+    "entry": 2643.46,
+    "exit": 2643.46,
+    "result": "BE",
+    "r": 0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 75,
+    "time": "2024-10-20 14:09:00",
+    "side": "LONG",
+    "entry": 2645.32,
+    "exit": 2691.41,
+    "result": "WIN",
+    "r": 1.74,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 76,
+    "time": "2024-10-21 06:59:00",
+    "side": "LONG",
+    "entry": 2758.3,
+    "exit": 2725.17,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 77,
+    "time": "2024-10-23 15:14:00",
+    "side": "SHORT",
+    "entry": 2612.41,
+    "exit": 2549.89,
+    "result": "WIN",
+    "r": 2.39,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 78,
+    "time": "2024-10-23 16:49:00",
+    "side": "SHORT",
+    "entry": 2562.7,
+    "exit": 2501.45,
+    "result": "WIN",
+    "r": 2.39,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 79,
+    "time": "2024-10-23 19:50:00",
+    "side": "SHORT",
+    "entry": 2482.91,
+    "exit": 2512.71,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 80,
+    "time": "2024-10-25 08:36:00",
+    "side": "SHORT",
+    "entry": 2484.56,
+    "exit": 2514.33,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 81,
+    "time": "2024-10-26 18:10:00",
+    "side": "SHORT",
+    "entry": 2457.75,
+    "exit": 2487.11,
+    "result": "LOSS",
+    "r": -1.19,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 82,
+    "time": "2024-10-27 13:23:00",
+    "side": "SHORT",
+    "entry": 2475.1,
+    "exit": 2494.53,
+    "result": "LOSS",
+    "r": -0.78,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 83,
+    "time": "2024-10-28 07:14:00",
+    "side": "SHORT",
+    "entry": 2485.16,
+    "exit": 2514.93,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 84,
+    "time": "2024-10-29 16:52:00",
+    "side": "LONG",
+    "entry": 2600.61,
+    "exit": 2663.3,
+    "result": "WIN",
+    "r": 2.41,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 85,
+    "time": "2024-10-30 12:05:00",
+    "side": "LONG",
+    "entry": 2654.49,
+    "exit": 2654.49,
+    "result": "BE",
+    "r": 0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 86,
+    "time": "2024-10-31 14:04:00",
+    "side": "SHORT",
+    "entry": 2629.72,
+    "exit": 2568.76,
+    "result": "WIN",
+    "r": 2.32,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 87,
+    "time": "2024-11-01 02:09:00",
+    "side": "SHORT",
+    "entry": 2541.74,
+    "exit": 2480.77,
+    "result": "WIN",
+    "r": 2.4,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 88,
+    "time": "2024-11-03 02:41:00",
+    "side": "SHORT",
+    "entry": 2495.81,
+    "exit": 2442.32,
+    "result": "WIN",
+    "r": 2.14,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 89,
+    "time": "2024-11-03 04:29:00",
+    "side": "SHORT",
+    "entry": 2457.81,
+    "exit": 2457.81,
+    "result": "BE",
+    "r": -0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 90,
+    "time": "2024-11-03 20:35:00",
+    "side": "SHORT",
+    "entry": 2436.32,
+    "exit": 2465.41,
+    "result": "LOSS",
+    "r": -1.19,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 91,
+    "time": "2024-11-04 21:24:00",
+    "side": "SHORT",
+    "entry": 2452.47,
+    "exit": 2393.82,
+    "result": "WIN",
+    "r": 2.39,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 92,
+    "time": "2024-11-06 02:20:00",
+    "side": "LONG",
+    "entry": 2471.21,
+    "exit": 2531.43,
+    "result": "WIN",
+    "r": 2.44,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 93,
+    "time": "2024-11-06 21:11:00",
+    "side": "LONG",
+    "entry": 2636.31,
+    "exit": 2700.19,
+    "result": "WIN",
+    "r": 2.42,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 94,
+    "time": "2024-11-07 00:26:00",
+    "side": "LONG",
+    "entry": 2706.79,
+    "exit": 2706.79,
+    "result": "BE",
+    "r": 0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 95,
+    "time": "2024-11-07 06:11:00",
+    "side": "LONG",
+    "entry": 2856.69,
+    "exit": 2822.23,
+    "result": "LOSS",
+    "r": -1.21,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 96,
+    "time": "2024-11-08 00:08:00",
+    "side": "LONG",
+    "entry": 2850.95,
+    "exit": 2919.58,
+    "result": "WIN",
+    "r": 2.41,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 97,
+    "time": "2024-11-08 21:15:00",
+    "side": "LONG",
+    "entry": 2924.67,
+    "exit": 2924.67,
+    "result": "BE",
+    "r": 0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 98,
+    "time": "2024-11-09 05:50:00",
+    "side": "LONG",
+    "entry": 2974.13,
+    "exit": 3045.81,
+    "result": "WIN",
+    "r": 2.41,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 99,
+    "time": "2024-11-10 12:05:00",
+    "side": "LONG",
+    "entry": 3156.17,
+    "exit": 3232.21,
+    "result": "WIN",
+    "r": 2.41,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 100,
+    "time": "2024-11-11 19:05:00",
+    "side": "LONG",
+    "entry": 3251.14,
+    "exit": 3330.27,
+    "result": "WIN",
+    "r": 2.43,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 101,
+    "time": "2024-11-15 20:19:00",
+    "side": "SHORT",
+    "entry": 3041.21,
+    "exit": 3077.43,
+    "result": "LOSS",
+    "r": -1.19,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 102,
+    "time": "2024-11-16 06:14:00",
+    "side": "LONG",
+    "entry": 3122.75,
+    "exit": 3122.75,
+    "result": "BE",
+    "r": 0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 103,
+    "time": "2024-11-23 02:37:00",
+    "side": "LONG",
+    "entry": 3320.47,
+    "exit": 3320.47,
+    "result": "BE",
+    "r": 0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 104,
+    "time": "2024-11-23 16:21:00",
+    "side": "LONG",
+    "entry": 3423.46,
+    "exit": 3423.46,
+    "result": "BE",
+    "r": 0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 105,
+    "time": "2024-11-25 09:35:00",
+    "side": "LONG",
+    "entry": 3392.76,
+    "exit": 3474.64,
+    "result": "WIN",
+    "r": 2.41,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 106,
+    "time": "2024-11-25 11:40:00",
+    "side": "LONG",
+    "entry": 3481.89,
+    "exit": 3481.89,
+    "result": "BE",
+    "r": 0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 107,
+    "time": "2024-11-27 10:40:00",
+    "side": "LONG",
+    "entry": 3380.48,
+    "exit": 3461.68,
+    "result": "WIN",
+    "r": 2.4,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 108,
+    "time": "2024-11-27 15:44:00",
+    "side": "LONG",
+    "entry": 3485.95,
+    "exit": 3570.07,
+    "result": "WIN",
+    "r": 2.41,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 109,
+    "time": "2024-11-27 22:17:00",
+    "side": "LONG",
+    "entry": 3576.64,
+    "exit": 3662.53,
+    "result": "WIN",
+    "r": 2.4,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 110,
+    "time": "2024-11-28 03:03:00",
+    "side": "LONG",
+    "entry": 3654.59,
+    "exit": 3610.57,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 111,
+    "time": "2024-11-29 16:17:00",
+    "side": "LONG",
+    "entry": 3598.3,
+    "exit": 3598.3,
+    "result": "BE",
+    "r": 0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 112,
+    "time": "2024-11-30 10:16:00",
+    "side": "LONG",
+    "entry": 3678.07,
+    "exit": 3678.07,
+    "result": "BE",
+    "r": 0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 113,
+    "time": "2024-12-01 19:50:00",
+    "side": "LONG",
+    "entry": 3695.74,
+    "exit": 3695.74,
+    "result": "BE",
+    "r": 0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 114,
+    "time": "2024-12-02 03:56:00",
+    "side": "LONG",
+    "entry": 3734.17,
+    "exit": 3689.27,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 115,
+    "time": "2024-12-04 07:41:00",
+    "side": "LONG",
+    "entry": 3625.45,
+    "exit": 3712.62,
+    "result": "WIN",
+    "r": 2.4,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 116,
+    "time": "2024-12-04 12:18:00",
+    "side": "LONG",
+    "entry": 3702.86,
+    "exit": 3702.86,
+    "result": "BE",
+    "r": 0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 117,
+    "time": "2024-12-05 15:23:00",
+    "side": "LONG",
+    "entry": 3929.8,
+    "exit": 3882.6,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 118,
+    "time": "2024-12-06 23:21:00",
+    "side": "LONG",
+    "entry": 4047.07,
+    "exit": 3998.55,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 119,
+    "time": "2024-12-08 08:16:00",
+    "side": "LONG",
+    "entry": 3990.1,
+    "exit": 3952.17,
+    "result": "LOSS",
+    "r": -0.95,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 120,
+    "time": "2024-12-09 01:47:00",
+    "side": "LONG",
+    "entry": 3997.64,
+    "exit": 3949.52,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 121,
+    "time": "2024-12-09 21:03:00",
+    "side": "SHORT",
+    "entry": 3788.31,
+    "exit": 3698.03,
+    "result": "WIN",
+    "r": 2.38,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 122,
+    "time": "2024-12-10 16:56:00",
+    "side": "SHORT",
+    "entry": 3570.03,
+    "exit": 3612.44,
+    "result": "LOSS",
+    "r": -1.19,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 123,
+    "time": "2024-12-10 18:20:00",
+    "side": "SHORT",
+    "entry": 3532.26,
+    "exit": 3574.59,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 124,
+    "time": "2024-12-11 20:24:00",
+    "side": "LONG",
+    "entry": 3735.33,
+    "exit": 3825.14,
+    "result": "WIN",
+    "r": 2.4,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 125,
+    "time": "2024-12-12 03:26:00",
+    "side": "LONG",
+    "entry": 3817.07,
+    "exit": 3908.84,
+    "result": "WIN",
+    "r": 2.4,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 126,
+    "time": "2024-12-12 16:36:00",
+    "side": "LONG",
+    "entry": 3934.93,
+    "exit": 3934.93,
+    "result": "BE",
+    "r": 0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 127,
+    "time": "2024-12-13 15:51:00",
+    "side": "LONG",
+    "entry": 3942.19,
+    "exit": 3894.77,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 128,
+    "time": "2024-12-19 02:11:00",
+    "side": "SHORT",
+    "entry": 3651.6,
+    "exit": 3564.3,
+    "result": "WIN",
+    "r": 2.39,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 129,
+    "time": "2024-12-19 02:56:00",
+    "side": "SHORT",
+    "entry": 3600.39,
+    "exit": 3643.13,
+    "result": "LOSS",
+    "r": -1.19,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 130,
+    "time": "2024-12-20 10:40:00",
+    "side": "SHORT",
+    "entry": 3231.1,
+    "exit": 3231.1,
+    "result": "BE",
+    "r": -0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 131,
+    "time": "2024-12-20 12:18:00",
+    "side": "SHORT",
+    "entry": 3134.65,
+    "exit": 3172.07,
+    "result": "LOSS",
+    "r": -1.19,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 132,
+    "time": "2024-12-21 13:32:00",
+    "side": "SHORT",
+    "entry": 3434.43,
+    "exit": 3352.32,
+    "result": "WIN",
+    "r": 2.39,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 133,
+    "time": "2024-12-26 08:24:00",
+    "side": "SHORT",
+    "entry": 3450.61,
+    "exit": 3368.14,
+    "result": "WIN",
+    "r": 2.39,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 134,
+    "time": "2025-01-03 15:45:00",
+    "side": "LONG",
+    "entry": 3476.97,
+    "exit": 3560.61,
+    "result": "WIN",
+    "r": 2.41,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 135,
+    "time": "2025-01-04 13:14:00",
+    "side": "LONG",
+    "entry": 3559.54,
+    "exit": 3645.1,
+    "result": "WIN",
+    "r": 2.4,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 136,
+    "time": "2025-01-06 10:06:00",
+    "side": "LONG",
+    "entry": 3678.11,
+    "exit": 3633.85,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 137,
+    "time": "2025-01-08 00:26:00",
+    "side": "SHORT",
+    "entry": 3370.46,
+    "exit": 3410.82,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 138,
+    "time": "2025-01-08 08:19:00",
+    "side": "SHORT",
+    "entry": 3336.4,
+    "exit": 3376.34,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 139,
+    "time": "2025-01-09 13:58:00",
+    "side": "SHORT",
+    "entry": 3293.05,
+    "exit": 3214.41,
+    "result": "WIN",
+    "r": 2.39,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 140,
+    "time": "2025-01-11 11:18:00",
+    "side": "SHORT",
+    "entry": 3238.84,
+    "exit": 3277.59,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 141,
+    "time": "2025-01-12 15:19:00",
+    "side": "SHORT",
+    "entry": 3242.88,
+    "exit": 3281.67,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 142,
+    "time": "2025-01-13 09:29:00",
+    "side": "SHORT",
+    "entry": 3234.96,
+    "exit": 3157.47,
+    "result": "WIN",
+    "r": 2.4,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 143,
+    "time": "2025-01-13 09:38:00",
+    "side": "SHORT",
+    "entry": 3165.28,
+    "exit": 3165.28,
+    "result": "BE",
+    "r": -0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 144,
+    "time": "2025-01-13 13:18:00",
+    "side": "SHORT",
+    "entry": 3088.08,
+    "exit": 3088.08,
+    "result": "BE",
+    "r": -0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 145,
+    "time": "2025-01-13 15:22:00",
+    "side": "SHORT",
+    "entry": 3036.15,
+    "exit": 3072.39,
+    "result": "LOSS",
+    "r": -1.19,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 146,
+    "time": "2025-01-15 13:30:00",
+    "side": "SHORT",
+    "entry": 3199.45,
+    "exit": 3237.76,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 147,
+    "time": "2025-01-15 19:52:00",
+    "side": "LONG",
+    "entry": 3361.36,
+    "exit": 3441.98,
+    "result": "WIN",
+    "r": 2.4,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 148,
+    "time": "2025-01-28 15:31:00",
+    "side": "SHORT",
+    "entry": 3172.45,
+    "exit": 3210.39,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 149,
+    "time": "2025-01-28 21:37:00",
+    "side": "SHORT",
+    "entry": 3148.5,
+    "exit": 3073.43,
+    "result": "WIN",
+    "r": 2.38,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 150,
+    "time": "2025-01-31 11:07:00",
+    "side": "LONG",
+    "entry": 3209.42,
+    "exit": 3286.62,
+    "result": "WIN",
+    "r": 2.41,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 151,
+    "time": "2025-02-02 23:04:00",
+    "side": "SHORT",
+    "entry": 2886.56,
+    "exit": 2818.33,
+    "result": "WIN",
+    "r": 2.36,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 152,
+    "time": "2025-02-03 01:47:00",
+    "side": "SHORT",
+    "entry": 2727.58,
+    "exit": 2661.58,
+    "result": "WIN",
+    "r": 2.42,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 153,
+    "time": "2025-02-04 22:48:00",
+    "side": "SHORT",
+    "entry": 2686.85,
+    "exit": 2686.85,
+    "result": "BE",
+    "r": -0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 154,
+    "time": "2025-02-05 19:40:00",
+    "side": "SHORT",
+    "entry": 2741.47,
+    "exit": 2774.23,
+    "result": "LOSS",
+    "r": -1.19,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 155,
+    "time": "2025-02-06 15:37:00",
+    "side": "SHORT",
+    "entry": 2789.23,
+    "exit": 2722.5,
+    "result": "WIN",
+    "r": 2.39,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 156,
+    "time": "2025-02-07 20:29:00",
+    "side": "SHORT",
+    "entry": 2687.98,
+    "exit": 2623.72,
+    "result": "WIN",
+    "r": 2.39,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 157,
+    "time": "2025-02-07 23:42:00",
+    "side": "SHORT",
+    "entry": 2614.72,
+    "exit": 2614.72,
+    "result": "BE",
+    "r": -0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 158,
+    "time": "2025-02-09 21:43:00",
+    "side": "SHORT",
+    "entry": 2640.98,
+    "exit": 2577.79,
+    "result": "WIN",
+    "r": 2.39,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 159,
+    "time": "2025-02-11 15:02:00",
+    "side": "SHORT",
+    "entry": 2671.27,
+    "exit": 2671.27,
+    "result": "BE",
+    "r": -0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 160,
+    "time": "2025-02-11 21:44:00",
+    "side": "SHORT",
+    "entry": 2628.85,
+    "exit": 2628.85,
+    "result": "BE",
+    "r": -0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 161,
+    "time": "2025-02-12 22:20:00",
+    "side": "LONG",
+    "entry": 2679.37,
+    "exit": 2743.95,
+    "result": "WIN",
+    "r": 2.41,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 162,
+    "time": "2025-02-14 17:48:00",
+    "side": "LONG",
+    "entry": 2705.85,
+    "exit": 2771.02,
+    "result": "WIN",
+    "r": 2.41,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 163,
+    "time": "2025-02-24 04:30:00",
+    "side": "SHORT",
+    "entry": 2768.74,
+    "exit": 2702.44,
+    "result": "WIN",
+    "r": 2.39,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 164,
+    "time": "2025-02-24 17:20:00",
+    "side": "SHORT",
+    "entry": 2681.7,
+    "exit": 2681.7,
+    "result": "BE",
+    "r": -0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 165,
+    "time": "2025-02-25 00:24:00",
+    "side": "SHORT",
+    "entry": 2496.03,
+    "exit": 2525.64,
+    "result": "LOSS",
+    "r": -1.19,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 166,
+    "time": "2025-02-26 14:00:00",
+    "side": "SHORT",
+    "entry": 2466.88,
+    "exit": 2407.92,
+    "result": "WIN",
+    "r": 2.39,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 167,
+    "time": "2025-02-26 18:29:00",
+    "side": "SHORT",
+    "entry": 2381.08,
+    "exit": 2324.27,
+    "result": "WIN",
+    "r": 2.39,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 168,
+    "time": "2025-02-27 21:17:00",
+    "side": "SHORT",
+    "entry": 2265.25,
+    "exit": 2265.25,
+    "result": "BE",
+    "r": -0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 169,
+    "time": "2025-02-28 04:42:00",
+    "side": "SHORT",
+    "entry": 2131.98,
+    "exit": 2131.98,
+    "result": "BE",
+    "r": -0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 170,
+    "time": "2025-03-01 13:16:00",
+    "side": "SHORT",
+    "entry": 2210.79,
+    "exit": 2157.88,
+    "result": "WIN",
+    "r": 2.39,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 171,
+    "time": "2025-03-01 16:38:00",
+    "side": "SHORT",
+    "entry": 2160.32,
+    "exit": 2186.13,
+    "result": "LOSS",
+    "r": -1.19,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 172,
+    "time": "2025-03-03 18:32:00",
+    "side": "SHORT",
+    "entry": 2254.19,
+    "exit": 2200.03,
+    "result": "WIN",
+    "r": 2.4,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 173,
+    "time": "2025-03-09 10:50:00",
+    "side": "SHORT",
+    "entry": 2182.79,
+    "exit": 2130.59,
+    "result": "WIN",
+    "r": 2.39,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 174,
+    "time": "2025-03-09 16:11:00",
+    "side": "SHORT",
+    "entry": 2102.82,
+    "exit": 2102.82,
+    "result": "BE",
+    "r": -0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 175,
+    "time": "2025-03-13 09:00:00",
+    "side": "SHORT",
+    "entry": 1870.16,
+    "exit": 1892.56,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 176,
+    "time": "2025-03-13 18:27:00",
+    "side": "SHORT",
+    "entry": 1850.71,
+    "exit": 1850.71,
+    "result": "BE",
+    "r": -0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 177,
+    "time": "2025-03-16 11:17:00",
+    "side": "SHORT",
+    "entry": 1917.38,
+    "exit": 1880.39,
+    "result": "WIN",
+    "r": 1.93,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 178,
+    "time": "2025-03-27 01:02:00",
+    "side": "SHORT",
+    "entry": 1998.08,
+    "exit": 2022.02,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 179,
+    "time": "2025-03-28 04:40:00",
+    "side": "SHORT",
+    "entry": 2009.55,
+    "exit": 1961.36,
+    "result": "WIN",
+    "r": 2.4,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 180,
+    "time": "2025-03-29 00:14:00",
+    "side": "SHORT",
+    "entry": 1903.4,
+    "exit": 1903.4,
+    "result": "BE",
+    "r": -0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 181,
+    "time": "2025-03-29 16:46:00",
+    "side": "SHORT",
+    "entry": 1876.97,
+    "exit": 1832.18,
+    "result": "WIN",
+    "r": 2.39,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 182,
+    "time": "2025-03-29 17:31:00",
+    "side": "SHORT",
+    "entry": 1828.86,
+    "exit": 1828.86,
+    "result": "BE",
+    "r": -0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 183,
+    "time": "2025-04-02 13:52:00",
+    "side": "SHORT",
+    "entry": 1870.96,
+    "exit": 1893.37,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 184,
+    "time": "2025-04-03 13:31:00",
+    "side": "SHORT",
+    "entry": 1780.26,
+    "exit": 1780.26,
+    "result": "BE",
+    "r": -0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 185,
+    "time": "2025-04-05 20:43:00",
+    "side": "SHORT",
+    "entry": 1796.5,
+    "exit": 1796.5,
+    "result": "BE",
+    "r": -0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 186,
+    "time": "2025-04-06 13:53:00",
+    "side": "SHORT",
+    "entry": 1793.01,
+    "exit": 1750.14,
+    "result": "WIN",
+    "r": 2.39,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 187,
+    "time": "2025-04-06 19:16:00",
+    "side": "SHORT",
+    "entry": 1630.6,
+    "exit": 1630.6,
+    "result": "BE",
+    "r": -0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 188,
+    "time": "2025-04-06 22:04:00",
+    "side": "SHORT",
+    "entry": 1589.05,
+    "exit": 1589.05,
+    "result": "BE",
+    "r": -0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 189,
+    "time": "2025-04-08 17:12:00",
+    "side": "SHORT",
+    "entry": 1506.14,
+    "exit": 1470.23,
+    "result": "WIN",
+    "r": 2.38,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 190,
+    "time": "2025-04-12 06:11:00",
+    "side": "SHORT",
+    "entry": 1556.75,
+    "exit": 1575.41,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 191,
+    "time": "2025-04-23 03:10:00",
+    "side": "LONG",
+    "entry": 1783.57,
+    "exit": 1783.57,
+    "result": "BE",
+    "r": 0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 192,
+    "time": "2025-04-23 07:08:00",
+    "side": "LONG",
+    "entry": 1803.6,
+    "exit": 1781.8,
+    "result": "LOSS",
+    "r": -1.21,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 193,
+    "time": "2025-04-25 02:25:00",
+    "side": "LONG",
+    "entry": 1774.08,
+    "exit": 1752.71,
+    "result": "LOSS",
+    "r": -1.21,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 194,
+    "time": "2025-04-27 01:31:00",
+    "side": "LONG",
+    "entry": 1817.18,
+    "exit": 1817.18,
+    "result": "BE",
+    "r": 0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 195,
+    "time": "2025-04-28 12:56:00",
+    "side": "LONG",
+    "entry": 1805.98,
+    "exit": 1805.98,
+    "result": "BE",
+    "r": 0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 196,
+    "time": "2025-04-29 13:16:00",
+    "side": "LONG",
+    "entry": 1828.74,
+    "exit": 1806.75,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 197,
+    "time": "2025-04-30 12:32:00",
+    "side": "LONG",
+    "entry": 1811.92,
+    "exit": 1790.15,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 198,
+    "time": "2025-04-30 18:07:00",
+    "side": "SHORT",
+    "entry": 1759.76,
+    "exit": 1780.65,
+    "result": "LOSS",
+    "r": -1.19,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 199,
+    "time": "2025-05-01 10:30:00",
+    "side": "LONG",
+    "entry": 1804.79,
+    "exit": 1848.23,
+    "result": "WIN",
+    "r": 2.41,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 200,
+    "time": "2025-05-08 14:34:00",
+    "side": "LONG",
+    "entry": 1948.21,
+    "exit": 1994.97,
+    "result": "WIN",
+    "r": 2.4,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 201,
+    "time": "2025-05-08 15:28:00",
+    "side": "LONG",
+    "entry": 1982.64,
+    "exit": 2030.32,
+    "result": "WIN",
+    "r": 2.4,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 202,
+    "time": "2025-05-08 15:42:00",
+    "side": "LONG",
+    "entry": 2011.4,
+    "exit": 2059.91,
+    "result": "WIN",
+    "r": 2.41,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 203,
+    "time": "2025-05-10 17:11:00",
+    "side": "LONG",
+    "entry": 2424.25,
+    "exit": 2482.76,
+    "result": "WIN",
+    "r": 2.41,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 204,
+    "time": "2025-05-10 17:48:00",
+    "side": "LONG",
+    "entry": 2464.63,
+    "exit": 2464.63,
+    "result": "BE",
+    "r": 0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 205,
+    "time": "2025-05-13 12:11:00",
+    "side": "LONG",
+    "entry": 2495.3,
+    "exit": 2495.3,
+    "result": "BE",
+    "r": 0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 206,
+    "time": "2025-05-13 16:28:00",
+    "side": "LONG",
+    "entry": 2536.62,
+    "exit": 2597.68,
+    "result": "WIN",
+    "r": 2.41,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 207,
+    "time": "2025-05-16 08:17:00",
+    "side": "LONG",
+    "entry": 2587.16,
+    "exit": 2587.16,
+    "result": "BE",
+    "r": 0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 208,
+    "time": "2025-05-16 12:25:00",
+    "side": "LONG",
+    "entry": 2626.28,
+    "exit": 2594.71,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 209,
+    "time": "2025-05-18 14:48:00",
+    "side": "LONG",
+    "entry": 2501.15,
+    "exit": 2561.45,
+    "result": "WIN",
+    "r": 2.41,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 210,
+    "time": "2025-05-18 17:27:00",
+    "side": "LONG",
+    "entry": 2545.85,
+    "exit": 2545.85,
+    "result": "BE",
+    "r": 0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 211,
+    "time": "2025-05-19 16:56:00",
+    "side": "LONG",
+    "entry": 2445.91,
+    "exit": 2504.83,
+    "result": "WIN",
+    "r": 2.41,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 212,
+    "time": "2025-05-26 16:22:00",
+    "side": "LONG",
+    "entry": 2538.52,
+    "exit": 2538.52,
+    "result": "BE",
+    "r": 0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 213,
+    "time": "2025-06-01 04:46:00",
+    "side": "SHORT",
+    "entry": 2526.95,
+    "exit": 2526.95,
+    "result": "BE",
+    "r": -0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 214,
+    "time": "2025-06-01 16:05:00",
+    "side": "SHORT",
+    "entry": 2495.68,
+    "exit": 2525.51,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 215,
+    "time": "2025-06-03 03:12:00",
+    "side": "LONG",
+    "entry": 2595.69,
+    "exit": 2595.69,
+    "result": "BE",
+    "r": 0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 216,
+    "time": "2025-06-03 16:21:00",
+    "side": "LONG",
+    "entry": 2614.72,
+    "exit": 2614.72,
+    "result": "BE",
+    "r": 0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 217,
+    "time": "2025-06-04 13:05:00",
+    "side": "LONG",
+    "entry": 2643.35,
+    "exit": 2611.57,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 218,
+    "time": "2025-06-07 13:46:00",
+    "side": "SHORT",
+    "entry": 2482.13,
+    "exit": 2511.82,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 219,
+    "time": "2025-06-11 17:59:00",
+    "side": "LONG",
+    "entry": 2830.73,
+    "exit": 2830.73,
+    "result": "BE",
+    "r": 0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 220,
+    "time": "2025-06-15 04:46:00",
+    "side": "SHORT",
+    "entry": 2542.89,
+    "exit": 2542.89,
+    "result": "BE",
+    "r": -0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 221,
+    "time": "2025-06-15 14:09:00",
+    "side": "SHORT",
+    "entry": 2518.07,
+    "exit": 2548.24,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 222,
+    "time": "2025-06-16 22:36:00",
+    "side": "LONG",
+    "entry": 2623.73,
+    "exit": 2623.73,
+    "result": "BE",
+    "r": 0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 223,
+    "time": "2025-06-17 15:26:00",
+    "side": "SHORT",
+    "entry": 2558.23,
+    "exit": 2497.05,
+    "result": "WIN",
+    "r": 2.39,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 224,
+    "time": "2025-06-17 19:01:00",
+    "side": "SHORT",
+    "entry": 2472.78,
+    "exit": 2502.32,
+    "result": "LOSS",
+    "r": -1.19,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 225,
+    "time": "2025-06-18 14:04:00",
+    "side": "SHORT",
+    "entry": 2490.95,
+    "exit": 2520.74,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 226,
+    "time": "2025-06-19 17:36:00",
+    "side": "SHORT",
+    "entry": 2519.01,
+    "exit": 2519.01,
+    "result": "BE",
+    "r": -0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 227,
+    "time": "2025-06-20 17:23:00",
+    "side": "SHORT",
+    "entry": 2487.28,
+    "exit": 2427.59,
+    "result": "WIN",
+    "r": 2.4,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 228,
+    "time": "2025-06-21 21:24:00",
+    "side": "SHORT",
+    "entry": 2411.62,
+    "exit": 2353.91,
+    "result": "WIN",
+    "r": 2.39,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 229,
+    "time": "2025-06-21 23:50:00",
+    "side": "SHORT",
+    "entry": 2258.73,
+    "exit": 2285.62,
+    "result": "LOSS",
+    "r": -1.19,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 230,
+    "time": "2025-06-27 21:07:00",
+    "side": "SHORT",
+    "entry": 2399.0,
+    "exit": 2427.7,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 231,
+    "time": "2025-06-29 21:04:00",
+    "side": "LONG",
+    "entry": 2427.75,
+    "exit": 2427.75,
+    "result": "BE",
+    "r": 0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 232,
+    "time": "2025-07-03 12:38:00",
+    "side": "LONG",
+    "entry": 2603.54,
+    "exit": 2572.15,
+    "result": "LOSS",
+    "r": -1.21,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 233,
+    "time": "2025-07-05 03:05:00",
+    "side": "SHORT",
+    "entry": 2493.87,
+    "exit": 2523.69,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 234,
+    "time": "2025-07-08 14:55:00",
+    "side": "LONG",
+    "entry": 2558.41,
+    "exit": 2558.41,
+    "result": "BE",
+    "r": 0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 235,
+    "time": "2025-07-09 20:43:00",
+    "side": "LONG",
+    "entry": 2732.16,
+    "exit": 2732.16,
+    "result": "BE",
+    "r": 0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 236,
+    "time": "2025-07-10 21:23:00",
+    "side": "LONG",
+    "entry": 2821.45,
+    "exit": 2889.38,
+    "result": "WIN",
+    "r": 2.41,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 237,
+    "time": "2025-07-12 12:37:00",
+    "side": "LONG",
+    "entry": 2975.61,
+    "exit": 2939.86,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 238,
+    "time": "2025-07-13 14:19:00",
+    "side": "LONG",
+    "entry": 2943.34,
+    "exit": 3014.1,
+    "result": "WIN",
+    "r": 2.4,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 239,
+    "time": "2025-07-13 21:38:00",
+    "side": "LONG",
+    "entry": 2994.6,
+    "exit": 2958.52,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 240,
+    "time": "2025-07-14 15:48:00",
+    "side": "LONG",
+    "entry": 3011.89,
+    "exit": 3011.89,
+    "result": "BE",
+    "r": 0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 241,
+    "time": "2025-07-15 23:08:00",
+    "side": "LONG",
+    "entry": 3066.47,
+    "exit": 3140.26,
+    "result": "WIN",
+    "r": 2.41,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 242,
+    "time": "2025-07-16 14:33:00",
+    "side": "LONG",
+    "entry": 3155.79,
+    "exit": 3231.75,
+    "result": "WIN",
+    "r": 2.41,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 243,
+    "time": "2025-07-16 18:06:00",
+    "side": "LONG",
+    "entry": 3273.39,
+    "exit": 3352.03,
+    "result": "WIN",
+    "r": 2.4,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 244,
+    "time": "2025-07-16 21:38:00",
+    "side": "LONG",
+    "entry": 3393.7,
+    "exit": 3353.0,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 245,
+    "time": "2025-07-17 13:43:00",
+    "side": "LONG",
+    "entry": 3441.63,
+    "exit": 3400.11,
+    "result": "LOSS",
+    "r": -1.21,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 246,
+    "time": "2025-07-18 01:12:00",
+    "side": "LONG",
+    "entry": 3491.63,
+    "exit": 3575.91,
+    "result": "WIN",
+    "r": 2.41,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 247,
+    "time": "2025-07-18 07:40:00",
+    "side": "LONG",
+    "entry": 3624.37,
+    "exit": 3624.37,
+    "result": "BE",
+    "r": 0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 248,
+    "time": "2025-07-20 03:30:00",
+    "side": "LONG",
+    "entry": 3563.04,
+    "exit": 3648.92,
+    "result": "WIN",
+    "r": 2.41,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 249,
+    "time": "2025-07-20 15:34:00",
+    "side": "LONG",
+    "entry": 3692.65,
+    "exit": 3781.56,
+    "result": "WIN",
+    "r": 2.41,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 250,
+    "time": "2025-07-20 17:10:00",
+    "side": "LONG",
+    "entry": 3768.96,
+    "exit": 3768.96,
+    "result": "BE",
+    "r": 0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 251,
+    "time": "2025-07-21 16:15:00",
+    "side": "LONG",
+    "entry": 3774.69,
+    "exit": 3774.69,
+    "result": "BE",
+    "r": 0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 252,
+    "time": "2025-07-26 15:16:00",
+    "side": "LONG",
+    "entry": 3765.27,
+    "exit": 3719.91,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 253,
+    "time": "2025-07-28 05:21:00",
+    "side": "LONG",
+    "entry": 3843.8,
+    "exit": 3936.46,
+    "result": "WIN",
+    "r": 2.41,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 254,
+    "time": "2025-07-29 10:57:00",
+    "side": "LONG",
+    "entry": 3827.43,
+    "exit": 3827.43,
+    "result": "BE",
+    "r": 0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 255,
+    "time": "2025-08-01 01:02:00",
+    "side": "SHORT",
+    "entry": 3688.42,
+    "exit": 3688.42,
+    "result": "BE",
+    "r": -0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 256,
+    "time": "2025-08-01 12:31:00",
+    "side": "SHORT",
+    "entry": 3625.05,
+    "exit": 3668.42,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 257,
+    "time": "2025-08-01 20:58:00",
+    "side": "SHORT",
+    "entry": 3541.38,
+    "exit": 3541.38,
+    "result": "BE",
+    "r": -0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 258,
+    "time": "2025-08-04 20:00:00",
+    "side": "LONG",
+    "entry": 3666.08,
+    "exit": 3666.08,
+    "result": "BE",
+    "r": 0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 259,
+    "time": "2025-08-07 10:30:00",
+    "side": "LONG",
+    "entry": 3715.6,
+    "exit": 3805.05,
+    "result": "WIN",
+    "r": 2.41,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 260,
+    "time": "2025-08-07 14:32:00",
+    "side": "LONG",
+    "entry": 3860.21,
+    "exit": 3813.9,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 261,
+    "time": "2025-08-08 06:10:00",
+    "side": "LONG",
+    "entry": 3893.32,
+    "exit": 3893.32,
+    "result": "BE",
+    "r": 0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 262,
+    "time": "2025-08-09 05:05:00",
+    "side": "LONG",
+    "entry": 4023.61,
+    "exit": 4120.58,
+    "result": "WIN",
+    "r": 2.41,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 263,
+    "time": "2025-08-09 13:49:00",
+    "side": "LONG",
+    "entry": 4217.45,
+    "exit": 4166.82,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 264,
+    "time": "2025-08-09 22:47:00",
+    "side": "LONG",
+    "entry": 4253.37,
+    "exit": 4253.37,
+    "result": "BE",
+    "r": 0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 265,
+    "time": "2025-08-11 08:04:00",
+    "side": "LONG",
+    "entry": 4260.02,
+    "exit": 4260.02,
+    "result": "BE",
+    "r": 0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 266,
+    "time": "2025-08-12 12:42:00",
+    "side": "LONG",
+    "entry": 4305.84,
+    "exit": 4409.31,
+    "result": "WIN",
+    "r": 2.4,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 267,
+    "time": "2025-08-12 20:16:00",
+    "side": "LONG",
+    "entry": 4442.99,
+    "exit": 4549.66,
+    "result": "WIN",
+    "r": 2.4,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 268,
+    "time": "2025-08-13 13:56:00",
+    "side": "LONG",
+    "entry": 4647.51,
+    "exit": 4647.51,
+    "result": "BE",
+    "r": 0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 269,
+    "time": "2025-08-14 00:35:00",
+    "side": "LONG",
+    "entry": 4724.89,
+    "exit": 4724.89,
+    "result": "BE",
+    "r": 0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 270,
+    "time": "2025-08-15 12:30:00",
+    "side": "LONG",
+    "entry": 4614.23,
+    "exit": 4614.23,
+    "result": "BE",
+    "r": 0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 271,
+    "time": "2025-08-17 10:55:00",
+    "side": "LONG",
+    "entry": 4458.55,
+    "exit": 4565.89,
+    "result": "WIN",
+    "r": 2.41,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 272,
+    "time": "2025-08-17 16:52:00",
+    "side": "LONG",
+    "entry": 4563.21,
+    "exit": 4508.38,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 273,
+    "time": "2025-08-18 02:50:00",
+    "side": "SHORT",
+    "entry": 4436.97,
+    "exit": 4331.06,
+    "result": "WIN",
+    "r": 2.39,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 274,
+    "time": "2025-08-18 09:46:00",
+    "side": "SHORT",
+    "entry": 4310.53,
+    "exit": 4310.53,
+    "result": "BE",
+    "r": -0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 275,
+    "time": "2025-08-19 08:52:00",
+    "side": "SHORT",
+    "entry": 4263.42,
+    "exit": 4263.42,
+    "result": "BE",
+    "r": -0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 276,
+    "time": "2025-08-19 19:27:00",
+    "side": "SHORT",
+    "entry": 4165.8,
+    "exit": 4165.8,
+    "result": "BE",
+    "r": -0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 277,
+    "time": "2025-08-20 01:06:00",
+    "side": "SHORT",
+    "entry": 4121.03,
+    "exit": 4121.03,
+    "result": "BE",
+    "r": -0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 278,
+    "time": "2025-08-20 14:30:00",
+    "side": "SHORT",
+    "entry": 4165.79,
+    "exit": 4165.79,
+    "result": "BE",
+    "r": -0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 279,
+    "time": "2025-08-20 18:06:00",
+    "side": "LONG",
+    "entry": 4299.01,
+    "exit": 4299.01,
+    "result": "BE",
+    "r": 0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 280,
+    "time": "2025-08-21 14:17:00",
+    "side": "SHORT",
+    "entry": 4267.76,
+    "exit": 4318.75,
+    "result": "LOSS",
+    "r": -1.19,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 281,
+    "time": "2025-08-22 02:12:00",
+    "side": "SHORT",
+    "entry": 4226.98,
+    "exit": 4277.56,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 282,
+    "time": "2025-08-22 17:24:00",
+    "side": "LONG",
+    "entry": 4727.96,
+    "exit": 4842.33,
+    "result": "WIN",
+    "r": 2.42,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 283,
+    "time": "2025-08-24 10:30:00",
+    "side": "LONG",
+    "entry": 4797.85,
+    "exit": 4740.1,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 284,
+    "time": "2025-08-24 17:40:00",
+    "side": "LONG",
+    "entry": 4786.61,
+    "exit": 4901.69,
+    "result": "WIN",
+    "r": 2.4,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 285,
+    "time": "2025-08-24 19:34:00",
+    "side": "LONG",
+    "entry": 4920.91,
+    "exit": 4861.59,
+    "result": "LOSS",
+    "r": -1.21,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 286,
+    "time": "2025-08-26 01:46:00",
+    "side": "SHORT",
+    "entry": 4347.34,
+    "exit": 4399.32,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 287,
+    "time": "2025-08-27 00:46:00",
+    "side": "LONG",
+    "entry": 4577.11,
+    "exit": 4577.11,
+    "result": "BE",
+    "r": 0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 288,
+    "time": "2025-09-11 12:30:00",
+    "side": "LONG",
+    "entry": 4406.02,
+    "exit": 4406.02,
+    "result": "BE",
+    "r": 0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 289,
+    "time": "2025-09-12 05:56:00",
+    "side": "LONG",
+    "entry": 4444.47,
+    "exit": 4551.36,
+    "result": "WIN",
+    "r": 2.4,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 290,
+    "time": "2025-09-12 20:48:00",
+    "side": "LONG",
+    "entry": 4570.39,
+    "exit": 4680.24,
+    "result": "WIN",
+    "r": 2.4,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 291,
+    "time": "2025-09-13 13:51:00",
+    "side": "LONG",
+    "entry": 4666.36,
+    "exit": 4666.36,
+    "result": "BE",
+    "r": 0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 292,
+    "time": "2025-09-14 12:51:00",
+    "side": "LONG",
+    "entry": 4674.23,
+    "exit": 4618.48,
+    "result": "LOSS",
+    "r": -1.19,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 293,
+    "time": "2025-09-15 07:37:00",
+    "side": "LONG",
+    "entry": 4661.15,
+    "exit": 4605.16,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 294,
+    "time": "2025-09-16 22:09:00",
+    "side": "SHORT",
+    "entry": 4512.88,
+    "exit": 4512.88,
+    "result": "BE",
+    "r": -0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 295,
+    "time": "2025-09-18 06:10:00",
+    "side": "LONG",
+    "entry": 4579.99,
+    "exit": 4579.99,
+    "result": "BE",
+    "r": 0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 296,
+    "time": "2025-09-22 00:32:00",
+    "side": "SHORT",
+    "entry": 4464.53,
+    "exit": 4390.08,
+    "result": "WIN",
+    "r": 1.67,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 297,
+    "time": "2025-09-22 06:00:00",
+    "side": "SHORT",
+    "entry": 4302.17,
+    "exit": 4198.75,
+    "result": "WIN",
+    "r": 2.4,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 298,
+    "time": "2025-09-24 05:41:00",
+    "side": "SHORT",
+    "entry": 4165.3,
+    "exit": 4165.3,
+    "result": "BE",
+    "r": -0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 299,
+    "time": "2025-09-25 03:22:00",
+    "side": "SHORT",
+    "entry": 4160.72,
+    "exit": 4061.22,
+    "result": "WIN",
+    "r": 2.39,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 300,
+    "time": "2025-09-25 17:15:00",
+    "side": "SHORT",
+    "entry": 3990.26,
+    "exit": 3895.64,
+    "result": "WIN",
+    "r": 2.37,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 301,
+    "time": "2025-09-28 16:07:00",
+    "side": "SHORT",
+    "entry": 4005.88,
+    "exit": 4049.34,
+    "result": "LOSS",
+    "r": -1.08,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 302,
+    "time": "2025-09-28 23:59:00",
+    "side": "LONG",
+    "entry": 4047.47,
+    "exit": 4144.84,
+    "result": "WIN",
+    "r": 2.41,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 303,
+    "time": "2025-09-30 20:46:00",
+    "side": "SHORT",
+    "entry": 4123.7,
+    "exit": 4172.99,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 304,
+    "time": "2025-10-02 06:42:00",
+    "side": "LONG",
+    "entry": 4316.78,
+    "exit": 4420.84,
+    "result": "WIN",
+    "r": 2.41,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 305,
+    "time": "2025-10-03 03:55:00",
+    "side": "LONG",
+    "entry": 4498.72,
+    "exit": 4498.72,
+    "result": "BE",
+    "r": 0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 306,
+    "time": "2025-10-03 17:00:00",
+    "side": "LONG",
+    "entry": 4535.26,
+    "exit": 4480.29,
+    "result": "LOSS",
+    "r": -1.21,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 307,
+    "time": "2025-10-05 10:35:00",
+    "side": "LONG",
+    "entry": 4524.74,
+    "exit": 4524.74,
+    "result": "BE",
+    "r": 0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 308,
+    "time": "2025-10-06 14:06:00",
+    "side": "LONG",
+    "entry": 4545.93,
+    "exit": 4655.51,
+    "result": "WIN",
+    "r": 2.41,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 309,
+    "time": "2025-10-07 01:21:00",
+    "side": "LONG",
+    "entry": 4670.38,
+    "exit": 4670.38,
+    "result": "BE",
+    "r": 0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 310,
+    "time": "2025-10-07 13:45:00",
+    "side": "LONG",
+    "entry": 4725.02,
+    "exit": 4667.98,
+    "result": "LOSS",
+    "r": -1.21,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 311,
+    "time": "2025-10-09 05:03:00",
+    "side": "SHORT",
+    "entry": 4459.37,
+    "exit": 4459.37,
+    "result": "BE",
+    "r": -0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 312,
+    "time": "2025-10-09 17:41:00",
+    "side": "SHORT",
+    "entry": 4319.12,
+    "exit": 4319.12,
+    "result": "BE",
+    "r": -0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 313,
+    "time": "2025-10-10 21:12:00",
+    "side": "SHORT",
+    "entry": 3906.43,
+    "exit": 3813.52,
+    "result": "WIN",
+    "r": 2.38,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 314,
+    "time": "2025-10-11 21:24:00",
+    "side": "SHORT",
+    "entry": 3723.51,
+    "exit": 3723.51,
+    "result": "BE",
+    "r": -0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 315,
+    "time": "2025-10-14 02:18:00",
+    "side": "LONG",
+    "entry": 4243.58,
+    "exit": 4192.56,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 316,
+    "time": "2025-10-14 06:33:00",
+    "side": "SHORT",
+    "entry": 4125.03,
+    "exit": 4026.07,
+    "result": "WIN",
+    "r": 2.4,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 317,
+    "time": "2025-10-15 15:46:00",
+    "side": "SHORT",
+    "entry": 4070.11,
+    "exit": 3972.79,
+    "result": "WIN",
+    "r": 2.39,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 318,
+    "time": "2025-10-15 18:22:00",
+    "side": "SHORT",
+    "entry": 3954.3,
+    "exit": 4001.56,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 319,
+    "time": "2025-10-16 23:21:00",
+    "side": "SHORT",
+    "entry": 3848.89,
+    "exit": 3895.05,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 320,
+    "time": "2025-10-17 10:23:00",
+    "side": "SHORT",
+    "entry": 3771.77,
+    "exit": 3681.62,
+    "result": "WIN",
+    "r": 2.39,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 321,
+    "time": "2025-10-20 08:22:00",
+    "side": "LONG",
+    "entry": 4036.07,
+    "exit": 4036.07,
+    "result": "BE",
+    "r": 0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 322,
+    "time": "2025-10-21 12:22:00",
+    "side": "SHORT",
+    "entry": 3915.74,
+    "exit": 3915.74,
+    "result": "BE",
+    "r": -0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 323,
+    "time": "2025-10-21 16:59:00",
+    "side": "LONG",
+    "entry": 4077.21,
+    "exit": 4028.17,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 324,
+    "time": "2025-10-22 12:18:00",
+    "side": "SHORT",
+    "entry": 3851.97,
+    "exit": 3851.97,
+    "result": "BE",
+    "r": -0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 325,
+    "time": "2025-10-23 15:33:00",
+    "side": "SHORT",
+    "entry": 3835.12,
+    "exit": 3880.9,
+    "result": "LOSS",
+    "r": -1.19,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 326,
+    "time": "2025-10-24 12:30:00",
+    "side": "LONG",
+    "entry": 3913.51,
+    "exit": 4007.56,
+    "result": "WIN",
+    "r": 2.4,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 327,
+    "time": "2025-10-26 22:03:00",
+    "side": "LONG",
+    "entry": 4061.61,
+    "exit": 4159.36,
+    "result": "WIN",
+    "r": 2.41,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 328,
+    "time": "2025-10-27 08:28:00",
+    "side": "LONG",
+    "entry": 4224.67,
+    "exit": 4173.9,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 329,
+    "time": "2025-10-28 14:45:00",
+    "side": "LONG",
+    "entry": 4129.18,
+    "exit": 4079.47,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 330,
+    "time": "2025-10-29 16:34:00",
+    "side": "SHORT",
+    "entry": 3975.45,
+    "exit": 3975.45,
+    "result": "BE",
+    "r": -0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 331,
+    "time": "2025-10-30 19:39:00",
+    "side": "SHORT",
+    "entry": 3801.91,
+    "exit": 3711.13,
+    "result": "WIN",
+    "r": 2.39,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 332,
+    "time": "2025-10-30 20:53:00",
+    "side": "SHORT",
+    "entry": 3710.33,
+    "exit": 3754.75,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 333,
+    "time": "2025-11-02 23:42:00",
+    "side": "SHORT",
+    "entry": 3857.3,
+    "exit": 3903.42,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 334,
+    "time": "2025-11-03 14:07:00",
+    "side": "SHORT",
+    "entry": 3699.5,
+    "exit": 3743.61,
+    "result": "LOSS",
+    "r": -1.19,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 335,
+    "time": "2025-11-04 11:18:00",
+    "side": "SHORT",
+    "entry": 3473.61,
+    "exit": 3515.25,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 336,
+    "time": "2025-11-04 18:33:00",
+    "side": "SHORT",
+    "entry": 3360.25,
+    "exit": 3279.79,
+    "result": "WIN",
+    "r": 2.39,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 337,
+    "time": "2025-11-04 21:55:00",
+    "side": "SHORT",
+    "entry": 3152.26,
+    "exit": 3189.55,
+    "result": "LOSS",
+    "r": -1.18,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 338,
+    "time": "2025-11-06 15:52:00",
+    "side": "SHORT",
+    "entry": 3357.42,
+    "exit": 3277.32,
+    "result": "WIN",
+    "r": 2.39,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 339,
+    "time": "2025-11-07 14:44:00",
+    "side": "SHORT",
+    "entry": 3263.07,
+    "exit": 3263.07,
+    "result": "BE",
+    "r": -0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 340,
+    "time": "2025-11-09 06:41:00",
+    "side": "SHORT",
+    "entry": 3375.6,
+    "exit": 3415.97,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 341,
+    "time": "2025-11-11 01:58:00",
+    "side": "LONG",
+    "entry": 3578.38,
+    "exit": 3578.38,
+    "result": "BE",
+    "r": 0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 342,
+    "time": "2025-11-11 21:51:00",
+    "side": "SHORT",
+    "entry": 3492.87,
+    "exit": 3409.37,
+    "result": "WIN",
+    "r": 2.39,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 343,
+    "time": "2025-11-14 13:51:00",
+    "side": "SHORT",
+    "entry": 3119.99,
+    "exit": 3119.99,
+    "result": "BE",
+    "r": -0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 344,
+    "time": "2025-11-16 02:48:00",
+    "side": "SHORT",
+    "entry": 3161.04,
+    "exit": 3198.84,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 345,
+    "time": "2025-11-16 16:24:00",
+    "side": "SHORT",
+    "entry": 3154.4,
+    "exit": 3078.87,
+    "result": "WIN",
+    "r": 2.39,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 346,
+    "time": "2025-11-17 19:35:00",
+    "side": "SHORT",
+    "entry": 3032.55,
+    "exit": 3032.55,
+    "result": "BE",
+    "r": -0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 347,
+    "time": "2025-11-17 20:25:00",
+    "side": "SHORT",
+    "entry": 2996.43,
+    "exit": 2996.43,
+    "result": "BE",
+    "r": -0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 348,
+    "time": "2025-11-19 05:47:00",
+    "side": "SHORT",
+    "entry": 3066.98,
+    "exit": 2993.54,
+    "result": "WIN",
+    "r": 2.39,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 349,
+    "time": "2025-11-19 20:36:00",
+    "side": "SHORT",
+    "entry": 2894.57,
+    "exit": 2929.23,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 350,
+    "time": "2025-11-20 16:04:00",
+    "side": "SHORT",
+    "entry": 3007.47,
+    "exit": 2936.21,
+    "result": "WIN",
+    "r": 2.37,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 351,
+    "time": "2025-11-22 14:16:00",
+    "side": "SHORT",
+    "entry": 2719.02,
+    "exit": 2751.55,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 352,
+    "time": "2025-11-26 14:31:00",
+    "side": "SHORT",
+    "entry": 2905.39,
+    "exit": 2940.1,
+    "result": "LOSS",
+    "r": -1.19,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 353,
+    "time": "2025-11-26 18:07:00",
+    "side": "LONG",
+    "entry": 2964.62,
+    "exit": 3036.04,
+    "result": "WIN",
+    "r": 2.41,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 354,
+    "time": "2025-11-27 12:52:00",
+    "side": "LONG",
+    "entry": 3039.55,
+    "exit": 3002.91,
+    "result": "LOSS",
+    "r": -1.21,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 355,
+    "time": "2025-11-27 22:45:00",
+    "side": "LONG",
+    "entry": 3040.45,
+    "exit": 3003.95,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 356,
+    "time": "2025-12-03 14:04:00",
+    "side": "LONG",
+    "entry": 3070.97,
+    "exit": 3033.97,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 357,
+    "time": "2025-12-03 21:56:00",
+    "side": "LONG",
+    "entry": 3089.97,
+    "exit": 3165.14,
+    "result": "WIN",
+    "r": 2.43,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 358,
+    "time": "2025-12-04 01:13:00",
+    "side": "LONG",
+    "entry": 3154.96,
+    "exit": 3230.9,
+    "result": "WIN",
+    "r": 2.41,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 359,
+    "time": "2025-12-04 13:03:00",
+    "side": "LONG",
+    "entry": 3208.63,
+    "exit": 3169.79,
+    "result": "LOSS",
+    "r": -1.21,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 360,
+    "time": "2025-12-10 20:51:00",
+    "side": "LONG",
+    "entry": 3403.18,
+    "exit": 3361.88,
+    "result": "LOSS",
+    "r": -1.21,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 361,
+    "time": "2025-12-12 15:28:00",
+    "side": "SHORT",
+    "entry": 3235.89,
+    "exit": 3163.16,
+    "result": "WIN",
+    "r": 2.25,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 362,
+    "time": "2025-12-14 11:45:00",
+    "side": "SHORT",
+    "entry": 3108.61,
+    "exit": 3051.9,
+    "result": "WIN",
+    "r": 1.82,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 363,
+    "time": "2025-12-15 14:46:00",
+    "side": "LONG",
+    "entry": 3151.33,
+    "exit": 3113.49,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 364,
+    "time": "2025-12-15 18:35:00",
+    "side": "SHORT",
+    "entry": 2978.5,
+    "exit": 2907.15,
+    "result": "WIN",
+    "r": 2.4,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 365,
+    "time": "2025-12-18 09:35:00",
+    "side": "SHORT",
+    "entry": 2819.49,
+    "exit": 2853.26,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 366,
+    "time": "2025-12-18 22:05:00",
+    "side": "SHORT",
+    "entry": 2803.72,
+    "exit": 2837.22,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 367,
+    "time": "2025-12-21 12:42:00",
+    "side": "LONG",
+    "entry": 2982.79,
+    "exit": 2982.79,
+    "result": "BE",
+    "r": 0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 368,
+    "time": "2025-12-22 22:53:00",
+    "side": "SHORT",
+    "entry": 3012.88,
+    "exit": 3012.88,
+    "result": "BE",
+    "r": -0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 369,
+    "time": "2025-12-23 16:53:00",
+    "side": "SHORT",
+    "entry": 2965.32,
+    "exit": 2965.32,
+    "result": "BE",
+    "r": -0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 370,
+    "time": "2025-12-29 09:33:00",
+    "side": "LONG",
+    "entry": 3027.58,
+    "exit": 2991.13,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 371,
+    "time": "2026-01-02 10:07:00",
+    "side": "LONG",
+    "entry": 3001.16,
+    "exit": 3060.2,
+    "result": "WIN",
+    "r": 1.97,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 372,
+    "time": "2026-01-02 17:50:00",
+    "side": "LONG",
+    "entry": 3112.27,
+    "exit": 3112.27,
+    "result": "BE",
+    "r": 0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 373,
+    "time": "2026-01-04 00:55:00",
+    "side": "LONG",
+    "entry": 3111.56,
+    "exit": 3162.18,
+    "result": "WIN",
+    "r": 1.63,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 374,
+    "time": "2026-01-05 01:37:00",
+    "side": "LONG",
+    "entry": 3140.39,
+    "exit": 3204.55,
+    "result": "WIN",
+    "r": 2.04,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 375,
+    "time": "2026-01-06 16:43:00",
+    "side": "LONG",
+    "entry": 3236.48,
+    "exit": 3236.48,
+    "result": "BE",
+    "r": 0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 376,
+    "time": "2026-01-08 16:48:00",
+    "side": "SHORT",
+    "entry": 3079.68,
+    "exit": 3116.39,
+    "result": "LOSS",
+    "r": -1.19,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 377,
+    "time": "2026-01-11 05:46:00",
+    "side": "SHORT",
+    "entry": 3089.5,
+    "exit": 3101.88,
+    "result": "LOSS",
+    "r": -0.4,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 378,
+    "time": "2026-01-14 18:17:00",
+    "side": "LONG",
+    "entry": 3326.11,
+    "exit": 3326.11,
+    "result": "BE",
+    "r": 0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 379,
+    "time": "2026-01-20 06:17:00",
+    "side": "SHORT",
+    "entry": 3210.58,
+    "exit": 3150.49,
+    "result": "WIN",
+    "r": 1.87,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 380,
+    "time": "2026-01-20 14:49:00",
+    "side": "SHORT",
+    "entry": 3109.45,
+    "exit": 3034.89,
+    "result": "WIN",
+    "r": 2.4,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 381,
+    "time": "2026-01-20 19:35:00",
+    "side": "SHORT",
+    "entry": 3056.8,
+    "exit": 2983.66,
+    "result": "WIN",
+    "r": 2.39,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 382,
+    "time": "2026-01-21 14:06:00",
+    "side": "SHORT",
+    "entry": 2952.85,
+    "exit": 2952.85,
+    "result": "BE",
+    "r": -0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 383,
+    "time": "2026-01-22 15:24:00",
+    "side": "SHORT",
+    "entry": 2997.7,
+    "exit": 2925.97,
+    "result": "WIN",
+    "r": 2.39,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 384,
+    "time": "2026-01-23 15:21:00",
+    "side": "SHORT",
+    "entry": 2935.5,
+    "exit": 2935.5,
+    "result": "BE",
+    "r": -0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 385,
+    "time": "2026-01-25 08:41:00",
+    "side": "SHORT",
+    "entry": 2958.31,
+    "exit": 2924.75,
+    "result": "WIN",
+    "r": 1.13,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 386,
+    "time": "2026-01-25 16:20:00",
+    "side": "SHORT",
+    "entry": 2936.79,
+    "exit": 2877.44,
+    "result": "WIN",
+    "r": 2.02,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 387,
+    "time": "2026-01-25 19:53:00",
+    "side": "SHORT",
+    "entry": 2870.99,
+    "exit": 2802.08,
+    "result": "WIN",
+    "r": 2.4,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 388,
+    "time": "2026-01-26 01:04:00",
+    "side": "SHORT",
+    "entry": 2816.3,
+    "exit": 2850.06,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 389,
+    "time": "2026-01-27 14:15:00",
+    "side": "SHORT",
+    "entry": 2906.4,
+    "exit": 2941.27,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 390,
+    "time": "2026-01-29 02:31:00",
+    "side": "LONG",
+    "entry": 3011.78,
+    "exit": 2975.53,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 391,
+    "time": "2026-01-29 15:00:00",
+    "side": "SHORT",
+    "entry": 2935.55,
+    "exit": 2865.36,
+    "result": "WIN",
+    "r": 2.39,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 392,
+    "time": "2026-01-31 08:40:00",
+    "side": "SHORT",
+    "entry": 2685.62,
+    "exit": 2621.42,
+    "result": "WIN",
+    "r": 2.39,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 393,
+    "time": "2026-01-31 17:11:00",
+    "side": "SHORT",
+    "entry": 2485.95,
+    "exit": 2426.37,
+    "result": "WIN",
+    "r": 2.4,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 394,
+    "time": "2026-01-31 19:06:00",
+    "side": "SHORT",
+    "entry": 2367.97,
+    "exit": 2396.2,
+    "result": "LOSS",
+    "r": -1.19,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 395,
+    "time": "2026-02-01 16:25:00",
+    "side": "SHORT",
+    "entry": 2325.78,
+    "exit": 2325.78,
+    "result": "BE",
+    "r": -0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 396,
+    "time": "2026-02-03 18:18:00",
+    "side": "SHORT",
+    "entry": 2223.01,
+    "exit": 2170.06,
+    "result": "WIN",
+    "r": 2.38,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 397,
+    "time": "2026-02-04 18:27:00",
+    "side": "SHORT",
+    "entry": 2104.91,
+    "exit": 2104.91,
+    "result": "BE",
+    "r": -0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 398,
+    "time": "2026-02-09 15:01:00",
+    "side": "SHORT",
+    "entry": 2031.01,
+    "exit": 2055.34,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 399,
+    "time": "2026-02-10 14:42:00",
+    "side": "SHORT",
+    "entry": 2044.7,
+    "exit": 1995.72,
+    "result": "WIN",
+    "r": 2.4,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 400,
+    "time": "2026-02-11 12:07:00",
+    "side": "SHORT",
+    "entry": 1961.45,
+    "exit": 1961.45,
+    "result": "BE",
+    "r": -0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 401,
+    "time": "2026-02-15 01:28:00",
+    "side": "LONG",
+    "entry": 2086.31,
+    "exit": 2061.18,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 402,
+    "time": "2026-02-15 17:45:00",
+    "side": "SHORT",
+    "entry": 2011.11,
+    "exit": 1963.05,
+    "result": "WIN",
+    "r": 2.39,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 403,
+    "time": "2026-02-16 17:31:00",
+    "side": "SHORT",
+    "entry": 1960.73,
+    "exit": 1984.14,
+    "result": "LOSS",
+    "r": -1.19,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 404,
+    "time": "2026-02-23 01:03:00",
+    "side": "SHORT",
+    "entry": 1944.34,
+    "exit": 1897.8,
+    "result": "WIN",
+    "r": 2.39,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 405,
+    "time": "2026-02-24 01:15:00",
+    "side": "SHORT",
+    "entry": 1878.98,
+    "exit": 1834.12,
+    "result": "WIN",
+    "r": 2.39,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 406,
+    "time": "2026-02-25 17:42:00",
+    "side": "LONG",
+    "entry": 2026.89,
+    "exit": 2075.63,
+    "result": "WIN",
+    "r": 2.4,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 407,
+    "time": "2026-02-27 16:06:00",
+    "side": "SHORT",
+    "entry": 1974.76,
+    "exit": 1927.36,
+    "result": "WIN",
+    "r": 2.4,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 408,
+    "time": "2026-02-27 22:34:00",
+    "side": "SHORT",
+    "entry": 1940.11,
+    "exit": 1893.62,
+    "result": "WIN",
+    "r": 2.4,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 409,
+    "time": "2026-02-28 21:19:00",
+    "side": "LONG",
+    "entry": 1948.8,
+    "exit": 1948.8,
+    "result": "BE",
+    "r": 0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 410,
+    "time": "2026-03-01 20:35:00",
+    "side": "SHORT",
+    "entry": 1961.28,
+    "exit": 1914.47,
+    "result": "WIN",
+    "r": 2.39,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 411,
+    "time": "2026-03-06 14:10:00",
+    "side": "SHORT",
+    "entry": 2054.52,
+    "exit": 2005.47,
+    "result": "WIN",
+    "r": 2.39,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 412,
+    "time": "2026-03-06 19:13:00",
+    "side": "SHORT",
+    "entry": 1960.9,
+    "exit": 1984.41,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 413,
+    "time": "2026-03-13 13:19:00",
+    "side": "LONG",
+    "entry": 2138.09,
+    "exit": 2189.61,
+    "result": "WIN",
+    "r": 2.41,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 414,
+    "time": "2026-03-15 05:17:00",
+    "side": "LONG",
+    "entry": 2081.05,
+    "exit": 2111.57,
+    "result": "WIN",
+    "r": 1.47,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 415,
+    "time": "2026-03-15 22:32:00",
+    "side": "LONG",
+    "entry": 2106.29,
+    "exit": 2156.91,
+    "result": "WIN",
+    "r": 2.4,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 416,
+    "time": "2026-03-16 07:38:00",
+    "side": "LONG",
+    "entry": 2279.95,
+    "exit": 2252.59,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 417,
+    "time": "2026-03-16 23:04:00",
+    "side": "LONG",
+    "entry": 2344.92,
+    "exit": 2344.92,
+    "result": "BE",
+    "r": 0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 418,
+    "time": "2026-03-19 19:06:00",
+    "side": "SHORT",
+    "entry": 2118.51,
+    "exit": 2143.82,
+    "result": "LOSS",
+    "r": -1.19,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 419,
+    "time": "2026-03-20 08:09:00",
+    "side": "SHORT",
+    "entry": 2135.76,
+    "exit": 2161.31,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 420,
+    "time": "2026-03-22 21:20:00",
+    "side": "SHORT",
+    "entry": 2075.9,
+    "exit": 2026.34,
+    "result": "WIN",
+    "r": 2.39,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 421,
+    "time": "2026-03-24 13:40:00",
+    "side": "LONG",
+    "entry": 2165.15,
+    "exit": 2139.09,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 422,
+    "time": "2026-03-24 20:26:00",
+    "side": "SHORT",
+    "entry": 2124.99,
+    "exit": 2150.4,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 423,
+    "time": "2026-03-25 15:09:00",
+    "side": "LONG",
+    "entry": 2161.89,
+    "exit": 2161.89,
+    "result": "BE",
+    "r": 0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 424,
+    "time": "2026-03-27 10:38:00",
+    "side": "SHORT",
+    "entry": 2058.0,
+    "exit": 2008.81,
+    "result": "WIN",
+    "r": 2.39,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 425,
+    "time": "2026-03-31 01:23:00",
+    "side": "SHORT",
+    "entry": 2025.95,
+    "exit": 2050.18,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 426,
+    "time": "2026-04-01 07:57:00",
+    "side": "LONG",
+    "entry": 2130.49,
+    "exit": 2130.49,
+    "result": "BE",
+    "r": 0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 427,
+    "time": "2026-04-02 14:35:00",
+    "side": "SHORT",
+    "entry": 2057.67,
+    "exit": 2057.67,
+    "result": "BE",
+    "r": -0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 428,
+    "time": "2026-04-06 12:56:00",
+    "side": "LONG",
+    "entry": 2145.04,
+    "exit": 2145.04,
+    "result": "BE",
+    "r": 0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 429,
+    "time": "2026-04-07 17:36:00",
+    "side": "SHORT",
+    "entry": 2074.83,
+    "exit": 2099.64,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 430,
+    "time": "2026-04-07 22:58:00",
+    "side": "LONG",
+    "entry": 2149.08,
+    "exit": 2200.9,
+    "result": "WIN",
+    "r": 2.41,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 431,
+    "time": "2026-04-09 13:38:00",
+    "side": "LONG",
+    "entry": 2187.32,
+    "exit": 2165.9,
+    "result": "LOSS",
+    "r": -0.98,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 432,
+    "time": "2026-04-10 15:57:00",
+    "side": "LONG",
+    "entry": 2221.32,
+    "exit": 2221.32,
+    "result": "BE",
+    "r": 0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 433,
+    "time": "2026-04-13 19:34:00",
+    "side": "LONG",
+    "entry": 2198.18,
+    "exit": 2251.35,
+    "result": "WIN",
+    "r": 2.42,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 434,
+    "time": "2026-04-16 07:54:00",
+    "side": "LONG",
+    "entry": 2336.27,
+    "exit": 2336.27,
+    "result": "BE",
+    "r": 0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 435,
+    "time": "2026-04-17 13:18:00",
+    "side": "LONG",
+    "entry": 2354.75,
+    "exit": 2411.67,
+    "result": "WIN",
+    "r": 2.42,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 436,
+    "time": "2026-04-18 00:34:00",
+    "side": "LONG",
+    "entry": 2441.7,
+    "exit": 2412.32,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 437,
+    "time": "2026-04-20 01:31:00",
+    "side": "SHORT",
+    "entry": 2287.93,
+    "exit": 2287.93,
+    "result": "BE",
+    "r": -0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 438,
+    "time": "2026-05-06 13:37:00",
+    "side": "LONG",
+    "entry": 2378.29,
+    "exit": 2378.29,
+    "result": "BE",
+    "r": 0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 439,
+    "time": "2026-05-07 07:12:00",
+    "side": "SHORT",
+    "entry": 2341.81,
+    "exit": 2341.81,
+    "result": "BE",
+    "r": -0.0,
+    "closeReason": "Breakeven Exit"
+  },
+  {
+    "id": 440,
+    "time": "2026-05-08 17:31:00",
+    "side": "SHORT",
+    "entry": 2281.86,
+    "exit": 2309.19,
+    "result": "LOSS",
+    "r": -1.2,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 441,
+    "time": "2026-05-13 04:56:00",
+    "side": "SHORT",
+    "entry": 2281.57,
+    "exit": 2308.84,
+    "result": "LOSS",
+    "r": -1.19,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 442,
+    "time": "2026-05-14 06:07:00",
+    "side": "SHORT",
+    "entry": 2247.13,
+    "exit": 2273.97,
+    "result": "LOSS",
+    "r": -1.19,
+    "closeReason": "SL Hit"
+  },
+  {
+    "id": 443,
+    "time": "2026-05-15 13:39:00",
+    "side": "SHORT",
+    "entry": 2281.83,
+    "exit": 2227.22,
+    "result": "WIN",
+    "r": 2.39,
+    "closeReason": "TP Hit"
+  },
+  {
+    "id": 444,
+    "time": "2026-05-17 23:41:00",
+    "side": "SHORT",
+    "entry": 2181.23,
+    "exit": 2129.14,
+    "result": "WIN",
+    "r": 2.39,
+    "closeReason": "TP Hit"
+  }
+];

@@ -337,43 +337,67 @@ function BacktestIntelligence() {
 }
 
 function ExecutionConsole({ basePrice }: { basePrice: number }) {
-  const paperTrades = generateDemoTrades(basePrice, 100);
+  const paperTrades = REAL_BACKTEST_TRADES;
   const orderBook = generateOrderBook(basePrice);
   const totalR = paperTrades.reduce((sum, trade) => sum + trade.r, 0);
   const wins = paperTrades.filter((trade) => trade.result === "WIN").length;
   const losses = paperTrades.filter((trade) => trade.result === "LOSS").length;
   const winRate = (wins / paperTrades.length) * 100;
 
+  const [page, setPage] = useState(1);
+  const pageSize = 15;
+  const totalPages = Math.ceil(paperTrades.length / pageSize);
+  const paginatedTrades = paperTrades.slice((page - 1) * pageSize, page * pageSize);
+
   return (
     <div className="execution-grid" id="execution">
       <Panel title="Paper Execution Console" eyebrow="demo simulation ledger" icon={<ShieldCheck size={18} />}>
         <div className="demo-note">
-          100 deterministic demo trades over the last 6 months, generated around the current ETH-USDT market price.
+          {paperTrades.length} deterministic demo trades over the last 6 months, generated around the current ETH-USDT market price.
         </div>
         <div className="execution-summary">
-          <MetricCard label="Total P&L" value={formatSigned(totalR, "R")} tone="positive" />
+          <MetricCard label="Total P&L" value={formatSigned(totalR, "%")} tone="positive" />
           <MetricCard label="Demo Trades" value={String(paperTrades.length)} tone="neutral" />
           <MetricCard label="Win Rate" value={`${winRate.toFixed(1)}%`} tone={wins > losses ? "positive" : "warning"} />
         </div>
         <div className="trade-table">
           <div className="trade-row table-head">
+            <span style={{ width: 40 }}>#</span>
             <span>Time</span>
             <span>Side</span>
             <span>Entry</span>
             <span>Exit</span>
             <span>R</span>
           </div>
-          {paperTrades.map((trade) => (
+          {paginatedTrades.map((trade) => (
             <div className="trade-row" key={trade.id}>
+              <span style={{ width: 40, color: "var(--muted)" }}>{trade.id}</span>
               <span>{trade.time}</span>
               <strong className={trade.side === "LONG" ? "positive" : "negative"}>{trade.side}</strong>
               <span>{trade.entry.toFixed(2)}</span>
               <span>{trade.exit.toFixed(2)}</span>
               <strong className={trade.r > 0 ? "positive" : trade.r < 0 ? "negative" : ""}>
-                {formatSigned(trade.r, "R")}
+                {formatSigned(trade.r, "%")}
               </strong>
             </div>
           ))}
+        </div>
+        <div className="pagination">
+          <button 
+            className="secondary-btn" 
+            disabled={page === 1} 
+            onClick={() => setPage(p => Math.max(1, p - 1))}
+          >
+            Previous
+          </button>
+          <span>Page {page} of {totalPages}</span>
+          <button 
+            className="secondary-btn" 
+            disabled={page === totalPages} 
+            onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+          >
+            Next
+          </button>
         </div>
       </Panel>
       <Panel title="Order Flow Snapshot" eyebrow="demo depth monitor" icon={<RadioTower size={18} />}>

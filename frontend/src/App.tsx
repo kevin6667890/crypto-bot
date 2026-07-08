@@ -128,7 +128,15 @@ function SystemRail() {
       <nav>
         <span className="nav-label">Jump to section</span>
         {navItems.map(([label, target], index) => (
-          <a key={target} href={`#${target}`} className={index === 0 ? "active" : ""}>
+          <a 
+            key={target} 
+            href={`#${target}`} 
+            className={index === 0 ? "active" : ""}
+            onClick={(e) => {
+              e.preventDefault();
+              document.getElementById(target)?.scrollIntoView({ behavior: 'smooth' });
+            }}
+          >
             {label}
           </a>
         ))}

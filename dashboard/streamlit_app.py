@@ -69,4 +69,4 @@ def load_react_bundle() -> str:
     return html
 
 
-components.html(load_react_bundle(), height=1250, scrolling=True)
+components.html(load_react_bundle(), height=1800, scrolling=True)

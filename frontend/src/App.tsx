@@ -338,7 +338,7 @@ function BacktestIntelligence() {
 }
 
 function ExecutionConsole({ basePrice }: { basePrice: number }) {
-  const paperTrades = REAL_BACKTEST_TRADES;
+  const paperTrades = [...REAL_BACKTEST_TRADES].reverse();
   const orderBook = generateOrderBook(basePrice);
   const totalR = paperTrades.reduce((sum, trade) => sum + trade.r, 0);
   const wins = paperTrades.filter((trade) => trade.result === "WIN").length;

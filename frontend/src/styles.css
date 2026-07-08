@@ -823,15 +823,15 @@ footer span {
 
 /* --- Modal Styles --- */
 .modal-overlay {
-  position: fixed;
+  position: absolute;
   inset: 0;
   background: rgba(11, 14, 17, 0.4);
   backdrop-filter: blur(4px);
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: center;
   z-index: 1000;
-  padding: 20px;
+  padding: 80px 20px 20px;
 }
 
 .modal-card {

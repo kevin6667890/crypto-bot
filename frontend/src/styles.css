@@ -742,3 +742,174 @@ footer span {
     display: none;
   }
 }
+
+
+/* --- Header Improvements --- */
+.terminal-header {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  padding: 20px;
+  border-radius: 8px;
+  grid-template-columns: minmax(0, 1fr) 356px;
+  gap: 24px;
+}
+
+.header-info {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+}
+
+.header-actions {
+  margin-top: 16px;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+}
+
+.primary-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  background: var(--text);
+  color: var(--surface);
+  border: none;
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+
+.primary-btn:hover {
+  opacity: 0.85;
+}
+
+.primary-btn.connected {
+  background: var(--green);
+}
+
+.secondary-btn {
+  background: var(--surface-soft);
+  color: var(--text);
+  border: 1px solid var(--line-strong);
+  padding: 8px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.secondary-btn:hover {
+  background: var(--line);
+}
+
+.header-badges {
+  display: flex;
+  gap: 8px;
+}
+
+.badge {
+  background: var(--surface-soft);
+  border: 1px solid var(--line);
+  color: var(--subtle);
+  font-size: 11px;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-family: "JetBrains Mono", monospace;
+  text-transform: uppercase;
+}
+
+/* --- Modal Styles --- */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(11, 14, 17, 0.4);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 20px;
+}
+
+.modal-card {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  padding: 24px;
+  width: 100%;
+  max-width: 420px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.1);
+  border-radius: 8px;
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.modal-header h2 {
+  font-size: 18px;
+  margin: 0;
+}
+
+.close-btn {
+  background: none;
+  border: none;
+  font-size: 24px;
+  line-height: 1;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.close-btn:hover {
+  color: var(--text);
+}
+
+.modal-desc {
+  font-size: 13px;
+  color: var(--muted);
+  margin: 0 0 20px;
+  line-height: 1.5;
+}
+
+.form-group {
+  margin-bottom: 16px;
+}
+
+.form-group label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 6px;
+  color: #344054;
+}
+
+.form-group input,
+.form-group select {
+  width: 100%;
+  padding: 10px 12px;
+  border: 1px solid var(--line-strong);
+  border-radius: 4px;
+  font-family: inherit;
+  font-size: 14px;
+  background: var(--surface-soft);
+  color: var(--text);
+  outline: none;
+}
+
+.form-group input:focus,
+.form-group select:focus {
+  border-color: var(--green);
+  background: var(--surface);
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 24px;
+}

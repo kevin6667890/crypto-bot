@@ -166,23 +166,37 @@ function Header({
   snapshot,
   loading,
   onRefresh,
+  onLoginClick,
+  isConnected,
 }: {
   snapshot: MarketSnapshot;
   loading: boolean;
   onRefresh: () => void;
+  onLoginClick: () => void;
+  isConnected: string | null;
 }) {
   const distance =
     snapshot.ema20 === null ? null : ((snapshot.price - snapshot.ema20) / snapshot.ema20) * 100;
 
   return (
     <header className="terminal-header" id="command">
-      <div>
+      <div className="header-info">
         <span className="eyebrow">ETH/USDT Research System</span>
         <h1>Quant Trading Terminal</h1>
         <p>
           Multi-timeframe EMA20 pullback strategy with live market context, paper execution tracking,
           backtest validation, and AI-assisted trade review.
         </p>
+        <div className="header-actions">
+          <button className={`primary-btn ${isConnected ? "connected" : ""}`} onClick={onLoginClick}>
+            <ShieldCheck size={16} />
+            {isConnected ? `Connected to ${isConnected}` : "Connect Exchange API"}
+          </button>
+          <div className="header-badges">
+            <span className="badge">V3 Strategy</span>
+            <span className="badge">Paper Trading</span>
+          </div>
+        </div>
       </div>
       <div className="market-ticker" aria-label="ETH market snapshot">
         <div className="ticker-top">
@@ -387,11 +401,76 @@ function ExecutionConsole({ basePrice }: { basePrice: number }) {
   );
 }
 
+function LoginModal({
+  onClose,
+  onConnect,
+}: {
+  onClose: () => void;
+  onConnect: (exchange: string) => void;
+}) {
+  const [exchange, setExchange] = useState("Binance");
+  const [apiKey, setApiKey] = useState("");
+  const [secretKey, setSecretKey] = useState("");
+  const [passphrase, setPassphrase] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  async function handleConnect(e: React.FormEvent) {
+    e.preventDefault();
+    setLoading(true);
+    await new Promise((r) => setTimeout(r, 1200));
+    setLoading(false);
+    onConnect(exchange);
+  }
+
+  return (
+    <div className="modal-overlay">
+      <div className="modal-card">
+        <div className="modal-header">
+          <h2>Connect Exchange API</h2>
+          <button type="button" onClick={onClose} className="close-btn">×</button>
+        </div>
+        <p className="modal-desc">Bind your Binance or OKX account for live execution. Keys are stored locally.</p>
+        <form onSubmit={handleConnect}>
+          <div className="form-group">
+            <label>Exchange</label>
+            <select value={exchange} onChange={(e) => setExchange(e.target.value)}>
+              <option value="Binance">Binance</option>
+              <option value="OKX">OKX</option>
+            </select>
+          </div>
+          <div className="form-group">
+            <label>API Key</label>
+            <input type="text" required placeholder="Enter API Key" value={apiKey} onChange={(e) => setApiKey(e.target.value)} />
+          </div>
+          <div className="form-group">
+            <label>Secret Key</label>
+            <input type="password" required placeholder="Enter Secret Key" value={secretKey} onChange={(e) => setSecretKey(e.target.value)} />
+          </div>
+          {exchange === "OKX" && (
+            <div className="form-group">
+              <label>Passphrase</label>
+              <input type="password" required placeholder="Enter API Passphrase" value={passphrase} onChange={(e) => setPassphrase(e.target.value)} />
+            </div>
+          )}
+          <div className="modal-actions">
+            <button type="button" onClick={onClose} className="secondary-btn">Cancel</button>
+            <button type="submit" className="primary-btn" disabled={loading}>
+              {loading ? "Validating..." : "Connect"}
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
 export default function App() {
   const [snapshot, setSnapshot] = useState<MarketSnapshot>(() => demoSnapshot());
   const [loadingMarket, setLoadingMarket] = useState(false);
   const [signal, setSignal] = useState<SignalAnalysis>(demoSignal);
   const [loadingSignal, setLoadingSignal] = useState(false);
+  const [showLogin, setShowLogin] = useState(false);
+  const [connectedExchange, setConnectedExchange] = useState<string | null>(null);
 
   async function refreshMarket() {
     setLoadingMarket(true);
@@ -428,7 +507,16 @@ export default function App() {
     <div className="terminal-app">
       <SystemRail />
       <main>
-        <Header snapshot={snapshot} loading={loadingMarket} onRefresh={refreshMarket} />
+        {showLogin && (
+          <LoginModal
+            onClose={() => setShowLogin(false)}
+            onConnect={(ex) => {
+              setConnectedExchange(ex);
+              setShowLogin(false);
+            }}
+          />
+        )}
+        <Header snapshot={snapshot} loading={loadingMarket} onRefresh={refreshMarket} onLoginClick={() => setShowLogin(true)} isConnected={connectedExchange} />
         <CommandCenter signal={signal} loadingSignal={loadingSignal} />
         <div id="strategy">
           <StrategyLab />

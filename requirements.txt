@@ -9,6 +9,7 @@ pyyaml>=6.0
 rich>=13.0.0
 pytz>=2024.0
 ccxt>=4.0.0
+streamlit>=1.28.0
 
 # 回测与图表分析（backtest/）
 matplotlib>=3.7.0

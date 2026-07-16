@@ -174,8 +174,10 @@ export type WatchlistItem = { instrument: string; price: number; changePct: numb
 export type PaperTrade = { id: number; instrument: string; side: "LONG" | "SHORT"; entry: number; stop_loss: number; take_profit: number; status: string; exit_price?: number; pnl_r?: number; reason?: string; created_at: string; closed_at?: string };
 export type PaperStatus = { analysis: { action?: string; bias?: string; score?: number; price?: number; ema20?: number; rsi14?: number; atr14?: number; volume_ratio?: number; conditions?: Array<{ label: string; value: string; pass: boolean }>; updated_at?: string }; open_trades: PaperTrade[]; closed_trades: PaperTrade[]; ai_brief: { created_at: string; content: string; source: string } | null; summary: { open: number; closed: number; wins: number; win_rate: number; total_r: number } };
 
+const paperApiBase = (import.meta.env.VITE_PAPER_API_URL || "http://127.0.0.1:8765").replace(/\/$/, "");
+
 export async function fetchPaperStatus(): Promise<PaperStatus> {
-  const response = await fetch("http://127.0.0.1:8765/api/status");
+  const response = await fetch(`${paperApiBase}/api/status`);
   if (!response.ok) throw new Error(`Paper API request failed: ${response.status}`);
   return response.json() as Promise<PaperStatus>;
 }

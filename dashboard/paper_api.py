@@ -260,8 +260,9 @@ def run() -> None:
             time.sleep(60)
 
     threading.Thread(target=scheduler, daemon=True).start()
-    server = ThreadingHTTPServer(("127.0.0.1", 8765), Handler)
-    print("Paper API listening on http://127.0.0.1:8765")
+    host = os.getenv("PAPER_API_HOST", "127.0.0.1")
+    server = ThreadingHTTPServer((host, 8765), Handler)
+    print(f"Paper API listening on http://{host}:8765")
     server.serve_forever()
 
 

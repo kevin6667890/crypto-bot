@@ -48,6 +48,11 @@ When `DEEPSEEK_API_KEY` is present in the server-side `.env`, the same service
 also stores one cautious AI market brief per hour. AI describes the stored
 indicator snapshot only; deterministic rules remain the sole trade trigger.
 
+For Docker deployment, `docker compose up -d paper-api` exposes the service on
+port 8765. Build the frontend with `VITE_PAPER_API_URL` set to its public HTTPS
+URL (for example `https://api.example.com`) so a remotely hosted dashboard does
+not try to call the visitor's own `127.0.0.1`.
+
 ## 📈 Strategy Overview
 **Multi-Timeframe EMA20 Pullback**
 - **Trigger:** Score ≥ 70 (based on 4H trend, 1H confirmation, 15m structure)

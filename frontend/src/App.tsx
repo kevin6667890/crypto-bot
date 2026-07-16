@@ -622,6 +622,7 @@ function Workspace() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [paper, setPaper] = useState<PaperStatus | null>(null);
+  const [activePage, setActivePage] = useState<"market" | "research">("market");
 
   async function refresh() {
     setLoading(true);
@@ -660,7 +661,7 @@ function Workspace() {
   return (
     <div className="workspace">
       <header className="workspace-topbar">
-        <div className="workspace-brand"><TerminalSquare size={19} /><strong>Crypto-Bot</strong><span>Decision Workspace</span><a href="#research">Research & Backtest</a></div>
+        <div className="workspace-brand"><TerminalSquare size={19} /><strong>Crypto-Bot</strong><span>Decision Workspace</span><div className="page-switch"><button className={activePage === "market" ? "active" : ""} onClick={() => setActivePage("market")}>行情与分析</button><button className={activePage === "research" ? "active" : ""} onClick={() => setActivePage("research")}>策略与回测</button></div></div>
         <div className="market-controls">
           <span className="live-dot" /> <strong>OKX Public Data</strong>
           <select value={instrument} onChange={(event) => setInstrument(event.target.value)} aria-label="Instrument"><option>BTC-USDT</option><option>ETH-USDT</option><option>SOL-USDT</option><option>XRP-USDT</option><option>DOGE-USDT</option></select>
@@ -670,7 +671,7 @@ function Workspace() {
         </div>
       </header>
 
-      <div className="workspace-grid">
+      {activePage === "market" ? <div className="workspace-grid">
         <aside className="watchlist-panel">
           <div className="section-title"><div><span className="eyebrow">OKX spot</span><h2>Market Scanner</h2></div><span className="count-badge">{watchlist.length || 5}</span></div>
           <p className="scanner-note">24h momentum · public market feed</p>
@@ -708,13 +709,12 @@ function Workspace() {
           <div className="rule-list"><span className="eyebrow">Rule checks</span>{decisionConditions.map((condition) => <div className="rule-row" key={condition.label}><span>{condition.label}</span><b className={condition.tone}>{condition.value}</b></div>)}</div>
           <div className="paper-mode"><ShieldCheck size={17} /><div><strong>Paper trading only</strong><span>No exchange key or live order is used.</span></div></div>
         </aside>
-      </div>
-      <section className="research-suite" id="research">
+      </div> : <section className="research-suite">
         <div className="research-intro"><span className="eyebrow">Existing project modules</span><h2>Strategy research, backtest & execution history</h2><p>These original modules are retained as research tools rather than removed from the project.</p></div>
         <StrategyLab />
         <BacktestIntelligence />
         <ExecutionConsole basePrice={snapshot.price} />
-      </section>
+      </section>}
       {settingsOpen && <div className="settings-backdrop" onClick={() => setSettingsOpen(false)}><section className="settings-drawer" onClick={(event) => event.stopPropagation()}><div className="section-title"><div><span className="eyebrow">Workspace</span><h2>Settings</h2></div><button className="icon-button" onClick={() => setSettingsOpen(false)}>×</button></div><label>Market source<select><option>OKX Public Market Data</option></select></label><label>Watchlist size<select><option>5 liquid USDT pairs</option></select></label><label>Refresh interval<select><option>60 seconds</option><option>5 minutes</option></select></label><label>AI brief cadence<select><option>Every 1 hour (backend required)</option></select></label><p className="settings-note">API keys are intentionally not accepted by this browser workspace.</p></section></div>}
     </div>
   );

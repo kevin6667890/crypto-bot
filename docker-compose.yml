@@ -17,3 +17,15 @@ services:
       - ./logs:/app/logs
       - ./data_cache:/app/data_cache
     restart: unless-stopped
+
+  paper-api:
+    build: .
+    env_file: .env
+    command: python dashboard/paper_api.py
+    environment:
+      PAPER_API_HOST: 0.0.0.0
+    ports:
+      - "8765:8765"
+    volumes:
+      - ./data_cache:/app/data_cache
+    restart: unless-stopped

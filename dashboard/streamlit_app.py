@@ -37,7 +37,7 @@ if "DEEPSEEK_API_KEY" in st.secrets:
 st.markdown(
     """
     <style>
-    .stApp { background: #f7f8fa; overflow: hidden; }
+    .stApp { background: #f7f8fa; overflow: auto; }
     .block-container { padding: 0 !important; max-width: none !important; margin: 0 !important; }
     header[data-testid="stHeader"],
     [data-testid="stToolbar"],
@@ -97,4 +97,4 @@ def load_react_bundle(paper_status: dict) -> str:
 
 
 paper_service = start_paper_service()
-components.html(load_react_bundle(paper_service.status()), height=900, scrolling=True)
+components.html(load_react_bundle(paper_service.status()), height=1400, scrolling=True)

@@ -31,20 +31,35 @@ function useResponsiveChart(factory: (container: HTMLDivElement) => IChartApi, d
     } catch {
       return;
     }
+    let lastWidth = 0;
+    let lastHeight = 0;
+    let delayedResize: number | undefined;
     const resizeChart = () => {
       const bounds = ref.current?.getBoundingClientRect();
       if (!bounds || bounds.width < 20 || bounds.height < 20) return;
-      chart?.applyOptions({ width: Math.floor(bounds.width), height: Math.floor(bounds.height) });
-      chart?.timeScale().fitContent();
+      const width = Math.floor(bounds.width);
+      const height = Math.floor(bounds.height);
+      if (width === lastWidth && height === lastHeight) return;
+      lastWidth = width;
+      lastHeight = height;
+      chart?.resize(width, height, true);
     };
-    const resize = new ResizeObserver(() => requestAnimationFrame(resizeChart));
+    const queueResize = () => {
+      requestAnimationFrame(resizeChart);
+      window.clearTimeout(delayedResize);
+      delayedResize = window.setTimeout(resizeChart, 160);
+    };
+    const resize = new ResizeObserver(queueResize);
     resize.observe(ref.current);
-    window.addEventListener("resize", resizeChart);
-    requestAnimationFrame(resizeChart);
+    window.addEventListener("resize", queueResize);
+    window.visualViewport?.addEventListener("resize", queueResize);
+    queueResize();
 
     return () => {
       resize.disconnect();
-      window.removeEventListener("resize", resizeChart);
+      window.clearTimeout(delayedResize);
+      window.removeEventListener("resize", queueResize);
+      window.visualViewport?.removeEventListener("resize", queueResize);
       chart?.remove();
     };
   }, deps);

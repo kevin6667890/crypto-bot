@@ -225,12 +225,12 @@ export async function fetchEthCandles(interval = "15m", limit = 160, instrument 
   return fetchOkxCandles(interval, limit, instrument);
 }
 
-export async function fetchSignalAnalysis(): Promise<SignalAnalysis> {
+export async function fetchSignalAnalysis(instrument = "ETH-USDT"): Promise<SignalAnalysis> {
   try {
     const [m15, h1, h4] = await Promise.all([
-      fetchEthCandles("15m", 160),
-      fetchEthCandles("1h", 120),
-      fetchEthCandles("4h", 90),
+      fetchEthCandles("15m", 160, instrument),
+      fetchEthCandles("1h", 120, instrument),
+      fetchEthCandles("4h", 90, instrument),
     ]);
     return buildSignalAnalysis(m15, h1, h4, "Live");
   } catch {
@@ -258,8 +258,8 @@ async function fetchBinanceCandles(interval = "15m", limit = 160): Promise<Candl
   }));
 }
 
-export async function fetchEthSnapshot(): Promise<MarketSnapshot> {
-  return fetchOkxSnapshot();
+export async function fetchEthSnapshot(instrument = "ETH-USDT"): Promise<MarketSnapshot> {
+  return fetchOkxSnapshot(instrument);
 }
 
 async function fetchBinanceSnapshot(): Promise<MarketSnapshot> {
@@ -291,10 +291,10 @@ async function fetchBinanceSnapshot(): Promise<MarketSnapshot> {
   };
 }
 
-async function fetchOkxSnapshot(): Promise<MarketSnapshot> {
+async function fetchOkxSnapshot(instrument = "ETH-USDT"): Promise<MarketSnapshot> {
   const [tickerResponse, candles] = await Promise.all([
-    fetch("https://www.okx.com/api/v5/market/ticker?instId=ETH-USDT"),
-    fetchOkxCandles("15m", 25),
+    fetch(`https://www.okx.com/api/v5/market/ticker?instId=${instrument}`),
+    fetchOkxCandles("15m", 25, instrument),
   ]);
   if (!tickerResponse.ok) {
     throw new Error(`OKX ticker request failed: ${tickerResponse.status}`);

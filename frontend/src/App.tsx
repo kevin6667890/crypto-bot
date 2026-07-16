@@ -616,6 +616,7 @@ function Workspace() {
   const [snapshot, setSnapshot] = useState<MarketSnapshot>(() => demoSnapshot());
   const [signal, setSignal] = useState<SignalAnalysis>(demoSignal);
   const [watchlist, setWatchlist] = useState<WatchlistItem[]>([]);
+  const [instrument, setInstrument] = useState("ETH-USDT");
   const [interval, setInterval] = useState("15m");
   const [showBoll, setShowBoll] = useState(true);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -625,14 +626,18 @@ function Workspace() {
   async function refresh() {
     setLoading(true);
     try {
-      const [market, analysis, instruments] = await Promise.all([fetchEthSnapshot(), fetchSignalAnalysis(), fetchOkxWatchlist()]);
+      const [market, analysis] = await Promise.all([fetchEthSnapshot(instrument), fetchSignalAnalysis(instrument)]);
       setSnapshot(market);
       setSignal(analysis);
-      setWatchlist(instruments);
     } catch {
       setSnapshot(demoSnapshot());
     } finally {
       setLoading(false);
+    }
+    try {
+      setWatchlist(await fetchOkxWatchlist());
+    } catch {
+      setWatchlist((current) => current);
     }
     try {
       setPaper(await fetchPaperStatus());
@@ -645,9 +650,9 @@ function Workspace() {
     refresh();
     const timer = window.setInterval(refresh, 60_000);
     return () => window.clearInterval(timer);
-  }, []);
+  }, [instrument]);
 
-  const runtimeAnalysis = paper?.analysis;
+  const runtimeAnalysis = instrument === "ETH-USDT" ? paper?.analysis : null;
   const action = runtimeAnalysis?.action || (signal.score >= 70 ? "WATCH" : "WAIT");
   const decisionScore = runtimeAnalysis?.score ?? signal.score;
   const decisionConditions = runtimeAnalysis?.conditions?.map((condition) => ({ ...condition, tone: condition.pass ? "pass" : "watch" as const })) ?? signal.conditions;
@@ -655,10 +660,10 @@ function Workspace() {
   return (
     <div className="workspace">
       <header className="workspace-topbar">
-        <div className="workspace-brand"><TerminalSquare size={19} /><strong>Crypto-Bot</strong><span>Decision Workspace</span></div>
+        <div className="workspace-brand"><TerminalSquare size={19} /><strong>Crypto-Bot</strong><span>Decision Workspace</span><a href="#research">Research & Backtest</a></div>
         <div className="market-controls">
           <span className="live-dot" /> <strong>OKX Public Data</strong>
-          <select aria-label="Instrument"><option>ETH-USDT</option></select>
+          <select value={instrument} onChange={(event) => setInstrument(event.target.value)} aria-label="Instrument"><option>BTC-USDT</option><option>ETH-USDT</option><option>SOL-USDT</option><option>XRP-USDT</option><option>DOGE-USDT</option></select>
           <select value={interval} onChange={(event) => setInterval(event.target.value)} aria-label="Chart interval"><option>15m</option><option>1h</option><option>4h</option></select>
           <button className="icon-button" onClick={refresh} disabled={loading} title="Refresh"><RefreshCw size={15} className={loading ? "spinning" : ""} /></button>
           <button className="icon-button" onClick={() => setSettingsOpen(true)} title="Settings"><Settings size={16} /></button>
@@ -671,7 +676,7 @@ function Workspace() {
           <p className="scanner-note">24h momentum · public market feed</p>
           <div className="scanner-head"><span>Instrument</span><span>24h</span></div>
           {watchlist.length ? watchlist.map((item) => (
-            <button className={item.instrument === "ETH-USDT" ? "scan-row selected" : "scan-row"} key={item.instrument}>
+            <button className={item.instrument === instrument ? "scan-row selected" : "scan-row"} onClick={() => setInstrument(item.instrument)} key={item.instrument}>
               <span><strong>{item.instrument.replace("-USDT", "")}</strong><small>${item.price.toLocaleString(undefined, { maximumFractionDigits: 2 })}</small></span>
               <b className={item.changePct >= 0 ? "positive" : "negative"}>{formatSigned(item.changePct, "%")}</b>
             </button>
@@ -681,12 +686,12 @@ function Workspace() {
 
         <main className="workspace-main">
           <section className="market-summary">
-            <div><span className="eyebrow">ETH-USDT · OKX spot</span><div className="price-line"><strong>${snapshot.price.toLocaleString(undefined, { maximumFractionDigits: 2 })}</strong><b className={snapshot.changePct >= 0 ? "positive" : "negative"}>{formatSigned(snapshot.changePct, "%")}</b></div><small>Updated {snapshot.updatedAt} · public market data</small></div>
+            <div><span className="eyebrow">{instrument} · OKX spot</span><div className="price-line"><strong>${snapshot.price.toLocaleString(undefined, { maximumFractionDigits: 2 })}</strong><b className={snapshot.changePct >= 0 ? "positive" : "negative"}>{formatSigned(snapshot.changePct, "%")}</b></div><small>Updated {snapshot.updatedAt} · public market data</small></div>
             <div className="summary-stats"><span><small>24H HIGH</small><b>{snapshot.high24.toFixed(2)}</b></span><span><small>24H LOW</small><b>{snapshot.low24.toFixed(2)}</b></span><span><small>EMA20</small><b>{snapshot.ema20?.toFixed(2) ?? "--"}</b></span></div>
           </section>
           <section className="chart-workspace">
             <div className="chart-toolbar"><div><span className="eyebrow">Live chart</span><h2>Price & Structure</h2></div><div className="indicator-toggles"><button className="active">MA 5</button><button className="active">MA 10</button><button className={showBoll ? "active" : ""} onClick={() => setShowBoll(!showBoll)}>BOLL</button></div></div>
-            <div className="workspace-chart"><MarketChart interval={interval} showBoll={showBoll} /></div>
+            <div className="workspace-chart"><MarketChart instrument={instrument} interval={interval} showBoll={showBoll} /></div>
             <div className="chart-legend"><span><i className="ma5" /> MA5</span><span><i className="ma10" /> MA10</span><span><i className="boll" /> Bollinger (20,2)</span><span className="muted">CVD / OI require the backend collector</span></div>
           </section>
           <section className="ai-brief"><BrainCircuit size={19} /><div><span className="eyebrow">Hourly AI brief · {paper?.ai_brief?.source || "waiting for paper service"}</span><strong>{paper?.ai_brief?.created_at ? `Updated ${new Date(paper.ai_brief.created_at).toLocaleString()}` : "AI analysis is not available yet."}</strong><p>{paper?.ai_brief?.content || "Start the local paper service. When DEEPSEEK_API_KEY is configured on the server, it stores one cautious market summary per hour without controlling trade execution."}</p></div><button className="secondary-btn" disabled>Brief history soon</button></section>
@@ -704,6 +709,12 @@ function Workspace() {
           <div className="paper-mode"><ShieldCheck size={17} /><div><strong>Paper trading only</strong><span>No exchange key or live order is used.</span></div></div>
         </aside>
       </div>
+      <section className="research-suite" id="research">
+        <div className="research-intro"><span className="eyebrow">Existing project modules</span><h2>Strategy research, backtest & execution history</h2><p>These original modules are retained as research tools rather than removed from the project.</p></div>
+        <StrategyLab />
+        <BacktestIntelligence />
+        <ExecutionConsole basePrice={snapshot.price} />
+      </section>
       {settingsOpen && <div className="settings-backdrop" onClick={() => setSettingsOpen(false)}><section className="settings-drawer" onClick={(event) => event.stopPropagation()}><div className="section-title"><div><span className="eyebrow">Workspace</span><h2>Settings</h2></div><button className="icon-button" onClick={() => setSettingsOpen(false)}>×</button></div><label>Market source<select><option>OKX Public Market Data</option></select></label><label>Watchlist size<select><option>5 liquid USDT pairs</option></select></label><label>Refresh interval<select><option>60 seconds</option><option>5 minutes</option></select></label><label>AI brief cadence<select><option>Every 1 hour (backend required)</option></select></label><p className="settings-note">API keys are intentionally not accepted by this browser workspace.</p></section></div>}
     </div>
   );

@@ -31,8 +31,12 @@ st.set_page_config(
 
 # Streamlit Community Cloud stores keys in ``st.secrets`` rather than a local
 # .env file. PaperService reads the same environment variable in both cases.
-if "DEEPSEEK_API_KEY" in st.secrets:
-    os.environ.setdefault("DEEPSEEK_API_KEY", st.secrets["DEEPSEEK_API_KEY"])
+try:
+    if "DEEPSEEK_API_KEY" in st.secrets:
+        os.environ.setdefault("DEEPSEEK_API_KEY", st.secrets["DEEPSEEK_API_KEY"])
+except st.errors.StreamlitSecretNotFoundError:
+    # Self-hosted Docker deployment uses /app/.env instead.
+    pass
 
 st.markdown(
     """

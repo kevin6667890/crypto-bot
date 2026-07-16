@@ -19,7 +19,11 @@ from pathlib import Path
 from typing import Any
 from urllib.request import Request, urlopen
 
-from dotenv import load_dotenv
+try:
+    from dotenv import load_dotenv
+except ImportError:  # Streamlit secrets still work when dotenv is unavailable.
+    def load_dotenv(*_args: object, **_kwargs: object) -> bool:
+        return False
 
 
 ROOT = Path(__file__).resolve().parents[1]

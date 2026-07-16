@@ -7,9 +7,15 @@ frontend/dist. Rebuild it with `cd frontend && npm run build` before deploy.
 from __future__ import annotations
 
 from pathlib import Path
+import json
+import os
+import threading
+import time
 
 import streamlit as st
 import streamlit.components.v1 as components
+
+from paper_api import PaperService
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -23,6 +29,11 @@ st.set_page_config(
     initial_sidebar_state="collapsed",
 )
 
+# Streamlit Community Cloud stores keys in ``st.secrets`` rather than a local
+# .env file. PaperService reads the same environment variable in both cases.
+if "DEEPSEEK_API_KEY" in st.secrets:
+    os.environ.setdefault("DEEPSEEK_API_KEY", st.secrets["DEEPSEEK_API_KEY"])
+
 st.markdown(
     """
     <style>
@@ -32,14 +43,28 @@ st.markdown(
     [data-testid="stToolbar"],
     footer,
     #MainMenu { display: none !important; }
-    iframe { display: block; height: 100vh !important; border: none !important; }
+    iframe { display: block; border: none !important; }
     </style>
     """,
     unsafe_allow_html=True,
 )
 
 
-def load_react_bundle() -> str:
+@st.cache_resource
+def start_paper_service() -> PaperService:
+    """Keep paper trading on the Streamlit server, not in the visitor's browser."""
+    service = PaperService()
+
+    def loop() -> None:
+        while True:
+            service.cycle()
+            time.sleep(60)
+
+    threading.Thread(target=loop, daemon=True, name="paper-trading-loop").start()
+    return service
+
+
+def load_react_bundle(paper_status: dict) -> str:
     index = DIST / "index.html"
     if not index.exists():
         return """
@@ -66,7 +91,12 @@ def load_react_bundle() -> str:
             f"<script type=\"module\">{js}</script>",
         )
 
+    status_json = json.dumps(paper_status).replace("</", "<\\/")
+    html = html.replace("</head>", f"<script>window.__PAPER_STATUS__={status_json};</script></head>")
+    html = html.replace("</body>", "<script>setTimeout(() => window.location.reload(), 60000);</script></body>")
+
     return html
 
 
-components.html(load_react_bundle(), height=1800, scrolling=True)
+paper_service = start_paper_service()
+components.html(load_react_bundle(paper_service.status()), height=900, scrolling=True)

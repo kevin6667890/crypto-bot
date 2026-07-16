@@ -661,7 +661,7 @@ function Workspace() {
   return (
     <div className="workspace">
       <header className="workspace-topbar">
-        <div className="workspace-brand"><TerminalSquare size={19} /><strong>Crypto-Bot</strong><span>Decision Workspace</span><div className="page-switch"><button className={activePage === "market" ? "active" : ""} onClick={() => setActivePage("market")}>行情与分析</button><button className={activePage === "research" ? "active" : ""} onClick={() => setActivePage("research")}>策略与回测</button></div></div>
+        <div className="workspace-brand"><TerminalSquare size={19} /><strong>Crypto-Bot</strong><span>Decision Workspace</span><div className="page-switch"><button className={activePage === "market" ? "active" : ""} onClick={() => setActivePage("market")}>Market Analysis</button><button className={activePage === "research" ? "active" : ""} onClick={() => setActivePage("research")}>Strategy Research</button></div></div>
         <div className="market-controls">
           <span className="live-dot" /> <strong>OKX Public Data</strong>
           <select value={instrument} onChange={(event) => setInstrument(event.target.value)} aria-label="Instrument"><option>BTC-USDT</option><option>ETH-USDT</option><option>SOL-USDT</option><option>XRP-USDT</option><option>DOGE-USDT</option></select>

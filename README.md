@@ -48,6 +48,11 @@ When `DEEPSEEK_API_KEY` is present in the server-side `.env`, the same service
 also stores one cautious AI market brief per hour. AI describes the stored
 indicator snapshot only; deterministic rules remain the sole trade trigger.
 
+On Streamlit Community Cloud, add `DEEPSEEK_API_KEY` in the app's **Settings →
+Secrets**. The Streamlit wrapper then starts the paper-trading loop on the
+server and passes its latest SQLite status to the embedded frontend every
+minute; no separate public Paper API URL is required for that deployment.
+
 For Docker deployment, `docker compose up -d paper-api` exposes the service on
 port 8765. Build the frontend with `VITE_PAPER_API_URL` set to its public HTTPS
 URL (for example `https://api.example.com`) so a remotely hosted dashboard does

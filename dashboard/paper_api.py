@@ -191,6 +191,37 @@ class PaperService:
         with self._connect() as conn:
             conn.execute("INSERT INTO ai_briefs(created_at,content,source) VALUES(?,?,?)", (now_iso(), content, source))
 
+    def chat(self, question: str) -> dict[str, str]:
+        """Answer a market question with the latest stored, explainable context."""
+        question = question.strip()[:1200]
+        if not question:
+            return {"error": "Please enter a question."}
+        key = os.getenv("DEEPSEEK_API_KEY", "")
+        if not key:
+            return {"error": "DeepSeek is not configured on the server."}
+        context = self.status()
+        context["closed_trades"] = context["closed_trades"][:5]
+        system = (
+            "You are Crypto-Bot Market Copilot, a cautious quantitative-research assistant. "
+            "Use only the supplied OKX market snapshot, deterministic rule output, paper positions and recent outcomes. "
+            "Answer in Chinese, clearly distinguish facts from inference, mention uncertainty, and never claim certainty or place orders. "
+            "This is research assistance, not financial advice."
+        )
+        request = Request(
+            "https://api.deepseek.com/chat/completions",
+            data=json.dumps({"model": "deepseek-chat", "temperature": 0.25, "max_tokens": 500, "messages": [
+                {"role": "system", "content": system},
+                {"role": "user", "content": f"Context:\n{json.dumps(context, ensure_ascii=False)}\n\nQuestion: {question}"},
+            ]}).encode("utf-8"),
+            headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json", "User-Agent": "crypto-bot-paper-research/1.0"},
+        )
+        try:
+            with urlopen(request, timeout=25) as response:  # noqa: S310 - fixed DeepSeek API URL
+                payload = json.loads(response.read().decode("utf-8"))
+            return {"answer": payload["choices"][0]["message"]["content"].strip()}
+        except Exception as error:
+            return {"error": f"Copilot request failed: {error}"}
+
     def monitor_positions(self, price: float) -> None:
         with self._connect() as conn:
             positions = conn.execute("SELECT * FROM paper_trades WHERE status='OPEN'").fetchall()
@@ -250,6 +281,14 @@ class Handler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:  # noqa: N802
         if self.path == "/api/cycle":
             self._send(SERVICE.cycle())
+        elif self.path == "/api/chat":
+            try:
+                length = int(self.headers.get("Content-Length", "0"))
+                payload = json.loads(self.rfile.read(length).decode("utf-8"))
+                result = SERVICE.chat(str(payload.get("question", "")))
+                self._send(result, HTTPStatus.BAD_REQUEST if "error" in result else HTTPStatus.OK)
+            except (ValueError, json.JSONDecodeError):
+                self._send({"error": "Invalid JSON body"}, HTTPStatus.BAD_REQUEST)
         else:
             self._send({"error": "Not found"}, HTTPStatus.NOT_FOUND)
 

@@ -29,6 +29,7 @@ import {
   SignalAnalysis,
   WatchlistItem,
   fetchOkxWatchlist,
+  askMarketCopilot,
   PaperStatus,
   fetchPaperStatus,
   strategyComparison,
@@ -623,6 +624,9 @@ function Workspace() {
   const [loading, setLoading] = useState(false);
   const [paper, setPaper] = useState<PaperStatus | null>(null);
   const [activePage, setActivePage] = useState<"market" | "research">("market");
+  const [question, setQuestion] = useState("");
+  const [chatAnswer, setChatAnswer] = useState("");
+  const [chatLoading, setChatLoading] = useState(false);
 
   async function refresh() {
     setLoading(true);
@@ -658,6 +662,18 @@ function Workspace() {
   const decisionScore = runtimeAnalysis?.score ?? signal.score;
   const decisionConditions = runtimeAnalysis?.conditions?.map((condition) => ({ ...condition, tone: condition.pass ? "pass" : "watch" as const })) ?? signal.conditions;
   const risk = snapshot.price * 0.015;
+  async function submitQuestion(event: React.FormEvent) {
+    event.preventDefault();
+    if (!question.trim()) return;
+    setChatLoading(true);
+    try {
+      setChatAnswer(await askMarketCopilot(question));
+    } catch (error) {
+      setChatAnswer(error instanceof Error ? error.message : "Copilot request failed.");
+    } finally {
+      setChatLoading(false);
+    }
+  }
   return (
     <div className="workspace">
       <header className="workspace-topbar">
@@ -696,6 +712,7 @@ function Workspace() {
             <div className="chart-legend"><span><i className="ma5" /> MA5</span><span><i className="ma10" /> MA10</span><span><i className="boll" /> Bollinger (20,2)</span><span className="muted">CVD / OI require the backend collector</span></div>
           </section>
           <section className="ai-brief"><BrainCircuit size={19} /><div><span className="eyebrow">Hourly AI brief · {paper?.ai_brief?.source || "waiting for paper service"}</span><strong>{paper?.ai_brief?.created_at ? `Updated ${new Date(paper.ai_brief.created_at).toLocaleString()}` : "AI analysis is not available yet."}</strong><p>{paper?.ai_brief?.content || "Start the local paper service. When DEEPSEEK_API_KEY is configured on the server, it stores one cautious market summary per hour without controlling trade execution."}</p></div><button className="secondary-btn" disabled>Brief history soon</button></section>
+          <section className="copilot-panel"><div><span className="eyebrow">Market Copilot · DeepSeek</span><h2>Ask the current market</h2><p>The answer uses the latest OKX indicators, rule score, paper positions and recent outcomes.</p></div><form onSubmit={submitQuestion}><input value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="e.g. Why is the current setup WAIT?" maxLength={1200} /><button className="primary-btn" disabled={chatLoading}>{chatLoading ? "Thinking…" : "Ask Copilot"}</button></form>{chatAnswer && <div className="copilot-answer">{chatAnswer}</div>}</section>
           <section className="paper-ledger"><div className="section-title"><div><span className="eyebrow">SQLite paper ledger</span><h2>Execution & Results</h2></div>{paper ? <div className="ledger-stats"><span>Open <b>{paper.summary.open}</b></span><span>Win rate <b>{paper.summary.win_rate}%</b></span><span>Total <b className={paper.summary.total_r >= 0 ? "positive" : "negative"}>{formatSigned(paper.summary.total_r, "R")}</b></span></div> : <span className="api-offline">Start paper_api.py to enable</span>}</div>
             {paper?.open_trades?.length ? <div className="position-list">{paper.open_trades.map((trade) => <div className="position-row" key={trade.id}><span><b className={trade.side === "LONG" ? "positive" : "negative"}>{trade.side}</b> {trade.instrument}</span><span>Entry {trade.entry.toFixed(2)}</span><span>SL {trade.stop_loss.toFixed(2)}</span><span>TP {trade.take_profit.toFixed(2)}</span><small>Opened {new Date(trade.created_at).toLocaleString()}</small></div>)}</div> : <p className="empty-ledger">{paper ? "No open paper position. The rule engine opens one only when trend, pullback, volume and RSI conditions align." : "Local paper API is offline; live market display remains available."}</p>}
             {paper?.closed_trades?.length ? <div className="closed-trades">{paper.closed_trades.slice(0, 5).map((trade) => <div key={trade.id}><span>#{trade.id} · {trade.side}</span><span>{trade.reason}</span><b className={(trade.pnl_r || 0) >= 0 ? "positive" : "negative"}>{formatSigned(trade.pnl_r || 0, "R")}</b></div>)}</div> : null}

@@ -31,16 +31,20 @@ function useResponsiveChart(factory: (container: HTMLDivElement) => IChartApi, d
     } catch {
       return;
     }
-    const resize = new ResizeObserver(([entry]) => {
-      chart?.applyOptions({
-        width: Math.floor(entry.contentRect.width),
-        height: Math.floor(entry.contentRect.height),
-      });
-    });
+    const resizeChart = () => {
+      const bounds = ref.current?.getBoundingClientRect();
+      if (!bounds || bounds.width < 20 || bounds.height < 20) return;
+      chart?.applyOptions({ width: Math.floor(bounds.width), height: Math.floor(bounds.height) });
+      chart?.timeScale().fitContent();
+    };
+    const resize = new ResizeObserver(() => requestAnimationFrame(resizeChart));
     resize.observe(ref.current);
+    window.addEventListener("resize", resizeChart);
+    requestAnimationFrame(resizeChart);
 
     return () => {
       resize.disconnect();
+      window.removeEventListener("resize", resizeChart);
       chart?.remove();
     };
   }, deps);

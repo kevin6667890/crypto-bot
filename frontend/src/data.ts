@@ -187,6 +187,20 @@ export async function fetchPaperStatus(): Promise<PaperStatus> {
   return response.json() as Promise<PaperStatus>;
 }
 
+export async function askMarketCopilot(question: string): Promise<string> {
+  if (window.__PAPER_STATUS__) {
+    throw new Error("Interactive Copilot needs a dedicated Paper API URL. Hourly AI briefs still run inside Streamlit.");
+  }
+  const response = await fetch(`${paperApiBase}/api/chat`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ question }),
+  });
+  const payload = (await response.json()) as { answer?: string; error?: string };
+  if (!response.ok || !payload.answer) throw new Error(payload.error || "Copilot did not return an answer.");
+  return payload.answer;
+}
+
 export async function fetchOkxWatchlist(): Promise<WatchlistItem[]> {
   const wanted = ["BTC-USDT", "ETH-USDT", "SOL-USDT", "XRP-USDT", "DOGE-USDT"];
   return Promise.all(wanted.map(async (instrument) => {

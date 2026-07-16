@@ -1,5 +1,5 @@
 import { DependencyList, useEffect, useRef, useState } from "react";
-import { AreaSeries, CandlestickSeries, ColorType, createChart, IChartApi } from "lightweight-charts";
+import { AreaSeries, CandlestickSeries, ColorType, createChart, IChartApi, LineSeries } from "lightweight-charts";
 import { Candle, fetchEthCandles, generateCandles, generateEquityCurve } from "./data";
 
 const chartTheme = {
@@ -48,7 +48,7 @@ function useResponsiveChart(factory: (container: HTMLDivElement) => IChartApi, d
   return ref;
 }
 
-export function MarketChart() {
+export function MarketChart({ instrument = "ETH-USDT", interval = "15m", showBoll = true }: { instrument?: string; interval?: string; showBoll?: boolean }) {
   const [candles, setCandles] = useState<Candle[]>(() => generateCandles());
 
   useEffect(() => {
@@ -56,7 +56,7 @@ export function MarketChart() {
 
     async function loadCandles() {
       try {
-        const liveCandles = await fetchEthCandles("15m", 160);
+        const liveCandles = await fetchEthCandles(interval, 160, instrument);
         if (!cancelled) setCandles(liveCandles);
       } catch {
         if (!cancelled) setCandles(generateCandles());
@@ -70,7 +70,7 @@ export function MarketChart() {
       cancelled = true;
       window.clearInterval(timer);
     };
-  }, []);
+  }, [instrument, interval]);
 
   const ref = useResponsiveChart((container) => {
     const chart = createChart(container, {
@@ -88,6 +88,27 @@ export function MarketChart() {
     });
     try {
       series.setData(candles);
+      const closes = candles.map((c) => c.close);
+      const movingAverage = (period: number) => candles.slice(period - 1).map((c, i) => ({
+        time: c.time,
+        value: closes.slice(i, i + period).reduce((sum, value) => sum + value, 0) / period,
+      }));
+      const ma5 = chart.addSeries(LineSeries, { color: "#f59e0b", lineWidth: 1, priceLineVisible: false });
+      const ma10 = chart.addSeries(LineSeries, { color: "#8b5cf6", lineWidth: 1, priceLineVisible: false });
+      ma5.setData(movingAverage(5));
+      ma10.setData(movingAverage(10));
+      if (showBoll) {
+        const upper = chart.addSeries(LineSeries, { color: "rgba(14, 165, 233, .55)", lineWidth: 1, lineStyle: 2, priceLineVisible: false });
+        const lower = chart.addSeries(LineSeries, { color: "rgba(14, 165, 233, .55)", lineWidth: 1, lineStyle: 2, priceLineVisible: false });
+        const boll = candles.slice(19).map((c, i) => {
+          const sample = closes.slice(i, i + 20);
+          const mean = sample.reduce((sum, value) => sum + value, 0) / sample.length;
+          const deviation = Math.sqrt(sample.reduce((sum, value) => sum + (value - mean) ** 2, 0) / sample.length);
+          return { time: c.time, upper: mean + 2 * deviation, lower: mean - 2 * deviation };
+        });
+        upper.setData(boll.map((point) => ({ time: point.time, value: point.upper })));
+        lower.setData(boll.map((point) => ({ time: point.time, value: point.lower })));
+      }
     } catch {
       series.setData(generateCandles());
     }

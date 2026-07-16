@@ -28,6 +28,26 @@ npm run dev
 ```
 *Note: To run the Streamlit wrapper locally, use `streamlit run dashboard/streamlit_app.py`.*
 
+### Local paper-trading workspace
+
+The frontend can run against OKX public market data without an exchange key. In a
+second terminal start the local paper-trading API, then start Vite as usual:
+
+```bash
+python dashboard/paper_api.py
+cd frontend && npm run dev
+```
+
+The service evaluates multi-timeframe trend, EMA20 pullback, 15m volume and RSI
+once a minute. Only when every entry gate passes does it create a SQLite paper
+position in `data_cache/paper_trades.db`; open positions are checked each cycle
+and automatically closed at their stop-loss or take-profit. It never submits a
+live exchange order or accepts an API key.
+
+When `DEEPSEEK_API_KEY` is present in the server-side `.env`, the same service
+also stores one cautious AI market brief per hour. AI describes the stored
+indicator snapshot only; deterministic rules remain the sole trade trigger.
+
 ## 📈 Strategy Overview
 **Multi-Timeframe EMA20 Pullback**
 - **Trigger:** Score ≥ 70 (based on 4H trend, 1H confirmation, 15m structure)

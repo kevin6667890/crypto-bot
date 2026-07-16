@@ -10,6 +10,7 @@ import {
   RefreshCw,
   ShieldCheck,
   Signal,
+  Settings,
   TerminalSquare,
   Zap,
 } from "lucide-react";
@@ -26,6 +27,10 @@ import {
   headlineMetrics,
   MarketSnapshot,
   SignalAnalysis,
+  WatchlistItem,
+  fetchOkxWatchlist,
+  PaperStatus,
+  fetchPaperStatus,
   strategyComparison,
   strategyEvolution,
 } from "./data";
@@ -525,7 +530,7 @@ function LoginModal({
   );
 }
 
-export default function App() {
+function LegacyApp() {
   const [snapshot, setSnapshot] = useState<MarketSnapshot>(() => demoSnapshot());
   const [loadingMarket, setLoadingMarket] = useState(false);
   const [signal, setSignal] = useState<SignalAnalysis>(demoSignal);
@@ -605,4 +610,105 @@ export default function App() {
       </main>
     </div>
   );
+}
+
+function Workspace() {
+  const [snapshot, setSnapshot] = useState<MarketSnapshot>(() => demoSnapshot());
+  const [signal, setSignal] = useState<SignalAnalysis>(demoSignal);
+  const [watchlist, setWatchlist] = useState<WatchlistItem[]>([]);
+  const [interval, setInterval] = useState("15m");
+  const [showBoll, setShowBoll] = useState(true);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [paper, setPaper] = useState<PaperStatus | null>(null);
+
+  async function refresh() {
+    setLoading(true);
+    try {
+      const [market, analysis, instruments] = await Promise.all([fetchEthSnapshot(), fetchSignalAnalysis(), fetchOkxWatchlist()]);
+      setSnapshot(market);
+      setSignal(analysis);
+      setWatchlist(instruments);
+    } catch {
+      setSnapshot(demoSnapshot());
+    } finally {
+      setLoading(false);
+    }
+    try {
+      setPaper(await fetchPaperStatus());
+    } catch {
+      setPaper(null);
+    }
+  }
+
+  useEffect(() => {
+    refresh();
+    const timer = window.setInterval(refresh, 60_000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const runtimeAnalysis = paper?.analysis;
+  const action = runtimeAnalysis?.action || (signal.score >= 70 ? "WATCH" : "WAIT");
+  const decisionScore = runtimeAnalysis?.score ?? signal.score;
+  const decisionConditions = runtimeAnalysis?.conditions?.map((condition) => ({ ...condition, tone: condition.pass ? "pass" : "watch" as const })) ?? signal.conditions;
+  const risk = snapshot.price * 0.015;
+  return (
+    <div className="workspace">
+      <header className="workspace-topbar">
+        <div className="workspace-brand"><TerminalSquare size={19} /><strong>Crypto-Bot</strong><span>Decision Workspace</span></div>
+        <div className="market-controls">
+          <span className="live-dot" /> <strong>OKX Public Data</strong>
+          <select aria-label="Instrument"><option>ETH-USDT</option></select>
+          <select value={interval} onChange={(event) => setInterval(event.target.value)} aria-label="Chart interval"><option>15m</option><option>1h</option><option>4h</option></select>
+          <button className="icon-button" onClick={refresh} disabled={loading} title="Refresh"><RefreshCw size={15} className={loading ? "spinning" : ""} /></button>
+          <button className="icon-button" onClick={() => setSettingsOpen(true)} title="Settings"><Settings size={16} /></button>
+        </div>
+      </header>
+
+      <div className="workspace-grid">
+        <aside className="watchlist-panel">
+          <div className="section-title"><div><span className="eyebrow">OKX spot</span><h2>Market Scanner</h2></div><span className="count-badge">{watchlist.length || 5}</span></div>
+          <p className="scanner-note">24h momentum · public market feed</p>
+          <div className="scanner-head"><span>Instrument</span><span>24h</span></div>
+          {watchlist.length ? watchlist.map((item) => (
+            <button className={item.instrument === "ETH-USDT" ? "scan-row selected" : "scan-row"} key={item.instrument}>
+              <span><strong>{item.instrument.replace("-USDT", "")}</strong><small>${item.price.toLocaleString(undefined, { maximumFractionDigits: 2 })}</small></span>
+              <b className={item.changePct >= 0 ? "positive" : "negative"}>{formatSigned(item.changePct, "%")}</b>
+            </button>
+          )) : <div className="scanner-loading">Loading OKX watchlist…</div>}
+          <div className="scanner-foot"><span className="pulse" /> Scanner refreshes every 60s</div>
+        </aside>
+
+        <main className="workspace-main">
+          <section className="market-summary">
+            <div><span className="eyebrow">ETH-USDT · OKX spot</span><div className="price-line"><strong>${snapshot.price.toLocaleString(undefined, { maximumFractionDigits: 2 })}</strong><b className={snapshot.changePct >= 0 ? "positive" : "negative"}>{formatSigned(snapshot.changePct, "%")}</b></div><small>Updated {snapshot.updatedAt} · public market data</small></div>
+            <div className="summary-stats"><span><small>24H HIGH</small><b>{snapshot.high24.toFixed(2)}</b></span><span><small>24H LOW</small><b>{snapshot.low24.toFixed(2)}</b></span><span><small>EMA20</small><b>{snapshot.ema20?.toFixed(2) ?? "--"}</b></span></div>
+          </section>
+          <section className="chart-workspace">
+            <div className="chart-toolbar"><div><span className="eyebrow">Live chart</span><h2>Price & Structure</h2></div><div className="indicator-toggles"><button className="active">MA 5</button><button className="active">MA 10</button><button className={showBoll ? "active" : ""} onClick={() => setShowBoll(!showBoll)}>BOLL</button></div></div>
+            <div className="workspace-chart"><MarketChart interval={interval} showBoll={showBoll} /></div>
+            <div className="chart-legend"><span><i className="ma5" /> MA5</span><span><i className="ma10" /> MA10</span><span><i className="boll" /> Bollinger (20,2)</span><span className="muted">CVD / OI require the backend collector</span></div>
+          </section>
+          <section className="ai-brief"><BrainCircuit size={19} /><div><span className="eyebrow">Hourly AI brief · {paper?.ai_brief?.source || "waiting for paper service"}</span><strong>{paper?.ai_brief?.created_at ? `Updated ${new Date(paper.ai_brief.created_at).toLocaleString()}` : "AI analysis is not available yet."}</strong><p>{paper?.ai_brief?.content || "Start the local paper service. When DEEPSEEK_API_KEY is configured on the server, it stores one cautious market summary per hour without controlling trade execution."}</p></div><button className="secondary-btn" disabled>Brief history soon</button></section>
+          <section className="paper-ledger"><div className="section-title"><div><span className="eyebrow">SQLite paper ledger</span><h2>Execution & Results</h2></div>{paper ? <div className="ledger-stats"><span>Open <b>{paper.summary.open}</b></span><span>Win rate <b>{paper.summary.win_rate}%</b></span><span>Total <b className={paper.summary.total_r >= 0 ? "positive" : "negative"}>{formatSigned(paper.summary.total_r, "R")}</b></span></div> : <span className="api-offline">Start paper_api.py to enable</span>}</div>
+            {paper?.open_trades?.length ? <div className="position-list">{paper.open_trades.map((trade) => <div className="position-row" key={trade.id}><span><b className={trade.side === "LONG" ? "positive" : "negative"}>{trade.side}</b> {trade.instrument}</span><span>Entry {trade.entry.toFixed(2)}</span><span>SL {trade.stop_loss.toFixed(2)}</span><span>TP {trade.take_profit.toFixed(2)}</span><small>Opened {new Date(trade.created_at).toLocaleString()}</small></div>)}</div> : <p className="empty-ledger">{paper ? "No open paper position. The rule engine opens one only when trend, pullback, volume and RSI conditions align." : "Local paper API is offline; live market display remains available."}</p>}
+            {paper?.closed_trades?.length ? <div className="closed-trades">{paper.closed_trades.slice(0, 5).map((trade) => <div key={trade.id}><span>#{trade.id} · {trade.side}</span><span>{trade.reason}</span><b className={(trade.pnl_r || 0) >= 0 ? "positive" : "negative"}>{formatSigned(trade.pnl_r || 0, "R")}</b></div>)}</div> : null}
+          </section>
+        </main>
+
+        <aside className="decision-panel">
+          <span className="eyebrow">Rule engine · {runtimeAnalysis ? "Paper service" : signal.source}</span><div className="decision-head"><div><h2>{action}</h2><p>{runtimeAnalysis ? `${runtimeAnalysis.bias || "WAIT"} bias · updated ${runtimeAnalysis.updated_at || "--"}` : signal.title}</p></div><div className="score-box"><strong>{decisionScore}</strong><small>/100</small></div></div>
+          <p className="decision-summary">{runtimeAnalysis ? `Rule score uses multi-timeframe trend, EMA20 pullback, 15m volume and RSI. A paper trade is opened automatically only when all entry gates align.` : signal.summary}</p>
+          <div className="trade-plan"><div><span>Ideal entry</span><b>{snapshot.ema20 ? `${(snapshot.ema20 * 0.997).toFixed(2)} – ${(snapshot.ema20 * 1.003).toFixed(2)}` : "Calculating"}</b></div><div><span>Invalidation</span><b>{(snapshot.price - risk).toFixed(2)}</b></div><div><span>First target</span><b>{(snapshot.price + risk * 2).toFixed(2)}</b></div></div>
+          <div className="rule-list"><span className="eyebrow">Rule checks</span>{decisionConditions.map((condition) => <div className="rule-row" key={condition.label}><span>{condition.label}</span><b className={condition.tone}>{condition.value}</b></div>)}</div>
+          <div className="paper-mode"><ShieldCheck size={17} /><div><strong>Paper trading only</strong><span>No exchange key or live order is used.</span></div></div>
+        </aside>
+      </div>
+      {settingsOpen && <div className="settings-backdrop" onClick={() => setSettingsOpen(false)}><section className="settings-drawer" onClick={(event) => event.stopPropagation()}><div className="section-title"><div><span className="eyebrow">Workspace</span><h2>Settings</h2></div><button className="icon-button" onClick={() => setSettingsOpen(false)}>×</button></div><label>Market source<select><option>OKX Public Market Data</option></select></label><label>Watchlist size<select><option>5 liquid USDT pairs</option></select></label><label>Refresh interval<select><option>60 seconds</option><option>5 minutes</option></select></label><label>AI brief cadence<select><option>Every 1 hour (backend required)</option></select></label><p className="settings-note">API keys are intentionally not accepted by this browser workspace.</p></section></div>}
+    </div>
+  );
+}
+
+export default function App() {
+  return <Workspace />;
 }

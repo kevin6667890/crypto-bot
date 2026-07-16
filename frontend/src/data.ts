@@ -181,16 +181,17 @@ export async function fetchPaperStatus(): Promise<PaperStatus> {
 }
 
 export async function fetchOkxWatchlist(): Promise<WatchlistItem[]> {
-  const response = await fetch("https://www.okx.com/api/v5/market/tickers?instType=SPOT");
-  if (!response.ok) throw new Error(`OKX tickers request failed: ${response.status}`);
-  const payload = (await response.json()) as { data?: Array<{ instId: string; last: string; open24h: string; vol24h: string }> };
   const wanted = ["BTC-USDT", "ETH-USDT", "SOL-USDT", "XRP-USDT", "DOGE-USDT"];
-  return wanted.map((instrument) => {
-    const ticker = payload.data?.find((item) => item.instId === instrument);
-    const price = Number(ticker?.last ?? 0);
-    const open = Number(ticker?.open24h ?? 0);
-    return { instrument, price, volume: Number(ticker?.vol24h ?? 0), changePct: open ? ((price - open) / open) * 100 : 0 };
-  });
+  return Promise.all(wanted.map(async (instrument) => {
+    const response = await fetch(`https://www.okx.com/api/v5/market/ticker?instId=${instrument}`);
+    if (!response.ok) throw new Error(`OKX ${instrument} ticker request failed: ${response.status}`);
+    const payload = (await response.json()) as { data?: Array<{ last: string; open24h: string; vol24h: string }> };
+    const ticker = payload.data?.[0];
+    if (!ticker) throw new Error(`OKX ${instrument} ticker response missing data`);
+    const price = Number(ticker.last);
+    const open = Number(ticker.open24h);
+    return { instrument, price, volume: Number(ticker.vol24h), changePct: open ? ((price - open) / open) * 100 : 0 };
+  }));
 }
 
 export function generateCandles(): Candle[] {

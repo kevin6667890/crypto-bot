@@ -93,8 +93,6 @@ def load_react_bundle(paper_status: dict) -> str:
 
     status_json = json.dumps(paper_status).replace("</", "<\\/")
     html = html.replace("</head>", f"<script>window.__PAPER_STATUS__={status_json};</script></head>")
-    html = html.replace("</body>", "<script>setTimeout(() => window.location.reload(), 60000);</script></body>")
-
     return html
 
 

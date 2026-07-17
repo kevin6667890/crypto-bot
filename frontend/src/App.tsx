@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 import { motion } from "framer-motion";
 import { CSSProperties, useEffect, useState } from "react";
-import { EquityChart, FlowChart, MarketChart } from "./charts";
+import { EquityChart, FlowChart, MarketChart, ReplayChart } from "./charts";
 import {
   demoSnapshot,
   fetchEthSnapshot,
@@ -32,6 +32,10 @@ import {
   askMarketCopilot,
   PaperStatus,
   fetchPaperStatus,
+  fetchReplayItems,
+  fetchReplayDetail,
+  ReplayItem,
+  ReplayDetail,
   strategyComparison,
   strategyEvolution,
 } from "./data";
@@ -614,6 +618,7 @@ function LegacyApp() {
 }
 
 function Workspace() {
+  const engineInstruments = ["BTC-USDT", "ETH-USDT", "SOL-USDT"];
   const [snapshot, setSnapshot] = useState<MarketSnapshot>(() => demoSnapshot());
   const [signal, setSignal] = useState<SignalAnalysis>(demoSignal);
   const [watchlist, setWatchlist] = useState<WatchlistItem[]>([]);
@@ -626,6 +631,9 @@ function Workspace() {
   const [question, setQuestion] = useState("");
   const [chatAnswer, setChatAnswer] = useState("");
   const [chatLoading, setChatLoading] = useState(false);
+  const [replayItems, setReplayItems] = useState<ReplayItem[]>([]);
+  const [replayDetail, setReplayDetail] = useState<ReplayDetail | null>(null);
+  const [replayLoading, setReplayLoading] = useState(false);
 
   async function refresh() {
     setLoading(true);
@@ -643,20 +651,24 @@ function Workspace() {
     } catch {
       setWatchlist((current) => current);
     }
-    try {
-      setPaper(await fetchPaperStatus());
-    } catch {
-      setPaper(null);
-    }
+    if (engineInstruments.includes(instrument)) {
+      try {
+        const [paperStatus, history] = await Promise.all([fetchPaperStatus(instrument), fetchReplayItems(instrument)]);
+        setPaper(paperStatus);
+        setReplayItems(history);
+      } catch { setPaper(null); setReplayItems([]); }
+    } else { setPaper(null); setReplayItems([]); }
   }
 
   useEffect(() => {
+    setReplayDetail(null);
+    setChatAnswer("");
     refresh();
     const timer = window.setInterval(refresh, 60_000);
     return () => window.clearInterval(timer);
   }, [instrument]);
 
-  const runtimeAnalysis = instrument === "ETH-USDT" ? paper?.analysis : null;
+  const runtimeAnalysis = paper?.instrument === instrument ? paper.analysis : null;
   const action = runtimeAnalysis?.action || (signal.score >= 70 ? "WATCH" : "WAIT");
   const decisionScore = runtimeAnalysis?.score ?? signal.score;
   const decisionConditions = runtimeAnalysis?.conditions?.map((condition) => ({ ...condition, tone: condition.pass ? "pass" : "watch" as const })) ?? signal.conditions;
@@ -666,12 +678,19 @@ function Workspace() {
     if (!question.trim()) return;
     setChatLoading(true);
     try {
-      setChatAnswer(await askMarketCopilot(question));
+      setChatAnswer(await askMarketCopilot(question, instrument));
     } catch (error) {
       setChatAnswer(error instanceof Error ? error.message : "Copilot request failed.");
     } finally {
       setChatLoading(false);
     }
+  }
+  async function selectReplay(createdAt: string) {
+    if (!createdAt) { setReplayDetail(null); return; }
+    setReplayLoading(true);
+    try { setReplayDetail(await fetchReplayDetail(instrument, createdAt)); }
+    catch (error) { setChatAnswer(error instanceof Error ? error.message : "Replay request failed."); }
+    finally { setReplayLoading(false); }
   }
   return (
     <div className="workspace">
@@ -710,8 +729,11 @@ function Workspace() {
             <div className="workspace-chart"><MarketChart instrument={instrument} interval={interval} /></div>
             <div className="chart-legend"><span><i className="ma60" /> MA60</span><span><i className="ma200" /> MA200</span><span className="muted">OKX public flow data · CVD is a recent taker-delta proxy</span></div>
           </section>
-          {instrument === "ETH-USDT" && paper?.flow && <section className="flow-panel"><div className="section-title"><div><span className="eyebrow">OKX public derivatives</span><h2>Order Flow & Open Interest</h2></div><small>{paper.flow.source}</small></div><div className="flow-grid"><article><div className="flow-head"><span>CVD · recent 100 trades</span><b className={paper.flow.cvd_delta >= 0 ? "positive" : "negative"}>{paper.flow.cvd_delta >= 0 ? "+" : ""}{paper.flow.cvd_delta.toLocaleString(undefined, { maximumFractionDigits: 0 })}</b></div><FlowChart points={paper.flow.cvd_series} /><small>Signed spot taker notional; positive means buy-side dominance in this sample.</small></article><article><div className="flow-head"><span>SWAP Open Interest</span><b>${paper.flow.oi.toLocaleString(undefined, { maximumFractionDigits: 0 })}</b></div><FlowChart color="#0ea5e9" points={paper.flow.oi_history.map((point, index) => ({ time: Math.floor(new Date(point.created_at).getTime() / 1000) || index, value: point.oi }))} /><small>OKX {instrument.replace("-USDT", "-USDT-SWAP")} public OI; history begins collecting on this server.</small></article></div></section>}
-          <section className="ai-brief"><BrainCircuit size={19} /><div><span className="eyebrow">Hourly AI brief · {paper?.ai_brief?.source || "waiting for paper service"}</span><strong>{paper?.ai_brief?.created_at ? `Updated ${new Date(paper.ai_brief.created_at).toLocaleString()}` : "AI analysis is not available yet."}</strong><p>{paper?.ai_brief?.content || "Start the local paper service. When DEEPSEEK_API_KEY is configured on the server, it stores one cautious market summary per hour without controlling trade execution."}</p></div><button className="secondary-btn" disabled>Brief history soon</button></section>
+          {paper?.flow && <section className="flow-panel"><div className="section-title"><div><span className="eyebrow">OKX public derivatives</span><h2>Order Flow & Open Interest</h2></div><small>{paper.flow.source}</small></div><div className="flow-grid"><article><div className="flow-head"><span>CVD · recent 100 trades</span><b className={paper.flow.cvd_delta >= 0 ? "positive" : "negative"}>{paper.flow.cvd_delta >= 0 ? "+" : ""}{paper.flow.cvd_delta.toLocaleString(undefined, { maximumFractionDigits: 0 })}</b></div><FlowChart points={paper.flow.cvd_series} /><small>Signed spot taker notional; positive means buy-side dominance in this sample.</small></article><article><div className="flow-head"><span>SWAP Open Interest</span><b>${paper.flow.oi.toLocaleString(undefined, { maximumFractionDigits: 0 })}</b></div><FlowChart color="#0ea5e9" points={paper.flow.oi_history.map((point, index) => ({ time: Math.floor(new Date(point.created_at).getTime() / 1000) || index, value: point.oi }))} /><small>OKX {instrument.replace("-USDT", "-USDT-SWAP")} public OI · {paper.flow.oi_change_pct >= 0 ? "+" : ""}{paper.flow.oi_change_pct.toFixed(3)}% since last collection.</small></article></div></section>}
+          {runtimeAnalysis?.contributions && <section className="explain-panel"><div className="section-title"><div><span className="eyebrow">Explainable rule engine</span><h2>Score Contribution</h2></div><b>{runtimeAnalysis.score}/100</b></div><div className="contribution-grid">{runtimeAnalysis.contributions.map((item) => <article key={item.key}><div><strong>{item.label}</strong><span className={item.status}>{item.points}/{item.max}</span></div><div className="contribution-track"><i style={{ width: `${item.points / item.max * 100}%` }} /></div><small>{item.detail}</small></article>)}</div></section>}
+          {engineInstruments.includes(instrument) && <section className="replay-panel"><div className="section-title"><div><span className="eyebrow">Stored decision snapshots</span><h2>Historical Signal Replay</h2></div><select value={replayDetail?.created_at || ""} onChange={(event) => selectReplay(event.target.value)} disabled={replayLoading || !replayItems.length}><option value="">{replayItems.length ? "Choose a snapshot" : "Collecting snapshots…"}</option>{replayItems.map((item) => <option key={item.id} value={item.created_at}>{new Date(item.created_at).toLocaleString()} · {item.analysis.action} · {item.analysis.score}/100</option>)}</select></div>{replayDetail ? <div className="replay-content"><div className="replay-chart"><ReplayChart candles={replayDetail.candles} /></div><div className="replay-facts"><strong>{replayDetail.analysis.action} · {replayDetail.analysis.score}/100</strong><span>{new Date(replayDetail.created_at).toLocaleString()}</span><p>{replayDetail.outcome?.message || "No subsequent execution event stored for this snapshot."}</p>{replayDetail.analysis.contributions?.map((item) => <small key={item.key}>{item.label}: {item.points}/{item.max} · {item.detail}</small>)}</div></div> : <p className="empty-ledger">Select a stored snapshot to restore its 15m candles, indicators, rule score and recorded execution outcome.</p>}</section>}
+          {paper?.events?.length ? <section className="event-panel"><div className="section-title"><div><span className="eyebrow">Auditable engine activity</span><h2>Decision & Trade Log</h2></div><small>{paper.events.length} recent events</small></div><div className="event-list">{paper.events.slice(0, 12).map((event) => <div key={event.id}><time>{new Date(event.created_at).toLocaleString()}</time><b>{event.event_type.replace(/_/g, " ")}</b><span>{event.message}</span></div>)}</div></section> : null}
+          <section className="ai-brief"><BrainCircuit size={19} /><div><span className="eyebrow">Hourly AI brief · {paper?.ai_brief?.source || "waiting for paper service"}</span><strong>{paper?.ai_brief?.created_at ? `Updated ${new Date(paper.ai_brief.created_at).toLocaleString()}` : "AI analysis is not available yet."}</strong><p>{paper?.ai_brief?.content || "The always-on paper service stores one multi-factor market summary per hour."}</p></div><button className="secondary-btn" disabled>Brief history soon</button></section>
           <section className="copilot-panel"><div><span className="eyebrow">Market Copilot · DeepSeek</span><h2>Ask the current market</h2><p>The answer uses the latest OKX indicators, rule score, paper positions and recent outcomes.</p></div><form onSubmit={submitQuestion}><input value={question} onChange={(event) => setQuestion(event.target.value)} placeholder="e.g. Why is the current setup WAIT?" maxLength={1200} /><button className="primary-btn" disabled={chatLoading}>{chatLoading ? "Thinking…" : "Ask Copilot"}</button></form>{chatAnswer && <div className="copilot-answer">{chatAnswer}</div>}</section>
           <section className="paper-ledger"><div className="section-title"><div><span className="eyebrow">SQLite paper ledger</span><h2>Execution & Results</h2></div>{paper ? <div className="ledger-stats"><span>Open <b>{paper.summary.open}</b></span><span>Win rate <b>{paper.summary.win_rate}%</b></span><span>Total <b className={paper.summary.total_r >= 0 ? "positive" : "negative"}>{formatSigned(paper.summary.total_r, "R")}</b></span></div> : <span className="api-offline">Start paper_api.py to enable</span>}</div>
             {paper?.open_trades?.length ? <div className="position-list">{paper.open_trades.map((trade) => <div className="position-row" key={trade.id}><span><b className={trade.side === "LONG" ? "positive" : "negative"}>{trade.side}</b> {trade.instrument}</span><span>Entry {trade.entry.toFixed(2)}</span><span>SL {trade.stop_loss.toFixed(2)}</span><span>TP {trade.take_profit.toFixed(2)}</span><small>Opened {new Date(trade.created_at).toLocaleString()}</small></div>)}</div> : <p className="empty-ledger">{paper ? "No open paper position. The rule engine opens one only when trend, pullback, volume and RSI conditions align." : "Local paper API is offline; live market display remains available."}</p>}
@@ -722,9 +744,10 @@ function Workspace() {
         <aside className="decision-panel">
           <span className="eyebrow">Rule engine · {runtimeAnalysis ? "Paper service" : signal.source}</span><div className="decision-head"><div><h2>{action}</h2><p>{runtimeAnalysis ? `${runtimeAnalysis.bias || "WAIT"} bias · updated ${runtimeAnalysis.updated_at || "--"}` : signal.title}</p></div><div className="score-box"><strong>{decisionScore}</strong><small>/100</small></div></div>
           <p className="decision-summary">{runtimeAnalysis ? `Rule score uses multi-timeframe trend, EMA20 pullback, 15m volume, RSI and public order flow. A paper trade opens only when all entry gates align.` : signal.summary}</p>
-          {runtimeAnalysis?.timeframes && <div className="timeframe-table"><span className="eyebrow">EMA20 structure</span>{Object.entries(runtimeAnalysis.timeframes).map(([frame, value]) => <div key={frame}><b>{frame}</b><span className={value.trend === "Bullish" ? "positive" : value.trend === "Bearish" ? "negative" : "watch"}>{value.trend}</span><small>{value.ema20_slope_pct >= 0 ? "+" : ""}{value.ema20_slope_pct.toFixed(3)}%</small></div>)}</div>}
+          {runtimeAnalysis?.timeframes && <div className="timeframe-table"><span className="eyebrow">MA60 / MA200 + EMA20 slope</span>{Object.entries(runtimeAnalysis.timeframes).map(([frame, value]) => <div key={frame}><b>{frame}</b><span className={value.trend === "Bullish" ? "positive" : value.trend === "Bearish" ? "negative" : "watch"}>{value.trend}</span><small>{value.ema20_slope_pct >= 0 ? "+" : ""}{value.ema20_slope_pct.toFixed(3)}%</small></div>)}</div>}
           <div className="trade-plan"><div><span>Ideal entry</span><b>{snapshot.ema20 ? `${(snapshot.ema20 * 0.997).toFixed(2)} – ${(snapshot.ema20 * 1.003).toFixed(2)}` : "Calculating"}</b></div><div><span>Invalidation</span><b>{(snapshot.price - risk).toFixed(2)}</b></div><div><span>First target</span><b>{(snapshot.price + risk * 2).toFixed(2)}</b></div></div>
           <div className="rule-list"><span className="eyebrow">Rule checks</span>{decisionConditions.map((condition) => <div className="rule-row" key={condition.label}><span>{condition.label}</span><b className={condition.tone}>{condition.value}</b></div>)}</div>
+          {paper?.risk && <div className={`risk-console ${paper.risk.allowed ? "safe" : "blocked"}`}><span className="eyebrow">Risk controls</span><div><span>Portfolio positions</span><b>{paper.risk.open_positions}/{paper.risk.max_open_positions}</b></div><div><span>Daily P&amp;L</span><b>{formatSigned(paper.risk.daily_pnl_r, "R")}</b></div><div><span>Consecutive losses</span><b>{paper.risk.consecutive_losses}/{paper.risk.max_consecutive_losses}</b></div><p>{paper.risk.allowed ? "New paper entries are permitted." : `Blocked: ${paper.risk.blockers.join(", ")}`}</p></div>}
           <div className="paper-mode"><ShieldCheck size={17} /><div><strong>Paper trading only</strong><span>No exchange key or live order is used.</span></div></div>
         </aside>
       </div> : <section className="research-suite">

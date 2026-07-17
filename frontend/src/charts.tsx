@@ -75,7 +75,7 @@ export function MarketChart({ instrument = "ETH-USDT", interval = "15m" }: { ins
 
     async function loadCandles() {
       try {
-        const liveCandles = await fetchEthCandles(interval, 260, instrument);
+        const liveCandles = await fetchEthCandles(interval, 500, instrument);
         if (!cancelled) setCandles(liveCandles);
       } catch {
         if (!cancelled) setCandles(generateCandles());
@@ -106,7 +106,8 @@ export function MarketChart({ instrument = "ETH-USDT", interval = "15m" }: { ins
       wickDownColor: "#f6465d",
     });
     try {
-      series.setData(candles);
+      const visibleCandles = candles.slice(-260);
+      series.setData(visibleCandles);
       const closes = candles.map((c) => c.close);
       const movingAverage = (period: number) => candles.slice(period - 1).map((c, i) => ({
         time: c.time,
@@ -114,8 +115,8 @@ export function MarketChart({ instrument = "ETH-USDT", interval = "15m" }: { ins
       }));
       const ma60 = chart.addSeries(LineSeries, { color: "#f59e0b", lineWidth: 2, priceLineVisible: false });
       const ma200 = chart.addSeries(LineSeries, { color: "#7c3aed", lineWidth: 2, priceLineVisible: false });
-      ma60.setData(movingAverage(60));
-      ma200.setData(movingAverage(200));
+      ma60.setData(movingAverage(60).slice(-260));
+      ma200.setData(movingAverage(200).slice(-260));
     } catch {
       series.setData(generateCandles());
     }
@@ -124,6 +125,17 @@ export function MarketChart({ instrument = "ETH-USDT", interval = "15m" }: { ins
   }, [candles]);
 
   return <div className="chart-canvas" ref={ref} />;
+}
+
+export function ReplayChart({ candles }: { candles: Candle[] }) {
+  const ref = useResponsiveChart((container) => {
+    const chart = createChart(container, { ...chartTheme, width: container.clientWidth, height: container.clientHeight });
+    const series = chart.addSeries(CandlestickSeries, { upColor: "#00b37e", downColor: "#f6465d", borderVisible: false, wickUpColor: "#00b37e", wickDownColor: "#f6465d" });
+    series.setData(candles);
+    chart.timeScale().fitContent();
+    return chart;
+  }, [candles]);
+  return <div className="replay-canvas" ref={ref} />;
 }
 
 export function EquityChart() {

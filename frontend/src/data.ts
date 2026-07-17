@@ -172,7 +172,14 @@ export type SignalAnalysis = {
 
 export type WatchlistItem = { instrument: string; price: number; changePct: number; volume: number };
 export type PaperTrade = { id: number; instrument: string; side: "LONG" | "SHORT"; entry: number; stop_loss: number; take_profit: number; status: string; exit_price?: number; pnl_r?: number; reason?: string; created_at: string; closed_at?: string };
-export type PaperStatus = { analysis: { action?: string; bias?: string; score?: number; price?: number; ema20?: number; rsi14?: number; atr14?: number; volume_ratio?: number; conditions?: Array<{ label: string; value: string; pass: boolean }>; timeframes?: Record<string, { trend: string; ema20_slope_pct: number }>; updated_at?: string }; flow?: { cvd: number; cvd_delta: number; cvd_series: Array<{ time: number; value: number }>; oi: number; oi_history: Array<{ created_at: string; oi: number; cvd: number }>; source: string } | null; open_trades: PaperTrade[]; closed_trades: PaperTrade[]; ai_brief: { created_at: string; content: string; source: string } | null; summary: { open: number; closed: number; wins: number; win_rate: number; total_r: number } };
+export type ScoreContribution = { key: string; label: string; points: number; max: number; status: "pass" | "watch" | "fail"; detail: string };
+export type RuntimeAnalysis = { instrument?: string; action?: string; bias?: string; score?: number; price?: number; ema20?: number; rsi14?: number; atr14?: number; volume_ratio?: number; conditions?: Array<{ label: string; value: string; pass: boolean }>; contributions?: ScoreContribution[]; timeframes?: Record<string, { trend: string; ema20_slope_pct: number; ma60: number; ma200: number }>; updated_at?: string };
+export type FlowStatus = { cvd: number; cvd_delta: number; cvd_series: Array<{ time: number; value: number }>; oi: number; oi_change_pct: number; oi_history: Array<{ created_at: string; oi: number; cvd: number }>; source: string };
+export type RiskStatus = { allowed: boolean; blockers: string[]; open_positions: number; max_open_positions: number; daily_pnl_r: number; daily_loss_limit_r: number; consecutive_losses: number; max_consecutive_losses: number; cooldown_until?: string | null };
+export type EventLog = { id: number; created_at: string; event_type: string; message: string; payload: string };
+export type ReplayItem = { id: number; created_at: string; analysis: RuntimeAnalysis };
+export type ReplayDetail = { id: number; created_at: string; analysis: RuntimeAnalysis; candles: Candle[]; outcome?: { event_type: string; message: string } | null };
+export type PaperStatus = { instrument: string; analysis: RuntimeAnalysis; flow?: FlowStatus | null; risk: RiskStatus; events: EventLog[]; open_trades: PaperTrade[]; closed_trades: PaperTrade[]; ai_brief: { created_at: string; content: string; source: string } | null; summary: { open: number; closed: number; wins: number; win_rate: number; total_r: number } };
 
 declare global {
   interface Window { __PAPER_STATUS__?: PaperStatus; __PAPER_API_URL__?: string; }
@@ -180,22 +187,36 @@ declare global {
 
 const paperApiBase = (window.__PAPER_API_URL__ || import.meta.env.VITE_PAPER_API_URL || "").replace(/\/$/, "");
 
-export async function fetchPaperStatus(): Promise<PaperStatus> {
+export async function fetchPaperStatus(instrument = "ETH-USDT"): Promise<PaperStatus> {
   if (window.__PAPER_STATUS__) return window.__PAPER_STATUS__;
-  const response = await fetch(`${paperApiBase}/api/status`);
+  const response = await fetch(`${paperApiBase}/api/status?instrument=${encodeURIComponent(instrument)}`);
   if (!response.ok) throw new Error(`Paper API request failed: ${response.status}`);
   return response.json() as Promise<PaperStatus>;
 }
 
-export async function askMarketCopilot(question: string): Promise<string> {
+export async function askMarketCopilot(question: string, instrument = "ETH-USDT"): Promise<string> {
   const response = await fetch(`${paperApiBase}/api/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ question }),
+    body: JSON.stringify({ question, instrument }),
   });
   const payload = (await response.json()) as { answer?: string; error?: string };
   if (!response.ok || !payload.answer) throw new Error(payload.error || "Copilot did not return an answer.");
   return payload.answer;
+}
+
+export async function fetchReplayItems(instrument: string): Promise<ReplayItem[]> {
+  const response = await fetch(`${paperApiBase}/api/replay?instrument=${encodeURIComponent(instrument)}`);
+  if (!response.ok) throw new Error(`Replay request failed: ${response.status}`);
+  const payload = await response.json() as { items?: ReplayItem[] };
+  return payload.items || [];
+}
+
+export async function fetchReplayDetail(instrument: string, at: string): Promise<ReplayDetail> {
+  const response = await fetch(`${paperApiBase}/api/replay?instrument=${encodeURIComponent(instrument)}&at=${encodeURIComponent(at)}`);
+  const payload = await response.json() as ReplayDetail & { error?: string };
+  if (!response.ok || payload.error) throw new Error(payload.error || `Replay request failed: ${response.status}`);
+  return payload;
 }
 
 export async function fetchOkxWatchlist(): Promise<WatchlistItem[]> {
@@ -347,17 +368,24 @@ async function fetchOkxSnapshot(instrument = "ETH-USDT"): Promise<MarketSnapshot
 
 async function fetchOkxCandles(interval = "15m", limit = 160, instrument = "ETH-USDT"): Promise<Candle[]> {
   const bar = normalizeOkxBar(interval);
-  const response = await fetch(
-    `https://www.okx.com/api/v5/market/candles?instId=${instrument}&bar=${bar}&limit=${limit}`,
-  );
-  if (!response.ok) {
-    throw new Error(`OKX candles request failed: ${response.status}`);
+  const rows = new Map<number, string[]>();
+  let after: string | undefined;
+  while (rows.size < limit) {
+    const pageSize = Math.min(300, limit - rows.size);
+    const endpoint = after ? "history-candles" : "candles";
+    const cursor = after ? `&after=${after}` : "";
+    const response = await fetch(`https://www.okx.com/api/v5/market/${endpoint}?instId=${instrument}&bar=${bar}&limit=${pageSize}${cursor}`);
+    if (!response.ok) throw new Error(`OKX candles request failed: ${response.status}`);
+    const payload = await response.json() as { data?: string[][] };
+    if (!payload.data?.length) break;
+    const previousSize = rows.size;
+    payload.data.forEach((row) => rows.set(Number(row[0]), row));
+    after = payload.data[payload.data.length - 1][0];
+    if (rows.size === previousSize || payload.data.length < pageSize) break;
   }
-  const payload = (await response.json()) as {
-    data?: string[][];
-  };
-  if (!payload.data) throw new Error("OKX candles response missing data");
-  return payload.data
+  return [...rows.values()]
+    .sort((a, b) => Number(a[0]) - Number(b[0]))
+    .slice(-limit)
     .map((row) => ({
       time: Math.floor(Number(row[0]) / 1000) as UTCTimestamp,
       open: Number(row[1]),
@@ -365,8 +393,7 @@ async function fetchOkxCandles(interval = "15m", limit = 160, instrument = "ETH-
       low: Number(row[3]),
       close: Number(row[4]),
       volume: Number(row[5]),
-    }))
-    .reverse();
+    }));
 }
 
 export function demoSnapshot(): MarketSnapshot {

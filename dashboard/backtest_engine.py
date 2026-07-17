@@ -9,12 +9,12 @@ try:
     from metrics import calculate_metrics, monthly_returns
     from okx_history import TIMEFRAME_SECONDS
     from strategy_rules import StrategyParameters, calculate_indicators, evaluate_signal
-    from decision_engine import TimeframeContext, HISTORICAL_STRATEGY_VERSION
+    from decision_engine import RiskContext, TimeframeContext, HISTORICAL_STRATEGY_VERSION
 except ImportError:
     from .metrics import calculate_metrics, monthly_returns
     from .okx_history import TIMEFRAME_SECONDS
     from .strategy_rules import StrategyParameters, calculate_indicators, evaluate_signal
-    from .decision_engine import TimeframeContext, HISTORICAL_STRATEGY_VERSION
+    from .decision_engine import RiskContext, TimeframeContext, HISTORICAL_STRATEGY_VERSION
 
 
 def _iso(ts: int) -> str:
@@ -113,7 +113,8 @@ def run_backtest(
                     row=rows[pointer]; frames[frame]={"candle_close_ts":row["candle_close_ts"],"close":row["close"],"fast_ma":row["fast_ma"],"slow_ma":row["slow_ma"]}
             required=("1H","4H")+(("1D",) if parameters.enable_daily_context else ())
             tf_context=TimeframeContext(frames,required,parameters.enable_daily_context,"multi-timeframe")
-        signal = evaluate_signal(signal_candle, indicators[index], parameters, instrument=instrument, timeframe=timeframe,timeframe_context=tf_context,strategy_version=HISTORICAL_STRATEGY_VERSION if tf_context else None)
+        execution_risk = RiskContext(True, (), 1 if position else 0, 0.0, index > cooldown_until_index, position is None and pending is None)
+        signal = evaluate_signal(signal_candle, indicators[index], parameters, instrument=instrument, timeframe=timeframe,timeframe_context=tf_context,strategy_version=HISTORICAL_STRATEGY_VERSION if tf_context else None,risk_context=execution_risk)
         if signal["warmed"]:
             decisions.append(signal)
         if signal["action"] != "WAIT" and index + 1 < len(candles) and int(candles[index + 1]["ts"]) <= end_ts:

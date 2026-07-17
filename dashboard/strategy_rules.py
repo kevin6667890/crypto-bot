@@ -6,9 +6,9 @@ from dataclasses import asdict, dataclass
 from typing import Any, Iterable
 
 try:
-    from decision_engine import FlowContext, MarketContext, TimeframeContext, evaluate_decision
+    from decision_engine import FlowContext, MarketContext, RiskContext, TimeframeContext, evaluate_decision
 except ImportError:
-    from .decision_engine import FlowContext, MarketContext, TimeframeContext, evaluate_decision
+    from .decision_engine import FlowContext, MarketContext, RiskContext, TimeframeContext, evaluate_decision
 
 
 @dataclass(frozen=True)
@@ -134,13 +134,15 @@ def score_rule_components(has_trend: bool, pullback: bool, momentum: bool, flow_
 
 def evaluate_signal(candle: dict[str, Any], indicators: dict[str, float | None], parameters: StrategyParameters,
                     flow_delta: float | None = None, instrument: str = "UNKNOWN", timeframe: str = "15m",
-                    timeframe_context: TimeframeContext | None = None, strategy_version: str | None = None) -> dict[str, Any]:
+                    timeframe_context: TimeframeContext | None = None, strategy_version: str | None = None,
+                    risk_context: RiskContext | None = None) -> dict[str, Any]:
     """Compatibility adapter; all decisions are produced by evaluate_decision."""
     decision = evaluate_decision(
         parameters,
         MarketContext(instrument, timeframe, int(candle.get("candle_close_ts", candle.get("ts", 0))), float(candle["close"]), indicators),
         timeframe_context,
         FlowContext(flow_delta is not None, flow_delta),
+        risk_context,
         strategy_version=strategy_version,
     ).to_dict()
     decision["atr"] = indicators.get("atr")

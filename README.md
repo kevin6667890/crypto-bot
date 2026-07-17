@@ -46,6 +46,13 @@ complete historical order-flow measure and is labelled accordingly.
 - IS/OOS validation, rolling walk-forward stability and Paper reconciliation
 - Responsive equity, drawdown, candle/execution, R-distribution, monthly-return
   and long/short diagnostics
+- Gate funnel statistics from complete canonical decision payloads, explainable
+  near misses and conservative counterfactual outcomes
+- Bounded OAT/2D sensitivity, comparable benchmarks, reproducible Monte Carlo
+  and bootstrap stress tests in the persistent single-worker queue
+- Isolated restart-safe Shadow candidates and an evidence-based, audited
+  strategy lifecycle with manual-only Active promotion and rollback
+- Causal deterministic market regimes stored with new decisions
 
 Historical CVD and OI are not reconstructed because the required historical
 samples are not reliably available from the endpoints used here. The backtest
@@ -117,6 +124,14 @@ Factor and empty-trade results.
 - `GET /api/reconciliation?run_id={id}`
 - `POST /api/portfolio/run`
 - `GET /api/portfolio/{id}`
+- `GET /api/validation/gates`
+- `POST /api/validation/gates/run`
+- `GET /api/near-misses`
+- `POST /api/sensitivity/run`
+- `POST /api/benchmarks/run`
+- `POST /api/robustness/run`
+- `GET|POST /api/shadow-strategies`
+- `GET /api/strategy-lifecycle`
 - `GET /api/health`
 - `GET /api/health/details`
 - `GET /api/jobs`

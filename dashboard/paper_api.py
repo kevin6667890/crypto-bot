@@ -18,12 +18,26 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 from urllib.request import Request, urlopen
 
-from research_service import ResearchService
-from strategy_rules import StrategyParameters, calculate_indicators
-from decision_engine import FlowContext, MarketContext, RiskContext, TimeframeContext, evaluate_decision, LIVE_STRATEGY_VERSION
-from alert_service import AlertService
-from health_service import HealthService, configure_logging, log_event
-from rate_limit import RateLimiter
+try:
+    from research_service import ResearchService
+    from strategy_rules import StrategyParameters, calculate_indicators, validate_parameters
+    from decision_engine import FlowContext, MarketContext, RiskContext, TimeframeContext, evaluate_decision, LIVE_STRATEGY_VERSION
+    from alert_service import AlertService
+    from health_service import HealthService, configure_logging, log_event
+    from rate_limit import RateLimiter
+    from validation_service import ValidationService
+    from shadow_service import ShadowService
+    from lifecycle_service import LifecycleService
+except ImportError:
+    from .research_service import ResearchService
+    from .strategy_rules import StrategyParameters, calculate_indicators, validate_parameters
+    from .decision_engine import FlowContext, MarketContext, RiskContext, TimeframeContext, evaluate_decision, LIVE_STRATEGY_VERSION
+    from .alert_service import AlertService
+    from .health_service import HealthService, configure_logging, log_event
+    from .rate_limit import RateLimiter
+    from .validation_service import ValidationService
+    from .shadow_service import ShadowService
+    from .lifecycle_service import LifecycleService
 
 try:
     from dotenv import load_dotenv
@@ -160,7 +174,7 @@ class PaperService:
         c15=datasets["15m"]
         if not c15: raise RuntimeError("No confirmed 15m candle is available")
         self._store_candles(instrument,c15)
-        params=StrategyParameters(); ind15=calculate_indicators(c15,params)[-1]; execution=c15[-1]; close_ts=int(execution["candle_close_ts"])
+        params,active_version=self._active_strategy(); ind15=calculate_indicators(c15,params)[-1]; execution=c15[-1]; close_ts=int(execution["candle_close_ts"])
         frames={}
         for frame in ("1H","4H","1D"):
             eligible=[row for row in datasets[frame] if int(row["candle_close_ts"])<=close_ts]
@@ -168,16 +182,24 @@ class PaperService:
             values=calculate_indicators(eligible,params)[-1]; row=eligible[-1]
             frames[frame]={"candle_close_ts":int(row["candle_close_ts"]),"close":row["close"],"fast_ma":values["fast_ma"],"slow_ma":values["slow_ma"],"trend":"Bullish" if values["fast_ma"] and values["slow_ma"] and row["close"]>values["fast_ma"]>values["slow_ma"] else "Bearish" if values["fast_ma"] and values["slow_ma"] and row["close"]<values["fast_ma"]<values["slow_ma"] else "Mixed","ema20_slope_pct":0.0,"ma60":values["fast_ma"],"ma200":values["slow_ma"]}
         risk=self.risk_state(instrument)
-        decision=evaluate_decision(params,MarketContext(instrument,"15m",close_ts,float(execution["close"]),ind15,"OKX","public-confirmed-live-v1"),TimeframeContext(frames,("1H","4H"),False,"multi-timeframe"),FlowContext(True,float(flow.get("cvd_delta",0)),float(flow.get("oi_change_pct",0)),flow.get("source")),RiskContext(bool(risk["allowed"]),tuple(risk["blockers"]),int(risk["open_positions"]),0),LIVE_STRATEGY_VERSION).to_dict()
+        decision=evaluate_decision(params,MarketContext(instrument,"15m",close_ts,float(execution["close"]),ind15,"OKX","public-confirmed-live-v1"),TimeframeContext(frames,("1H","4H"),False,"multi-timeframe"),FlowContext(True,float(flow.get("cvd_delta",0)),float(flow.get("oi_change_pct",0)),flow.get("source")),RiskContext(bool(risk["allowed"]),tuple(risk["blockers"]),int(risk["open_positions"]),0,bool(risk.get("cooldown_clear",True)),bool(risk.get("existing_position_clear",True))),active_version).to_dict()
         for item in decision["contributions"]:
             item["detail"]={"trend":"1H + 4H confirmed trend alignment","structure":"MA60 / MA200 structure","pullback":f"{decision.get('decision_input_summary',{}).get('close',0):.2f} close vs EMA20","momentum":f"Volume {ind15.get('volume_ratio') or 0:.2f}x · RSI {ind15.get('rsi') or 0:.1f}","flow":f"CVD {flow.get('cvd_delta',0):+.0f} · OI {flow.get('oi_change_pct',0):+.3f}%"}.get(item["key"],item["label"])
         distance_pct=(float(execution["close"])-float(ind15["ema"]))/float(ind15["ema"])*100 if ind15.get("ema") else None
         analysis={**decision,"price":round(float(execution["close"]),4),"ema20":ind15["ema"],"rsi14":ind15["rsi"],"atr14":ind15["atr"],"volume_ratio":ind15["volume_ratio"],"distance_ema20_pct":distance_pct,"timeframes":{"15m":{"trend":decision["bias"],"ma60":ind15["fast_ma"],"ma200":ind15["slow_ma"],"ema20_slope_pct":0},**frames},"flow":flow,"conditions":[{"label":x["label"],"value":x["detail"],"pass":x["status"]=="pass"} for x in decision["contributions"]],"updated_at":now_iso()}
         with self._connect() as conn:
             conn.execute("INSERT INTO analysis_snapshots(created_at,instrument,payload) VALUES(?,?,?)",(analysis["updated_at"],instrument,json.dumps(analysis)))
-            conn.execute("""INSERT OR IGNORE INTO decision_signals(signal_id,source,instrument,execution_timeframe,candle_close_ts,strategy_version,config_hash,action,bias,score,decision_payload,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",(decision["signal_id"],"PAPER",instrument,"15m",close_ts,decision["strategy_version"],decision["config_hash"],decision["action"],decision["bias"],decision["score"],json.dumps(decision),analysis["updated_at"]))
+            conn.execute("""INSERT OR IGNORE INTO decision_signals(signal_id,source,instrument,execution_timeframe,candle_close_ts,strategy_version,config_hash,action,bias,score,decision_payload,created_at,regime,regime_version,gate_payload) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",(decision["signal_id"],"PAPER",instrument,"15m",close_ts,decision["strategy_version"],decision["config_hash"],decision["action"],decision["bias"],decision["score"],json.dumps(decision),analysis["updated_at"],decision["regime"],decision["regime_version"],json.dumps(decision["gate_results"])))
+        shadow=globals().get("SHADOW")
+        if shadow:shadow.process_market(instrument,datasets,flow)
         self.last_analysis[instrument]=analysis
         return analysis
+
+    def _active_strategy(self) -> tuple[StrategyParameters, str]:
+        with self._connect() as conn:
+            if not conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='strategy_lifecycle'").fetchone():return StrategyParameters(),LIVE_STRATEGY_VERSION
+            row=conn.execute("SELECT sc.parameters,sl.strategy_version FROM strategy_lifecycle sl JOIN strategy_configs sc ON sc.id=sl.strategy_config_id WHERE sl.status='Active' LIMIT 1").fetchone()
+        return (validate_parameters(json.loads(row["parameters"])),str(row["strategy_version"])) if row else (StrategyParameters(),LIVE_STRATEGY_VERSION)
 
     def risk_state(self, instrument: str) -> dict[str, Any]:
         day_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
@@ -198,12 +220,14 @@ class PaperService:
         if today_r <= MAX_DAILY_LOSS_R: blockers.append("daily loss limit")
         if consecutive >= MAX_CONSECUTIVE_LOSSES: blockers.append("consecutive loss limit")
         if cooldown_until and cooldown_until > datetime.now(timezone.utc): blockers.append("instrument cooldown")
+        with self._connect() as conn:
+            instrument_open = bool(conn.execute("SELECT 1 FROM paper_trades WHERE instrument=? AND status='OPEN'", (instrument,)).fetchone())
         alerts=globals().get("ALERTS")
         if alerts:
             for condition,kind,key,message in ((today_r<=MAX_DAILY_LOSS_R,"Daily Loss Limit",f"daily-loss|{instrument}",f"{instrument} daily paper result reached {today_r:.2f}R"),(consecutive>=MAX_CONSECUTIVE_LOSSES,"Consecutive Loss Limit",f"consecutive-loss|{instrument}",f"{instrument} reached {consecutive} consecutive paper losses")):
                 if condition:alerts.raise_alert(kind,"critical","paper_risk",message,instrument,key=key)
                 else:alerts.resolve(key)
-        return {"allowed": not blockers, "blockers": blockers, "open_positions": open_total, "max_open_positions": MAX_OPEN_POSITIONS, "daily_pnl_r": round(today_r, 2), "daily_loss_limit_r": MAX_DAILY_LOSS_R, "consecutive_losses": consecutive, "max_consecutive_losses": MAX_CONSECUTIVE_LOSSES, "cooldown_until": cooldown_until.isoformat() if cooldown_until else None}
+        return {"allowed": not blockers, "blockers": blockers, "open_positions": open_total, "max_open_positions": MAX_OPEN_POSITIONS, "daily_pnl_r": round(today_r, 2), "daily_loss_limit_r": MAX_DAILY_LOSS_R, "consecutive_losses": consecutive, "max_consecutive_losses": MAX_CONSECUTIVE_LOSSES, "cooldown_until": cooldown_until.isoformat() if cooldown_until else None, "cooldown_clear": not (cooldown_until and cooldown_until > datetime.now(timezone.utc)), "existing_position_clear": not instrument_open}
 
     def _open_trade(self, analysis: dict[str, Any]) -> None:
         instrument = analysis["instrument"]
@@ -345,6 +369,10 @@ class PaperService:
 SERVICE = PaperService()
 RESEARCH = ResearchService(DB_PATH)
 ALERTS = AlertService(DB_PATH)
+VALIDATION = ValidationService(RESEARCH)
+SHADOW = ShadowService(VALIDATION.repository)
+SHADOW.ensure_default_candidates()
+LIFECYCLE = LifecycleService(VALIDATION.repository, ALERTS)
 HEALTH = HealthService(DB_PATH,SERVICE,RESEARCH.jobs,ALERTS,ROOT)
 LIMITER = RateLimiter()
 LOGGER = configure_logging(ROOT)
@@ -386,10 +414,37 @@ class Handler(BaseHTTPRequestHandler):
         instrument = query.get("instrument", ["ETH-USDT"])[0]
         if parsed.path == "/api/status": self._send(SERVICE.status(instrument))
         elif parsed.path == "/api/health": self._send(HEALTH.payload(False))
-        elif parsed.path == "/api/health/details": self._send(HEALTH.payload(True))
+        elif parsed.path == "/api/health/details":
+            details=HEALTH.payload(True); shadows=SHADOW.list(); counts=VALIDATION.repository.table_counts(); details.update({"shadow_scheduler_status":"running","active_shadow_strategies":sum(x["status"]=="RUNNING" for x in shadows),"validation_job_types":["GATE_ANALYSIS","SENSITIVITY","BENCHMARK","ROBUSTNESS"],"phase4_database_rows":sum(counts.get(name,0) for name in counts if name.startswith(("gate_","near_","sensitivity_","benchmark_","robustness_","shadow_","strategy_lifecycle","promotion_","strategy_audit"))),"promotion_audit_alerts":sum(str(x.get("severity","")).lower()=="critical" and str(x.get("status","")).lower()=="open" for x in ALERTS.list())});self._send(details)
         elif parsed.path == "/api/jobs": self._send({"items":RESEARCH.jobs.list(int(query.get("limit",["100"])[0]))})
         elif parsed.path == "/api/alerts": self._send({"items":ALERTS.list()})
         elif parsed.path == "/api/data-coverage": self._send({"items":RESEARCH.repository.data_coverage()})
+        elif parsed.path == "/api/validation/gates":
+            try:self._send(VALIDATION.gates(int(query["run_id"][0]) if query.get("run_id") else None,{key:value[0] for key,value in query.items() if key!="run_id"}))
+            except ValueError as error:self._send({"error":str(error)},HTTPStatus.NOT_FOUND)
+        elif parsed.path in {"/api/validation/gates/timeline","/api/validation/score-distribution"}:
+            result=VALIDATION.gates(int(query["run_id"][0]) if query.get("run_id") else None,{key:value[0] for key,value in query.items() if key!="run_id"}); key="daily_rejection_timeline" if parsed.path.endswith("timeline") else "score_distribution"; source=result.get("summary",result);self._send({"items":source.get(key,[])})
+        elif parsed.path == "/api/near-misses": self._send(VALIDATION.repository.near_misses({key:value[0] for key,value in query.items()},int(query.get("page",["1"])[0]),int(query.get("page_size",["50"])[0])))
+        elif parsed.path.startswith("/api/near-misses/"):
+            try:
+                item=VALIDATION.repository.near_miss(int(parsed.path.split("/")[3])); self._send((item.get("outcome") if parsed.path.endswith("/outcome") and item else item) or {"error":"Near miss not found"},HTTPStatus.OK if item else HTTPStatus.NOT_FOUND)
+            except (ValueError,IndexError):self._send({"error":"Invalid near miss id"},HTTPStatus.BAD_REQUEST)
+        elif parsed.path.startswith("/api/sensitivity/"):
+            try:self._send(VALIDATION.sensitivity(int(parsed.path.split("/")[3]),int(query.get("page",["1"])[0]),int(query.get("page_size",["100"])[0])))
+            except ValueError as error:self._send({"error":str(error)},HTTPStatus.NOT_FOUND)
+        elif parsed.path.startswith("/api/benchmarks/"):
+            try:self._send(VALIDATION.benchmark(int(parsed.path.split("/")[3])))
+            except ValueError as error:self._send({"error":str(error)},HTTPStatus.NOT_FOUND)
+        elif parsed.path.startswith("/api/robustness/"):
+            try:self._send(VALIDATION.robustness(int(parsed.path.split("/")[3])))
+            except ValueError as error:self._send({"error":str(error)},HTTPStatus.NOT_FOUND)
+        elif parsed.path == "/api/shadow-strategies": self._send({"items":SHADOW.list()})
+        elif parsed.path.startswith("/api/shadow-strategies/") and parsed.path.endswith("/trades"): self._send({"items":SHADOW.trades(parsed.path.split("/")[3],int(query.get("limit",["100"])[0]))})
+        elif parsed.path.startswith("/api/shadow-strategies/") and parsed.path.endswith("/equity"): self._send({"items":SHADOW.equity(parsed.path.split("/")[3],int(query.get("limit",["1000"])[0]))})
+        elif parsed.path == "/api/strategy-lifecycle": self._send({"items":LIFECYCLE.list(),"policy_version":"promotion-policy-v1"})
+        elif parsed.path.startswith("/api/strategy-lifecycle/") and parsed.path.endswith("/audit"):
+            try:self._send({"items":LIFECYCLE.audit(int(parsed.path.split("/")[3]))})
+            except ValueError:self._send({"error":"Invalid lifecycle id"},HTTPStatus.BAD_REQUEST)
         elif parsed.path.startswith("/api/portfolio/"):
             try:
                 item=RESEARCH.repository.portfolio_run(int(parsed.path.rsplit("/",1)[1])); self._send(item if item else {"error":"Portfolio run not found"},HTTPStatus.OK if item else HTTPStatus.NOT_FOUND)
@@ -416,6 +471,36 @@ class Handler(BaseHTTPRequestHandler):
         payload=self._body()
         if payload is None:return
         if parsed.path == "/api/cycle": self._send(SERVICE.cycle())
+        elif parsed.path == "/api/validation/gates/run":
+            if not self._admin():return
+            try:self._send(VALIDATION.start_gates(payload,self._client()),HTTPStatus.ACCEPTED)
+            except (ValueError,OverflowError) as error:self._send({"error":str(error)},HTTPStatus.BAD_REQUEST if isinstance(error,ValueError) else HTTPStatus.TOO_MANY_REQUESTS)
+        elif parsed.path == "/api/sensitivity/run":
+            if not self._admin():return
+            try:self._send(VALIDATION.start_sensitivity(payload,self._client()),HTTPStatus.ACCEPTED)
+            except (ValueError,OverflowError) as error:self._send({"error":str(error)},HTTPStatus.BAD_REQUEST if isinstance(error,ValueError) else HTTPStatus.TOO_MANY_REQUESTS)
+        elif parsed.path == "/api/benchmarks/run":
+            if not self._admin():return
+            try:self._send(VALIDATION.start_benchmark(payload,self._client()),HTTPStatus.ACCEPTED)
+            except (ValueError,OverflowError) as error:self._send({"error":str(error)},HTTPStatus.BAD_REQUEST if isinstance(error,ValueError) else HTTPStatus.TOO_MANY_REQUESTS)
+        elif parsed.path == "/api/robustness/run":
+            if not self._admin():return
+            try:self._send(VALIDATION.start_robustness(payload,self._client()),HTTPStatus.ACCEPTED)
+            except (ValueError,OverflowError) as error:self._send({"error":str(error)},HTTPStatus.BAD_REQUEST if isinstance(error,ValueError) else HTTPStatus.TOO_MANY_REQUESTS)
+        elif parsed.path == "/api/shadow-strategies":
+            if not self._admin():return
+            try:self._send(SHADOW.create(payload),HTTPStatus.CREATED)
+            except (ValueError,sqlite3.IntegrityError) as error:self._send({"error":str(error)},HTTPStatus.BAD_REQUEST)
+        elif parsed.path.startswith("/api/shadow-strategies/"):
+            if not self._admin():return
+            parts=parsed.path.strip("/").split("/")
+            try:self._send(SHADOW.duplicate(parts[2]) if parts[3]=="duplicate" else SHADOW.action(parts[2],parts[3]),HTTPStatus.CREATED if parts[3]=="duplicate" else HTTPStatus.OK)
+            except (ValueError,IndexError,sqlite3.IntegrityError) as error:self._send({"error":str(error)},HTTPStatus.BAD_REQUEST)
+        elif parsed.path.startswith("/api/strategy-lifecycle/"):
+            if not self._admin():return
+            parts=parsed.path.strip("/").split("/")
+            try:self._send(LIFECYCLE.evaluate(int(parts[2]),payload.get("policy")) if parts[3]=="evaluate" else LIFECYCLE.transition(int(parts[2]),parts[3],"admin",payload.get("evidence")))
+            except (ValueError,IndexError) as error:self._send({"error":str(error)},HTTPStatus.BAD_REQUEST)
         elif parsed.path == "/api/chat":
             if len(str(payload.get("question","")))>1200:self._send({"error":"Question exceeds 1200 characters."},HTTPStatus.BAD_REQUEST); return
             if self._limited("chat-minute",3,60) or self._limited("chat-hour",20,3600):return

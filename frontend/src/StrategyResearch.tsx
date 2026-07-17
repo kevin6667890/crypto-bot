@@ -4,6 +4,9 @@ import { BacktestCandleChart, DistributionCharts, LineResearchChart } from "./Re
 import { BacktestMetrics, BacktestRun, BacktestTrade, DEFAULT_RESEARCH_PARAMETERS, EquityPoint, Reconciliation, researchApi, StrategyConfig, StrategyParameters } from "./research";
 import PortfolioResearch from "./PortfolioResearch";
 import ReconciliationPanel from "./ReconciliationPanel";
+import ValidationWorkspace from "./validation/ValidationWorkspace";
+import ShadowExperiments from "./shadow/ShadowExperiments";
+import StrategyLifecycle from "./lifecycle/StrategyLifecycle";
 
 const dateText = (date: Date) => date.toISOString().slice(0, 10);
 const initialEnd = dateText(new Date());
@@ -36,9 +39,11 @@ function duration(seconds: number | null) {
 function ResearchSection({ title, eyebrow, actions, children, className = "" }: { title: string; eyebrow: string; actions?: React.ReactNode; children: React.ReactNode; className?: string }) {
   return <section className={`research-panel ${className}`}><div className="research-panel-head"><div><span className="eyebrow">{eyebrow}</span><h2>{title}</h2></div>{actions}</div>{children}</section>;
 }
+type ResearchMode = "single" | "portfolio" | "validation" | "shadow" | "lifecycle";
+function ResearchModeNav({mode,setMode}:{mode:ResearchMode;setMode:(mode:ResearchMode)=>void}) { return <div className="mode-switch research-modes">{[["single","Backtest"],["portfolio","Portfolio"],["validation","Validation"],["shadow","Shadow"],["lifecycle","Lifecycle"]].map(([key,label])=><button key={key} className={mode===key?"active":""} onClick={()=>setMode(key as ResearchMode)}>{label}</button>)}</div>; }
 
 export default function StrategyResearch() {
-  const [researchMode,setResearchMode]=useState<"single"|"portfolio">("single");
+  const [researchMode,setResearchMode]=useState<ResearchMode>("single");
   const [instrument, setInstrument] = useState("BTC-USDT"); const [timeframe, setTimeframe] = useState("15m");
   const [startDate, setStartDate] = useState(initialStart); const [endDate, setEndDate] = useState(initialEnd);
   const [parameters, setParameters] = useState<StrategyParameters>({ ...DEFAULT_RESEARCH_PARAMETERS });
@@ -94,10 +99,13 @@ export default function StrategyResearch() {
     ["Initial Capital", formatMetric(metrics.initial_capital, "money")], ["Final Equity", formatMetric(metrics.final_equity, "money")], ["Net Profit", formatMetric(metrics.net_profit, "money")], ["Total Return", formatMetric(metrics.total_return, "percent")], ["Annualized Return", formatMetric(metrics.annualized_return, "percent")], ["Total Trades", String(metrics.total_trades)], ["Win Rate", formatMetric(metrics.win_rate, "percent")], ["Profit Factor", formatMetric(metrics.profit_factor, "ratio")], ["Expectancy", formatMetric(metrics.expectancy, "money")], ["Average Win", formatMetric(metrics.average_win, "money")], ["Average Loss", formatMetric(metrics.average_loss, "money")], ["Risk / Reward Realized", formatMetric(metrics.realized_risk_reward, "ratio")], ["Maximum Drawdown", formatMetric(metrics.maximum_drawdown, "percent")], ["Sharpe Ratio", formatMetric(metrics.sharpe_ratio, "ratio")], ["Sortino Ratio", formatMetric(metrics.sortino_ratio, "ratio")], ["Consecutive Wins", String(metrics.consecutive_wins)], ["Consecutive Losses", String(metrics.consecutive_losses)], ["Fees Paid", formatMetric(metrics.fees_paid, "money")], ["Long / Short Trades", `${metrics.long_trades} / ${metrics.short_trades}`], ["Average Holding Time", duration(metrics.average_holding_seconds)]
   ] : [];
 
-  if(researchMode==="portfolio") return <main className="research-workspace"><div className="mode-switch"><button onClick={()=>setResearchMode("single")}>Single Asset</button><button className="active">Portfolio</button></div><section className="research-command"><div><span className="eyebrow">Unified decision engine · shared capital</span><h1>Portfolio Research</h1><p>BTC, ETH and SOL events are processed together. Cash and risk cannot be reused across assets.</p></div><div className="research-command-fields"><label>Start Date<input type="date" value={startDate} onChange={e=>setStartDate(e.target.value)}/></label><label>End Date<input type="date" value={endDate} onChange={e=>setEndDate(e.target.value)}/></label></div></section><PortfolioResearch startDate={startDate} endDate={endDate} parameters={parameters}/></main>;
+  if(researchMode==="portfolio") return <main className="research-workspace"><ResearchModeNav mode={researchMode} setMode={setResearchMode}/><section className="research-command"><div><span className="eyebrow">Unified decision engine · shared capital</span><h1>Portfolio Research</h1><p>BTC, ETH and SOL events are processed together. Cash and risk cannot be reused across assets.</p></div><div className="research-command-fields"><label>Start Date<input type="date" value={startDate} onChange={e=>setStartDate(e.target.value)}/></label><label>End Date<input type="date" value={endDate} onChange={e=>setEndDate(e.target.value)}/></label></div></section><PortfolioResearch startDate={startDate} endDate={endDate} parameters={parameters}/></main>;
+  if(researchMode==="validation") return <main className="research-workspace"><ResearchModeNav mode={researchMode} setMode={setResearchMode}/><ValidationWorkspace startDate={startDate} endDate={endDate} parameters={parameters}/></main>;
+  if(researchMode==="shadow") return <main className="research-workspace"><ResearchModeNav mode={researchMode} setMode={setResearchMode}/><ShadowExperiments/></main>;
+  if(researchMode==="lifecycle") return <main className="research-workspace"><ResearchModeNav mode={researchMode} setMode={setResearchMode}/><StrategyLifecycle/></main>;
 
   return <main className="research-workspace">
-    <div className="mode-switch"><button className="active">Single Asset</button><button onClick={()=>setResearchMode("portfolio")}>Portfolio</button></div>
+    <ResearchModeNav mode={researchMode} setMode={setResearchMode}/>
     <section className="research-command"><div><span className="eyebrow">Real historical research · OKX public data</span><h1>Strategy Research</h1><p>Deterministic research only. No AI-generated signals and no exchange order execution.</p></div><div className="research-command-fields"><label>Instrument<select value={instrument} onChange={(event) => setInstrument(event.target.value)}><option>BTC-USDT</option><option>ETH-USDT</option><option>SOL-USDT</option></select></label><label>Timeframe<select value={timeframe} onChange={(event) => setTimeframe(event.target.value)}><option>15m</option><option>1H</option><option>4H</option></select></label><label>Start Date<input type="date" value={startDate} max={endDate} onChange={(event) => setStartDate(event.target.value)} /></label><label>End Date<input type="date" value={endDate} min={startDate} max={initialEnd} onChange={(event) => setEndDate(event.target.value)} /></label><button className="primary-btn run-backtest" disabled={Boolean(validationError) || busy} onClick={startBacktest}><Play size={15} />{busy ? "Running…" : "Run Backtest"}</button></div></section>
     {(error || validationError) && <div className="research-alert error">{error || validationError}</div>}
     {busy && <div className="research-progress"><div><span>{run?.progress_message || "Preparing"}</span><b>{run?.progress || 0}%</b></div><i><span style={{ width: `${run?.progress || 0}%` }} /></i><small>The run is processed once on the server. The button remains locked until it finishes.</small></div>}

@@ -11,8 +11,10 @@ from typing import Any, Iterator
 
 try:
     from strategy_rules import STRATEGY_PRESETS
+    from signal_identity import config_hash
 except ImportError:
     from .strategy_rules import STRATEGY_PRESETS
+    from .signal_identity import config_hash
 
 
 def utc_now() -> str:
@@ -108,6 +110,9 @@ class ResearchRepository:
             self._ensure_column(connection, "backtest_trades", "config_hash", "TEXT")
             self._ensure_column(connection, "backtest_trades", "expected_entry_ts", "INTEGER")
             self._ensure_column(connection, "backtest_trades", "expected_entry_price", "REAL")
+            self._ensure_column(connection, "decision_signals", "regime", "TEXT")
+            self._ensure_column(connection, "decision_signals", "regime_version", "TEXT")
+            self._ensure_column(connection, "decision_signals", "gate_payload", "TEXT")
             connection.execute("UPDATE backtest_runs SET status='FAILED',progress=100,progress_message='Interrupted by service restart',error='Backtest worker was interrupted by a service restart',updated_at=? WHERE status IN ('QUEUED','RUNNING')", (utc_now(),))
             count = connection.execute("SELECT COUNT(*) FROM strategy_configs").fetchone()[0]
             if not count:
@@ -181,8 +186,8 @@ class ResearchRepository:
                 VALUES(?,?,?,?,?,?,?,?,?,?,?)""", [(run_id, index + 1, json.dumps(trade), trade["entry_ts"], trade["side"], trade["pnl"], trade.get("signal_id"), trade.get("strategy_version"), trade.get("config_hash"), trade.get("expected_entry_ts"), trade.get("expected_entry_price")) for index, trade in enumerate(result["trades"])])
             connection.executemany("INSERT INTO backtest_equity(run_id,ts,equity) VALUES(?,?,?)", [(run_id, point["ts"], point["equity"]) for point in result["equity"]])
             decisions = result.get("decisions", [])
-            connection.executemany("""INSERT OR IGNORE INTO decision_signals(signal_id,source,run_id,instrument,execution_timeframe,candle_close_ts,strategy_version,config_hash,action,bias,score,decision_payload,created_at)
-                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""", [(item["signal_id"], "BACKTEST", run_id, item["instrument"], item["execution_timeframe"], item["candle_close_ts"], item["strategy_version"], item["config_hash"], item["action"], item["bias"], item["score"], json.dumps(item), utc_now()) for item in decisions])
+            connection.executemany("""INSERT OR IGNORE INTO decision_signals(signal_id,source,run_id,instrument,execution_timeframe,candle_close_ts,strategy_version,config_hash,action,bias,score,decision_payload,created_at,regime,regime_version,gate_payload)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", [(item["signal_id"], "BACKTEST", run_id, item["instrument"], item["execution_timeframe"], item["candle_close_ts"], item["strategy_version"], item["config_hash"], item["action"], item["bias"], item["score"], json.dumps(item), utc_now(), item.get("regime"), item.get("regime_version"), json.dumps(item.get("gate_results", []))) for item in decisions])
             run = connection.execute("SELECT strategy_config_id,instrument,timeframe,start_date,end_date FROM backtest_runs WHERE id=?", (run_id,)).fetchone()
             if run and run["strategy_config_id"]:
                 summary = {**result["metrics"], "run_id": run_id, "instrument": run["instrument"], "timeframe": run["timeframe"], "start_date": run["start_date"], "end_date": run["end_date"]}
@@ -211,16 +216,26 @@ class ResearchRepository:
     def save_strategy(self, payload: dict[str, Any], strategy_id: int | None = None) -> dict[str, Any]:
         now = utc_now()
         with self.connect() as connection:
+            if strategy_id is not None and connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='strategy_lifecycle'").fetchone():
+                state=connection.execute("SELECT status FROM strategy_lifecycle WHERE strategy_config_id=?",(strategy_id,)).fetchone()
+                if state and state[0] in {"Qualified","Active","Watch"}:raise ValueError("Qualified or Active configurations are immutable; duplicate the strategy to create a new version.")
             if strategy_id is None:
                 cursor = connection.execute("""INSERT INTO strategy_configs(name,parameters,instrument,timeframe,start_date,end_date,created_at,updated_at)
                     VALUES(?,?,?,?,?,?,?,?)""", (payload["name"], json.dumps(payload["parameters"]), payload.get("instrument", "BTC-USDT"), payload.get("timeframe", "15m"), payload.get("start_date"), payload.get("end_date"), now, now))
                 strategy_id = int(cursor.lastrowid)
             else:
                 connection.execute("""UPDATE strategy_configs SET name=?,parameters=?,instrument=?,timeframe=?,start_date=?,end_date=?,updated_at=? WHERE id=?""", (payload["name"], json.dumps(payload["parameters"]), payload.get("instrument", "BTC-USDT"), payload.get("timeframe", "15m"), payload.get("start_date"), payload.get("end_date"), now, strategy_id))
+            if connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='strategy_lifecycle'").fetchone():
+                cfg=config_hash(payload["parameters"]);existing=connection.execute("SELECT id,status FROM strategy_lifecycle WHERE strategy_config_id=?",(strategy_id,)).fetchone()
+                if existing:connection.execute("UPDATE strategy_lifecycle SET name=?,config_hash=?,updated_at=? WHERE id=?",(payload["name"],cfg,now,existing["id"]))
+                else:
+                    cursor=connection.execute("INSERT INTO strategy_lifecycle(strategy_config_id,name,strategy_version,config_hash,status,policy_version,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)",(strategy_id,payload["name"],"canonical-v4",cfg,"Draft","promotion-policy-v1",now,now));connection.execute("INSERT INTO strategy_audit_log(lifecycle_id,action,from_status,to_status,actor,evidence,created_at) VALUES(?,?,?,?,?,?,?)",(cursor.lastrowid,"CREATE",None,"Draft","admin",json.dumps({"source":"strategy configuration"}),now))
         return next(item for item in self.strategies() if item["id"] == strategy_id)
 
     def delete_strategy(self, strategy_id: int) -> bool:
         with self.connect() as connection:
+            if connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='strategy_lifecycle'").fetchone() and connection.execute("SELECT 1 FROM strategy_lifecycle WHERE strategy_config_id=?",(strategy_id,)).fetchone():
+                raise ValueError("Lifecycle-managed strategies cannot be deleted; archive them to preserve evidence and audit history.")
             cursor = connection.execute("DELETE FROM strategy_configs WHERE id=?", (strategy_id,))
             return cursor.rowcount > 0
 

@@ -41,11 +41,15 @@ def test_reused_decision_signal_remains_linked_to_each_backtest_run(tmp_path):
     }
     result = {"trades": [], "equity": [], "decisions": [decision], "metrics": {}, "data_quality": {}}
     repository.save_result(first_run, result)
-    repository.save_result(second_run, result)
+    second_decision = {**decision, "score": 75, "gate_results": [{"key": "rsi_range", "passed": True, "applicable": True, "blocking": True}]}
+    repository.save_result(second_run, {**result, "decisions": [second_decision]})
 
     validation = ValidationRepository(database)
-    assert [item["signal_id"] for item in validation.decisions({"run_id": first_run})] == ["same-canonical-signal"]
-    assert [item["signal_id"] for item in validation.decisions({"run_id": second_run})] == ["same-canonical-signal"]
+    first = validation.decisions({"run_id": first_run})[0]
+    second = validation.decisions({"run_id": second_run})[0]
+    assert first["signal_id"] == second["signal_id"] == "same-canonical-signal"
+    assert first["score"] == 50 and first["gate_results"] == []
+    assert second["score"] == 75 and second["gate_results"][0]["key"] == "rsi_range"
 
 
 def test_okx_rate_limit_is_retried(monkeypatch):

@@ -1,7 +1,7 @@
 from copy import deepcopy
 import pytest
 
-from dashboard.gate_analysis import GATE_ORDER, aggregate_gate_funnel
+from dashboard.gate_analysis import GATE_ORDER, aggregate_gate_funnel, decision_gates
 from dashboard.market_regime import REGIME_VERSION, classify_regime
 from dashboard.near_miss import counterfactual_outcome, identify_near_miss
 
@@ -40,6 +40,27 @@ def test_asset_and_long_short_grouping():
 def test_empty_gate_data():
     result=aggregate_gate_funnel([])
     assert result["decision_count"]==0 and all(x["pass_rate"] is None for x in result["gates"])
+
+
+def test_legacy_payload_reconstructs_rsi_and_volume_independently():
+    legacy = decision()
+    legacy.pop("gate_results")
+    legacy["failed_gates"] = ["momentum"]
+    legacy["indicator_values"].update({"rsi": 50, "volume_ratio": .7})
+    legacy["decision_input_summary"]["parameters"] = {"rsi_min": 35, "rsi_max": 68, "minimum_volume_ratio": 1}
+    gates = {item["key"]: item for item in decision_gates(legacy)}
+    assert gates["rsi_range"]["passed"] is True
+    assert gates["volume_ratio"]["passed"] is False
+    assert gates["momentum_combined"]["passed"] is False
+
+
+def test_legacy_payload_marks_unrecoverable_split_gates_not_applicable():
+    legacy = decision()
+    legacy.pop("gate_results")
+    legacy["indicator_values"] = {}
+    gates = {item["key"]: item for item in decision_gates(legacy)}
+    assert gates["rsi_range"]["applicable"] is False
+    assert gates["volume_ratio"]["applicable"] is False
 
 
 def test_near_miss_single_gate_and_score_gap():

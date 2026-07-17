@@ -74,8 +74,11 @@ class ValidationRepository:
             """)
             for col, decl in (("regime", "TEXT"), ("regime_version", "TEXT"), ("gate_payload", "TEXT")):
                 self._ensure_column(c, "decision_signals", col, decl)
+            for col, decl in (("decision_payload", "TEXT"), ("gate_payload", "TEXT"), ("regime", "TEXT"), ("regime_version", "TEXT")):
+                self._ensure_column(c, "decision_signal_runs", col, decl)
             if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='decision_signals'").fetchone():
-                c.execute("INSERT OR IGNORE INTO decision_signal_runs(signal_id,run_id,source) SELECT signal_id,run_id,source FROM decision_signals WHERE run_id IS NOT NULL")
+                c.execute("""INSERT OR IGNORE INTO decision_signal_runs(signal_id,run_id,source,decision_payload,gate_payload,regime,regime_version)
+                    SELECT signal_id,run_id,source,decision_payload,gate_payload,regime,regime_version FROM decision_signals WHERE run_id IS NOT NULL""")
             if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='strategy_configs'").fetchone():
                 rows = c.execute("SELECT id,name,parameters FROM strategy_configs").fetchall()
                 for row in rows:
@@ -114,12 +117,20 @@ class ValidationRepository:
         for key, column in mapping.items():
             if filters.get(key) not in (None, "", "ALL"): clauses.append(f"{column}=?"); values.append(filters[key])
         join = ""
+        payload_column = "d.decision_payload"
+        source_column = "d.source"
+        regime_column = "d.regime"
+        regime_version_column = "d.regime_version"
         if filters.get("run_id") not in (None, "", "ALL"):
             join = " JOIN decision_signal_runs dsr ON dsr.signal_id=d.signal_id"
             clauses.append("dsr.run_id=?"); values.append(int(filters["run_id"]))
+            payload_column = "COALESCE(dsr.decision_payload,d.decision_payload)"
+            source_column = "COALESCE(dsr.source,d.source)"
+            regime_column = "COALESCE(dsr.regime,d.regime)"
+            regime_version_column = "COALESCE(dsr.regime_version,d.regime_version)"
         if filters.get("start_ts"): clauses.append("d.candle_close_ts>=?"); values.append(int(filters["start_ts"]))
         if filters.get("end_ts"): clauses.append("d.candle_close_ts<=?"); values.append(int(filters["end_ts"]))
-        with self.connect() as c: rows = c.execute(f"SELECT d.source,d.decision_payload,d.regime,d.regime_version FROM decision_signals d{join} WHERE {' AND '.join(clauses)} ORDER BY d.candle_close_ts LIMIT ?", (*values, min(limit, 200000))).fetchall()
+        with self.connect() as c: rows = c.execute(f"SELECT {source_column} AS source,{payload_column} AS decision_payload,{regime_column} AS regime,{regime_version_column} AS regime_version FROM decision_signals d{join} WHERE {' AND '.join(clauses)} ORDER BY d.candle_close_ts LIMIT ?", (*values, min(limit, 200000))).fetchall()
         output = []
         for row in rows:
             payload = json.loads(row["decision_payload"]); payload["source"] = row["source"]; payload.setdefault("regime", row["regime"] or "Unknown"); payload.setdefault("regime_version", row["regime_version"])

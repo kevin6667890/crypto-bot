@@ -120,7 +120,12 @@ class ResearchRepository:
             self._ensure_column(connection, "decision_signals", "regime", "TEXT")
             self._ensure_column(connection, "decision_signals", "regime_version", "TEXT")
             self._ensure_column(connection, "decision_signals", "gate_payload", "TEXT")
-            connection.execute("INSERT OR IGNORE INTO decision_signal_runs(signal_id,run_id,source) SELECT signal_id,run_id,source FROM decision_signals WHERE run_id IS NOT NULL")
+            self._ensure_column(connection, "decision_signal_runs", "decision_payload", "TEXT")
+            self._ensure_column(connection, "decision_signal_runs", "gate_payload", "TEXT")
+            self._ensure_column(connection, "decision_signal_runs", "regime", "TEXT")
+            self._ensure_column(connection, "decision_signal_runs", "regime_version", "TEXT")
+            connection.execute("""INSERT OR IGNORE INTO decision_signal_runs(signal_id,run_id,source,decision_payload,gate_payload,regime,regime_version)
+                SELECT signal_id,run_id,source,decision_payload,gate_payload,regime,regime_version FROM decision_signals WHERE run_id IS NOT NULL""")
             connection.execute("UPDATE backtest_runs SET status='FAILED',progress=100,progress_message='Interrupted by service restart',error='Backtest worker was interrupted by a service restart',updated_at=? WHERE status IN ('QUEUED','RUNNING')", (utc_now(),))
             count = connection.execute("SELECT COUNT(*) FROM strategy_configs").fetchone()[0]
             if not count:
@@ -196,7 +201,11 @@ class ResearchRepository:
             decisions = result.get("decisions", [])
             connection.executemany("""INSERT OR IGNORE INTO decision_signals(signal_id,source,run_id,instrument,execution_timeframe,candle_close_ts,strategy_version,config_hash,action,bias,score,decision_payload,created_at,regime,regime_version,gate_payload)
                 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", [(item["signal_id"], "BACKTEST", run_id, item["instrument"], item["execution_timeframe"], item["candle_close_ts"], item["strategy_version"], item["config_hash"], item["action"], item["bias"], item["score"], json.dumps(item), utc_now(), item.get("regime"), item.get("regime_version"), json.dumps(item.get("gate_results", []))) for item in decisions])
-            connection.executemany("INSERT OR IGNORE INTO decision_signal_runs(signal_id,run_id,source) VALUES(?,?,?)", [(item["signal_id"], run_id, "BACKTEST") for item in decisions])
+            connection.executemany("""INSERT INTO decision_signal_runs(signal_id,run_id,source,decision_payload,gate_payload,regime,regime_version)
+                VALUES(?,?,?,?,?,?,?) ON CONFLICT(signal_id,run_id) DO UPDATE SET source=excluded.source,
+                decision_payload=excluded.decision_payload,gate_payload=excluded.gate_payload,
+                regime=excluded.regime,regime_version=excluded.regime_version""",
+                [(item["signal_id"], run_id, "BACKTEST", json.dumps(item), json.dumps(item.get("gate_results", [])), item.get("regime"), item.get("regime_version")) for item in decisions])
             run = connection.execute("SELECT strategy_config_id,instrument,timeframe,start_date,end_date FROM backtest_runs WHERE id=?", (run_id,)).fetchone()
             if run and run["strategy_config_id"]:
                 summary = {**result["metrics"], "run_id": run_id, "instrument": run["instrument"], "timeframe": run["timeframe"], "start_date": run["start_date"], "end_date": run["end_date"]}

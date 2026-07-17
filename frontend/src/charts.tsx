@@ -164,13 +164,16 @@ export function EquityChart() {
   return <div className="chart-canvas" ref={ref} />;
 }
 
-export function FlowChart({ points, color = "#7c3aed" }: { points: Array<{ time: number; value: number }>; color?: string }) {
+export function FlowChart({ points, color = "#7c3aed", zeroLine = false }: { points: Array<{ time: number; value: number }>; color?: string; zeroLine?: boolean }) {
+  const normalized = Array.from(new Map(points.filter((point) => Number.isFinite(point.time) && Number.isFinite(point.value)).map((point) => [point.time, point])).values()).sort((a, b) => a.time - b.time);
+  if (normalized.length === 1) normalized.unshift({ time: normalized[0].time - 1, value: normalized[0].value });
   const ref = useResponsiveChart((container) => {
-    const chart = createChart(container, { ...chartTheme, width: container.clientWidth, height: container.clientHeight, rightPriceScale: { visible: false }, timeScale: { visible: false } });
-    const series = chart.addSeries(AreaSeries, { lineColor: color, topColor: `${color}33`, bottomColor: `${color}08`, lineWidth: 2, priceLineVisible: false });
-    series.setData(points.map((point) => ({ time: point.time as UTCTimestamp, value: point.value })));
+    const chart = createChart(container, { ...chartTheme, width: container.clientWidth, height: container.clientHeight, rightPriceScale: { visible: true, borderVisible: false, scaleMargins: { top: .15, bottom: .15 } }, timeScale: { visible: true, borderVisible: false, timeVisible: true, secondsVisible: true, fixLeftEdge: true, fixRightEdge: true } });
+    const series = chart.addSeries(AreaSeries, { lineColor: color, topColor: `${color}38`, bottomColor: `${color}05`, lineWidth: 2, priceLineVisible: false, lastValueVisible: true });
+    series.setData(normalized.map((point) => ({ time: point.time as UTCTimestamp, value: point.value })));
+    if (zeroLine) series.createPriceLine({ price: 0, color: "rgba(71,84,103,.45)", lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: "0" });
     chart.timeScale().fitContent();
     return chart;
-  }, [points, color]);
-  return <div className="flow-canvas" ref={ref} />;
+  }, [points, color, zeroLine]);
+  return <div className="flow-canvas">{normalized.length ? <div className="flow-canvas-inner" ref={ref} /> : <span className="flow-empty">No series data</span>}</div>;
 }

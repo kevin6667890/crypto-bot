@@ -146,10 +146,14 @@ class PaperService:
 
     def _flow_metrics(self, instrument: str) -> dict[str, Any]:
         trades = self._json(f"https://www.okx.com/api/v5/market/trades?instId={instrument}&limit=100").get("data", [])
-        cumulative, series = 0.0, []
+        cumulative, per_second = 0.0, {}
         for row in reversed(trades):
             cumulative += float(row["sz"]) * float(row["px"]) * (1 if row.get("side") == "buy" else -1)
-            series.append({"time": int(row["ts"]) // 1000, "value": round(cumulative, 2)})
+            # Lightweight Charts requires strictly increasing, unique timestamps.
+            # OKX often returns several trades in one second, so retain the last
+            # cumulative value for each second rather than emitting duplicates.
+            per_second[int(row["ts"]) // 1000] = round(cumulative, 2)
+        series = [{"time": timestamp, "value": value} for timestamp, value in sorted(per_second.items())]
         swap = instrument.replace("-USDT", "-USDT-SWAP")
         oi_row = self._json(f"https://www.okx.com/api/v5/public/open-interest?instType=SWAP&instId={swap}").get("data", [{}])[0]
         oi = float(oi_row.get("oiUsd") or oi_row.get("oi") or 0)

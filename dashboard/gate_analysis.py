@@ -22,6 +22,8 @@ def decision_gates(decision: dict[str, Any]) -> list[dict[str, Any]]:
         by_key = {item["key"]: dict(item) for item in decision["gate_results"]}
         return [by_key.get(key, {"key": key, "label": GATE_LABELS[key], "passed": False, "applicable": False, "blocking": True}) for key in GATE_ORDER]
     failed = set(decision.get("failed_gates") or [])
+    indicators = decision.get("indicator_values") or {}
+    parameters = (decision.get("decision_input_summary") or {}).get("parameters") or {}
     aliases = {"indicator_warmup": "warmup", "directional_bias": "trend", "ema_pullback": "pullback", "momentum_combined": "momentum", "cvd_alignment": "flow_alignment", "flow_combined": "flow_alignment", "risk_permission": "risk"}
     flow_available = bool((decision.get("flow_context") or {}).get("available"))
     output = []
@@ -30,8 +32,14 @@ def decision_gates(decision: dict[str, Any]) -> list[dict[str, Any]]:
         applicable = flow_available if key in {"cvd_alignment", "oi_context", "flow_combined"} else True
         if key == "final_entry_allowed": passed = bool(decision.get("entry_allowed"))
         elif key == "ma_structure": passed = decision.get("bias") in {"LONG", "SHORT"}
-        elif key == "rsi_range": passed = "momentum" not in failed
-        elif key == "volume_ratio": passed = "momentum" not in failed
+        elif key == "rsi_range":
+            rsi, low, high = indicators.get("rsi"), parameters.get("rsi_min"), parameters.get("rsi_max")
+            applicable = all(value is not None for value in (rsi, low, high))
+            passed = applicable and float(low) <= float(rsi) <= float(high)
+        elif key == "volume_ratio":
+            ratio, minimum = indicators.get("volume_ratio"), parameters.get("minimum_volume_ratio")
+            applicable = ratio is not None and minimum is not None
+            passed = applicable and float(ratio) >= float(minimum)
         else: passed = legacy not in failed
         output.append({"key": key, "label": GATE_LABELS[key], "passed": bool(passed) if applicable else True, "applicable": applicable, "blocking": key != "oi_context"})
     return output

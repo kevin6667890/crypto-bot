@@ -83,6 +83,12 @@ class PaperService:
                     content TEXT NOT NULL, source TEXT NOT NULL
                 )
             """)
+            conn.execute("""
+                CREATE TABLE IF NOT EXISTS flow_snapshots (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT NOT NULL,
+                    oi REAL, cvd REAL
+                )
+            """)
 
     @staticmethod
     def _json(url: str) -> dict[str, Any]:
@@ -103,6 +109,28 @@ class PaperService:
         payload = self._json(f"https://www.okx.com/api/v5/market/ticker?instId={INSTRUMENT}")
         return float(payload["data"][0]["last"])
 
+    def _flow_metrics(self) -> dict[str, Any]:
+        """Public order-flow proxy: recent spot taker delta plus swap open interest."""
+        trades = self._json(f"https://www.okx.com/api/v5/market/trades?instId={INSTRUMENT}&limit=100").get("data", [])
+        cumulative, series = 0.0, []
+        for row in reversed(trades):
+            signed_notional = float(row["sz"]) * float(row["px"]) * (1 if row.get("side") == "buy" else -1)
+            cumulative += signed_notional
+            series.append({"time": int(row["ts"]) // 1000, "value": round(cumulative, 2)})
+        swap = INSTRUMENT.replace("-USDT", "-USDT-SWAP")
+        oi_row = self._json(f"https://www.okx.com/api/v5/public/open-interest?instType=SWAP&instId={swap}").get("data", [{}])[0]
+        oi = float(oi_row.get("oiUsd") or oi_row.get("oi") or 0)
+        with self._connect() as conn:
+            conn.execute("INSERT INTO flow_snapshots(created_at,oi,cvd) VALUES(?,?,?)", (now_iso(), oi, cumulative))
+            history = [dict(row) for row in conn.execute("SELECT created_at,oi,cvd FROM flow_snapshots ORDER BY id DESC LIMIT 60")]
+        return {"cvd": round(cumulative, 2), "cvd_delta": round(cumulative - (series[0]["value"] if series else 0), 2), "cvd_series": series, "oi": oi, "oi_history": list(reversed(history)), "source": "OKX public trades + SWAP OI"}
+
+    @staticmethod
+    def _ema_slope(closes: list[float]) -> float:
+        current = ema(closes[-50:], 20)
+        previous = ema(closes[-60:-10], 20)
+        return (current - previous) / previous * 100 if previous else 0
+
     @staticmethod
     def _rsi(closes: list[float], period: int = 14) -> float:
         changes = [b - a for a, b in zip(closes[-period - 1:-1], closes[-period:])]
@@ -119,8 +147,8 @@ class PaperService:
         return sum(ranges) / len(ranges)
 
     def analyze(self) -> dict[str, Any]:
-        c15, c1h, c4h = self._candles("15m"), self._candles("1H"), self._candles("4H")
-        closes15, closes1h, closes4h = ([row["close"] for row in candles] for candles in (c15, c1h, c4h))
+        c15, c1h, c4h, c1d = self._candles("15m"), self._candles("1H"), self._candles("4H"), self._candles("1D")
+        closes15, closes1h, closes4h, closes1d = ([row["close"] for row in candles] for candles in (c15, c1h, c4h, c1d))
         price = closes15[-1]
         ema15, ema1h, ema4h = ema(closes15[-50:], 20), ema(closes1h[-50:], 20), ema(closes4h[-50:], 20)
         ema1h50, ema4h50 = ema(closes1h[-80:], 50), ema(closes4h[-80:], 50)
@@ -130,6 +158,8 @@ class PaperService:
         rsi = self._rsi(closes15)
         atr = self._atr(c15)
         volume_ratio = c15[-1]["volume"] / (sum(row["volume"] for row in c15[-21:-1]) / 20 or 1)
+        daily_ema20, daily_ema50 = ema(closes1d[-50:], 20), ema(closes1d[-80:], 50)
+        daily_trend = "Bullish" if closes1d[-1] > daily_ema20 > daily_ema50 else "Bearish" if closes1d[-1] < daily_ema20 < daily_ema50 else "Mixed"
         pullback = abs(distance) <= 0.45
         score = (35 if trend_long or trend_short else 0) + (25 if pullback else 8) + (15 if volume_ratio >= 1 else 6) + (15 if 35 <= rsi <= 68 else 5)
         side = "LONG" if trend_long else "SHORT" if trend_short else "WAIT"
@@ -138,6 +168,7 @@ class PaperService:
             "instrument": INSTRUMENT, "price": round(price, 4), "action": action, "bias": side,
             "score": min(score, 100), "ema20": round(ema15, 4), "rsi14": round(rsi, 2),
             "atr14": round(atr, 4), "volume_ratio": round(volume_ratio, 2), "distance_ema20_pct": round(distance, 3),
+            "timeframes": {"15m": {"trend": "Bullish" if closes15[-1] > ema15 else "Bearish", "ema20_slope_pct": round(self._ema_slope(closes15), 3)}, "1H": {"trend": "Bullish" if closes1h[-1] > ema1h else "Bearish", "ema20_slope_pct": round(self._ema_slope(closes1h), 3)}, "4H": {"trend": "Bullish" if closes4h[-1] > ema4h else "Bearish", "ema20_slope_pct": round(self._ema_slope(closes4h), 3)}, "1D": {"trend": daily_trend, "ema20_slope_pct": round(self._ema_slope(closes1d), 3)}},
             "conditions": [
                 {"label": "4H + 1H trend", "value": "Aligned" if side != "WAIT" else "Mixed", "pass": side != "WAIT"},
                 {"label": "EMA20 pullback", "value": f"{distance:+.2f}%", "pass": pullback},
@@ -243,6 +274,7 @@ class PaperService:
                 live_price = self._price()
                 self.monitor_positions(live_price)
                 analysis = self.analyze()
+                analysis["flow"] = self._flow_metrics()
                 self._open_trade(analysis)
                 self.maybe_create_ai_brief(analysis)
                 return analysis
@@ -256,7 +288,7 @@ class PaperService:
             closed = [dict(row) for row in conn.execute("SELECT * FROM paper_trades WHERE status!='OPEN' ORDER BY closed_at DESC LIMIT 20")]
             brief = conn.execute("SELECT created_at, content, source FROM ai_briefs ORDER BY id DESC LIMIT 1").fetchone()
         wins = sum(1 for row in closed if row["status"] == "WIN")
-        return {"analysis": self.last_analysis, "open_trades": open_trades, "closed_trades": closed, "ai_brief": dict(brief) if brief else None, "summary": {"open": len(open_trades), "closed": len(closed), "wins": wins, "win_rate": round(wins / len(closed) * 100, 1) if closed else 0, "total_r": round(sum(row["pnl_r"] or 0 for row in closed), 2)}}
+        return {"analysis": self.last_analysis, "flow": self.last_analysis.get("flow"), "open_trades": open_trades, "closed_trades": closed, "ai_brief": dict(brief) if brief else None, "summary": {"open": len(open_trades), "closed": len(closed), "wins": wins, "win_rate": round(wins / len(closed) * 100, 1) if closed else 0, "total_r": round(sum(row["pnl_r"] or 0 for row in closed), 2)}}
 
 
 SERVICE = PaperService()

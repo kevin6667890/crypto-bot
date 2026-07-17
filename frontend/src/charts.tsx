@@ -1,5 +1,5 @@
 import { DependencyList, useEffect, useRef, useState } from "react";
-import { AreaSeries, CandlestickSeries, ColorType, createChart, IChartApi, LineSeries } from "lightweight-charts";
+import { AreaSeries, CandlestickSeries, ColorType, createChart, IChartApi, LineSeries, UTCTimestamp } from "lightweight-charts";
 import { Candle, fetchEthCandles, generateCandles, generateEquityCurve } from "./data";
 
 const chartTheme = {
@@ -162,4 +162,15 @@ export function EquityChart() {
   });
 
   return <div className="chart-canvas" ref={ref} />;
+}
+
+export function FlowChart({ points, color = "#7c3aed" }: { points: Array<{ time: number; value: number }>; color?: string }) {
+  const ref = useResponsiveChart((container) => {
+    const chart = createChart(container, { ...chartTheme, width: container.clientWidth, height: container.clientHeight, rightPriceScale: { visible: false }, timeScale: { visible: false } });
+    const series = chart.addSeries(AreaSeries, { lineColor: color, topColor: `${color}33`, bottomColor: `${color}08`, lineWidth: 2, priceLineVisible: false });
+    series.setData(points.map((point) => ({ time: point.time as UTCTimestamp, value: point.value })));
+    chart.timeScale().fitContent();
+    return chart;
+  }, [points, color]);
+  return <div className="flow-canvas" ref={ref} />;
 }

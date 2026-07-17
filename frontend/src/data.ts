@@ -172,7 +172,7 @@ export type SignalAnalysis = {
 
 export type WatchlistItem = { instrument: string; price: number; changePct: number; volume: number };
 export type PaperTrade = { id: number; instrument: string; side: "LONG" | "SHORT"; entry: number; stop_loss: number; take_profit: number; status: string; exit_price?: number; pnl_r?: number; reason?: string; created_at: string; closed_at?: string };
-export type PaperStatus = { analysis: { action?: string; bias?: string; score?: number; price?: number; ema20?: number; rsi14?: number; atr14?: number; volume_ratio?: number; conditions?: Array<{ label: string; value: string; pass: boolean }>; updated_at?: string }; open_trades: PaperTrade[]; closed_trades: PaperTrade[]; ai_brief: { created_at: string; content: string; source: string } | null; summary: { open: number; closed: number; wins: number; win_rate: number; total_r: number } };
+export type PaperStatus = { analysis: { action?: string; bias?: string; score?: number; price?: number; ema20?: number; rsi14?: number; atr14?: number; volume_ratio?: number; conditions?: Array<{ label: string; value: string; pass: boolean }>; timeframes?: Record<string, { trend: string; ema20_slope_pct: number }>; updated_at?: string }; flow?: { cvd: number; cvd_delta: number; cvd_series: Array<{ time: number; value: number }>; oi: number; oi_history: Array<{ created_at: string; oi: number; cvd: number }>; source: string } | null; open_trades: PaperTrade[]; closed_trades: PaperTrade[]; ai_brief: { created_at: string; content: string; source: string } | null; summary: { open: number; closed: number; wins: number; win_rate: number; total_r: number } };
 
 declare global {
   interface Window { __PAPER_STATUS__?: PaperStatus; __PAPER_API_URL__?: string; }

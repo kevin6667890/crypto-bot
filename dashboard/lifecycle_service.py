@@ -8,8 +8,10 @@ from typing import Any
 
 try:
     from validation_repository import ValidationRepository, utc_now
+    from signal_identity import config_hash
 except ImportError:
     from .validation_repository import ValidationRepository, utc_now
+    from .signal_identity import config_hash
 
 POLICY_VERSION = "promotion-policy-v1"
 DEFAULT_POLICY = {"minimum_backtest_trades": 100, "minimum_oos_trades": 30, "minimum_shadow_trades": 30, "minimum_shadow_runtime_days": 14, "oos_profit_factor": 1.10, "oos_return": 0.0, "oos_maximum_drawdown": 15.0, "oos_sharpe": 0.5, "maximum_degradation_pct": 40.0, "minimum_stability_score": 60.0, "minimum_positive_neighborhood": 0.6, "minimum_positive_probability": 0.6, "maximum_risk_of_ruin": 0.05, "maximum_p95_drawdown": 20.0}

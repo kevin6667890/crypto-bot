@@ -13,7 +13,9 @@ try:
     from near_miss import counterfactual_outcome, identify_near_miss
     from robustness import MAX_SIMULATIONS, run_robustness, stress_curve
     from sensitivity import parameter_combinations, stability_scores
+    from signal_identity import config_hash
     from strategy_rules import DEFAULT_PARAMETERS, validate_parameters
+    from metrics import calculate_metrics
     from validation_repository import ValidationRepository, utc_now
 except ImportError:
     from .backtest_engine import run_backtest
@@ -22,7 +24,9 @@ except ImportError:
     from .near_miss import counterfactual_outcome, identify_near_miss
     from .robustness import MAX_SIMULATIONS, run_robustness, stress_curve
     from .sensitivity import parameter_combinations, stability_scores
+    from .signal_identity import config_hash
     from .strategy_rules import DEFAULT_PARAMETERS, validate_parameters
+    from .metrics import calculate_metrics
     from .validation_repository import ValidationRepository, utc_now
 
 
@@ -64,7 +68,7 @@ class ValidationService:
 
     def start_sensitivity(self,payload:dict[str,Any],requester:str)->dict[str,Any]:
         request=self.research.validate_request(payload); mode=str(payload.get("mode","OAT")); ranges=payload.get("ranges") or []; combos=parameter_combinations(request["parameters"],ranges,mode); request.update({"mode":mode,"ranges":ranges,"combination_count":len(combos)})
-        run_id=self.repository.create_run("sensitivity_runs",request,strategy_version="historical-mtf-no-flow-v1",config_hash=__import__('dashboard.signal_identity',fromlist=['config_hash']).config_hash(request["parameters"])); job=self.jobs.enqueue("SENSITIVITY",{"validation_run_id":run_id,**request},requester);self.repository.bind_job("sensitivity_runs",run_id,job["id"]);return {"id":run_id,"job_id":job["id"],"status":"QUEUED","estimated_combinations":len(combos)}
+        run_id=self.repository.create_run("sensitivity_runs",request,strategy_version="historical-mtf-no-flow-v1",config_hash=config_hash(request["parameters"])); job=self.jobs.enqueue("SENSITIVITY",{"validation_run_id":run_id,**request},requester);self.repository.bind_job("sensitivity_runs",run_id,job["id"]);return {"id":run_id,"job_id":job["id"],"status":"QUEUED","estimated_combinations":len(combos)}
 
     def _datasets(self,request:dict[str,Any],params:Any)->tuple[list[dict[str,Any]],dict[str,list[dict[str,Any]]]]:
         warmup=max(params.slow_ma,params.ema_pullback_period,params.rsi_period,params.atr_period)+20; candles,_=self.research.history.get_candles(request["instrument"],request["timeframe"],request["start_ts"],request["end_ts"],warmup); mtf={}
@@ -105,7 +109,7 @@ class ValidationService:
             for index,asset in enumerate(payload["assets"]):
                 checkpoint(job_id,5+index*25,f"Running {asset} benchmarks");request={**payload,"instrument":asset};candles,mtf=self._datasets(request,params);canonical=run_backtest(candles,asset,payload["timeframe"],params,payload["start_ts"],payload["end_ts"],timeframe_datasets=mtf);results=run_asset_benchmarks([row for row in candles if payload["start_ts"]<=int(row["ts"])<=payload["end_ts"]],params.initial_capital,params.trading_fee,params.slippage,{"15m":900,"1H":3600,"4H":14400}[payload["timeframe"]],canonical);all_results.extend([{**item,"instrument":asset} for item in results]);portfolio_series.append(next(item for item in results if item["name"]=="Buy & Hold")["equity"])
             if portfolio_series:
-                common=sorted(set.intersection(*(set(point["ts"] for point in series) for series in portfolio_series)));maps=[{p["ts"]:p["equity"] for p in series} for series in portfolio_series];equity=[{"ts":ts,"equity":sum(m[ts] for m in maps)/len(maps)} for ts in common];from dashboard.metrics import calculate_metrics;metrics=calculate_metrics(params.initial_capital,equity,[],{"15m":900,"1H":3600,"4H":14400}[payload["timeframe"]]);constituent_holds=[x for x in all_results if x["name"]=="Buy & Hold"];metrics["fees_paid"]=sum(x["metrics"]["fees_paid"] for x in constituent_holds)/len(constituent_holds);metrics.update({"exposure":100.0,"time_in_market":100.0,"total_trades":len(constituent_holds)});all_results.append({"name":"Equal-Weight BTC/ETH/SOL Portfolio","instrument":"PORTFOLIO","metrics":metrics,"equity":equity,"execution_model":"Equal capital allocation; constituent Buy & Hold fees and slippage included."})
+                common=sorted(set.intersection(*(set(point["ts"] for point in series) for series in portfolio_series)));maps=[{p["ts"]:p["equity"] for p in series} for series in portfolio_series];equity=[{"ts":ts,"equity":sum(m[ts] for m in maps)/len(maps)} for ts in common];metrics=calculate_metrics(params.initial_capital,equity,[],{"15m":900,"1H":3600,"4H":14400}[payload["timeframe"]]);constituent_holds=[x for x in all_results if x["name"]=="Buy & Hold"];metrics["fees_paid"]=sum(x["metrics"]["fees_paid"] for x in constituent_holds)/len(constituent_holds);metrics.update({"exposure":100.0,"time_in_market":100.0,"total_trades":len(constituent_holds)});all_results.append({"name":"Equal-Weight BTC/ETH/SOL Portfolio","instrument":"PORTFOLIO","metrics":metrics,"equity":equity,"execution_model":"Equal capital allocation; constituent Buy & Hold fees and slippage included."})
             with self.repository.connect() as c:c.executemany("INSERT INTO benchmark_results(run_id,name,instrument,payload) VALUES(?,?,?,?)",[(run_id,item["name"],item["instrument"],json.dumps(item)) for item in all_results])
             summary={"result_count":len(all_results),"assets":payload["assets"],"negative_results_preserved":True};self.repository.finish_run("benchmark_runs",run_id,summary);return {"benchmark_run_id":run_id,**summary}
         except Exception as error:self.repository.finish_run("benchmark_runs",run_id,error=str(error));raise
@@ -122,7 +126,7 @@ class ValidationService:
         simulations=int(payload.get("simulation_count",1000));
         if not 1<=simulations<=MAX_SIMULATIONS:raise ValueError(f"Simulation count must be between 1 and {MAX_SIMULATIONS}.")
         request={"input_run_id":input_run_id,"simulation_count":simulations,"random_seed":int(payload.get("random_seed",42)),"confidence_level":float(payload.get("confidence_level",.95)),"fee_multipliers":payload.get("fee_multipliers",[.5,1,1.5,2]),"slippage_multipliers":payload.get("slippage_multipliers",[.5,1,1.5,2]),"missed_trade_rates":payload.get("missed_trade_rates",[0,.05,.1,.2]),"execution_delay_bars":payload.get("execution_delay_bars",[0,1,2]),"loss_threshold_pct":float(payload.get("loss_threshold_pct",20)),"drawdown_threshold_pct":float(payload.get("drawdown_threshold_pct",25))}
-        run_id=self.repository.create_run("robustness_runs",request,input_run_id=input_run_id,strategy_version="historical-mtf-no-flow-v1",config_hash=__import__('dashboard.signal_identity',fromlist=['config_hash']).config_hash(run["parameters"]),random_seed=request["random_seed"]);job=self.jobs.enqueue("ROBUSTNESS",{"validation_run_id":run_id,**request},requester);self.repository.bind_job("robustness_runs",run_id,job["id"]);return {"id":run_id,"job_id":job["id"],"status":"QUEUED","simulation_count":simulations}
+        run_id=self.repository.create_run("robustness_runs",request,input_run_id=input_run_id,strategy_version="historical-mtf-no-flow-v1",config_hash=config_hash(run["parameters"]),random_seed=request["random_seed"]);job=self.jobs.enqueue("ROBUSTNESS",{"validation_run_id":run_id,**request},requester);self.repository.bind_job("robustness_runs",run_id,job["id"]);return {"id":run_id,"job_id":job["id"],"status":"QUEUED","simulation_count":simulations}
 
     def _job_robustness(self,job_id:int,payload:dict[str,Any],checkpoint)->dict[str,Any]:
         run_id=int(payload["validation_run_id"])

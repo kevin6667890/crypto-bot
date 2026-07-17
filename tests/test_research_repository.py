@@ -5,6 +5,7 @@ from urllib.error import HTTPError
 from dashboard import okx_history
 from dashboard.okx_history import OkxHistoryClient
 from dashboard.research_repository import ResearchRepository
+from dashboard.validation_repository import ValidationRepository
 
 
 def test_migration_preserves_existing_paper_data(tmp_path):
@@ -25,6 +26,26 @@ def test_default_strategy_presets_are_idempotent(tmp_path):
     second = ResearchRepository(database)
     assert {item["name"] for item in first.strategies()} == {"Conservative", "Balanced", "Aggressive"}
     assert len(second.strategies()) == 3
+
+
+def test_reused_decision_signal_remains_linked_to_each_backtest_run(tmp_path):
+    database = tmp_path / "lineage.db"
+    repository = ResearchRepository(database)
+    payload = {"instrument": "BTC-USDT", "timeframe": "15m", "start_date": "2026-01-01", "end_date": "2026-01-02", "parameters": {}}
+    first_run = repository.create_run(payload)
+    second_run = repository.create_run(payload)
+    decision = {
+        "signal_id": "same-canonical-signal", "instrument": "BTC-USDT", "execution_timeframe": "15m",
+        "candle_close_ts": 1767225600000, "strategy_version": "canonical-v4", "config_hash": "abc",
+        "action": "WAIT", "bias": "LONG", "score": 50, "gate_results": [],
+    }
+    result = {"trades": [], "equity": [], "decisions": [decision], "metrics": {}, "data_quality": {}}
+    repository.save_result(first_run, result)
+    repository.save_result(second_run, result)
+
+    validation = ValidationRepository(database)
+    assert [item["signal_id"] for item in validation.decisions({"run_id": first_run})] == ["same-canonical-signal"]
+    assert [item["signal_id"] for item in validation.decisions({"run_id": second_run})] == ["same-canonical-signal"]
 
 
 def test_okx_rate_limit_is_retried(monkeypatch):

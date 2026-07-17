@@ -226,7 +226,7 @@ class ResearchService:
             paper_trades = [dict(row) for row in connection.execute("SELECT * FROM paper_trades WHERE instrument=? AND created_at>=? AND created_at<=? ORDER BY created_at", (run["instrument"], run["start_date"], run["end_date"] + "T23:59:59+00:00"))]
             start_ts,end_ts=_date_ts(run["start_date"]),_date_ts(run["end_date"],True)
             paper_signals=[json.loads(row[0]) for row in connection.execute("SELECT decision_payload FROM decision_signals WHERE source='PAPER' AND instrument=? AND candle_close_ts BETWEEN ? AND ? AND action!='WAIT' ORDER BY candle_close_ts",(run["instrument"],start_ts,end_ts))]
-            backtest_signals=[json.loads(row[0]) for row in connection.execute("SELECT decision_payload FROM decision_signals WHERE source='BACKTEST' AND run_id=? AND action!='WAIT' ORDER BY candle_close_ts",(run_id,))]
+            backtest_signals=[json.loads(row[0]) for row in connection.execute("SELECT d.decision_payload FROM decision_signals d JOIN decision_signal_runs dsr ON dsr.signal_id=d.signal_id WHERE d.source='BACKTEST' AND dsr.run_id=? AND d.action!='WAIT' ORDER BY d.candle_close_ts",(run_id,))]
         paper_exec={x.get("signal_id"):x for x in paper_trades if x.get("signal_id")}; backtest_exec={x.get("signal_id"):x for x in backtest_trades if x.get("signal_id")}
         paper=[{**signal,**paper_exec.get(signal.get("signal_id"),{})} for signal in paper_signals] or paper_trades
         backtest=[{**signal,**backtest_exec.get(signal.get("signal_id"),{})} for signal in backtest_signals] or backtest_trades

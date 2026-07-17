@@ -51,6 +51,7 @@ class ValidationRepository:
             CREATE TABLE IF NOT EXISTS benchmark_results(id INTEGER PRIMARY KEY AUTOINCREMENT,run_id INTEGER NOT NULL,name TEXT NOT NULL,instrument TEXT,payload TEXT NOT NULL,FOREIGN KEY(run_id) REFERENCES benchmark_runs(id));
             CREATE TABLE IF NOT EXISTS robustness_runs(id INTEGER PRIMARY KEY AUTOINCREMENT,job_id INTEGER,status TEXT NOT NULL,input_run_id INTEGER,strategy_version TEXT,config_hash TEXT,random_seed INTEGER NOT NULL,request TEXT NOT NULL,result TEXT,error TEXT,created_at TEXT NOT NULL,completed_at TEXT);
             CREATE TABLE IF NOT EXISTS robustness_results(id INTEGER PRIMARY KEY AUTOINCREMENT,run_id INTEGER NOT NULL,simulation_type TEXT NOT NULL,payload TEXT NOT NULL,FOREIGN KEY(run_id) REFERENCES robustness_runs(id));
+            CREATE TABLE IF NOT EXISTS decision_signal_runs(signal_id TEXT NOT NULL,run_id INTEGER NOT NULL,source TEXT NOT NULL DEFAULT 'BACKTEST',PRIMARY KEY(signal_id,run_id),FOREIGN KEY(signal_id) REFERENCES decision_signals(signal_id),FOREIGN KEY(run_id) REFERENCES backtest_runs(id) ON DELETE CASCADE);
             CREATE TABLE IF NOT EXISTS shadow_strategies(id INTEGER PRIMARY KEY AUTOINCREMENT,shadow_strategy_id TEXT NOT NULL UNIQUE,name TEXT NOT NULL,strategy_version TEXT NOT NULL,config_hash TEXT NOT NULL,parameters TEXT NOT NULL,instruments TEXT NOT NULL,enabled INTEGER NOT NULL DEFAULT 0,started_at TEXT,stopped_at TEXT,status TEXT NOT NULL,virtual_initial_capital REAL NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,archived_at TEXT);
             CREATE UNIQUE INDEX IF NOT EXISTS idx_shadow_active_unique ON shadow_strategies(config_hash,instruments) WHERE status IN ('RUNNING','PAUSED');
             CREATE TABLE IF NOT EXISTS shadow_strategy_states(shadow_strategy_id TEXT PRIMARY KEY,current_equity REAL NOT NULL,cash REAL NOT NULL,open_positions TEXT NOT NULL DEFAULT '{}',closed_trades INTEGER NOT NULL DEFAULT 0,total_r REAL NOT NULL DEFAULT 0,fees REAL NOT NULL DEFAULT 0,peak_equity REAL NOT NULL,drawdown REAL NOT NULL DEFAULT 0,last_candle_ts INTEGER,updated_at TEXT NOT NULL,FOREIGN KEY(shadow_strategy_id) REFERENCES shadow_strategies(shadow_strategy_id));
@@ -63,6 +64,7 @@ class ValidationRepository:
             CREATE TABLE IF NOT EXISTS promotion_evaluations(id INTEGER PRIMARY KEY AUTOINCREMENT,lifecycle_id INTEGER NOT NULL,policy_version TEXT NOT NULL,result TEXT NOT NULL,recommended_status TEXT NOT NULL,evaluated_at TEXT NOT NULL,FOREIGN KEY(lifecycle_id) REFERENCES strategy_lifecycle(id));
             CREATE TABLE IF NOT EXISTS strategy_audit_log(id INTEGER PRIMARY KEY AUTOINCREMENT,lifecycle_id INTEGER NOT NULL,action TEXT NOT NULL,from_status TEXT,to_status TEXT,actor TEXT NOT NULL,evidence TEXT NOT NULL,created_at TEXT NOT NULL,FOREIGN KEY(lifecycle_id) REFERENCES strategy_lifecycle(id));
             CREATE INDEX IF NOT EXISTS idx_gate_runs_created ON gate_analysis_runs(created_at DESC);
+            CREATE INDEX IF NOT EXISTS idx_decision_signal_runs_run ON decision_signal_runs(run_id,signal_id);
             CREATE INDEX IF NOT EXISTS idx_near_miss_filter ON near_miss_signals(instrument,regime,score_gap,candle_close_ts DESC);
             CREATE INDEX IF NOT EXISTS idx_sensitivity_run ON sensitivity_results(run_id);
             CREATE INDEX IF NOT EXISTS idx_benchmark_run ON benchmark_results(run_id);
@@ -72,6 +74,8 @@ class ValidationRepository:
             """)
             for col, decl in (("regime", "TEXT"), ("regime_version", "TEXT"), ("gate_payload", "TEXT")):
                 self._ensure_column(c, "decision_signals", col, decl)
+            if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='decision_signals'").fetchone():
+                c.execute("INSERT OR IGNORE INTO decision_signal_runs(signal_id,run_id,source) SELECT signal_id,run_id,source FROM decision_signals WHERE run_id IS NOT NULL")
             if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='strategy_configs'").fetchone():
                 rows = c.execute("SELECT id,name,parameters FROM strategy_configs").fetchall()
                 for row in rows:
@@ -106,12 +110,16 @@ class ValidationRepository:
 
     def decisions(self, filters: dict[str, Any], limit: int = 200000) -> list[dict[str, Any]]:
         clauses, values = ["1=1"], []
-        mapping = {"instrument": "instrument", "strategy_version": "strategy_version", "config_hash": "config_hash", "timeframe": "execution_timeframe", "source": "source", "run_id": "run_id"}
+        mapping = {"instrument": "d.instrument", "strategy_version": "d.strategy_version", "config_hash": "d.config_hash", "timeframe": "d.execution_timeframe", "source": "d.source"}
         for key, column in mapping.items():
             if filters.get(key) not in (None, "", "ALL"): clauses.append(f"{column}=?"); values.append(filters[key])
-        if filters.get("start_ts"): clauses.append("candle_close_ts>=?"); values.append(int(filters["start_ts"]))
-        if filters.get("end_ts"): clauses.append("candle_close_ts<=?"); values.append(int(filters["end_ts"]))
-        with self.connect() as c: rows = c.execute(f"SELECT source,decision_payload,regime,regime_version FROM decision_signals WHERE {' AND '.join(clauses)} ORDER BY candle_close_ts LIMIT ?", (*values, min(limit, 200000))).fetchall()
+        join = ""
+        if filters.get("run_id") not in (None, "", "ALL"):
+            join = " JOIN decision_signal_runs dsr ON dsr.signal_id=d.signal_id"
+            clauses.append("dsr.run_id=?"); values.append(int(filters["run_id"]))
+        if filters.get("start_ts"): clauses.append("d.candle_close_ts>=?"); values.append(int(filters["start_ts"]))
+        if filters.get("end_ts"): clauses.append("d.candle_close_ts<=?"); values.append(int(filters["end_ts"]))
+        with self.connect() as c: rows = c.execute(f"SELECT d.source,d.decision_payload,d.regime,d.regime_version FROM decision_signals d{join} WHERE {' AND '.join(clauses)} ORDER BY d.candle_close_ts LIMIT ?", (*values, min(limit, 200000))).fetchall()
         output = []
         for row in rows:
             payload = json.loads(row["decision_payload"]); payload["source"] = row["source"]; payload.setdefault("regime", row["regime"] or "Unknown"); payload.setdefault("regime_version", row["regime_version"])

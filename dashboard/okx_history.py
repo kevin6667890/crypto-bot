@@ -6,6 +6,7 @@ import json
 import time
 from datetime import datetime, timezone
 from typing import Any
+from urllib.error import HTTPError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
@@ -26,12 +27,23 @@ class OkxHistoryClient:
     @staticmethod
     def _request(params: dict[str, Any]) -> list[list[str]]:
         url = "https://www.okx.com/api/v5/market/history-candles?" + urlencode(params)
-        request = Request(url, headers={"User-Agent": "crypto-bot-research/3.0"})
-        with urlopen(request, timeout=20) as response:  # noqa: S310 - fixed OKX endpoint
-            payload = json.loads(response.read().decode("utf-8"))
-        if payload.get("code") != "0":
-            raise RuntimeError(f"OKX history error: {payload.get('msg', 'unknown response')}")
-        return payload.get("data", [])
+        for attempt in range(7):
+            request = Request(url, headers={"User-Agent": "crypto-bot-research/3.0"})
+            try:
+                with urlopen(request, timeout=20) as response:  # noqa: S310 - fixed OKX endpoint
+                    payload = json.loads(response.read().decode("utf-8"))
+            except HTTPError as error:
+                if error.code != 429 or attempt == 6:
+                    raise
+                retry_after = error.headers.get("Retry-After")
+                time.sleep(float(retry_after) if retry_after and retry_after.isdigit() else min(2 ** attempt, 12))
+                continue
+            if payload.get("code") in {"50011", "50040"} and attempt < 6:
+                time.sleep(min(2 ** attempt, 12)); continue
+            if payload.get("code") != "0":
+                raise RuntimeError(f"OKX history error: {payload.get('msg', 'unknown response')}")
+            return payload.get("data", [])
+        raise RuntimeError("OKX history request exhausted its retry budget.")
 
     def get_candles(self, instrument: str, timeframe: str, start_ts: int, end_ts: int, warmup_bars: int) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         if instrument not in INSTRUMENTS or timeframe not in TIMEFRAME_SECONDS:

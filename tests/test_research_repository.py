@@ -1,5 +1,9 @@
 import sqlite3
+import json
+from urllib.error import HTTPError
 
+from dashboard import okx_history
+from dashboard.okx_history import OkxHistoryClient
 from dashboard.research_repository import ResearchRepository
 
 
@@ -21,3 +25,24 @@ def test_default_strategy_presets_are_idempotent(tmp_path):
     second = ResearchRepository(database)
     assert {item["name"] for item in first.strategies()} == {"Conservative", "Balanced", "Aggressive"}
     assert len(second.strategies()) == 3
+
+
+def test_okx_rate_limit_is_retried(monkeypatch):
+    calls = 0
+
+    class Response:
+        def __enter__(self): return self
+        def __exit__(self, *_args): return None
+        def read(self): return json.dumps({"code": "0", "data": [["1"]]}).encode()
+
+    def fake_open(*_args, **_kwargs):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            raise HTTPError("https://www.okx.com", 429, "limited", {}, None)
+        return Response()
+
+    monkeypatch.setattr(okx_history, "urlopen", fake_open)
+    monkeypatch.setattr(okx_history.time, "sleep", lambda _seconds: None)
+    assert OkxHistoryClient._request({"instId": "BTC-USDT", "bar": "15m"}) == [["1"]]
+    assert calls == 2

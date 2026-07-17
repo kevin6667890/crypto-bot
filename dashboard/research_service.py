@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import threading
+import json
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -13,11 +13,19 @@ try:
     from okx_history import INSTRUMENTS, TIMEFRAME_SECONDS, OkxHistoryClient
     from research_repository import ResearchRepository, utc_now
     from strategy_rules import DEFAULT_PARAMETERS, validate_parameters
+    from job_queue import JobQueue
+    from portfolio_backtest import PortfolioParameters, run_portfolio_backtest
+    from reconciliation import reconcile
+    from alert_service import AlertService
 except ImportError:
     from .backtest_engine import run_backtest
     from .okx_history import INSTRUMENTS, TIMEFRAME_SECONDS, OkxHistoryClient
     from .research_repository import ResearchRepository, utc_now
     from .strategy_rules import DEFAULT_PARAMETERS, validate_parameters
+    from .job_queue import JobQueue
+    from .portfolio_backtest import PortfolioParameters, run_portfolio_backtest
+    from .reconciliation import reconcile
+    from .alert_service import AlertService
 
 
 def _date_ts(value: str, end: bool = False) -> int:
@@ -31,8 +39,11 @@ class ResearchService:
     def __init__(self, db_path: Path) -> None:
         self.repository = ResearchRepository(db_path)
         self.history = OkxHistoryClient(self.repository)
-        self._active: set[int] = set()
-        self._lock = threading.Lock()
+        self.alerts = AlertService(db_path)
+        self.jobs = JobQueue(db_path, max_queue=int(__import__('os').getenv('RESEARCH_MAX_QUEUE','10')))
+        self.jobs.register("BACKTEST", self._job_backtest)
+        self.jobs.register("WALK_FORWARD", self._job_walk_forward)
+        self.jobs.register("PORTFOLIO_BACKTEST", self._job_portfolio)
 
     @staticmethod
     def validate_request(payload: dict[str, Any]) -> dict[str, Any]:
@@ -40,7 +51,7 @@ class ResearchService:
         timeframe = str(payload.get("timeframe", "15m"))
         if instrument not in INSTRUMENTS:
             raise ValueError("Instrument must be BTC-USDT, ETH-USDT or SOL-USDT.")
-        if timeframe not in TIMEFRAME_SECONDS:
+        if timeframe not in {"15m","1H","4H"}:
             raise ValueError("Timeframe must be 15m, 1H or 4H.")
         start_date, end_date = str(payload.get("start_date", "")), str(payload.get("end_date", ""))
         start_ts, end_ts = _date_ts(start_date), _date_ts(end_date, end=True)
@@ -48,32 +59,46 @@ class ResearchService:
             raise ValueError("Start date must be earlier than end date.")
         if end_ts > int(datetime.now(timezone.utc).timestamp()) + 86400:
             raise ValueError("End date cannot be in the future.")
-        if end_ts - start_ts > 5 * 366 * 86400:
-            raise ValueError("A single backtest range cannot exceed five years.")
+        if end_ts - start_ts > 2 * 366 * 86400:
+            raise ValueError("A single backtest range cannot exceed two years.")
         parameters = validate_parameters(payload.get("parameters"))
         return {"instrument": instrument, "timeframe": timeframe, "start_date": start_date, "end_date": end_date, "start_ts": start_ts, "end_ts": end_ts, "parameters": asdict(parameters), "strategy_config_id": payload.get("strategy_config_id"), "validation_split": float(payload.get("validation_split", 0.7))}
 
-    def start_backtest(self, payload: dict[str, Any]) -> dict[str, Any]:
+    def start_backtest(self, payload: dict[str, Any], requester_key: str = "public") -> dict[str, Any]:
         request = self.validate_request(payload)
         if not 0.5 <= request["validation_split"] <= 0.9:
             raise ValueError("Validation split must be between 50% and 90%.")
+        existing=self.jobs.find_active("BACKTEST",request,requester_key)
+        if existing:
+            return {"id":int(existing["request_payload"]["run_id"]),"job_id":existing["id"],"status":existing["status"],"progress":existing["progress"],"deduplicated":True}
         run_id = self.repository.create_run(request)
-        with self._lock:
-            self._active.add(run_id)
-        threading.Thread(target=self._execute, args=(run_id, request), daemon=True, name=f"backtest-{run_id}").start()
-        return {"id": run_id, "status": "QUEUED", "progress": 0}
+        job=self.jobs.enqueue("BACKTEST",{**request,"run_id":run_id},requester_key,dedupe_payload=request)
+        if job.get("deduplicated"):
+            self.repository.update_run(run_id,status="FAILED",progress=100,progress_message="Duplicate request",error="An identical active request already exists")
+            return {"id":int(job["request_payload"]["run_id"]),"job_id":job["id"],"status":job["status"],"progress":job["progress"],"deduplicated":True}
+        return {"id": run_id, "job_id":job["id"], "status": "QUEUED", "progress": 0, "deduplicated":False}
 
-    def _execute(self, run_id: int, request: dict[str, Any]) -> None:
+    def _job_backtest(self, job_id: int, request: dict[str, Any], checkpoint) -> dict[str, Any]:
+        run_id=int(request["run_id"])
         try:
             self.repository.update_run(run_id, status="RUNNING", progress=3, progress_message="Checking SQLite candle cache")
+            checkpoint(job_id,3,"Checking SQLite candle cache")
             parameters = validate_parameters(request["parameters"])
             warmup = max(parameters.slow_ma, parameters.ema_pullback_period, parameters.rsi_period, parameters.atr_period) + 20
             candles, quality = self.history.get_candles(request["instrument"], request["timeframe"], request["start_ts"], request["end_ts"], warmup)
+            if int(quality.get("missing_bars",0))>0:self.alerts.raise_alert("Data Gap Detected","warning","historical_data",f"{quality['missing_bars']} missing {request['timeframe']} bars detected",request["instrument"],related_job_id=job_id,key=f"data-gap|{request['instrument']}|{request['timeframe']}")
+            else:self.alerts.resolve(f"data-gap|{request['instrument']}|{request['timeframe']}")
+            mtf_data={}
+            if request["timeframe"]=="15m":
+                for frame in ("1H","4H"):
+                    mtf_data[frame],_=self.history.get_candles(request["instrument"],frame,request["start_ts"],request["end_ts"],warmup)
             self.repository.update_run(run_id, progress=25, progress_message=f"Loaded {len(candles)} confirmed OKX candles", data_quality=quality)
-            result = run_backtest(candles, request["instrument"], request["timeframe"], parameters, request["start_ts"], request["end_ts"], lambda value, message: self.repository.update_run(run_id, progress=25 + int(value * 0.6), progress_message=message))
+            def report(value:int,message:str)->None:
+                progress_value=25+int(value*.6); checkpoint(job_id,progress_value,message); self.repository.update_run(run_id,progress=progress_value,progress_message=message)
+            result = run_backtest(candles, request["instrument"], request["timeframe"], parameters, request["start_ts"], request["end_ts"], report, mtf_data)
             split_ts = request["start_ts"] + int((request["end_ts"] - request["start_ts"]) * request["validation_split"])
-            is_result = run_backtest(candles, request["instrument"], request["timeframe"], parameters, request["start_ts"], split_ts)
-            oos_result = run_backtest(candles, request["instrument"], request["timeframe"], parameters, split_ts + 1, request["end_ts"])
+            is_result = run_backtest(candles, request["instrument"], request["timeframe"], parameters, request["start_ts"], split_ts, timeframe_datasets=mtf_data)
+            oos_result = run_backtest(candles, request["instrument"], request["timeframe"], parameters, split_ts + 1, request["end_ts"], timeframe_datasets=mtf_data)
             validation = {"split": request["validation_split"], "split_ts": split_ts, "in_sample": is_result["metrics"], "out_of_sample": oos_result["metrics"]}
             is_pf, oos_pf = is_result["metrics"]["profit_factor"], oos_result["metrics"]["profit_factor"]
             is_return, oos_return = is_result["metrics"]["total_return"], oos_result["metrics"]["total_return"]
@@ -82,11 +107,11 @@ class ResearchService:
             validation["message"] = "OOS performance materially degraded; review robustness before paper use." if degradation else "No material IS/OOS degradation detected by the simple threshold check."
             result["validation"] = validation; result["data_quality"] = quality
             self.repository.save_result(run_id, result)
+            return {"run_id":run_id}
         except Exception as error:
             self.repository.update_run(run_id, status="FAILED", progress=100, progress_message="Failed", error=str(error))
-        finally:
-            with self._lock:
-                self._active.discard(run_id)
+            self.alerts.raise_alert("Backtest Failed","warning","research",f"Backtest run #{run_id} failed",request.get("instrument"),related_job_id=job_id,key=f"backtest-failed|{run_id}")
+            raise
 
     def run_detail(self, run_id: int, include_series: bool = True) -> dict[str, Any] | None:
         run = self.repository.run(run_id)
@@ -146,11 +171,14 @@ class ResearchService:
         parameters = validate_parameters(request["parameters"])
         warmup = max(parameters.slow_ma, parameters.ema_pullback_period, parameters.rsi_period, parameters.atr_period) + 20
         candles, quality = self.history.get_candles(request["instrument"], request["timeframe"], request["start_ts"], request["end_ts"], warmup)
+        mtf_data={}
+        if request["timeframe"]=="15m":
+            for frame in ("1H","4H"):mtf_data[frame],_=self.history.get_candles(request["instrument"],frame,request["start_ts"],request["end_ts"],warmup)
         windows, cursor = [], request["start_ts"]
         while cursor + (train_days + test_days) * 86400 <= request["end_ts"] and len(windows) < 36:
             train_end = cursor + train_days * 86400 - 1; test_end = train_end + test_days * 86400
-            train = run_backtest(candles, request["instrument"], request["timeframe"], parameters, cursor, train_end)
-            test = run_backtest(candles, request["instrument"], request["timeframe"], parameters, train_end + 1, test_end)
+            train = run_backtest(candles, request["instrument"], request["timeframe"], parameters, cursor, train_end,timeframe_datasets=mtf_data)
+            test = run_backtest(candles, request["instrument"], request["timeframe"], parameters, train_end + 1, test_end,timeframe_datasets=mtf_data)
             windows.append({"train_start": cursor, "train_end": train_end, "test_end": test_end, "train": train["metrics"], "test": test["metrics"]})
             cursor += step_days * 86400
         if not windows:
@@ -159,24 +187,54 @@ class ResearchService:
         result["id"] = self.repository.save_walk_forward(request["instrument"], request["timeframe"], request["parameters"], windows, {"note": result["note"], "data_quality": quality})
         return result
 
+    def start_walk_forward(self,payload:dict[str,Any],requester_key:str="public")->dict[str,Any]:
+        request=self.validate_request(payload)
+        for key,default in (("train_days",90),("test_days",30),("step_days",30)): request[key]=int(payload.get(key,default))
+        return self.jobs.enqueue("WALK_FORWARD",request,requester_key)
+
+    def _job_walk_forward(self,job_id:int,payload:dict[str,Any],checkpoint)->dict[str,Any]:
+        checkpoint(job_id,5,"Loading walk-forward data")
+        return self.walk_forward(payload)
+
+    def start_portfolio(self,payload:dict[str,Any],requester_key:str="public")->dict[str,Any]:
+        assets=sorted(set(payload.get("assets",[])))
+        if not assets or any(a not in INSTRUMENTS for a in assets): raise ValueError("Portfolio assets must contain BTC-USDT, ETH-USDT or SOL-USDT.")
+        request=self.validate_request({**payload,"instrument":assets[0],"timeframe":"15m"}); request["assets"]=assets
+        allowed={k:payload[k] for k in ("initial_capital","max_positions","max_asset_weight","max_asset_risk","max_portfolio_risk","max_long_exposure","max_short_exposure","asset_weights","risk_parity","portfolio_cooldown_bars") if k in payload}
+        request["portfolio_parameters"]=asdict(PortfolioParameters(**allowed))
+        return self.jobs.enqueue("PORTFOLIO_BACKTEST",request,requester_key)
+
+    def _job_portfolio(self,job_id:int,request:dict[str,Any],checkpoint)->dict[str,Any]:
+        params=validate_parameters(request["parameters"]); datasets={}
+        warmup=max(params.slow_ma,params.ema_pullback_period,params.rsi_period,params.atr_period)+20
+        for index,asset in enumerate(request["assets"]):
+            checkpoint(job_id,5+index*10,f"Loading {asset} confirmed candles")
+            datasets[asset],_=self.history.get_candles(asset,"15m",request["start_ts"],request["end_ts"],warmup)
+        run_id=self.repository.create_portfolio_run(request["portfolio_parameters"],job_id)
+        try:
+            result=run_portfolio_backtest(datasets,params,PortfolioParameters(**request["portfolio_parameters"]),request["start_ts"],request["end_ts"],lambda p,m:checkpoint(job_id,35+int(p*.6),m))
+            self.repository.save_portfolio_result(run_id,result); return {"portfolio_run_id":run_id}
+        except Exception as error:
+            self.repository.fail_portfolio_run(run_id,str(error)); raise
+
     def reconciliation(self, run_id: int) -> dict[str, Any]:
         run = self.repository.run(run_id)
         if not run or run["status"] != "COMPLETED":
             raise ValueError("A completed backtest run is required.")
-        backtest = self.repository.trades(run_id)
+        backtest_trades = self.repository.trades(run_id)
         with self.repository.connect() as connection:
-            paper = [dict(row) for row in connection.execute("SELECT * FROM paper_trades WHERE instrument=? AND created_at>=? AND created_at<=? ORDER BY created_at", (run["instrument"], run["start_date"], run["end_date"] + "T23:59:59+00:00"))]
-        bt_wins = sum(float(item["pnl"]) > 0 for item in backtest); paper_closed = [item for item in paper if item.get("status") != "OPEN"]
-        paper_wins = sum(item.get("status") == "WIN" for item in paper_closed)
-        paper_gross_win = sum(max(float(item.get("pnl_r") or 0), 0) for item in paper_closed); paper_gross_loss = abs(sum(min(float(item.get("pnl_r") or 0), 0) for item in paper_closed))
-        paper_pf = paper_gross_win / paper_gross_loss if paper_gross_loss else None
-        bt_metrics = run["result"]["metrics"]
-        signal_difference = len(paper) - int(run["result"].get("signal_count", len(backtest)))
-        status = "Normal" if abs(signal_difference) <= 1 else "Watch" if abs(signal_difference) <= 3 else "Diverging"
-        return {"run_id": run_id, "paper_trades": len(paper), "backtest_trades": len(backtest), "paper_signal_count": len(paper), "backtest_signal_count": run["result"].get("signal_count", len(backtest)), "signal_count_difference": signal_difference,
-                "paper_win_rate": paper_wins / len(paper_closed) * 100 if paper_closed else None, "backtest_win_rate": bt_metrics["win_rate"], "paper_profit_factor": paper_pf, "backtest_profit_factor": bt_metrics["profit_factor"],
-                "average_entry_difference_pct": None, "slippage_difference": None, "missed_signals": max(0, run["result"].get("signal_count", 0) - len(paper)), "unexpected_signals": max(0, len(paper) - run["result"].get("signal_count", 0)), "drift_status": status,
-                "limitations": ["Paper collection runs on a 60-second interval.", "Backtest signals use confirmed candle closes and next-open execution.", "Paper and historical API snapshots can differ.", "Configured slippage and paper observed prices are not identical.", "Cooldown, service restarts and missing collection intervals can suppress paper signals."]}
+            paper_trades = [dict(row) for row in connection.execute("SELECT * FROM paper_trades WHERE instrument=? AND created_at>=? AND created_at<=? ORDER BY created_at", (run["instrument"], run["start_date"], run["end_date"] + "T23:59:59+00:00"))]
+            start_ts,end_ts=_date_ts(run["start_date"]),_date_ts(run["end_date"],True)
+            paper_signals=[json.loads(row[0]) for row in connection.execute("SELECT decision_payload FROM decision_signals WHERE source='PAPER' AND instrument=? AND candle_close_ts BETWEEN ? AND ? AND action!='WAIT' ORDER BY candle_close_ts",(run["instrument"],start_ts,end_ts))]
+            backtest_signals=[json.loads(row[0]) for row in connection.execute("SELECT decision_payload FROM decision_signals WHERE source='BACKTEST' AND run_id=? AND action!='WAIT' ORDER BY candle_close_ts",(run_id,))]
+        paper_exec={x.get("signal_id"):x for x in paper_trades if x.get("signal_id")}; backtest_exec={x.get("signal_id"):x for x in backtest_trades if x.get("signal_id")}
+        paper=[{**signal,**paper_exec.get(signal.get("signal_id"),{})} for signal in paper_signals] or paper_trades
+        backtest=[{**signal,**backtest_exec.get(signal.get("signal_id"),{})} for signal in backtest_signals] or backtest_trades
+        result=reconcile(paper,backtest)
+        drift_key=f"strategy-drift|{run_id}"
+        if result["drift_status"]=="Diverging":self.alerts.raise_alert("Strategy Drift","warning","reconciliation",f"Run #{run_id} is diverging from paper lineage",run["instrument"],related_job_id=None,key=drift_key)
+        elif result["drift_status"]=="Normal":self.alerts.resolve(drift_key)
+        result.update({"run_id":run_id,"paper_trades":len(paper_trades),"backtest_trades":len(backtest_trades),"limitations":["Only identical strategy versions are eligible for exact reconciliation.","Legacy rows without reliable lineage remain unmatched."]}); return result
 
 
 DEFAULT_RESEARCH_PARAMETERS = DEFAULT_PARAMETERS

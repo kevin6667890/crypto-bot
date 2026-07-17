@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hmac
 import os
 import sqlite3
 import threading
@@ -18,7 +19,11 @@ from urllib.parse import parse_qs, urlparse
 from urllib.request import Request, urlopen
 
 from research_service import ResearchService
-from strategy_rules import score_rule_components
+from strategy_rules import StrategyParameters, calculate_indicators
+from decision_engine import FlowContext, MarketContext, RiskContext, TimeframeContext, evaluate_decision, LIVE_STRATEGY_VERSION
+from alert_service import AlertService
+from health_service import HealthService, configure_logging, log_event
+from rate_limit import RateLimiter
 
 try:
     from dotenv import load_dotenv
@@ -42,13 +47,6 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 
 
-def ema(values: list[float], period: int) -> float:
-    multiplier, result = 2 / (period + 1), values[0]
-    for value in values[1:]:
-        result = value * multiplier + result * (1 - multiplier)
-    return result
-
-
 class PaperService:
     def __init__(self, db_path: Path = DB_PATH) -> None:
         self.db_path = db_path
@@ -59,11 +57,14 @@ class PaperService:
             for instrument in INSTRUMENTS
         }
         self.last_ai_at = {instrument: 0.0 for instrument in INSTRUMENTS}
+        self.scheduler_running=False; self.last_cycle_started_at=None; self.last_cycle_completed_at=None; self.last_cycle_duration_ms=None; self.next_cycle_at=None; self.last_okx_success=None; self.last_okx_error=None; self.last_ai_success=None
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
         conn = sqlite3.connect(self.db_path, timeout=20)
         conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA busy_timeout=30000")
+        conn.execute("PRAGMA journal_mode=WAL")
         try:
             yield conn
             conn.commit()
@@ -96,6 +97,9 @@ class PaperService:
             self._ensure_column(conn, "analysis_snapshots", "instrument", "TEXT")
             self._ensure_column(conn, "ai_briefs", "instrument", "TEXT")
             self._ensure_column(conn, "flow_snapshots", "instrument", "TEXT")
+            for column,declaration in (("signal_id","TEXT"),("strategy_version","TEXT"),("config_hash","TEXT"),("expected_entry_price","REAL"),("observed_entry_price","REAL"),("execution_delay_ms","INTEGER"),("observed_slippage_pct","REAL"),("candle_close_ts","INTEGER"),("signal_score","REAL")):
+                self._ensure_column(conn,"paper_trades",column,declaration)
+            conn.execute("""CREATE TABLE IF NOT EXISTS decision_signals(id INTEGER PRIMARY KEY AUTOINCREMENT,signal_id TEXT NOT NULL UNIQUE,source TEXT NOT NULL,run_id INTEGER,instrument TEXT NOT NULL,execution_timeframe TEXT NOT NULL,candle_close_ts INTEGER NOT NULL,strategy_version TEXT NOT NULL,config_hash TEXT NOT NULL,action TEXT NOT NULL,bias TEXT NOT NULL,score REAL NOT NULL,decision_payload TEXT NOT NULL,created_at TEXT NOT NULL)""")
             conn.execute("""CREATE TABLE IF NOT EXISTS event_logs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT NOT NULL, instrument TEXT NOT NULL,
                 event_type TEXT NOT NULL, message TEXT NOT NULL, payload TEXT NOT NULL DEFAULT '{}')""")
@@ -114,7 +118,8 @@ class PaperService:
 
     def _candles(self, instrument: str, bar: str, limit: int = 300) -> list[dict[str, float]]:
         payload = self._json(f"https://www.okx.com/api/v5/market/candles?instId={instrument}&bar={bar}&limit={limit}")
-        candles = [{"ts": int(row[0]) // 1000, "open": float(row[1]), "high": float(row[2]), "low": float(row[3]), "close": float(row[4]), "volume": float(row[5])} for row in payload.get("data", [])]
+        seconds={"15m":900,"1H":3600,"4H":14400,"1D":86400}.get(bar,0)
+        candles = [{"ts": int(row[0]) // 1000, "candle_close_ts": int(row[0]) // 1000 + seconds, "open": float(row[1]), "high": float(row[2]), "low": float(row[3]), "close": float(row[4]), "volume": float(row[5]), "confirmed": bool(int(row[8])) if len(row)>8 else True} for row in payload.get("data", [])]
         return list(reversed(candles))
 
     def _price(self, instrument: str) -> float:
@@ -145,72 +150,33 @@ class PaperService:
             "oi_history": list(reversed(history)), "source": "OKX public trades + SWAP OI",
         }
 
-    @staticmethod
-    def _ema_slope(closes: list[float]) -> float:
-        current, previous = ema(closes[-80:], 20), ema(closes[-90:-10], 20)
-        return (current - previous) / previous * 100 if previous else 0
-
-    @staticmethod
-    def _rsi(closes: list[float], period: int = 14) -> float:
-        changes = [b - a for a, b in zip(closes[-period - 1:-1], closes[-period:])]
-        gains, losses = sum(max(v, 0) for v in changes) / period, sum(max(-v, 0) for v in changes) / period
-        return 100.0 if losses == 0 else 100 - 100 / (1 + gains / losses)
-
-    @staticmethod
-    def _atr(candles: list[dict[str, float]], period: int = 14) -> float:
-        sample = candles[-period - 1:]
-        ranges = [max(row["high"] - row["low"], abs(row["high"] - previous["close"]), abs(row["low"] - previous["close"])) for previous, row in zip(sample, sample[1:])]
-        return sum(ranges) / len(ranges)
-
     def _store_candles(self, instrument: str, candles: list[dict[str, float]]) -> None:
         with self._connect() as conn:
             conn.executemany("INSERT OR REPLACE INTO market_candles(instrument,bar,ts,open,high,low,close,volume) VALUES(?,?,?,?,?,?,?,?)", [(instrument, "15m", row["ts"], row["open"], row["high"], row["low"], row["close"], row["volume"]) for row in candles])
 
     def analyze(self, instrument: str, flow: dict[str, Any]) -> dict[str, Any]:
-        c15, c1h, c4h, c1d = (self._candles(instrument, bar) for bar in ("15m", "1H", "4H", "1D"))
-        self._store_candles(instrument, c15)
-        closes15, closes1h, closes4h, closes1d = ([row["close"] for row in candles] for candles in (c15, c1h, c4h, c1d))
-        price = closes15[-1]
-        ema15, ema1h, ema4h = ema(closes15[-80:], 20), ema(closes1h[-80:], 20), ema(closes4h[-80:], 20)
-        ma60_1h, ma200_1h = sum(closes1h[-60:]) / 60, sum(closes1h[-200:]) / 200
-        ma60_4h, ma200_4h = sum(closes4h[-60:]) / 60, sum(closes4h[-200:]) / 200
-        trend_long = closes4h[-1] > ma60_4h > ma200_4h and closes1h[-1] > ma60_1h > ma200_1h
-        trend_short = closes4h[-1] < ma60_4h < ma200_4h and closes1h[-1] < ma60_1h < ma200_1h
-        side = "LONG" if trend_long else "SHORT" if trend_short else "WAIT"
-        distance, rsi, atr = (price - ema15) / ema15 * 100, self._rsi(closes15), self._atr(c15)
-        volume_ratio = c15[-1]["volume"] / (sum(row["volume"] for row in c15[-21:-1]) / 20 or 1)
-        pullback = abs(distance) <= 0.45
-        flow_aligned = (side == "LONG" and flow["cvd_delta"] > 0) or (side == "SHORT" and flow["cvd_delta"] < 0)
-        contributions = [
-            {"key": "trend", "label": "1H + 4H trend", "points": 30 if side != "WAIT" else 8, "max": 30, "status": "pass" if side != "WAIT" else "fail", "detail": "MA60/MA200 aligned" if side != "WAIT" else "Moving averages are mixed"},
-            {"key": "structure", "label": "MA60 / MA200 structure", "points": 20 if side != "WAIT" else 6, "max": 20, "status": "pass" if side != "WAIT" else "watch", "detail": f"4H {ma60_4h:.2f} / {ma200_4h:.2f}"},
-            {"key": "pullback", "label": "EMA20 pullback", "points": 20 if pullback else 5, "max": 20, "status": "pass" if pullback else "fail", "detail": f"{distance:+.2f}% from EMA20"},
-            {"key": "momentum", "label": "Volume + RSI", "points": 15 if volume_ratio >= 1 and 35 <= rsi <= 68 else 6, "max": 15, "status": "pass" if volume_ratio >= 1 and 35 <= rsi <= 68 else "watch", "detail": f"{volume_ratio:.2f}x volume · RSI {rsi:.1f}"},
-            {"key": "flow", "label": "CVD + OI flow", "points": 15 if flow_aligned else 5, "max": 15, "status": "pass" if flow_aligned else "watch", "detail": f"CVD {flow['cvd_delta']:+.0f} · OI {flow['oi_change_pct']:+.3f}%"},
-        ]
-        shared_components = score_rule_components(side != "WAIT", pullback, volume_ratio >= 1 and 35 <= rsi <= 68, True, flow_aligned)
-        for contribution, shared in zip(contributions, shared_components):
-            contribution["points"] = shared["points"]
-        score = sum(item["points"] for item in contributions)
-        action = side if side != "WAIT" and pullback and flow_aligned and score >= 75 else "WAIT"
-
-        def timeframe(closes: list[float]) -> dict[str, Any]:
-            ma60, ma200 = sum(closes[-60:]) / 60, sum(closes[-200:]) / 200
-            trend = "Bullish" if closes[-1] > ma60 > ma200 else "Bearish" if closes[-1] < ma60 < ma200 else "Mixed"
-            return {"trend": trend, "ema20_slope_pct": round(self._ema_slope(closes), 3), "ma60": round(ma60, 4), "ma200": round(ma200, 4)}
-
-        analysis = {
-            "instrument": instrument, "price": round(price, 4), "action": action, "bias": side, "score": score,
-            "ema20": round(ema15, 4), "rsi14": round(rsi, 2), "atr14": round(atr, 4),
-            "volume_ratio": round(volume_ratio, 2), "distance_ema20_pct": round(distance, 3),
-            "timeframes": {"15m": timeframe(closes15), "1H": timeframe(closes1h), "4H": timeframe(closes4h), "1D": timeframe(closes1d)},
-            "contributions": contributions, "flow": flow,
-            "conditions": [{"label": item["label"], "value": item["detail"], "pass": item["status"] == "pass"} for item in contributions],
-            "updated_at": now_iso(),
-        }
+        """Build causal live MTF context and call the canonical decision engine."""
+        datasets={bar:[row for row in self._candles(instrument,bar,300) if row.get("confirmed",True)] for bar in ("15m","1H","4H","1D")}
+        c15=datasets["15m"]
+        if not c15: raise RuntimeError("No confirmed 15m candle is available")
+        self._store_candles(instrument,c15)
+        params=StrategyParameters(); ind15=calculate_indicators(c15,params)[-1]; execution=c15[-1]; close_ts=int(execution["candle_close_ts"])
+        frames={}
+        for frame in ("1H","4H","1D"):
+            eligible=[row for row in datasets[frame] if int(row["candle_close_ts"])<=close_ts]
+            if not eligible: continue
+            values=calculate_indicators(eligible,params)[-1]; row=eligible[-1]
+            frames[frame]={"candle_close_ts":int(row["candle_close_ts"]),"close":row["close"],"fast_ma":values["fast_ma"],"slow_ma":values["slow_ma"],"trend":"Bullish" if values["fast_ma"] and values["slow_ma"] and row["close"]>values["fast_ma"]>values["slow_ma"] else "Bearish" if values["fast_ma"] and values["slow_ma"] and row["close"]<values["fast_ma"]<values["slow_ma"] else "Mixed","ema20_slope_pct":0.0,"ma60":values["fast_ma"],"ma200":values["slow_ma"]}
+        risk=self.risk_state(instrument)
+        decision=evaluate_decision(params,MarketContext(instrument,"15m",close_ts,float(execution["close"]),ind15,"OKX","public-confirmed-live-v1"),TimeframeContext(frames,("1H","4H"),False,"multi-timeframe"),FlowContext(True,float(flow.get("cvd_delta",0)),float(flow.get("oi_change_pct",0)),flow.get("source")),RiskContext(bool(risk["allowed"]),tuple(risk["blockers"]),int(risk["open_positions"]),0),LIVE_STRATEGY_VERSION).to_dict()
+        for item in decision["contributions"]:
+            item["detail"]={"trend":"1H + 4H confirmed trend alignment","structure":"MA60 / MA200 structure","pullback":f"{decision.get('decision_input_summary',{}).get('close',0):.2f} close vs EMA20","momentum":f"Volume {ind15.get('volume_ratio') or 0:.2f}x · RSI {ind15.get('rsi') or 0:.1f}","flow":f"CVD {flow.get('cvd_delta',0):+.0f} · OI {flow.get('oi_change_pct',0):+.3f}%"}.get(item["key"],item["label"])
+        distance_pct=(float(execution["close"])-float(ind15["ema"]))/float(ind15["ema"])*100 if ind15.get("ema") else None
+        analysis={**decision,"price":round(float(execution["close"]),4),"ema20":ind15["ema"],"rsi14":ind15["rsi"],"atr14":ind15["atr"],"volume_ratio":ind15["volume_ratio"],"distance_ema20_pct":distance_pct,"timeframes":{"15m":{"trend":decision["bias"],"ma60":ind15["fast_ma"],"ma200":ind15["slow_ma"],"ema20_slope_pct":0},**frames},"flow":flow,"conditions":[{"label":x["label"],"value":x["detail"],"pass":x["status"]=="pass"} for x in decision["contributions"]],"updated_at":now_iso()}
         with self._connect() as conn:
-            conn.execute("INSERT INTO analysis_snapshots(created_at,instrument,payload) VALUES(?,?,?)", (analysis["updated_at"], instrument, json.dumps(analysis)))
-        self.last_analysis[instrument] = analysis
+            conn.execute("INSERT INTO analysis_snapshots(created_at,instrument,payload) VALUES(?,?,?)",(analysis["updated_at"],instrument,json.dumps(analysis)))
+            conn.execute("""INSERT OR IGNORE INTO decision_signals(signal_id,source,instrument,execution_timeframe,candle_close_ts,strategy_version,config_hash,action,bias,score,decision_payload,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",(decision["signal_id"],"PAPER",instrument,"15m",close_ts,decision["strategy_version"],decision["config_hash"],decision["action"],decision["bias"],decision["score"],json.dumps(decision),analysis["updated_at"]))
+        self.last_analysis[instrument]=analysis
         return analysis
 
     def risk_state(self, instrument: str) -> dict[str, Any]:
@@ -232,6 +198,11 @@ class PaperService:
         if today_r <= MAX_DAILY_LOSS_R: blockers.append("daily loss limit")
         if consecutive >= MAX_CONSECUTIVE_LOSSES: blockers.append("consecutive loss limit")
         if cooldown_until and cooldown_until > datetime.now(timezone.utc): blockers.append("instrument cooldown")
+        alerts=globals().get("ALERTS")
+        if alerts:
+            for condition,kind,key,message in ((today_r<=MAX_DAILY_LOSS_R,"Daily Loss Limit",f"daily-loss|{instrument}",f"{instrument} daily paper result reached {today_r:.2f}R"),(consecutive>=MAX_CONSECUTIVE_LOSSES,"Consecutive Loss Limit",f"consecutive-loss|{instrument}",f"{instrument} reached {consecutive} consecutive paper losses")):
+                if condition:alerts.raise_alert(kind,"critical","paper_risk",message,instrument,key=key)
+                else:alerts.resolve(key)
         return {"allowed": not blockers, "blockers": blockers, "open_positions": open_total, "max_open_positions": MAX_OPEN_POSITIONS, "daily_pnl_r": round(today_r, 2), "daily_loss_limit_r": MAX_DAILY_LOSS_R, "consecutive_losses": consecutive, "max_consecutive_losses": MAX_CONSECUTIVE_LOSSES, "cooldown_until": cooldown_until.isoformat() if cooldown_until else None}
 
     def _open_trade(self, analysis: dict[str, Any]) -> None:
@@ -250,7 +221,9 @@ class PaperService:
                 return
             entry, atr, side = analysis["price"], analysis["atr14"], analysis["action"]
             stop, target = (entry - atr, entry + 2 * atr) if side == "LONG" else (entry + atr, entry - 2 * atr)
-            cursor = conn.execute("INSERT INTO paper_trades(instrument,side,entry,stop_loss,take_profit,created_at) VALUES(?,?,?,?,?,?)", (instrument, side, entry, stop, target, now_iso()))
+            observed_at=now_iso(); delay=max(0,int((datetime.now(timezone.utc).timestamp()-int(analysis["candle_close_ts"]))*1000))
+            cursor = conn.execute("""INSERT INTO paper_trades(instrument,side,entry,stop_loss,take_profit,created_at,signal_id,strategy_version,config_hash,expected_entry_price,observed_entry_price,execution_delay_ms,observed_slippage_pct,candle_close_ts,signal_score)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", (instrument, side, entry, stop, target, observed_at,analysis["signal_id"],analysis["strategy_version"],analysis["config_hash"],entry,entry,delay,0.0,analysis["candle_close_ts"],analysis["score"]))
             trade_id = cursor.lastrowid
         self._event(instrument, "TRADE_OPENED", f"Paper {side} opened", {"trade_id": trade_id, "entry": entry, "stop": stop, "target": target, "score": analysis["score"]})
 
@@ -285,8 +258,12 @@ class PaperService:
                 with urlopen(request, timeout=25) as response:  # noqa: S310
                     content = json.loads(response.read().decode())["choices"][0]["message"]["content"].strip()
                 source = "DeepSeek"
+                self.last_ai_success=now_iso(); alerts=globals().get("ALERTS")
+                if alerts:alerts.resolve(f"deepseek|{instrument}")
             except Exception as error:
                 content, source = f"AI brief unavailable: {error}", "error"
+                alerts=globals().get("ALERTS")
+                if alerts:alerts.raise_alert("DeepSeek Error","warning","ai","AI brief request failed",instrument,key=f"deepseek|{instrument}")
         with self._connect() as conn:
             conn.execute("INSERT INTO ai_briefs(created_at,instrument,content,source) VALUES(?,?,?,?)", (now_iso(), instrument, content, source))
 
@@ -298,16 +275,31 @@ class PaperService:
             analysis = self.analyze(instrument, flow)
             self._open_trade(analysis)
             self.maybe_create_ai_brief(analysis)
+            self.last_okx_success=now_iso(); self.last_okx_error=None
+            alerts=globals().get("ALERTS")
+            if alerts:alerts.resolve(f"collector-error|{instrument}")
             return analysis
         except Exception as error:
+            self.last_okx_error=type(error).__name__
             state = {"instrument": instrument, "status": "Data unavailable", "action": "WAIT", "score": 0, "error": str(error), "updated_at": now_iso()}
             self.last_analysis[instrument] = state
             self._event(instrument, "COLLECTOR_ERROR", "Market collector cycle failed", {"error": str(error)})
+            alerts=globals().get("ALERTS")
+            if alerts:
+                kind="OKX Rate Limited" if getattr(error,"code",None)==429 else "Collector Stale"
+                alerts.raise_alert(kind,"warning","collector",f"{instrument} market collector failed",instrument,key=f"collector-error|{instrument}")
             return state
 
     def cycle(self) -> dict[str, Any]:
         with self._lock:
-            return {instrument: self.cycle_instrument(instrument) for instrument in INSTRUMENTS}
+            start=time.monotonic(); self.last_cycle_started_at=now_iso()
+            result={instrument: self.cycle_instrument(instrument) for instrument in INSTRUMENTS}
+            self.last_cycle_completed_at=now_iso(); self.last_cycle_duration_ms=int((time.monotonic()-start)*1000); self.next_cycle_at=(datetime.now(timezone.utc)+timedelta(seconds=60)).replace(microsecond=0).isoformat()
+            alerts=globals().get("ALERTS")
+            if alerts:
+                if self.last_cycle_duration_ms>45_000:alerts.raise_alert("Paper Cycle Slow","warning","paper_scheduler",f"Paper cycle took {self.last_cycle_duration_ms} ms",key="paper-cycle-slow")
+                else:alerts.resolve("paper-cycle-slow")
+            return result
 
     def status(self, instrument: str) -> dict[str, Any]:
         if instrument not in INSTRUMENTS: instrument = "ETH-USDT"
@@ -352,20 +344,56 @@ class PaperService:
 
 SERVICE = PaperService()
 RESEARCH = ResearchService(DB_PATH)
+ALERTS = AlertService(DB_PATH)
+HEALTH = HealthService(DB_PATH,SERVICE,RESEARCH.jobs,ALERTS,ROOT)
+LIMITER = RateLimiter()
+LOGGER = configure_logging(ROOT)
 
 
 class Handler(BaseHTTPRequestHandler):
     def _send(self, payload: Any, status: int = HTTPStatus.OK) -> None:
         body = json.dumps(payload).encode()
         self.send_response(status)
-        for key, value in (("Content-Type", "application/json"), ("Access-Control-Allow-Origin", "*"), ("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS"), ("Access-Control-Allow-Headers", "Content-Type"), ("Content-Length", str(len(body)))):
+        for key, value in (("Content-Type", "application/json"), ("Cache-Control","no-store"), ("X-Content-Type-Options","nosniff"), ("Content-Length", str(len(body)))):
             self.send_header(key, value)
         self.end_headers(); self.wfile.write(body)
+
+    def _client(self)->str:
+        return self.headers.get("X-Forwarded-For",self.client_address[0]).split(",")[0].strip()[:64]
+
+    def _limited(self,bucket:str,limit:int,window:int)->bool:
+        allowed,retry=LIMITER.allow(bucket,self._client(),limit,window)
+        if not allowed:
+            self.send_response(HTTPStatus.TOO_MANY_REQUESTS); self.send_header("Content-Type","application/json"); self.send_header("Retry-After",str(retry)); self.end_headers(); self.wfile.write(json.dumps({"error":"Rate limit exceeded.","retry_after":retry}).encode()); return True
+        return False
+
+    def _admin(self)->bool:
+        configured=os.getenv("ADMIN_TOKEN","")
+        if not configured:return True
+        supplied=self.headers.get("Authorization","").removeprefix("Bearer ")
+        if hmac.compare_digest(configured,supplied):return True
+        self._send({"error":"Admin authorization required."},HTTPStatus.UNAUTHORIZED); return False
+
+    def _body(self)->dict[str,Any]|None:
+        try:length=int(self.headers.get("Content-Length","0"))
+        except ValueError:self._send({"error":"Invalid Content-Length."},HTTPStatus.BAD_REQUEST); return None
+        if length>65536:self._send({"error":"Request body exceeds 64 KiB."},HTTPStatus.REQUEST_ENTITY_TOO_LARGE); return None
+        try:return json.loads(self.rfile.read(length).decode() or "{}")
+        except (UnicodeDecodeError,json.JSONDecodeError):self._send({"error":"Invalid JSON body"},HTTPStatus.BAD_REQUEST); return None
 
     def do_GET(self) -> None:  # noqa: N802
         parsed, query = urlparse(self.path), parse_qs(urlparse(self.path).query)
         instrument = query.get("instrument", ["ETH-USDT"])[0]
         if parsed.path == "/api/status": self._send(SERVICE.status(instrument))
+        elif parsed.path == "/api/health": self._send(HEALTH.payload(False))
+        elif parsed.path == "/api/health/details": self._send(HEALTH.payload(True))
+        elif parsed.path == "/api/jobs": self._send({"items":RESEARCH.jobs.list(int(query.get("limit",["100"])[0]))})
+        elif parsed.path == "/api/alerts": self._send({"items":ALERTS.list()})
+        elif parsed.path == "/api/data-coverage": self._send({"items":RESEARCH.repository.data_coverage()})
+        elif parsed.path.startswith("/api/portfolio/"):
+            try:
+                item=RESEARCH.repository.portfolio_run(int(parsed.path.rsplit("/",1)[1])); self._send(item if item else {"error":"Portfolio run not found"},HTTPStatus.OK if item else HTTPStatus.NOT_FOUND)
+            except ValueError:self._send({"error":"Invalid portfolio run id"},HTTPStatus.BAD_REQUEST)
         elif parsed.path == "/api/replay": self._send(SERVICE.replay(instrument, query.get("at", [None])[0]))
         elif parsed.path == "/api/strategies": self._send({"items": RESEARCH.strategies()})
         elif parsed.path == "/api/backtest/history": self._send({"items": RESEARCH.repository.run_history()})
@@ -385,18 +413,25 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
-        try:
-            length = int(self.headers.get("Content-Length", "0")); payload = json.loads(self.rfile.read(length).decode() or "{}")
-        except (ValueError, json.JSONDecodeError):
-            self._send({"error": "Invalid JSON body"}, HTTPStatus.BAD_REQUEST); return
+        payload=self._body()
+        if payload is None:return
         if parsed.path == "/api/cycle": self._send(SERVICE.cycle())
         elif parsed.path == "/api/chat":
+            if len(str(payload.get("question","")))>1200:self._send({"error":"Question exceeds 1200 characters."},HTTPStatus.BAD_REQUEST); return
+            if self._limited("chat-minute",3,60) or self._limited("chat-hour",20,3600):return
             result = SERVICE.chat(str(payload.get("question", "")), str(payload.get("instrument", "ETH-USDT")))
             self._send(result, HTTPStatus.BAD_REQUEST if "error" in result else HTTPStatus.OK)
         elif parsed.path == "/api/backtest/run":
-            try: self._send(RESEARCH.start_backtest(payload), HTTPStatus.ACCEPTED)
+            if self._limited("backtest-minute",2,60) or self._limited("backtest-day",20,86400):return
+            try: self._send(RESEARCH.start_backtest(payload,self._client()), HTTPStatus.ACCEPTED)
+            except OverflowError as error: ALERTS.raise_alert("Queue Full","warning","job_queue",str(error)); self._send({"error":str(error)},HTTPStatus.TOO_MANY_REQUESTS)
             except ValueError as error: self._send({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+        elif parsed.path == "/api/portfolio/run":
+            if self._limited("backtest-minute",2,60) or self._limited("backtest-day",20,86400):return
+            try:self._send(RESEARCH.start_portfolio(payload,self._client()),HTTPStatus.ACCEPTED)
+            except (ValueError,OverflowError) as error:self._send({"error":str(error)},HTTPStatus.BAD_REQUEST if isinstance(error,ValueError) else HTTPStatus.TOO_MANY_REQUESTS)
         elif parsed.path == "/api/strategies":
+            if not self._admin():return
             try: self._send(RESEARCH.save_strategy(payload), HTTPStatus.CREATED)
             except (ValueError, sqlite3.IntegrityError) as error: self._send({"error": str(error)}, HTTPStatus.BAD_REQUEST)
         elif parsed.path == "/api/compare":
@@ -405,14 +440,31 @@ class Handler(BaseHTTPRequestHandler):
                 self._send({"items": items})
             except (ValueError, TypeError) as error: self._send({"error": str(error)}, HTTPStatus.BAD_REQUEST)
         elif parsed.path == "/api/walk-forward":
-            try: self._send(RESEARCH.walk_forward(payload))
-            except ValueError as error: self._send({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+            if self._limited("walk-minute",1,60):return
+            try: self._send(RESEARCH.start_walk_forward(payload,self._client()),HTTPStatus.ACCEPTED)
+            except (ValueError,OverflowError) as error: self._send({"error": str(error)}, HTTPStatus.BAD_REQUEST if isinstance(error,ValueError) else HTTPStatus.TOO_MANY_REQUESTS)
+        elif parsed.path == "/api/jobs/cleanup":
+            if not self._admin():return
+            self._send({"deleted_jobs":RESEARCH.jobs.cleanup(int(payload.get("older_than_days",30))),"backtest_results_deleted":0})
+        elif parsed.path.startswith("/api/jobs/") and parsed.path.endswith("/cancel"):
+            if not self._admin():return
+            try:self._send(RESEARCH.jobs.cancel(int(parsed.path.split("/")[3])))
+            except ValueError as error:self._send({"error":str(error)},HTTPStatus.BAD_REQUEST)
+        elif parsed.path.startswith("/api/jobs/") and parsed.path.endswith("/retry"):
+            if not self._admin():return
+            try:self._send(RESEARCH.jobs.retry(int(parsed.path.split("/")[3]),self._client()),HTTPStatus.ACCEPTED)
+            except (ValueError,OverflowError) as error:self._send({"error":str(error)},HTTPStatus.BAD_REQUEST)
+        elif parsed.path.startswith("/api/alerts/") and parsed.path.endswith("/acknowledge"):
+            if not self._admin():return
+            try:self._send({"acknowledged":ALERTS.acknowledge(int(parsed.path.split("/")[3]))})
+            except ValueError:self._send({"error":"Invalid alert id"},HTTPStatus.BAD_REQUEST)
         elif parsed.path.startswith("/api/strategies/") and parsed.path.endswith("/duplicate"):
             try: self._send(RESEARCH.duplicate_strategy(int(parsed.path.strip("/").split("/")[2])), HTTPStatus.CREATED)
             except (ValueError, sqlite3.IntegrityError) as error: self._send({"error": str(error)}, HTTPStatus.BAD_REQUEST)
         else: self._send({"error": "Not found"}, HTTPStatus.NOT_FOUND)
 
     def do_PUT(self) -> None:  # noqa: N802
+        if not self._admin():return
         try:
             length = int(self.headers.get("Content-Length", "0")); payload = json.loads(self.rfile.read(length).decode() or "{}")
             strategy_id = int(urlparse(self.path).path.strip("/").split("/")[2])
@@ -421,6 +473,7 @@ class Handler(BaseHTTPRequestHandler):
             self._send({"error": str(error)}, HTTPStatus.BAD_REQUEST)
 
     def do_DELETE(self) -> None:  # noqa: N802
+        if not self._admin():return
         try:
             strategy_id = int(urlparse(self.path).path.strip("/").split("/")[2])
             deleted = RESEARCH.repository.delete_strategy(strategy_id)
@@ -437,11 +490,12 @@ class Handler(BaseHTTPRequestHandler):
 
 def run() -> None:
     def scheduler() -> None:
+        SERVICE.scheduler_running=True
         while True:
-            SERVICE.cycle(); time.sleep(60)
+            SERVICE.cycle(); log_event(LOGGER,"INFO","paper_scheduler","cycle_completed",duration_ms=SERVICE.last_cycle_duration_ms); time.sleep(60)
     threading.Thread(target=scheduler, daemon=True).start()
     host = os.getenv("PAPER_API_HOST", "127.0.0.1")
-    ThreadingHTTPServer((host, 8765), Handler).serve_forever()
+    ThreadingHTTPServer((host, int(os.getenv("PAPER_API_PORT", "8765"))), Handler).serve_forever()
 
 
 if __name__ == "__main__":

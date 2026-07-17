@@ -16,7 +16,7 @@ except ImportError:  # package imports in tests
     from .research_repository import ResearchRepository
 
 
-TIMEFRAME_SECONDS = {"15m": 900, "1H": 3600, "4H": 14400}
+TIMEFRAME_SECONDS = {"15m": 900, "1H": 3600, "4H": 14400, "1D": 86400}
 INSTRUMENTS = {"BTC-USDT", "ETH-USDT", "SOL-USDT"}
 
 

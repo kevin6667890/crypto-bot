@@ -29,6 +29,9 @@ class ResearchRepository:
     def connect(self) -> Iterator[sqlite3.Connection]:
         connection = sqlite3.connect(self.db_path, timeout=30)
         connection.row_factory = sqlite3.Row
+        connection.execute("PRAGMA busy_timeout=30000")
+        connection.execute("PRAGMA journal_mode=WAL")
+        connection.execute("PRAGMA foreign_keys=ON")
         try:
             yield connection
             connection.commit()
@@ -77,13 +80,47 @@ class ResearchRepository:
                 CREATE INDEX IF NOT EXISTS idx_backtest_trades_run ON backtest_trades(run_id, entry_ts);
                 CREATE INDEX IF NOT EXISTS idx_historical_range ON historical_candles(instrument, timeframe, ts);
                 CREATE INDEX IF NOT EXISTS idx_strategy_updated ON strategy_configs(updated_at DESC);
+                CREATE TABLE IF NOT EXISTS decision_signals (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, signal_id TEXT NOT NULL UNIQUE, source TEXT NOT NULL,
+                    run_id INTEGER, instrument TEXT NOT NULL, execution_timeframe TEXT NOT NULL, candle_close_ts INTEGER NOT NULL,
+                    strategy_version TEXT NOT NULL, config_hash TEXT NOT NULL, action TEXT NOT NULL, bias TEXT NOT NULL,
+                    score REAL NOT NULL, decision_payload TEXT NOT NULL, created_at TEXT NOT NULL
+                );
+                CREATE TABLE IF NOT EXISTS portfolio_backtest_runs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, job_id INTEGER, status TEXT NOT NULL, parameters TEXT NOT NULL,
+                    result TEXT, error TEXT, created_at TEXT NOT NULL, completed_at TEXT
+                );
+                CREATE TABLE IF NOT EXISTS portfolio_backtest_assets (run_id INTEGER NOT NULL, instrument TEXT NOT NULL, weight REAL NOT NULL, PRIMARY KEY(run_id,instrument));
+                CREATE TABLE IF NOT EXISTS portfolio_backtest_trades (id INTEGER PRIMARY KEY AUTOINCREMENT, run_id INTEGER NOT NULL, instrument TEXT NOT NULL, signal_id TEXT, entry_ts INTEGER NOT NULL, payload TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS portfolio_backtest_equity (run_id INTEGER NOT NULL, ts INTEGER NOT NULL, equity REAL NOT NULL, cash REAL NOT NULL, exposure REAL NOT NULL, PRIMARY KEY(run_id,ts));
+                CREATE INDEX IF NOT EXISTS idx_decision_lookup ON decision_signals(instrument,strategy_version,candle_close_ts);
+                CREATE INDEX IF NOT EXISTS idx_portfolio_trades_run ON portfolio_backtest_trades(run_id,entry_ts);
             """)
+            self._ensure_column(connection, "paper_trades", "signal_id", "TEXT")
+            self._ensure_column(connection, "paper_trades", "strategy_version", "TEXT")
+            self._ensure_column(connection, "paper_trades", "config_hash", "TEXT")
+            self._ensure_column(connection, "paper_trades", "expected_entry_price", "REAL")
+            self._ensure_column(connection, "paper_trades", "observed_entry_price", "REAL")
+            self._ensure_column(connection, "paper_trades", "execution_delay_ms", "INTEGER")
+            self._ensure_column(connection, "paper_trades", "observed_slippage_pct", "REAL")
+            self._ensure_column(connection, "backtest_trades", "signal_id", "TEXT")
+            self._ensure_column(connection, "backtest_trades", "strategy_version", "TEXT")
+            self._ensure_column(connection, "backtest_trades", "config_hash", "TEXT")
+            self._ensure_column(connection, "backtest_trades", "expected_entry_ts", "INTEGER")
+            self._ensure_column(connection, "backtest_trades", "expected_entry_price", "REAL")
             connection.execute("UPDATE backtest_runs SET status='FAILED',progress=100,progress_message='Interrupted by service restart',error='Backtest worker was interrupted by a service restart',updated_at=? WHERE status IN ('QUEUED','RUNNING')", (utc_now(),))
             count = connection.execute("SELECT COUNT(*) FROM strategy_configs").fetchone()[0]
             if not count:
                 now = utc_now()
                 for name, parameters in STRATEGY_PRESETS.items():
                     connection.execute("INSERT INTO strategy_configs(name,parameters,created_at,updated_at) VALUES(?,?,?,?)", (name, json.dumps(parameters), now, now))
+
+    @staticmethod
+    def _ensure_column(connection: sqlite3.Connection, table: str, column: str, declaration: str) -> None:
+        if not connection.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)).fetchone():
+            return
+        if column not in {row[1] for row in connection.execute(f"PRAGMA table_info({table})")}:
+            connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {declaration}")
 
     def upsert_candles(self, instrument: str, timeframe: str, candles: list[dict[str, Any]]) -> None:
         if not candles:
@@ -101,6 +138,9 @@ class ResearchRepository:
         with self.connect() as connection:
             row = connection.execute("SELECT MIN(ts),MAX(ts) FROM historical_candles WHERE instrument=? AND timeframe=? AND confirmed=1", (instrument, timeframe)).fetchone()
             return row[0], row[1]
+
+    def data_coverage(self) -> list[dict[str,Any]]:
+        with self.connect() as connection:return [dict(row) for row in connection.execute("SELECT instrument,timeframe,COUNT(*) rows,MIN(ts) first_ts,MAX(ts) last_ts FROM historical_candles WHERE confirmed=1 GROUP BY instrument,timeframe ORDER BY instrument,timeframe")]
 
     def create_run(self, payload: dict[str, Any]) -> int:
         now = utc_now()
@@ -137,13 +177,17 @@ class ResearchRepository:
         with self.connect() as connection:
             connection.execute("DELETE FROM backtest_trades WHERE run_id=?", (run_id,))
             connection.execute("DELETE FROM backtest_equity WHERE run_id=?", (run_id,))
-            connection.executemany("INSERT INTO backtest_trades(run_id,trade_id,payload,entry_ts,side,pnl) VALUES(?,?,?,?,?,?)", [(run_id, index + 1, json.dumps(trade), trade["entry_ts"], trade["side"], trade["pnl"]) for index, trade in enumerate(result["trades"])])
+            connection.executemany("""INSERT INTO backtest_trades(run_id,trade_id,payload,entry_ts,side,pnl,signal_id,strategy_version,config_hash,expected_entry_ts,expected_entry_price)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?)""", [(run_id, index + 1, json.dumps(trade), trade["entry_ts"], trade["side"], trade["pnl"], trade.get("signal_id"), trade.get("strategy_version"), trade.get("config_hash"), trade.get("expected_entry_ts"), trade.get("expected_entry_price")) for index, trade in enumerate(result["trades"])])
             connection.executemany("INSERT INTO backtest_equity(run_id,ts,equity) VALUES(?,?,?)", [(run_id, point["ts"], point["equity"]) for point in result["equity"]])
+            decisions = result.get("decisions", [])
+            connection.executemany("""INSERT OR IGNORE INTO decision_signals(signal_id,source,run_id,instrument,execution_timeframe,candle_close_ts,strategy_version,config_hash,action,bias,score,decision_payload,created_at)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""", [(item["signal_id"], "BACKTEST", run_id, item["instrument"], item["execution_timeframe"], item["candle_close_ts"], item["strategy_version"], item["config_hash"], item["action"], item["bias"], item["score"], json.dumps(item), utc_now()) for item in decisions])
             run = connection.execute("SELECT strategy_config_id,instrument,timeframe,start_date,end_date FROM backtest_runs WHERE id=?", (run_id,)).fetchone()
             if run and run["strategy_config_id"]:
                 summary = {**result["metrics"], "run_id": run_id, "instrument": run["instrument"], "timeframe": run["timeframe"], "start_date": run["start_date"], "end_date": run["end_date"]}
                 connection.execute("UPDATE strategy_configs SET latest_summary=?,updated_at=? WHERE id=?", (json.dumps(summary), utc_now(), run["strategy_config_id"]))
-        public_result = {key: value for key, value in result.items() if key not in {"trades", "equity"}}
+        public_result = {key: value for key, value in result.items() if key not in {"trades", "equity", "decisions"}}
         self.update_run(run_id, status="COMPLETED", progress=100, progress_message="Completed", result=public_result, data_quality=result.get("data_quality"))
 
     def trades(self, run_id: int) -> list[dict[str, Any]]:
@@ -184,3 +228,30 @@ class ResearchRepository:
         with self.connect() as connection:
             cursor = connection.execute("INSERT INTO walk_forward_runs(instrument,timeframe,parameters,windows,result,created_at) VALUES(?,?,?,?,?,?)", (instrument, timeframe, json.dumps(parameters), json.dumps(windows), json.dumps(result), utc_now()))
             return int(cursor.lastrowid)
+
+    def create_portfolio_run(self, parameters: dict[str, Any], job_id: int | None = None) -> int:
+        with self.connect() as connection:
+            cur=connection.execute("INSERT INTO portfolio_backtest_runs(job_id,status,parameters,created_at) VALUES(?,?,?,?)",(job_id,"RUNNING",json.dumps(parameters),utc_now()))
+            run_id=int(cur.lastrowid)
+            for instrument,weight in (parameters.get("asset_weights") or {}).items():
+                connection.execute("INSERT INTO portfolio_backtest_assets(run_id,instrument,weight) VALUES(?,?,?)",(run_id,instrument,float(weight)))
+            return run_id
+
+    def save_portfolio_result(self, run_id: int, result: dict[str, Any]) -> None:
+        public={k:v for k,v in result.items() if k not in {"trades","equity"}}
+        with self.connect() as connection:
+            connection.executemany("INSERT INTO portfolio_backtest_trades(run_id,instrument,signal_id,entry_ts,payload) VALUES(?,?,?,?,?)",[(run_id,t["instrument"],t.get("signal_id"),t["entry_ts"],json.dumps(t)) for t in result["trades"]])
+            connection.executemany("INSERT INTO portfolio_backtest_equity(run_id,ts,equity,cash,exposure) VALUES(?,?,?,?,?)",[(run_id,e["ts"],e["equity"],e.get("cash",e["equity"]),next((x["gross"] for x in result.get("exposure_timeline",[]) if x["ts"]==e["ts"]),0)) for e in result["equity"]])
+            connection.execute("UPDATE portfolio_backtest_runs SET status='COMPLETED',result=?,completed_at=? WHERE id=?",(json.dumps(public),utc_now(),run_id))
+
+    def fail_portfolio_run(self,run_id:int,error:str)->None:
+        with self.connect() as connection:connection.execute("UPDATE portfolio_backtest_runs SET status='FAILED',error=?,completed_at=? WHERE id=?",(error[:1000],utc_now(),run_id))
+
+    def portfolio_run(self, run_id: int) -> dict[str, Any] | None:
+        with self.connect() as connection:
+            row=connection.execute("SELECT * FROM portfolio_backtest_runs WHERE id=?",(run_id,)).fetchone()
+            if not row:return None
+            item=dict(row); item["parameters"]=json.loads(item["parameters"]); item["result"]=json.loads(item["result"]) if item.get("result") else None
+            item["trades"]=[json.loads(x[0]) for x in connection.execute("SELECT payload FROM portfolio_backtest_trades WHERE run_id=? ORDER BY entry_ts,id",(run_id,))]
+            item["equity"]=[dict(x) for x in connection.execute("SELECT ts,equity,cash,exposure FROM portfolio_backtest_equity WHERE run_id=? ORDER BY ts",(run_id,))]
+            return item

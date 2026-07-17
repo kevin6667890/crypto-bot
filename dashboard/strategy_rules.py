@@ -5,6 +5,11 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from typing import Any, Iterable
 
+try:
+    from decision_engine import FlowContext, MarketContext, TimeframeContext, evaluate_decision
+except ImportError:
+    from .decision_engine import FlowContext, MarketContext, TimeframeContext, evaluate_decision
+
 
 @dataclass(frozen=True)
 class StrategyParameters:
@@ -125,27 +130,20 @@ def score_rule_components(has_trend: bool, pullback: bool, momentum: bool, flow_
     ]
 
 
-def evaluate_signal(candle: dict[str, Any], indicators: dict[str, float | None], parameters: StrategyParameters, flow_delta: float | None = None) -> dict[str, Any]:
-    close = float(candle["close"])
-    fast, slow, ema_value = indicators["fast_ma"], indicators["slow_ma"], indicators["ema"]
-    rsi, atr, volume_ratio = indicators["rsi"], indicators["atr"], indicators["volume_ratio"]
-    warmed = all(value is not None for value in (fast, slow, ema_value, rsi, atr, volume_ratio))
-    if not warmed:
-        return {"action": "WAIT", "bias": "WAIT", "score": 0, "warmed": False, "reason": "indicator warm-up incomplete"}
-    assert fast is not None and slow is not None and ema_value is not None and rsi is not None and atr is not None and volume_ratio is not None
-    long_trend = close > fast > slow and parameters.enable_long
-    short_trend = close < fast < slow and parameters.enable_short
-    bias = "LONG" if long_trend else "SHORT" if short_trend else "WAIT"
-    distance = abs(close - ema_value) / ema_value if ema_value else 1.0
-    pullback = distance <= parameters.ema_pullback_distance
-    momentum = parameters.rsi_min <= rsi <= parameters.rsi_max and volume_ratio >= parameters.minimum_volume_ratio
-    flow_aligned = flow_delta is None or (bias == "LONG" and flow_delta > 0) or (bias == "SHORT" and flow_delta < 0)
-    contributions = score_rule_components(bias != "WAIT", pullback, momentum, flow_delta is not None, flow_aligned)
-    score = sum(item["points"] for item in contributions)
-    action = bias if bias != "WAIT" and pullback and momentum and flow_aligned and score >= parameters.minimum_score else "WAIT"
-    return {
-        "action": action, "bias": bias, "score": score, "warmed": True, "atr": atr,
-        "distance_ema_pct": distance * 100, "rsi": rsi, "volume_ratio": volume_ratio,
-        "contributions": contributions,
-        "reason": "entry gates passed" if action != "WAIT" else "one or more entry gates failed",
-    }
+def evaluate_signal(candle: dict[str, Any], indicators: dict[str, float | None], parameters: StrategyParameters,
+                    flow_delta: float | None = None, instrument: str = "UNKNOWN", timeframe: str = "15m",
+                    timeframe_context: TimeframeContext | None = None, strategy_version: str | None = None) -> dict[str, Any]:
+    """Compatibility adapter; all decisions are produced by evaluate_decision."""
+    decision = evaluate_decision(
+        parameters,
+        MarketContext(instrument, timeframe, int(candle.get("candle_close_ts", candle.get("ts", 0))), float(candle["close"]), indicators),
+        timeframe_context,
+        FlowContext(flow_delta is not None, flow_delta),
+        strategy_version=strategy_version,
+    ).to_dict()
+    decision["atr"] = indicators.get("atr")
+    decision["distance_ema_pct"] = (abs(float(candle["close"]) - float(indicators["ema"])) / float(indicators["ema"]) * 100) if indicators.get("ema") else None
+    decision["rsi"] = indicators.get("rsi")
+    decision["volume_ratio"] = indicators.get("volume_ratio")
+    decision["reason"] = decision["rejection_reason"] or "entry gates passed"
+    return decision

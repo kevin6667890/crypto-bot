@@ -52,6 +52,27 @@ samples are not reliably available from the endpoints used here. The backtest
 does not synthesize them. If a candle touches stop and target in the same bar,
 the engine conservatively records the stop first.
 
+### Operations and lineage
+
+- Paper and historical research call the same canonical `evaluate_decision`
+  implementation; 15m research uses strict confirmed 1H/4H as-of context.
+- Canonical JSON configuration hashes and SHA-256 signal IDs make decisions
+  reproducible without rewriting legacy rows.
+- Exact reconciliation classifies matched, missing, divergent, risk-blocked,
+  service-gap and legacy executions instead of inferring matches.
+- Portfolio research processes BTC, ETH and SOL in one chronological stream
+  with shared cash, exposure, position and risk limits.
+- A persistent SQLite queue runs one heavy job at a time and supports queue
+  limits, deduplication, cancellation, retries and restart interruption.
+- Operations exposes sanitized health, collector freshness, job monitoring and
+  deduplicated persistent alerts. Logs rotate on disk.
+
+Chat and research writes have application and Nginx rate limits. API bodies are
+limited to 64 KiB, API responses are not cached, and browser API calls are
+same-origin. Optional `ADMIN_TOKEN` protection uses a server environment value;
+when used by the UI it belongs in `sessionStorage`. Plain HTTP does not protect
+that token in transit, so HTTPS remains required before treating it as secure.
+
 ## Local development
 
 ```bash
@@ -94,6 +115,15 @@ Factor and empty-trade results.
 - `POST /api/compare`
 - `POST /api/walk-forward`
 - `GET /api/reconciliation?run_id={id}`
+- `POST /api/portfolio/run`
+- `GET /api/portfolio/{id}`
+- `GET /api/health`
+- `GET /api/health/details`
+- `GET /api/jobs`
+- `POST /api/jobs/{id}/cancel`
+- `POST /api/jobs/{id}/retry`
+- `GET /api/alerts`
+- `POST /api/alerts/{id}/acknowledge`
 
 ## Docker deployment
 

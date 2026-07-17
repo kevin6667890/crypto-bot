@@ -67,7 +67,7 @@ function useResponsiveChart(factory: (container: HTMLDivElement) => IChartApi, d
   return ref;
 }
 
-export function MarketChart({ instrument = "ETH-USDT", interval = "15m", showBoll = true }: { instrument?: string; interval?: string; showBoll?: boolean }) {
+export function MarketChart({ instrument = "ETH-USDT", interval = "15m" }: { instrument?: string; interval?: string }) {
   const [candles, setCandles] = useState<Candle[]>(() => generateCandles());
 
   useEffect(() => {
@@ -75,7 +75,7 @@ export function MarketChart({ instrument = "ETH-USDT", interval = "15m", showBol
 
     async function loadCandles() {
       try {
-        const liveCandles = await fetchEthCandles(interval, 160, instrument);
+        const liveCandles = await fetchEthCandles(interval, 260, instrument);
         if (!cancelled) setCandles(liveCandles);
       } catch {
         if (!cancelled) setCandles(generateCandles());
@@ -112,22 +112,10 @@ export function MarketChart({ instrument = "ETH-USDT", interval = "15m", showBol
         time: c.time,
         value: closes.slice(i, i + period).reduce((sum, value) => sum + value, 0) / period,
       }));
-      const ma5 = chart.addSeries(LineSeries, { color: "#f59e0b", lineWidth: 1, priceLineVisible: false });
-      const ma10 = chart.addSeries(LineSeries, { color: "#8b5cf6", lineWidth: 1, priceLineVisible: false });
-      ma5.setData(movingAverage(5));
-      ma10.setData(movingAverage(10));
-      if (showBoll) {
-        const upper = chart.addSeries(LineSeries, { color: "rgba(14, 165, 233, .55)", lineWidth: 1, lineStyle: 2, priceLineVisible: false });
-        const lower = chart.addSeries(LineSeries, { color: "rgba(14, 165, 233, .55)", lineWidth: 1, lineStyle: 2, priceLineVisible: false });
-        const boll = candles.slice(19).map((c, i) => {
-          const sample = closes.slice(i, i + 20);
-          const mean = sample.reduce((sum, value) => sum + value, 0) / sample.length;
-          const deviation = Math.sqrt(sample.reduce((sum, value) => sum + (value - mean) ** 2, 0) / sample.length);
-          return { time: c.time, upper: mean + 2 * deviation, lower: mean - 2 * deviation };
-        });
-        upper.setData(boll.map((point) => ({ time: point.time, value: point.upper })));
-        lower.setData(boll.map((point) => ({ time: point.time, value: point.lower })));
-      }
+      const ma60 = chart.addSeries(LineSeries, { color: "#f59e0b", lineWidth: 2, priceLineVisible: false });
+      const ma200 = chart.addSeries(LineSeries, { color: "#7c3aed", lineWidth: 2, priceLineVisible: false });
+      ma60.setData(movingAverage(60));
+      ma200.setData(movingAverage(200));
     } catch {
       series.setData(generateCandles());
     }

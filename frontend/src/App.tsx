@@ -619,7 +619,6 @@ function Workspace() {
   const [watchlist, setWatchlist] = useState<WatchlistItem[]>([]);
   const [instrument, setInstrument] = useState("ETH-USDT");
   const [interval, setInterval] = useState("15m");
-  const [showBoll, setShowBoll] = useState(true);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [paper, setPaper] = useState<PaperStatus | null>(null);
@@ -707,9 +706,9 @@ function Workspace() {
             <div className="summary-stats"><span><small>24H HIGH</small><b>{snapshot.high24.toFixed(2)}</b></span><span><small>24H LOW</small><b>{snapshot.low24.toFixed(2)}</b></span><span><small>EMA20</small><b>{snapshot.ema20?.toFixed(2) ?? "--"}</b></span></div>
           </section>
           <section className="chart-workspace">
-            <div className="chart-toolbar"><div><span className="eyebrow">Live chart</span><h2>Price & Structure</h2></div><div className="indicator-toggles">{["1m", "5m", "15m", "1h", "4h", "1D"].map((value) => <button key={value} className={interval === value ? "active" : ""} onClick={() => setInterval(value)}>{value}</button>)}<button className={showBoll ? "active" : ""} onClick={() => setShowBoll(!showBoll)}>BOLL</button></div></div>
-            <div className="workspace-chart"><MarketChart instrument={instrument} interval={interval} showBoll={showBoll} /></div>
-            <div className="chart-legend"><span><i className="ma5" /> MA5</span><span><i className="ma10" /> MA10</span><span><i className="boll" /> Bollinger (20,2)</span><span className="muted">OKX public flow data · CVD is a recent taker-delta proxy</span></div>
+            <div className="chart-toolbar"><div><span className="eyebrow">Live chart</span><h2>Price & Structure</h2></div><div className="indicator-toggles">{["1m", "5m", "15m", "1h", "4h", "1D"].map((value) => <button key={value} className={interval === value ? "active" : ""} onClick={() => setInterval(value)}>{value}</button>)}</div></div>
+            <div className="workspace-chart"><MarketChart instrument={instrument} interval={interval} /></div>
+            <div className="chart-legend"><span><i className="ma60" /> MA60</span><span><i className="ma200" /> MA200</span><span className="muted">OKX public flow data · CVD is a recent taker-delta proxy</span></div>
           </section>
           {instrument === "ETH-USDT" && paper?.flow && <section className="flow-panel"><div className="section-title"><div><span className="eyebrow">OKX public derivatives</span><h2>Order Flow & Open Interest</h2></div><small>{paper.flow.source}</small></div><div className="flow-grid"><article><div className="flow-head"><span>CVD · recent 100 trades</span><b className={paper.flow.cvd_delta >= 0 ? "positive" : "negative"}>{paper.flow.cvd_delta >= 0 ? "+" : ""}{paper.flow.cvd_delta.toLocaleString(undefined, { maximumFractionDigits: 0 })}</b></div><FlowChart points={paper.flow.cvd_series} /><small>Signed spot taker notional; positive means buy-side dominance in this sample.</small></article><article><div className="flow-head"><span>SWAP Open Interest</span><b>${paper.flow.oi.toLocaleString(undefined, { maximumFractionDigits: 0 })}</b></div><FlowChart color="#0ea5e9" points={paper.flow.oi_history.map((point, index) => ({ time: Math.floor(new Date(point.created_at).getTime() / 1000) || index, value: point.oi }))} /><small>OKX {instrument.replace("-USDT", "-USDT-SWAP")} public OI; history begins collecting on this server.</small></article></div></section>}
           <section className="ai-brief"><BrainCircuit size={19} /><div><span className="eyebrow">Hourly AI brief · {paper?.ai_brief?.source || "waiting for paper service"}</span><strong>{paper?.ai_brief?.created_at ? `Updated ${new Date(paper.ai_brief.created_at).toLocaleString()}` : "AI analysis is not available yet."}</strong><p>{paper?.ai_brief?.content || "Start the local paper service. When DEEPSEEK_API_KEY is configured on the server, it stores one cautious market summary per hour without controlling trade execution."}</p></div><button className="secondary-btn" disabled>Brief history soon</button></section>

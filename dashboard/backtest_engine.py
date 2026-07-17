@@ -111,7 +111,8 @@ def run_backtest(
                 higher_pointer[frame]=pointer
                 if pointer>=0:
                     row=rows[pointer]; frames[frame]={"candle_close_ts":row["candle_close_ts"],"close":row["close"],"fast_ma":row["fast_ma"],"slow_ma":row["slow_ma"]}
-            tf_context=TimeframeContext(frames,("1H","4H"),False,"multi-timeframe")
+            required=("1H","4H")+(("1D",) if parameters.enable_daily_context else ())
+            tf_context=TimeframeContext(frames,required,parameters.enable_daily_context,"multi-timeframe")
         signal = evaluate_signal(signal_candle, indicators[index], parameters, instrument=instrument, timeframe=timeframe,timeframe_context=tf_context,strategy_version=HISTORICAL_STRATEGY_VERSION if tf_context else None)
         if signal["warmed"]:
             decisions.append(signal)

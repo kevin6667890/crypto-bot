@@ -5,6 +5,7 @@ export type StrategyParameters = {
   risk_reward_ratio: number; trading_fee: number; slippage: number; cooldown_bars: number;
   enable_long: boolean; enable_short: boolean; initial_capital: number; risk_per_trade: number;
   max_open_positions: number;
+  enable_daily_context: boolean;
 };
 
 export const DEFAULT_RESEARCH_PARAMETERS: StrategyParameters = {
@@ -14,6 +15,7 @@ export const DEFAULT_RESEARCH_PARAMETERS: StrategyParameters = {
   risk_reward_ratio: 2, trading_fee: 0.0005, slippage: 0.0003, cooldown_bars: 16,
   enable_long: true, enable_short: true, initial_capital: 10000, risk_per_trade: 0.01,
   max_open_positions: 1,
+  enable_daily_context: false,
 };
 
 export type BacktestMetrics = {

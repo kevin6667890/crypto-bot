@@ -33,6 +33,7 @@ class StrategyParameters:
     initial_capital: float = 10_000.0
     risk_per_trade: float = 0.01
     max_open_positions: int = 1
+    enable_daily_context: bool = False
 
 
 DEFAULT_PARAMETERS = asdict(StrategyParameters())
@@ -54,6 +55,7 @@ def validate_parameters(raw: dict[str, Any] | None) -> StrategyParameters:
             values[key] = float(values[key])
         values["enable_long"] = bool(values["enable_long"])
         values["enable_short"] = bool(values["enable_short"])
+        values["enable_daily_context"] = bool(values["enable_daily_context"])
     except (TypeError, ValueError) as error:
         raise ValueError("Strategy parameters must be numeric where required.") from error
 

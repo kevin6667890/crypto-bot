@@ -90,7 +90,7 @@ class ResearchService:
             else:self.alerts.resolve(f"data-gap|{request['instrument']}|{request['timeframe']}")
             mtf_data={}
             if request["timeframe"]=="15m":
-                for frame in ("1H","4H"):
+                for frame in (("1H","4H","1D") if parameters.enable_daily_context else ("1H","4H")):
                     mtf_data[frame],_=self.history.get_candles(request["instrument"],frame,request["start_ts"],request["end_ts"],warmup)
             self.repository.update_run(run_id, progress=25, progress_message=f"Loaded {len(candles)} confirmed OKX candles", data_quality=quality)
             def report(value:int,message:str)->None:
@@ -173,7 +173,7 @@ class ResearchService:
         candles, quality = self.history.get_candles(request["instrument"], request["timeframe"], request["start_ts"], request["end_ts"], warmup)
         mtf_data={}
         if request["timeframe"]=="15m":
-            for frame in ("1H","4H"):mtf_data[frame],_=self.history.get_candles(request["instrument"],frame,request["start_ts"],request["end_ts"],warmup)
+            for frame in (("1H","4H","1D") if parameters.enable_daily_context else ("1H","4H")):mtf_data[frame],_=self.history.get_candles(request["instrument"],frame,request["start_ts"],request["end_ts"],warmup)
         windows, cursor = [], request["start_ts"]
         while cursor + (train_days + test_days) * 86400 <= request["end_ts"] and len(windows) < 36:
             train_end = cursor + train_days * 86400 - 1; test_end = train_end + test_days * 86400

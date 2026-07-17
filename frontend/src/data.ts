@@ -178,7 +178,7 @@ declare global {
   interface Window { __PAPER_STATUS__?: PaperStatus; __PAPER_API_URL__?: string; }
 }
 
-const paperApiBase = (window.__PAPER_API_URL__ || import.meta.env.VITE_PAPER_API_URL || "http://127.0.0.1:8765").replace(/\/$/, "");
+const paperApiBase = (window.__PAPER_API_URL__ || import.meta.env.VITE_PAPER_API_URL || "").replace(/\/$/, "");
 
 export async function fetchPaperStatus(): Promise<PaperStatus> {
   if (window.__PAPER_STATUS__) return window.__PAPER_STATUS__;

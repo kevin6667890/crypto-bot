@@ -616,9 +616,17 @@ function LegacyApp() {
 
 */
 function Workspace() {
-  const { language, setLanguage, t, value: localValue, message } = useLanguage();
+  const {
+    language,
+    setLanguage,
+    t,
+    value: localValue,
+    message,
+  } = useLanguage();
   const engineInstruments = ["BTC-USDT", "ETH-USDT", "SOL-USDT"];
-  const [snapshot, setSnapshot] = useState<MarketSnapshot>(() => demoSnapshot());
+  const [snapshot, setSnapshot] = useState<MarketSnapshot>(() =>
+    demoSnapshot()
+  );
   const [signal, setSignal] = useState<SignalAnalysis>(demoSignal);
   const [watchlist, setWatchlist] = useState<WatchlistItem[]>([]);
   const [instrument, setInstrument] = useState("ETH-USDT");
@@ -626,7 +634,9 @@ function Workspace() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [paper, setPaper] = useState<PaperStatus | null>(null);
-  const [activePage, setActivePage] = useState<"market" | "research" | "operations">("market");
+  const [activePage, setActivePage] = useState<
+    "market" | "research" | "operations"
+  >("market");
   const [question, setQuestion] = useState("");
   const [chatAnswer, setChatAnswer] = useState("");
   const [chatLoading, setChatLoading] = useState(false);
@@ -637,7 +647,10 @@ function Workspace() {
   async function refresh() {
     setLoading(true);
     try {
-      const [market, analysis] = await Promise.all([fetchEthSnapshot(instrument), fetchSignalAnalysis(instrument)]);
+      const [market, analysis] = await Promise.all([
+        fetchEthSnapshot(instrument),
+        fetchSignalAnalysis(instrument),
+      ]);
       setSnapshot(market);
       setSignal(analysis);
     } catch {
@@ -652,11 +665,20 @@ function Workspace() {
     }
     if (engineInstruments.includes(instrument)) {
       try {
-        const [paperStatus, history] = await Promise.all([fetchPaperStatus(instrument), fetchReplayItems(instrument)]);
+        const [paperStatus, history] = await Promise.all([
+          fetchPaperStatus(instrument),
+          fetchReplayItems(instrument),
+        ]);
         setPaper(paperStatus);
         setReplayItems(history);
-      } catch { setPaper(null); setReplayItems([]); }
-    } else { setPaper(null); setReplayItems([]); }
+      } catch {
+        setPaper(null);
+        setReplayItems([]);
+      }
+    } else {
+      setPaper(null);
+      setReplayItems([]);
+    }
   }
 
   useEffect(() => {
@@ -667,10 +689,17 @@ function Workspace() {
     return () => window.clearInterval(timer);
   }, [instrument]);
 
-  const runtimeAnalysis = paper?.instrument === instrument ? paper.analysis : null;
-  const action = runtimeAnalysis?.action || (signal.score >= 70 ? "WATCH" : "WAIT");
+  const runtimeAnalysis =
+    paper?.instrument === instrument ? paper.analysis : null;
+  const action =
+    runtimeAnalysis?.action || (signal.score >= 70 ? "WATCH" : "WAIT");
   const decisionScore = runtimeAnalysis?.score ?? signal.score;
-  const decisionConditions = runtimeAnalysis?.contributions?.map((item) => ({ label:message(item.label_code,item.detail_params,item.label),value:message(item.detail_code,item.detail_params,item.detail),tone:item.status==="pass"?"pass" as const:"watch" as const })) ?? signal.conditions;
+  const decisionConditions =
+    runtimeAnalysis?.contributions?.map((item) => ({
+      label: message(item.label_code, item.detail_params, item.label),
+      value: message(item.detail_code, item.detail_params, item.detail),
+      tone: item.status === "pass" ? ("pass" as const) : ("watch" as const),
+    })) ?? signal.conditions;
   const risk = snapshot.price * 0.015;
   async function submitQuestion(event: React.FormEvent) {
     event.preventDefault();
@@ -679,80 +708,772 @@ function Workspace() {
     try {
       setChatAnswer(await askMarketCopilot(question, instrument));
     } catch (error) {
-      setChatAnswer(error instanceof Error ? error.message : t("market.copilotFailed"));
+      setChatAnswer(`${t("market.copilotFailed")} ${t("common.technicalDetail", {detail:error instanceof Error?error.message:String(error)})}`);
     } finally {
       setChatLoading(false);
     }
   }
   async function selectReplay(createdAt: string) {
-    if (!createdAt) { setReplayDetail(null); return; }
+    if (!createdAt) {
+      setReplayDetail(null);
+      return;
+    }
     setReplayLoading(true);
-    try { setReplayDetail(await fetchReplayDetail(instrument, createdAt)); }
-    catch (error) { setChatAnswer(error instanceof Error ? error.message : t("market.replayFailed")); }
-    finally { setReplayLoading(false); }
+    try {
+      setReplayDetail(await fetchReplayDetail(instrument, createdAt));
+    } catch (error) {
+      setChatAnswer(`${t("market.replayFailed")} ${t("common.technicalDetail", {detail:error instanceof Error?error.message:String(error)})}`);
+    } finally {
+      setReplayLoading(false);
+    }
   }
   return (
     <div className="workspace">
       <header className="workspace-topbar">
-        <div className="workspace-brand"><TerminalSquare size={19} /><strong>Crypto-Bot</strong><span>{t("app.workspace")}</span><div className="page-switch"><button className={activePage === "market" ? "active" : ""} onClick={() => setActivePage("market")}>{t("nav.market")}</button><button className={activePage === "research" ? "active" : ""} onClick={() => setActivePage("research")}>{t("nav.research")}</button><button className={activePage === "operations" ? "active" : ""} onClick={() => setActivePage("operations")}>{t("nav.operations")}</button></div></div>
+        <div className="workspace-brand">
+          <TerminalSquare size={19} />
+          <strong>Crypto-Bot</strong>
+          <span>{t("app.workspace")}</span>
+          <div className="page-switch">
+            <button
+              className={activePage === "market" ? "active" : ""}
+              onClick={() => setActivePage("market")}
+            >
+              {t("nav.market")}
+            </button>
+            <button
+              className={activePage === "research" ? "active" : ""}
+              onClick={() => setActivePage("research")}
+            >
+              {t("nav.research")}
+            </button>
+            <button
+              className={activePage === "operations" ? "active" : ""}
+              onClick={() => setActivePage("operations")}
+            >
+              {t("nav.operations")}
+            </button>
+          </div>
+        </div>
         <div className="market-controls">
-          <span className="live-dot" /> <strong>{t("market.publicData")}</strong>
-          <select value={instrument} onChange={(event) => setInstrument(event.target.value)} aria-label={t("common.instrument")}><option>BTC-USDT</option><option>ETH-USDT</option><option>SOL-USDT</option><option>XRP-USDT</option><option>DOGE-USDT</option></select>
-          <select value={interval} onChange={(event) => setInterval(event.target.value)} aria-label={t("common.timeframe")}><option>1m</option><option>5m</option><option>15m</option><option>1h</option><option>4h</option><option>1D</option></select>
-          <div className="language-switch" role="group" aria-label={t("common.language")}><button className={language === "en" ? "active" : ""} onClick={() => setLanguage("en")}>EN</button><button className={language === "zh" ? "active" : ""} onClick={() => setLanguage("zh")}>中文</button></div>
-          <button className="icon-button" onClick={refresh} disabled={loading} title={t("common.refresh")} aria-label={t("common.refresh")}><RefreshCw size={15} className={loading ? "spinning" : ""} /></button>
-          <button className="icon-button" onClick={() => setSettingsOpen(true)} title={t("common.settings")} aria-label={t("common.settings")}><Settings size={16} /></button>
+          <span className="live-dot" />{" "}
+          <strong>{t("market.publicData")}</strong>
+          <select
+            value={instrument}
+            onChange={(event) => setInstrument(event.target.value)}
+            aria-label={t("common.instrument")}
+          >
+            <option>BTC-USDT</option>
+            <option>ETH-USDT</option>
+            <option>SOL-USDT</option>
+            <option>XRP-USDT</option>
+            <option>DOGE-USDT</option>
+          </select>
+          <select
+            value={interval}
+            onChange={(event) => setInterval(event.target.value)}
+            aria-label={t("common.timeframe")}
+          >
+            <option>1m</option>
+            <option>5m</option>
+            <option>15m</option>
+            <option>1h</option>
+            <option>4h</option>
+            <option>1D</option>
+          </select>
+          <div
+            className="language-switch"
+            role="group"
+            aria-label={t("common.language")}
+          >
+            <button
+              className={language === "en" ? "active" : ""}
+              onClick={() => setLanguage("en")}
+            >
+              EN
+            </button>
+            <button
+              className={language === "zh" ? "active" : ""}
+              onClick={() => setLanguage("zh")}
+            >
+              中文
+            </button>
+          </div>
+          <button
+            className="icon-button"
+            onClick={refresh}
+            disabled={loading}
+            title={t("common.refresh")}
+            aria-label={t("common.refresh")}
+          >
+            <RefreshCw size={15} className={loading ? "spinning" : ""} />
+          </button>
+          <button
+            className="icon-button"
+            onClick={() => setSettingsOpen(true)}
+            title={t("common.settings")}
+            aria-label={t("common.settings")}
+          >
+            <Settings size={16} />
+          </button>
         </div>
       </header>
 
-      {activePage === "market" ? <div className="workspace-grid">
-        <aside className="watchlist-panel">
-          <div className="section-title"><div><span className="eyebrow">{t("market.okxSpot")}</span><h2>{t("market.scanner")}</h2></div><span className="count-badge">{watchlist.length || 5}</span></div>
-          <p className="scanner-note">{t("market.scannerNote")}</p>
-          <div className="scanner-head"><span>{t("common.instrument")}</span><span>24h</span></div>
-          {watchlist.length ? watchlist.map((item) => (
-            <button className={item.instrument === instrument ? "scan-row selected" : "scan-row"} onClick={() => setInstrument(item.instrument)} key={item.instrument}>
-              <span><strong>{item.instrument.replace("-USDT", "")}</strong><small>${item.price.toLocaleString(undefined, { maximumFractionDigits: 2 })}</small></span>
-              <b className={item.changePct >= 0 ? "positive" : "negative"}>{formatSigned(item.changePct, "%")}</b>
-            </button>
-          )) : <div className="scanner-loading">{t("market.loadingWatchlist")}</div>}
-          <div className="scanner-foot"><span className="pulse" />{t("market.scannerRefresh")}</div>
-        </aside>
+      {activePage === "market" ? (
+        <div className="workspace-grid">
+          <aside className="watchlist-panel">
+            <div className="section-title">
+              <div>
+                <span className="eyebrow">{t("market.okxSpot")}</span>
+                <h2>{t("market.scanner")}</h2>
+              </div>
+              <span className="count-badge">{watchlist.length || 5}</span>
+            </div>
+            <p className="scanner-note">{t("market.scannerNote")}</p>
+            <div className="scanner-head">
+              <span>{t("common.instrument")}</span>
+              <span>24h</span>
+            </div>
+            {watchlist.length ? (
+              watchlist.map((item) => (
+                <button
+                  className={
+                    item.instrument === instrument
+                      ? "scan-row selected"
+                      : "scan-row"
+                  }
+                  onClick={() => setInstrument(item.instrument)}
+                  key={item.instrument}
+                >
+                  <span>
+                    <strong>{item.instrument.replace("-USDT", "")}</strong>
+                    <small>
+                      $
+                      {item.price.toLocaleString(undefined, {
+                        maximumFractionDigits: 2,
+                      })}
+                    </small>
+                  </span>
+                  <b className={item.changePct >= 0 ? "positive" : "negative"}>
+                    {formatSigned(item.changePct, "%")}
+                  </b>
+                </button>
+              ))
+            ) : (
+              <div className="scanner-loading">
+                {t("market.loadingWatchlist")}
+              </div>
+            )}
+            <div className="scanner-foot">
+              <span className="pulse" />
+              {t("market.scannerRefresh")}
+            </div>
+          </aside>
 
-        <main className="workspace-main">
-          <section className="market-summary">
-            <div><span className="eyebrow">{instrument} · {t("market.okxSpot")}</span><div className="price-line"><strong>${snapshot.price.toLocaleString(undefined, { maximumFractionDigits: 2 })}</strong><b className={snapshot.changePct >= 0 ? "positive" : "negative"}>{formatSigned(snapshot.changePct, "%")}</b></div><small>{t("market.updatedAt",{time:snapshot.updatedAt})}</small></div>
-            <div className="summary-stats"><span><small>24H HIGH</small><b>{snapshot.high24.toFixed(2)}</b></span><span><small>24H LOW</small><b>{snapshot.low24.toFixed(2)}</b></span><span><small>EMA20</small><b>{snapshot.ema20?.toFixed(2) ?? "--"}</b></span></div>
-          </section>
-          <section className="chart-workspace">
-            <div className="chart-toolbar"><div><span className="eyebrow">{t("market.liveChart")}</span><h2>{t("market.priceStructure")}</h2></div><div className="indicator-toggles">{["1m", "5m", "15m", "1h", "4h", "1D"].map((item) => <button key={item} className={interval === item ? "active" : ""} onClick={() => setInterval(item)}>{item}</button>)}</div></div>
-            <div className="workspace-chart"><MarketChart instrument={instrument} interval={interval} /></div>
-            <div className="chart-legend"><span><i className="ma60" /> MA60</span><span><i className="ma200" /> MA200</span><span className="muted">{t("market.flowProxy")}</span></div>
-          </section>
-          {paper?.flow && <section className="flow-panel"><div className="section-title"><div><span className="eyebrow">{t("market.publicDerivatives")}</span><h2>{t("market.orderFlowOi")}</h2></div><small>{paper.flow.source}</small></div><div className="flow-grid"><article><div className="flow-head"><span>{t("market.cvdRecent")}</span><b className={paper.flow.cvd_delta >= 0 ? "positive" : "negative"}>{paper.flow.cvd_delta >= 0 ? "+" : ""}{paper.flow.cvd_delta.toLocaleString(undefined, { maximumFractionDigits: 0 })}</b></div><FlowChart points={paper.flow.cvd_series} zeroLine /><small>{t("market.cvdHelp")}</small></article><article><div className="flow-head"><span>{t("market.swapOi")}</span><b>${paper.flow.oi.toLocaleString(undefined, { maximumFractionDigits: 0 })}</b></div><FlowChart color="#0ea5e9" points={paper.flow.oi_history.map((point, index) => ({ time: Math.floor(new Date(point.created_at).getTime() / 1000) || index, value: point.oi }))} /><small>{t("market.oiChange",{instrument:instrument.replace("-USDT","-USDT-SWAP"),change:`${paper.flow.oi_change_pct>=0?"+":""}${paper.flow.oi_change_pct.toFixed(3)}`})}</small></article></div></section>}
-          {runtimeAnalysis?.contributions && <section className="explain-panel"><div className="section-title"><div><span className="eyebrow">{t("market.explainableEngine")}</span><h2>{t("market.scoreContribution")}</h2></div><b>{runtimeAnalysis.score}/100</b></div><div className="contribution-grid">{runtimeAnalysis.contributions.map((item) => <article key={item.key}><div><strong>{message(item.label_code,item.detail_params,item.label)}</strong><span className={item.status}>{item.max ? `${item.points}/${item.max}` : t("common.notAvailable")}</span></div><div className="contribution-track"><i style={{ width: `${item.max ? item.points / item.max * 100 : 0}%` }} /></div><small>{message(item.detail_code,item.detail_params,item.detail)}</small></article>)}</div></section>}
-          {engineInstruments.includes(instrument) && <section className="replay-panel"><div className="section-title"><div><span className="eyebrow">{t("market.snapshots")}</span><h2>{t("market.replay")}</h2></div><select value={replayDetail?.created_at || ""} onChange={(event) => selectReplay(event.target.value)} disabled={replayLoading || !replayItems.length}><option value="">{replayItems.length?t("market.chooseSnapshot"):t("market.collectingSnapshots")}</option>{replayItems.map((item) => <option key={item.id} value={item.created_at}>{new Date(item.created_at).toLocaleString()} · {localValue(item.analysis.action)} · {item.analysis.score}/100</option>)}</select></div>{replayDetail ? <div className="replay-content"><div className="replay-chart"><ReplayChart candles={replayDetail.candles} /></div><div className="replay-facts"><strong>{localValue(replayDetail.analysis.action)} · {replayDetail.analysis.score}/100</strong><span>{new Date(replayDetail.created_at).toLocaleString()}</span><p>{replayDetail.outcome?.message || t("market.noReplayOutcome")}</p>{replayDetail.analysis.contributions?.map((item) => <small key={item.key}>{item.label}: {item.points}/{item.max} · {item.detail}</small>)}</div></div> : <p className="empty-ledger">{t("market.replayEmpty")}</p>}</section>}
-          {paper?.events?.length ? <section className="event-panel"><div className="section-title"><div><span className="eyebrow">{t("market.auditableActivity")}</span><h2>{t("market.decisionLog")}</h2></div><small>{t("market.recentEvents",{count:paper.events.length})}</small></div><div className="event-list">{paper.events.slice(0, 12).map((event) => <div key={event.id}><time>{new Date(event.created_at).toLocaleString()}</time><b>{localValue(event.event_type)}</b><span>{message(event.message_code,event.message_params,event.message)}</span></div>)}</div></section> : null}
-          <section className="ai-brief"><BrainCircuit size={19} /><div><span className="eyebrow">{t("market.aiBrief",{source:paper?.ai_brief?.source||t("market.waitingPaper")})}</span><strong>{paper?.ai_brief?.created_at?t("market.updatedAt",{time:new Date(paper.ai_brief.created_at).toLocaleString()}):t("market.aiUnavailable")}</strong><p>{paper?.ai_brief?.content||t("market.aiDefault")}</p></div><button className="secondary-btn" disabled>{t("market.briefSoon")}</button></section>
-          <section className="copilot-panel"><div><span className="eyebrow">{t("market.copilot")}</span><h2>{t("market.askCurrent")}</h2><p>{t("market.copilotHelp")}</p></div><form onSubmit={submitQuestion}><input value={question} onChange={(event) => setQuestion(event.target.value)} placeholder={t("market.copilotPlaceholder")} maxLength={1200} /><button className="primary-btn" disabled={chatLoading}>{chatLoading?t("market.thinking"):t("market.askCopilot")}</button></form>{chatAnswer && <div className="copilot-answer">{chatAnswer}</div>}</section>
-          <section className="paper-ledger"><div className="section-title"><div><span className="eyebrow">{t("paper.ledger")}</span><h2>{t("paper.executionResults")}</h2></div>{paper ? <div className="ledger-stats"><span>{t("paper.open")} <b>{paper.summary.open}</b></span><span>{t("paper.winRate")} <b>{paper.summary.win_rate}%</b></span><span>{t("paper.total")} <b className={paper.summary.total_r >= 0 ? "positive" : "negative"}>{formatSigned(paper.summary.total_r, "R")}</b></span></div> : <span className="api-offline">{t("paper.startApi")}</span>}</div>
-            {paper?.open_trades?.length ? <div className="position-list">{paper.open_trades.map((trade) => <div className="position-row" key={trade.id}><span><b className={trade.side === "LONG" ? "positive" : "negative"}>{localValue(trade.side)}</b> {trade.instrument}</span><span>{t("paper.entry",{price:trade.entry.toFixed(2)})}</span><span>SL {trade.stop_loss.toFixed(2)}</span><span>TP {trade.take_profit.toFixed(2)}</span><small>{t("paper.opened",{time:new Date(trade.created_at).toLocaleString()})}</small></div>)}</div> : <p className="empty-ledger">{paper?t("paper.noPosition"):t("paper.apiOffline")}</p>}
-            {paper?.closed_trades?.length ? <div className="closed-trades">{paper.closed_trades.slice(0, 5).map((trade) => <div key={trade.id}><span>#{trade.id} · {localValue(trade.side)}</span><span>{localValue(trade.reason)}</span><b className={(trade.pnl_r || 0) >= 0 ? "positive" : "negative"}>{formatSigned(trade.pnl_r || 0, "R")}</b></div>)}</div> : null}
-          </section>
-        </main>
+          <main className="workspace-main">
+            <section className="market-summary">
+              <div>
+                <span className="eyebrow">
+                  {instrument} · {t("market.okxSpot")}
+                </span>
+                <div className="price-line">
+                  <strong>
+                    $
+                    {snapshot.price.toLocaleString(undefined, {
+                      maximumFractionDigits: 2,
+                    })}
+                  </strong>
+                  <b
+                    className={
+                      snapshot.changePct >= 0 ? "positive" : "negative"
+                    }
+                  >
+                    {formatSigned(snapshot.changePct, "%")}
+                  </b>
+                </div>
+                <small>
+                  {t("market.updatedAt", { time: snapshot.updatedAt })}
+                </small>
+              </div>
+              <div className="summary-stats">
+                <span>
+                  <small>{t("market.high24")}</small>
+                  <b>{snapshot.high24.toFixed(2)}</b>
+                </span>
+                <span>
+                  <small>{t("market.low24")}</small>
+                  <b>{snapshot.low24.toFixed(2)}</b>
+                </span>
+                <span>
+                  <small>EMA20</small>
+                  <b>{snapshot.ema20?.toFixed(2) ?? "--"}</b>
+                </span>
+              </div>
+            </section>
+            <section className="chart-workspace">
+              <div className="chart-toolbar">
+                <div>
+                  <span className="eyebrow">{t("market.liveChart")}</span>
+                  <h2>{t("market.priceStructure")}</h2>
+                </div>
+                <div className="indicator-toggles">
+                  {["1m", "5m", "15m", "1h", "4h", "1D"].map((item) => (
+                    <button
+                      key={item}
+                      className={interval === item ? "active" : ""}
+                      onClick={() => setInterval(item)}
+                    >
+                      {item}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="workspace-chart">
+                <MarketChart instrument={instrument} interval={interval} />
+              </div>
+              <div className="chart-legend">
+                <span>
+                  <i className="ma60" /> MA60
+                </span>
+                <span>
+                  <i className="ma200" /> MA200
+                </span>
+                <span className="muted">{t("market.flowProxy")}</span>
+              </div>
+            </section>
+            {paper?.flow && (
+              <section className="flow-panel">
+                <div className="section-title">
+                  <div>
+                    <span className="eyebrow">
+                      {t("market.publicDerivatives")}
+                    </span>
+                    <h2>{t("market.orderFlowOi")}</h2>
+                  </div>
+                  <small>{t("flow.source.okxTradesAndSwapOi")}</small>
+                </div>
+                <div className="flow-grid">
+                  <article>
+                    <div className="flow-head">
+                      <span>{t("market.cvdRecent")}</span>
+                      <b
+                        className={
+                          paper.flow.cvd_delta >= 0 ? "positive" : "negative"
+                        }
+                      >
+                        {paper.flow.cvd_delta >= 0 ? "+" : ""}
+                        {paper.flow.cvd_delta.toLocaleString(undefined, {
+                          maximumFractionDigits: 0,
+                        })}
+                      </b>
+                    </div>
+                    <FlowChart points={paper.flow.cvd_series} zeroLine />
+                    <small>{t("market.cvdHelp")}</small>
+                  </article>
+                  <article>
+                    <div className="flow-head">
+                      <span>{t("market.swapOi")}</span>
+                      <b>
+                        $
+                        {paper.flow.oi.toLocaleString(undefined, {
+                          maximumFractionDigits: 0,
+                        })}
+                      </b>
+                    </div>
+                    <FlowChart
+                      color="#0ea5e9"
+                      points={paper.flow.oi_history.map((point, index) => ({
+                        time:
+                          Math.floor(
+                            new Date(point.created_at).getTime() / 1000
+                          ) || index,
+                        value: point.oi,
+                      }))}
+                    />
+                    <small>
+                      {t("market.oiChange", {
+                        instrument: instrument.replace("-USDT", "-USDT-SWAP"),
+                        change: `${
+                          paper.flow.oi_change_pct >= 0 ? "+" : ""
+                        }${paper.flow.oi_change_pct.toFixed(3)}`,
+                      })}
+                    </small>
+                  </article>
+                </div>
+              </section>
+            )}
+            {runtimeAnalysis?.contributions && (
+              <section className="explain-panel">
+                <div className="section-title">
+                  <div>
+                    <span className="eyebrow">
+                      {t("market.explainableEngine")}
+                    </span>
+                    <h2>{t("market.scoreContribution")}</h2>
+                  </div>
+                  <b>{runtimeAnalysis.score}/100</b>
+                </div>
+                <div className="contribution-grid">
+                  {runtimeAnalysis.contributions.map((item) => (
+                    <article key={item.key}>
+                      <div>
+                        <strong>
+                          {message(
+                            item.label_code,
+                            item.detail_params,
+                            item.label
+                          )}
+                        </strong>
+                        <span className={item.status}>
+                          {item.max
+                            ? `${item.points}/${item.max}`
+                            : t("common.notAvailable")}
+                        </span>
+                      </div>
+                      <div className="contribution-track">
+                        <i
+                          style={{
+                            width: `${
+                              item.max ? (item.points / item.max) * 100 : 0
+                            }%`,
+                          }}
+                        />
+                      </div>
+                      <small>
+                        {message(
+                          item.detail_code,
+                          item.detail_params,
+                          item.detail
+                        )}
+                      </small>
+                    </article>
+                  ))}
+                </div>
+              </section>
+            )}
+            {engineInstruments.includes(instrument) && (
+              <section className="replay-panel">
+                <div className="section-title">
+                  <div>
+                    <span className="eyebrow">{t("market.snapshots")}</span>
+                    <h2>{t("market.replay")}</h2>
+                  </div>
+                  <select
+                    value={replayDetail?.created_at || ""}
+                    onChange={(event) => selectReplay(event.target.value)}
+                    disabled={replayLoading || !replayItems.length}
+                  >
+                    <option value="">
+                      {replayItems.length
+                        ? t("market.chooseSnapshot")
+                        : t("market.collectingSnapshots")}
+                    </option>
+                    {replayItems.map((item) => (
+                      <option key={item.id} value={item.created_at}>
+                        {new Date(item.created_at).toLocaleString()} ·{" "}
+                        {localValue(item.analysis.action)} ·{" "}
+                        {item.analysis.score}/100
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                {replayDetail ? (
+                  <div className="replay-content">
+                    <div className="replay-chart">
+                      <ReplayChart candles={replayDetail.candles} />
+                    </div>
+                    <div className="replay-facts">
+                      <strong>
+                        {localValue(replayDetail.analysis.action)} ·{" "}
+                        {replayDetail.analysis.score}/100
+                      </strong>
+                      <span>
+                        {new Date(replayDetail.created_at).toLocaleString()}
+                      </span>
+                      <p>
+                        {replayDetail.outcome
+                          ? message(replayDetail.outcome.message_code,replayDetail.outcome.message_params,replayDetail.outcome.message)
+                          : t("market.noReplayOutcome")}
+                      </p>
+                      {replayDetail.analysis.contributions?.map((item) => (
+                        <small key={item.key}>
+                          {message(item.label_code,item.detail_params,item.label)}: {item.points}/{item.max} · {message(item.detail_code,item.detail_params,item.detail)}
+                        </small>
+                      ))}
+                    </div>
+                  </div>
+                ) : (
+                  <p className="empty-ledger">{t("market.replayEmpty")}</p>
+                )}
+              </section>
+            )}
+            {paper?.events?.length ? (
+              <section className="event-panel">
+                <div className="section-title">
+                  <div>
+                    <span className="eyebrow">
+                      {t("market.auditableActivity")}
+                    </span>
+                    <h2>{t("market.decisionLog")}</h2>
+                  </div>
+                  <small>
+                    {t("market.recentEvents", { count: paper.events.length })}
+                  </small>
+                </div>
+                <div className="event-list">
+                  {paper.events.slice(0, 12).map((event) => (
+                    <div key={event.id}>
+                      <time>{new Date(event.created_at).toLocaleString()}</time>
+                      <b>{localValue(event.event_type)}</b>
+                      <span>
+                        {message(
+                          event.message_code,
+                          event.message_params,
+                          event.message
+                        )}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            ) : null}
+            <section className="ai-brief">
+              <BrainCircuit size={19} />
+              <div>
+                <span className="eyebrow">
+                  {t("market.aiBrief", {
+                    source: paper?.ai_brief?.source || t("market.waitingPaper"),
+                  })}
+                </span>
+                <strong>
+                  {paper?.ai_brief?.created_at
+                    ? t("market.updatedAt", {
+                        time: new Date(
+                          paper.ai_brief.created_at
+                        ).toLocaleString(),
+                      })
+                    : t("market.aiUnavailable")}
+                </strong>
+                <p>{paper?.ai_brief?.content || t("market.aiDefault")}</p>
+              </div>
+              <button className="secondary-btn" disabled>
+                {t("market.briefSoon")}
+              </button>
+            </section>
+            <section className="copilot-panel">
+              <div>
+                <span className="eyebrow">{t("market.copilot")}</span>
+                <h2>{t("market.askCurrent")}</h2>
+                <p>{t("market.copilotHelp")}</p>
+              </div>
+              <form onSubmit={submitQuestion}>
+                <input
+                  value={question}
+                  onChange={(event) => setQuestion(event.target.value)}
+                  placeholder={t("market.copilotPlaceholder")}
+                  maxLength={1200}
+                />
+                <button className="primary-btn" disabled={chatLoading}>
+                  {chatLoading ? t("market.thinking") : t("market.askCopilot")}
+                </button>
+              </form>
+              {chatAnswer && <div className="copilot-answer">{chatAnswer}</div>}
+            </section>
+            <section className="paper-ledger">
+              <div className="section-title">
+                <div>
+                  <span className="eyebrow">{t("paper.ledger")}</span>
+                  <h2>{t("paper.executionResults")}</h2>
+                </div>
+                {paper ? (
+                  <div className="ledger-stats">
+                    <span>
+                      {t("paper.open")} <b>{paper.summary.open}</b>
+                    </span>
+                    <span>
+                      {t("paper.winRate")} <b>{paper.summary.win_rate}%</b>
+                    </span>
+                    <span>
+                      {t("paper.total")}{" "}
+                      <b
+                        className={
+                          paper.summary.total_r >= 0 ? "positive" : "negative"
+                        }
+                      >
+                        {formatSigned(paper.summary.total_r, "R")}
+                      </b>
+                    </span>
+                  </div>
+                ) : (
+                  <span className="api-offline">{t("paper.startApi")}</span>
+                )}
+              </div>
+              {paper?.open_trades?.length ? (
+                <div className="position-list">
+                  {paper.open_trades.map((trade) => (
+                    <div className="position-row" key={trade.id}>
+                      <span>
+                        <b
+                          className={
+                            trade.side === "LONG" ? "positive" : "negative"
+                          }
+                        >
+                          {localValue(trade.side)}
+                        </b>{" "}
+                        {trade.instrument}
+                      </span>
+                      <span>
+                        {t("paper.entry", { price: trade.entry.toFixed(2) })}
+                      </span>
+                      <span>SL {trade.stop_loss.toFixed(2)}</span>
+                      <span>TP {trade.take_profit.toFixed(2)}</span>
+                      <small>
+                        {t("paper.opened", {
+                          time: new Date(trade.created_at).toLocaleString(),
+                        })}
+                      </small>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="empty-ledger">
+                  {paper ? t("paper.noPosition") : t("paper.apiOffline")}
+                </p>
+              )}
+              {paper?.closed_trades?.length ? (
+                <div className="closed-trades">
+                  {paper.closed_trades.slice(0, 5).map((trade) => (
+                    <div key={trade.id}>
+                      <span>
+                        #{trade.id} · {localValue(trade.side)}
+                      </span>
+                      <span>{localValue(trade.reason)}</span>
+                      <b
+                        className={
+                          (trade.pnl_r || 0) >= 0 ? "positive" : "negative"
+                        }
+                      >
+                        {formatSigned(trade.pnl_r || 0, "R")}
+                      </b>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+            </section>
+          </main>
 
-        <aside className="decision-panel">
-          <span className="eyebrow">{t("decision.ruleEngine",{source:runtimeAnalysis?t("decision.paperService"):signal.source})}</span><div className="decision-head"><div><h2>{localValue(action)}</h2><p>{runtimeAnalysis?t("decision.biasUpdated",{bias:localValue(runtimeAnalysis.bias||"WAIT"),time:runtimeAnalysis.updated_at||"--"}):signal.title}</p></div><div className="score-box"><strong>{decisionScore}</strong><small>/100</small></div></div>
-          {runtimeAnalysis?.strategy_version && <div className="signal-lineage"><span>{t("decision.version")} <b>{runtimeAnalysis.strategy_version}</b></span><span>{t("decision.config")} <b title={runtimeAnalysis.config_hash}>{runtimeAnalysis.config_hash?.slice(0,10)}</b></span><span>{t("decision.signal")} <b title={runtimeAnalysis.signal_id}>{runtimeAnalysis.signal_id?.slice(0,10)}</b></span><span>{t("decision.collectorFreshness")} <b>{runtimeAnalysis.updated_at ? new Date(runtimeAnalysis.updated_at).toLocaleTimeString() : t("decision.starting")}</b></span></div>}
-          <p className="decision-summary">{runtimeAnalysis?t("decision.summary"):signal.summary}</p>
-          {runtimeAnalysis?.timeframes && <div className="timeframe-table"><span className="eyebrow">{t("decision.trendStructure")}</span>{Object.entries(runtimeAnalysis.timeframes).map(([frame, item]) => <div key={frame}><b>{frame}</b><span className={item.trend === "Bullish" ? "positive" : item.trend === "Bearish" ? "negative" : "watch"}>{localValue(item.trend)}</span><small>{item.ema20_slope_pct >= 0 ? "+" : ""}{item.ema20_slope_pct.toFixed(3)}%</small></div>)}</div>}
-          <div className="trade-plan"><div><span>{t("decision.idealEntry")}</span><b>{snapshot.ema20 ? `${(snapshot.ema20 * 0.997).toFixed(2)} – ${(snapshot.ema20 * 1.003).toFixed(2)}` : t("decision.calculating")}</b></div><div><span>{t("decision.invalidation")}</span><b>{(snapshot.price - risk).toFixed(2)}</b></div><div><span>{t("decision.firstTarget")}</span><b>{(snapshot.price + risk * 2).toFixed(2)}</b></div></div>
-          <div className="rule-list"><span className="eyebrow">{t("decision.ruleChecks")}</span>{decisionConditions.map((condition) => <div className="rule-row" key={condition.label}><span>{condition.label}</span><b className={condition.tone}>{condition.value}</b></div>)}</div>
-          {paper?.risk && <div className={`risk-console ${paper.risk.allowed ? "safe" : "blocked"}`}><span className="eyebrow">{t("decision.riskControls")}</span><div><span>{t("decision.portfolioPositions")}</span><b>{paper.risk.open_positions}/{paper.risk.max_open_positions}</b></div><div><span>{t("decision.dailyPnl")}</span><b>{formatSigned(paper.risk.daily_pnl_r, "R")}</b></div><div><span>{t("decision.consecutiveLosses")}</span><b>{paper.risk.consecutive_losses}/{paper.risk.max_consecutive_losses}</b></div><p>{paper.risk.allowed?t("decision.entriesAllowed"):t("decision.blocked",{reasons:paper.risk.blockers.join(", ")})}</p></div>}
-          <div className="paper-mode"><ShieldCheck size={17} /><div><strong>{t("paper.mode")}</strong><span>{t("paper.noLiveOrder")}</span></div></div>
-        </aside>
-      </div> : activePage === "research" ? <StrategyResearch /> : <Operations />}
-      {settingsOpen && <div className="settings-backdrop" onClick={() => setSettingsOpen(false)}><section className="settings-drawer" onClick={(event) => event.stopPropagation()}><div className="section-title"><div><span className="eyebrow">{t("settings.workspace")}</span><h2>{t("common.settings")}</h2></div><button className="icon-button" aria-label={t("common.close")} onClick={() => setSettingsOpen(false)}>×</button></div><label>{t("settings.marketSource")}<select><option>{t("market.publicData")}</option></select></label><label>{t("settings.watchlistSize")}<select><option>{t("settings.liquidPairs")}</option></select></label><label>{t("settings.refreshInterval")}<select><option>{t("settings.seconds60")}</option><option>{t("settings.minutes5")}</option></select></label><label>{t("settings.aiCadence")}<select><option>{t("settings.hourlyBackend")}</option></select></label><p className="settings-note">{t("settings.noApiKeys")}</p></section></div>}
+          <aside className="decision-panel">
+            <span className="eyebrow">
+              {t("decision.ruleEngine", {
+                source: runtimeAnalysis
+                  ? t("decision.paperService")
+                  : signal.source,
+              })}
+            </span>
+            <div className="decision-head">
+              <div>
+                <h2>{localValue(action)}</h2>
+                <p>
+                  {runtimeAnalysis
+                    ? t("decision.biasUpdated", {
+                        bias: localValue(runtimeAnalysis.bias || "WAIT"),
+                        time: runtimeAnalysis.updated_at || "--",
+                      })
+                    : signal.title}
+                </p>
+              </div>
+              <div className="score-box">
+                <strong>{decisionScore}</strong>
+                <small>/100</small>
+              </div>
+            </div>
+            {runtimeAnalysis?.strategy_version && (
+              <div className="signal-lineage">
+                <span>
+                  {t("decision.version")}{" "}
+                  <b>{runtimeAnalysis.strategy_version}</b>
+                </span>
+                <span>
+                  {t("decision.config")}{" "}
+                  <b title={runtimeAnalysis.config_hash}>
+                    {runtimeAnalysis.config_hash?.slice(0, 10)}
+                  </b>
+                </span>
+                <span>
+                  {t("decision.signal")}{" "}
+                  <b title={runtimeAnalysis.signal_id}>
+                    {runtimeAnalysis.signal_id?.slice(0, 10)}
+                  </b>
+                </span>
+                <span>
+                  {t("decision.collectorFreshness")}{" "}
+                  <b>
+                    {runtimeAnalysis.updated_at
+                      ? new Date(
+                          runtimeAnalysis.updated_at
+                        ).toLocaleTimeString()
+                      : t("decision.starting")}
+                  </b>
+                </span>
+              </div>
+            )}
+            <p className="decision-summary">
+              {runtimeAnalysis ? t("decision.summary") : signal.summary}
+            </p>
+            {runtimeAnalysis?.timeframes && (
+              <div className="timeframe-table">
+                <span className="eyebrow">{t("decision.trendStructure")}</span>
+                {Object.entries(runtimeAnalysis.timeframes).map(
+                  ([frame, item]) => (
+                    <div key={frame}>
+                      <b>{frame}</b>
+                      <span
+                        className={
+                          item.trend === "Bullish"
+                            ? "positive"
+                            : item.trend === "Bearish"
+                            ? "negative"
+                            : "watch"
+                        }
+                      >
+                        {localValue(item.trend)}
+                      </span>
+                      <small>
+                        {item.ema20_slope_pct >= 0 ? "+" : ""}
+                        {item.ema20_slope_pct.toFixed(3)}%
+                      </small>
+                    </div>
+                  )
+                )}
+              </div>
+            )}
+            <div className="trade-plan">
+              <div>
+                <span>{t("decision.idealEntry")}</span>
+                <b>
+                  {snapshot.ema20
+                    ? `${(snapshot.ema20 * 0.997).toFixed(2)} – ${(
+                        snapshot.ema20 * 1.003
+                      ).toFixed(2)}`
+                    : t("decision.calculating")}
+                </b>
+              </div>
+              <div>
+                <span>{t("decision.invalidation")}</span>
+                <b>{(snapshot.price - risk).toFixed(2)}</b>
+              </div>
+              <div>
+                <span>{t("decision.firstTarget")}</span>
+                <b>{(snapshot.price + risk * 2).toFixed(2)}</b>
+              </div>
+            </div>
+            <div className="rule-list">
+              <span className="eyebrow">{t("decision.ruleChecks")}</span>
+              {decisionConditions.map((condition) => (
+                <div className="rule-row" key={condition.label}>
+                  <span>{condition.label}</span>
+                  <b className={condition.tone}>{condition.value}</b>
+                </div>
+              ))}
+            </div>
+            {paper?.risk && (
+              <div
+                className={`risk-console ${
+                  paper.risk.allowed ? "safe" : "blocked"
+                }`}
+              >
+                <span className="eyebrow">{t("decision.riskControls")}</span>
+                <div>
+                  <span>{t("decision.portfolioPositions")}</span>
+                  <b>
+                    {paper.risk.open_positions}/{paper.risk.max_open_positions}
+                  </b>
+                </div>
+                <div>
+                  <span>{t("decision.dailyPnl")}</span>
+                  <b>{formatSigned(paper.risk.daily_pnl_r, "R")}</b>
+                </div>
+                <div>
+                  <span>{t("decision.consecutiveLosses")}</span>
+                  <b>
+                    {paper.risk.consecutive_losses}/
+                    {paper.risk.max_consecutive_losses}
+                  </b>
+                </div>
+                <p>
+                  {paper.risk.allowed
+                    ? t("decision.entriesAllowed")
+                    : t("decision.blocked", {
+                        reasons: paper.risk.blockers.map(localValue).join("、"),
+                      })}
+                </p>
+              </div>
+            )}
+            <div className="paper-mode">
+              <ShieldCheck size={17} />
+              <div>
+                <strong>{t("paper.mode")}</strong>
+                <span>{t("paper.noLiveOrder")}</span>
+              </div>
+            </div>
+          </aside>
+        </div>
+      ) : activePage === "research" ? (
+        <StrategyResearch />
+      ) : (
+        <Operations />
+      )}
+      {settingsOpen && (
+        <div
+          className="settings-backdrop"
+          onClick={() => setSettingsOpen(false)}
+        >
+          <section
+            className="settings-drawer"
+            onClick={(event) => event.stopPropagation()}
+          >
+            <div className="section-title">
+              <div>
+                <span className="eyebrow">{t("settings.workspace")}</span>
+                <h2>{t("common.settings")}</h2>
+              </div>
+              <button
+                className="icon-button"
+                aria-label={t("common.close")}
+                onClick={() => setSettingsOpen(false)}
+              >
+                ×
+              </button>
+            </div>
+            <label>
+              {t("settings.marketSource")}
+              <select>
+                <option>{t("market.publicData")}</option>
+              </select>
+            </label>
+            <label>
+              {t("settings.watchlistSize")}
+              <select>
+                <option>{t("settings.liquidPairs")}</option>
+              </select>
+            </label>
+            <label>
+              {t("settings.refreshInterval")}
+              <select>
+                <option>{t("settings.seconds60")}</option>
+                <option>{t("settings.minutes5")}</option>
+              </select>
+            </label>
+            <label>
+              {t("settings.aiCadence")}
+              <select>
+                <option>{t("settings.hourlyBackend")}</option>
+              </select>
+            </label>
+            <p className="settings-note">{t("settings.noApiKeys")}</p>
+          </section>
+        </div>
+      )}
     </div>
   );
 }

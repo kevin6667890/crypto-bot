@@ -55,7 +55,10 @@ def stability_scores(results: list[dict[str, Any]], parameter_names: list[str]) 
         row["stability_components"] = {"neighborhood_variance": round(variance_component, 2), "oos_degradation": round(oos_component, 2), "positive_neighborhood": round(positive_component, 2), "drawdown_stability": round(dd_component, 2), "sample_size": round(sample_component, 2)}
         row["positive_neighborhood_ratio"] = sum(value > 0 for value in returns) / len(returns)
         row["labels"] = (["Low Sample Size"] if trades < 30 else []) + (["High Return / Fragile"] if is_return > 0 and row["stability_score"] < 50 else []) + (["Overfitting Risk"] if oos_return < 0 < is_return else [])
+        row["label_codes"] = (["validation.label.low_sample_size"] if trades < 30 else []) + (["validation.label.high_return_fragile"] if is_return > 0 and row["stability_score"] < 50 else []) + (["validation.label.overfitting_risk"] if oos_return < 0 < is_return else [])
     if results:
         max(results, key=lambda item: float(item.get("total_return") or -1e99))["labels"].append("Best Historical Result")
         max(results, key=lambda item: item["stability_score"])["labels"].append("Most Stable Region")
+        max(results, key=lambda item: float(item.get("total_return") or -1e99))["label_codes"].append("validation.label.best_historical_result")
+        max(results, key=lambda item: item["stability_score"])["label_codes"].append("validation.label.most_stable_region")
     return results

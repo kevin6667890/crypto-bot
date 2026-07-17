@@ -1,2 +1,206 @@
-import {useState} from "react";import {post,phase4Api,pct} from "./api";import {StrategyParameters} from "../research";import {useLanguage} from "../i18n";
-export default function SensitivityLab({startDate,endDate,parameters}:{startDate:string;endDate:string;parameters:StrategyParameters}){const {t}=useLanguage(),[parameter,setParameter]=useState("minimum_score"),[start,setStart]=useState(70),[stop,setStop]=useState(80),[step,setStep]=useState(2.5),[runId,setRunId]=useState<number|null>(null),[data,setData]=useState<any>(null),[notice,setNotice]=useState("");const count=Math.max(0,Math.floor((stop-start)/step)+1);async function run(){try{const x=await post<{id:number;estimated_combinations:number}>("/api/sensitivity/run",{instrument:"BTC-USDT",timeframe:"15m",start_date:startDate,end_date:endDate,parameters,mode:"OAT",ranges:[{parameter,start,stop,step}]});setRunId(x.id);setNotice(t("common.queuedRun",{id:x.id,count:x.estimated_combinations}))}catch(e){setNotice(e instanceof Error?e.message:t("common.runFailed"))}}async function load(){if(runId)try{setData(await phase4Api(`/api/sensitivity/${runId}/results`))}catch(e){setNotice(e instanceof Error?e.message:t("common.notReady"))}}return <section className="phase4-card"><div className="phase4-head"><div><span className="eyebrow">{t("validation.bounded")}</span><h2>{t("validation.parameterSensitivity")}</h2></div></div><div className="phase4-controls sensitivity-controls"><select value={parameter} onChange={e=>setParameter(e.target.value)}>{["fast_ma","slow_ma","ema_pullback_distance","rsi_min","rsi_max","minimum_volume_ratio","minimum_score","stop_loss_atr_multiplier","risk_reward_ratio","cooldown_bars","trading_fee","slippage"].map(x=><option key={x}>{x}</option>)}</select><label>{t("common.start")}<input type="number" value={start} onChange={e=>setStart(+e.target.value)}/></label><label>{t("common.stop")}<input type="number" value={stop} onChange={e=>setStop(+e.target.value)}/></label><label>Δ<input type="number" value={step} onChange={e=>setStep(+e.target.value)}/></label><span>{t("validation.estimated")} <b>{Number.isFinite(count)?count:0}</b></span><button onClick={run} disabled={count<1||count>100}>{t("validation.runOat")}</button>{runId&&<button onClick={load}>{t("validation.refreshResult")}</button>}</div>{notice&&<div className="research-alert warning">{notice}</div>}{data?.results?.length?<><div className="sensitivity-line">{data.results.map((x:any)=><div key={JSON.stringify(x.parameters)} title={`${pct(x.total_return)} · ${x.stability_score}`} style={{height:`${Math.max(8,Math.min(100,50+x.total_return*2))}%`}} className={x.total_return>=0?"positive-bar":"negative-bar"}/>)}</div><div className="research-table-wrap"><table><thead><tr>{[t("validation.parameter"),t("common.return"),t("validation.oosReturn"),t("common.drawdown"),t("common.trades"),t("validation.stability"),t("validation.assessment")].map(x=><th key={x}>{x}</th>)}</tr></thead><tbody>{data.results.map((x:any)=><tr key={JSON.stringify(x.parameters)}><td>{x.parameters[parameter]}</td><td>{pct(x.total_return)}</td><td>{pct(x.oos_return)}</td><td>{pct(x.maximum_drawdown)}</td><td>{x.trades}</td><td>{x.stability_score}</td><td>{x.labels.join(" · ")||"—"}</td></tr>)}</tbody></table></div><p className="method-note">{t("validation.sensitivityMethod")}</p></>:<div className="research-empty compact">{t("validation.queueSensitivity")}</div>}</section>}
+import { useState } from "react";
+import { post, phase4Api, pct } from "./api";
+import { StrategyParameters } from "../research";
+import { useLanguage, type TranslationKey } from "../i18n";
+const parameterLabels: Record<string, TranslationKey> = {
+  fast_ma: "parameter.fastMa",
+  slow_ma: "parameter.slowMa",
+  ema_pullback_distance: "validation.parameter.ema_pullback_distance",
+  rsi_min: "parameter.rsiMin",
+  rsi_max: "parameter.rsiMax",
+  minimum_volume_ratio: "validation.parameter.minimum_volume_ratio",
+  minimum_score: "validation.parameter.minimum_score",
+  stop_loss_atr_multiplier: "validation.parameter.stop_loss_atr_multiplier",
+  risk_reward_ratio: "validation.parameter.risk_reward_ratio",
+  cooldown_bars: "validation.parameter.cooldown_bars",
+  trading_fee: "validation.parameter.trading_fee",
+  slippage: "validation.parameter.slippage",
+};
+export default function SensitivityLab({
+  startDate,
+  endDate,
+  parameters,
+}: {
+  startDate: string;
+  endDate: string;
+  parameters: StrategyParameters;
+}) {
+  const { t, value } = useLanguage(),
+    [parameter, setParameter] = useState("minimum_score"),
+    [start, setStart] = useState(70),
+    [stop, setStop] = useState(80),
+    [step, setStep] = useState(2.5),
+    [runId, setRunId] = useState<number | null>(null),
+    [data, setData] = useState<any>(null),
+    [notice, setNotice] = useState("");
+  const count = Math.max(0, Math.floor((stop - start) / step) + 1);
+  async function run() {
+    try {
+      const x = await post<{ id: number; estimated_combinations: number }>(
+        "/api/sensitivity/run",
+        {
+          instrument: "BTC-USDT",
+          timeframe: "15m",
+          start_date: startDate,
+          end_date: endDate,
+          parameters,
+          mode: "OAT",
+          ranges: [{ parameter, start, stop, step }],
+        }
+      );
+      setRunId(x.id);
+      setNotice(
+        t("common.queuedRun", { id: x.id, count: x.estimated_combinations })
+      );
+    } catch (e) {
+      setNotice(
+        `${t("common.runFailed")} ${t("common.technicalDetail", {
+          detail: e instanceof Error ? e.message : String(e),
+        })}`
+      );
+    }
+  }
+  async function load() {
+    if (runId)
+      try {
+        setData(await phase4Api(`/api/sensitivity/${runId}/results`));
+      } catch (e) {
+        setNotice(
+          `${t("validation.resultNotReady")} ${t("common.technicalDetail", {
+            detail: e instanceof Error ? e.message : String(e),
+          })}`
+        );
+      }
+  }
+  return (
+    <section className="phase4-card">
+      <div className="phase4-head">
+        <div>
+          <span className="eyebrow">{t("validation.bounded")}</span>
+          <h2>{t("validation.parameterSensitivity")}</h2>
+        </div>
+      </div>
+      <div className="phase4-controls sensitivity-controls">
+        <select
+          value={parameter}
+          onChange={(e) => setParameter(e.target.value)}
+        >
+          {[
+            "fast_ma",
+            "slow_ma",
+            "ema_pullback_distance",
+            "rsi_min",
+            "rsi_max",
+            "minimum_volume_ratio",
+            "minimum_score",
+            "stop_loss_atr_multiplier",
+            "risk_reward_ratio",
+            "cooldown_bars",
+            "trading_fee",
+            "slippage",
+          ].map((x) => (
+            <option key={x} value={x}>
+              {t(parameterLabels[x])}
+            </option>
+          ))}
+        </select>
+        <label>
+          {t("common.start")}
+          <input
+            type="number"
+            value={start}
+            onChange={(e) => setStart(+e.target.value)}
+          />
+        </label>
+        <label>
+          {t("common.stop")}
+          <input
+            type="number"
+            value={stop}
+            onChange={(e) => setStop(+e.target.value)}
+          />
+        </label>
+        <label>
+          Δ
+          <input
+            type="number"
+            value={step}
+            onChange={(e) => setStep(+e.target.value)}
+          />
+        </label>
+        <span>
+          {t("validation.estimated")}{" "}
+          <b>{Number.isFinite(count) ? count : 0}</b>
+        </span>
+        <button onClick={run} disabled={count < 1 || count > 100}>
+          {t("validation.runOat")}
+        </button>
+        {runId && (
+          <button onClick={load}>{t("validation.refreshResult")}</button>
+        )}
+      </div>
+      {notice && <div className="research-alert warning">{notice}</div>}
+      {data?.results?.length ? (
+        <>
+          <div className="sensitivity-line">
+            {data.results.map((x: any) => (
+              <div
+                key={JSON.stringify(x.parameters)}
+                title={`${pct(x.total_return)} · ${x.stability_score}`}
+                style={{
+                  height: `${Math.max(
+                    8,
+                    Math.min(100, 50 + x.total_return * 2)
+                  )}%`,
+                }}
+                className={
+                  x.total_return >= 0 ? "positive-bar" : "negative-bar"
+                }
+              />
+            ))}
+          </div>
+          <div className="research-table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  {[
+                    t("validation.parameter"),
+                    t("common.return"),
+                    t("validation.oosReturn"),
+                    t("common.drawdown"),
+                    t("common.trades"),
+                    t("validation.stability"),
+                    t("validation.assessment"),
+                  ].map((x) => (
+                    <th key={x}>{x}</th>
+                  ))}
+                </tr>
+              </thead>
+              <tbody>
+                {data.results.map((x: any) => (
+                  <tr key={JSON.stringify(x.parameters)}>
+                    <td>{x.parameters[parameter]}</td>
+                    <td>{pct(x.total_return)}</td>
+                    <td>{pct(x.oos_return)}</td>
+                    <td>{pct(x.maximum_drawdown)}</td>
+                    <td>{x.trades}</td>
+                    <td>{x.stability_score}</td>
+                    <td>
+                      {(x.label_codes || x.labels).map(value).join(" · ") ||
+                        "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <p className="method-note">{t("validation.sensitivityMethod")}</p>
+        </>
+      ) : (
+        <div className="research-empty compact">
+          {t("validation.queueSensitivity")}
+        </div>
+      )}
+    </section>
+  );
+}

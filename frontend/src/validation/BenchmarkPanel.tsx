@@ -1,2 +1,103 @@
-import {useState} from "react";import {phase4Api,post,pct} from "./api";import {StrategyParameters} from "../research";import {useLanguage} from "../i18n";
-export default function BenchmarkPanel({startDate,endDate,parameters}:{startDate:string;endDate:string;parameters:StrategyParameters}){const {t}=useLanguage(),[runId,setRunId]=useState<number|null>(null),[data,setData]=useState<any>(null),[notice,setNotice]=useState("");async function run(){try{const x=await post<{id:number}>("/api/benchmarks/run",{instrument:"BTC-USDT",assets:["BTC-USDT","ETH-USDT","SOL-USDT"],timeframe:"15m",start_date:startDate,end_date:endDate,parameters});setRunId(x.id);setNotice(`#${x.id}`)}catch(e){setNotice(e instanceof Error?e.message:t("common.runFailed"))}}async function load(){if(runId)try{setData(await phase4Api(`/api/benchmarks/${runId}`))}catch(e){setNotice(e instanceof Error?e.message:t("common.notReady"))}}return <section className="phase4-card"><div className="phase4-head"><div><span className="eyebrow">{t("validation.benchmarkContract")}</span><h2>{t("validation.benchmarkComparison")}</h2></div><div className="phase4-controls"><button onClick={run}>{t("validation.runBenchmarks")}</button>{runId&&<button onClick={load}>{t("validation.refreshResult")}</button>}</div></div>{notice&&<div className="research-alert warning">{notice}</div>}{data?.results?.length?<div className="research-table-wrap"><table><thead><tr>{[t("common.asset"),"Benchmark",t("common.return"),t("common.drawdown"),"Sharpe","Sortino","PF",t("common.trades"),t("common.fees"),t("portfolio.exposure")].map(x=><th key={x}>{x}</th>)}</tr></thead><tbody>{data.results.map((x:any,i:number)=><tr key={`${x.instrument}-${x.name}-${i}`}><td>{x.instrument}</td><td>{x.name}</td><td>{pct(x.metrics.total_return)}</td><td>{pct(x.metrics.maximum_drawdown)}</td><td>{x.metrics.sharpe_ratio?.toFixed(2)??"—"}</td><td>{x.metrics.sortino_ratio?.toFixed(2)??"—"}</td><td>{x.metrics.profit_factor?.toFixed(2)??"—"}</td><td>{x.metrics.total_trades}</td><td>${x.metrics.fees_paid?.toFixed(2)}</td><td>{pct(x.metrics.exposure)}</td></tr>)}</tbody></table></div>:<div className="research-empty compact">{t("validation.noBenchmark")}</div>}</section>}
+import { useState } from "react";
+import { phase4Api, post, pct } from "./api";
+import { StrategyParameters } from "../research";
+import { useLanguage } from "../i18n";
+export default function BenchmarkPanel({
+  startDate,
+  endDate,
+  parameters,
+}: {
+  startDate: string;
+  endDate: string;
+  parameters: StrategyParameters;
+}) {
+  const { t, value } = useLanguage(),
+    [runId, setRunId] = useState<number | null>(null),
+    [data, setData] = useState<any>(null),
+    [notice, setNotice] = useState("");
+  async function run() {
+    try {
+      const x = await post<{ id: number }>("/api/benchmarks/run", {
+        instrument: "BTC-USDT",
+        assets: ["BTC-USDT", "ETH-USDT", "SOL-USDT"],
+        timeframe: "15m",
+        start_date: startDate,
+        end_date: endDate,
+        parameters,
+      });
+      setRunId(x.id);
+      setNotice(t("validation.runQueued", {id: x.id}));
+    } catch (e) {
+      setNotice(`${t("common.runFailed")} ${t("common.technicalDetail", {detail:e instanceof Error?e.message:String(e)})}`);
+    }
+  }
+  async function load() {
+    if (runId)
+      try {
+        setData(await phase4Api(`/api/benchmarks/${runId}`));
+      } catch (e) {
+        setNotice(`${t("validation.resultNotReady")} ${t("common.technicalDetail", {detail:e instanceof Error?e.message:String(e)})}`);
+      }
+  }
+  return (
+    <section className="phase4-card">
+      <div className="phase4-head">
+        <div>
+          <span className="eyebrow">{t("validation.benchmarkContract")}</span>
+          <h2>{t("validation.benchmarkComparison")}</h2>
+        </div>
+        <div className="phase4-controls">
+          <button onClick={run}>{t("validation.runBenchmarks")}</button>
+          {runId && (
+            <button onClick={load}>{t("validation.refreshResult")}</button>
+          )}
+        </div>
+      </div>
+      {notice && <div className="research-alert warning">{notice}</div>}
+      {data?.results?.length ? (
+        <div className="research-table-wrap">
+          <table>
+            <thead>
+              <tr>
+                {[
+                  t("common.asset"),
+                  t("validation.benchmark"),
+                  t("common.return"),
+                  t("common.drawdown"),
+                  t("validation.sharpe"),
+                  t("validation.sortino"),
+                  t("validation.profitFactor"),
+                  t("common.trades"),
+                  t("common.fees"),
+                  t("portfolio.exposure"),
+                ].map((x) => (
+                  <th key={x}>{x}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {data.results.map((x: any, i: number) => (
+                <tr key={`${x.instrument}-${x.name}-${i}`}>
+                  <td>{x.instrument}</td>
+                  <td>{value(x.name)}</td>
+                  <td>{pct(x.metrics.total_return)}</td>
+                  <td>{pct(x.metrics.maximum_drawdown)}</td>
+                  <td>{x.metrics.sharpe_ratio?.toFixed(2) ?? "—"}</td>
+                  <td>{x.metrics.sortino_ratio?.toFixed(2) ?? "—"}</td>
+                  <td>{x.metrics.profit_factor?.toFixed(2) ?? "—"}</td>
+                  <td>{x.metrics.total_trades}</td>
+                  <td>${x.metrics.fees_paid?.toFixed(2)}</td>
+                  <td>{pct(x.metrics.exposure)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : (
+        <div className="research-empty compact">
+          {t("validation.noBenchmark")}
+        </div>
+      )}
+    </section>
+  );
+}

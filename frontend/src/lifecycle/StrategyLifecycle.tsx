@@ -1,3 +1,141 @@
-import {useEffect,useState} from "react";import {phase4Api,post} from "../validation/api";import PromotionChecklist from "./PromotionChecklist";import AuditHistory from "./AuditHistory";import {useLanguage} from "../i18n";
-type Life={id:number;name:string;status:string;strategy_version:string;config_hash:string;policy_version:string;latest_evaluation:any};
-export default function StrategyLifecycle(){const {t,value}=useLanguage(),[items,setItems]=useState<Life[]>([]),[selected,setSelected]=useState<Life|null>(null),[audit,setAudit]=useState<any[]>([]),[notice,setNotice]=useState("");async function load(){try{const x=await phase4Api<{items:Life[]}>("/api/strategy-lifecycle");setItems(x.items);if(selected)setSelected(x.items.find(i=>i.id===selected.id)||null)}catch(e){setNotice(e instanceof Error?e.message:t("common.error"))}}useEffect(()=>{load()},[]);async function choose(x:Life){setSelected(x);setAudit((await phase4Api<{items:any[]}>(`/api/strategy-lifecycle/${x.id}/audit`)).items)}async function action(verb:string){if(!selected)return;try{await post(`/api/strategy-lifecycle/${selected.id}/${verb}`,{});await load()}catch(e){setNotice(e instanceof Error?e.message:t("common.error"))}}return <><section className="research-command"><div><span className="eyebrow">{t("lifecycle.description")}</span><h1>{t("lifecycle.title")}</h1><p>{t("lifecycle.policy")}</p></div></section>{notice&&<div className="research-alert warning">{notice}</div>}<div className="lifecycle-layout"><section className="phase4-card"><h2>{t("lifecycle.strategyStatus")}</h2>{items.map(x=><button className={`lifecycle-row ${selected?.id===x.id?"active":""}`} key={x.id} onClick={()=>choose(x)}><span><b>{x.name}</b><small>{x.strategy_version} · {x.config_hash.slice(0,10)}</small></span><strong>{value(x.status)}</strong></button>)}</section><section className="phase4-card lifecycle-detail"><div className="phase4-head"><div><span className="eyebrow">{selected?.policy_version||"promotion-policy-v1"}</span><h2>{t("lifecycle.checklist")}</h2></div>{selected&&<div className="row-actions"><button onClick={()=>action("evaluate")}>{t("lifecycle.evaluate")}</button>{selected.status==="Draft"&&<button onClick={()=>action("candidate")}>{t("lifecycle.candidate")}</button>}{selected.status==="Candidate"&&<button onClick={()=>action("shadow")}>{t("shadow.title")}</button>}<button onClick={()=>action("promote")}>{t("lifecycle.promote")}</button><button onClick={()=>action("reject")}>{t("lifecycle.reject")}</button><button onClick={()=>action("archive")}>{t("common.archive")}</button>{selected.status==="Active"&&<button onClick={()=>action("rollback")}>{t("lifecycle.rollback")}</button>}</div>}</div>{selected?<PromotionChecklist evaluation={selected.latest_evaluation}/>:<div className="research-empty">{t("lifecycle.select")}</div>}</section><section className="phase4-card lifecycle-audit"><h2>{t("lifecycle.audit")}</h2>{audit.length?<AuditHistory items={audit}/>:<div className="research-empty compact">{t("lifecycle.none")}</div>}</section></div></>}
+import { useEffect, useState } from "react";
+import { phase4Api, post } from "../validation/api";
+import PromotionChecklist from "./PromotionChecklist";
+import AuditHistory from "./AuditHistory";
+import { useLanguage } from "../i18n";
+type Life = {
+  id: number;
+  name: string;
+  status: string;
+  strategy_version: string;
+  config_hash: string;
+  policy_version: string;
+  latest_evaluation: any;
+};
+export default function StrategyLifecycle() {
+  const { t, value } = useLanguage(),
+    [items, setItems] = useState<Life[]>([]),
+    [selected, setSelected] = useState<Life | null>(null),
+    [audit, setAudit] = useState<any[]>([]),
+    [notice, setNotice] = useState("");
+  async function load() {
+    try {
+      const x = await phase4Api<{ items: Life[] }>("/api/strategy-lifecycle");
+      setItems(x.items);
+      if (selected)
+        setSelected(x.items.find((i) => i.id === selected.id) || null);
+    } catch (e) {
+      setNotice(`${t("lifecycle.operationFailed")} ${t("common.technicalDetail", {detail:e instanceof Error?e.message:String(e)})}`);
+    }
+  }
+  useEffect(() => {
+    load();
+  }, []);
+  async function choose(x: Life) {
+    setSelected(x);
+    setAudit(
+      (
+        await phase4Api<{ items: any[] }>(
+          `/api/strategy-lifecycle/${x.id}/audit`
+        )
+      ).items
+    );
+  }
+  async function action(verb: string) {
+    if (!selected) return;
+    try {
+      await post(`/api/strategy-lifecycle/${selected.id}/${verb}`, {});
+      await load();
+    } catch (e) {
+      setNotice(`${t("lifecycle.operationFailed")} ${t("common.technicalDetail", {detail:e instanceof Error?e.message:String(e)})}`);
+    }
+  }
+  return (
+    <>
+      <section className="research-command">
+        <div>
+          <span className="eyebrow">{t("lifecycle.description")}</span>
+          <h1>{t("lifecycle.title")}</h1>
+          <p>{t("lifecycle.policy")}</p>
+        </div>
+      </section>
+      {notice && <div className="research-alert warning">{notice}</div>}
+      <div className="lifecycle-layout">
+        <section className="phase4-card">
+          <h2>{t("lifecycle.strategyStatus")}</h2>
+          {items.map((x) => (
+            <button
+              className={`lifecycle-row ${
+                selected?.id === x.id ? "active" : ""
+              }`}
+              key={x.id}
+              onClick={() => choose(x)}
+            >
+              <span>
+                <b>{x.name}</b>
+                <small>
+                  {x.strategy_version} · {x.config_hash.slice(0, 10)}
+                </small>
+              </span>
+              <strong>{value(x.status)}</strong>
+            </button>
+          ))}
+        </section>
+        <section className="phase4-card lifecycle-detail">
+          <div className="phase4-head">
+            <div>
+              <span className="eyebrow">
+                {selected?.policy_version || "promotion-policy-v1"}
+              </span>
+              <h2>{t("lifecycle.checklist")}</h2>
+            </div>
+            {selected && (
+              <div className="row-actions">
+                <button onClick={() => action("evaluate")}>
+                  {t("lifecycle.evaluate")}
+                </button>
+                {selected.status === "Draft" && (
+                  <button onClick={() => action("candidate")}>
+                    {t("lifecycle.candidate")}
+                  </button>
+                )}
+                {selected.status === "Candidate" && (
+                  <button onClick={() => action("shadow")}>
+                    {t("shadow.title")}
+                  </button>
+                )}
+                <button onClick={() => action("promote")}>
+                  {t("lifecycle.promote")}
+                </button>
+                <button onClick={() => action("reject")}>
+                  {t("lifecycle.reject")}
+                </button>
+                <button onClick={() => action("archive")}>
+                  {t("common.archive")}
+                </button>
+                {selected.status === "Active" && (
+                  <button onClick={() => action("rollback")}>
+                    {t("lifecycle.rollback")}
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+          {selected ? (
+            <PromotionChecklist evaluation={selected.latest_evaluation} />
+          ) : (
+            <div className="research-empty">{t("lifecycle.select")}</div>
+          )}
+        </section>
+        <section className="phase4-card lifecycle-audit">
+          <h2>{t("lifecycle.audit")}</h2>
+          {audit.length ? (
+            <AuditHistory items={audit} />
+          ) : (
+            <div className="research-empty compact">{t("lifecycle.none")}</div>
+          )}
+        </section>
+      </div>
+    </>
+  );
+}

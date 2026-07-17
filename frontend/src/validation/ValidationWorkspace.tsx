@@ -1,2 +1,56 @@
-import { useState } from "react";import { StrategyParameters } from "../research";import GateFunnel from "./GateFunnel";import NearMissPanel from "./NearMissPanel";import SensitivityLab from "./SensitivityLab";import BenchmarkPanel from "./BenchmarkPanel";import RobustnessPanel from "./RobustnessPanel";import {useLanguage} from "../i18n";
-export default function ValidationWorkspace(props:{startDate:string;endDate:string;parameters:StrategyParameters}){const {t}=useLanguage();const [tab,setTab]=useState("gates");const tabs=[["gates",t("validation.gateFunnel")],["near",t("validation.nearMiss")],["sensitivity",t("validation.sensitivity")],["benchmarks",t("validation.benchmarks")],["robustness",t("validation.robustness")]];return <><section className="research-command"><div><span className="eyebrow">{t("validation.phase")}</span><h1>{t("validation.title")}</h1><p>{t("validation.description")}</p></div></section><div className="validation-tabs">{tabs.map(([key,label])=><button className={tab===key?"active":""} onClick={()=>setTab(key)} key={key}>{label}</button>)}</div>{tab==="gates"?<GateFunnel/>:tab==="near"?<NearMissPanel/>:tab==="sensitivity"?<SensitivityLab {...props}/>:tab==="benchmarks"?<BenchmarkPanel {...props}/>:<RobustnessPanel/>}</>}
+import { useState } from "react";
+import { StrategyParameters } from "../research";
+import GateFunnel from "./GateFunnel";
+import NearMissPanel from "./NearMissPanel";
+import SensitivityLab from "./SensitivityLab";
+import BenchmarkPanel from "./BenchmarkPanel";
+import RobustnessPanel from "./RobustnessPanel";
+import { useLanguage } from "../i18n";
+export default function ValidationWorkspace(props: {
+  startDate: string;
+  endDate: string;
+  parameters: StrategyParameters;
+}) {
+  const { t } = useLanguage();
+  const [tab, setTab] = useState("gates");
+  const tabs = [
+    ["gates", t("validation.gateFunnel")],
+    ["near", t("validation.nearMiss")],
+    ["sensitivity", t("validation.sensitivity")],
+    ["benchmarks", t("validation.benchmarks")],
+    ["robustness", t("validation.robustness")],
+  ];
+  return (
+    <>
+      <section className="research-command">
+        <div>
+          <span className="eyebrow">{t("validation.phase")}</span>
+          <h1>{t("validation.title")}</h1>
+          <p>{t("validation.description")}</p>
+        </div>
+      </section>
+      <div className="validation-tabs">
+        {tabs.map(([key, label]) => (
+          <button
+            className={tab === key ? "active" : ""}
+            onClick={() => setTab(key)}
+            key={key}
+          >
+            {label}
+          </button>
+        ))}
+      </div>
+      {tab === "gates" ? (
+        <GateFunnel />
+      ) : tab === "near" ? (
+        <NearMissPanel />
+      ) : tab === "sensitivity" ? (
+        <SensitivityLab {...props} />
+      ) : tab === "benchmarks" ? (
+        <BenchmarkPanel {...props} />
+      ) : (
+        <RobustnessPanel />
+      )}
+    </>
+  );
+}

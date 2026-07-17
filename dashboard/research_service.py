@@ -81,20 +81,22 @@ class ResearchService:
     def _job_backtest(self, job_id: int, request: dict[str, Any], checkpoint) -> dict[str, Any]:
         run_id=int(request["run_id"])
         try:
-            self.repository.update_run(run_id, status="RUNNING", progress=3, progress_message="Checking SQLite candle cache")
-            checkpoint(job_id,3,"Checking SQLite candle cache")
+            self.repository.update_run(run_id, status="RUNNING", progress=3, progress_message="Checking SQLite candle cache", message_code="research.progress.checking_cache", message_params={})
+            checkpoint(job_id,3,"research.progress.checking_cache",{})
             parameters = validate_parameters(request["parameters"])
             warmup = max(parameters.slow_ma, parameters.ema_pullback_period, parameters.rsi_period, parameters.atr_period) + 20
             candles, quality = self.history.get_candles(request["instrument"], request["timeframe"], request["start_ts"], request["end_ts"], warmup)
-            if int(quality.get("missing_bars",0))>0:self.alerts.raise_alert("Data Gap Detected","warning","historical_data",f"{quality['missing_bars']} missing {request['timeframe']} bars detected",request["instrument"],related_job_id=job_id,key=f"data-gap|{request['instrument']}|{request['timeframe']}")
+            if int(quality.get("missing_bars",0))>0:self.alerts.raise_alert("Data Gap Detected","warning","historical_data",f"{quality['missing_bars']} missing {request['timeframe']} bars detected",request["instrument"],related_job_id=job_id,key=f"data-gap|{request['instrument']}|{request['timeframe']}",message_code="alert.data_gap",message_params={"missing":quality["missing_bars"],"timeframe":request["timeframe"],"instrument":request["instrument"]})
             else:self.alerts.resolve(f"data-gap|{request['instrument']}|{request['timeframe']}")
             mtf_data={}
             if request["timeframe"]=="15m":
                 for frame in (("1H","4H","1D") if parameters.enable_daily_context else ("1H","4H")):
                     mtf_data[frame],_=self.history.get_candles(request["instrument"],frame,request["start_ts"],request["end_ts"],warmup)
-            self.repository.update_run(run_id, progress=25, progress_message=f"Loaded {len(candles)} confirmed OKX candles", data_quality=quality)
-            def report(value:int,message:str)->None:
-                progress_value=25+int(value*.6); checkpoint(job_id,progress_value,message); self.repository.update_run(run_id,progress=progress_value,progress_message=message)
+            loaded_params={"instrument":request["instrument"],"loaded":len(candles)}
+            self.repository.update_run(run_id, progress=25, progress_message=f"Loaded {len(candles)} confirmed OKX candles", message_code="research.progress.loaded_candles", message_params=loaded_params, data_quality=quality)
+            def report(value:int,_legacy_message:str)->None:
+                progress_value=25+int(value*.6); processed=min(len(candles),int(len(candles)*value/90)); params={"processed":processed,"total":len(candles)}
+                checkpoint(job_id,progress_value,"research.progress.running_backtest",params); self.repository.update_run(run_id,progress=progress_value,progress_message=f"Processing {processed} / {len(candles)} candles",message_code="research.progress.running_backtest",message_params=params)
             result = run_backtest(candles, request["instrument"], request["timeframe"], parameters, request["start_ts"], request["end_ts"], report, mtf_data)
             split_ts = request["start_ts"] + int((request["end_ts"] - request["start_ts"]) * request["validation_split"])
             is_result = run_backtest(candles, request["instrument"], request["timeframe"], parameters, request["start_ts"], split_ts, timeframe_datasets=mtf_data)
@@ -105,12 +107,15 @@ class ResearchService:
             degradation = (is_pf and oos_pf is not None and oos_pf < is_pf * 0.6) or (is_return > 0 and oos_return < 0)
             validation["overfitting_warning"] = bool(degradation)
             validation["message"] = "OOS performance materially degraded; review robustness before paper use." if degradation else "No material IS/OOS degradation detected by the simple threshold check."
+            validation["message_code"] = "research.validation.oosDegraded" if degradation else "research.validation.oosStable"
             result["validation"] = validation; result["data_quality"] = quality
+            self.repository.update_run(run_id,progress=95,progress_message="Saving backtest trades and equity",message_code="research.progress.saving_results",message_params={})
+            checkpoint(job_id,95,"research.progress.saving_results",{})
             self.repository.save_result(run_id, result)
             return {"run_id":run_id}
         except Exception as error:
-            self.repository.update_run(run_id, status="FAILED", progress=100, progress_message="Failed", error=str(error))
-            self.alerts.raise_alert("Backtest Failed","warning","research",f"Backtest run #{run_id} failed",request.get("instrument"),related_job_id=job_id,key=f"backtest-failed|{run_id}")
+            self.repository.update_run(run_id, status="FAILED", progress=100, progress_message="Failed", message_code="job.failed", message_params={"error":str(error)[:1000]}, error=str(error))
+            self.alerts.raise_alert("Backtest Failed","warning","research",f"Backtest run #{run_id} failed",request.get("instrument"),related_job_id=job_id,key=f"backtest-failed|{run_id}",message_code="alert.backtest_failed",message_params={"id":run_id,"instrument":request.get("instrument")})
             raise
 
     def run_detail(self, run_id: int, include_series: bool = True) -> dict[str, Any] | None:
@@ -163,7 +168,7 @@ class ResearchService:
             output.append({"id": strategy["id"], "label": strategy["name"], "return": metrics["total_return"], "profit_factor": metrics["profit_factor"], "drawdown": metrics["maximum_drawdown"], "sharpe": metrics["sharpe_ratio"], "win_rate": metrics["win_rate"], "trades": metrics["total_trades"], "fees": metrics["fees_paid"], "expectancy": metrics["expectancy"]})
         return output
 
-    def walk_forward(self, payload: dict[str, Any]) -> dict[str, Any]:
+    def walk_forward(self, payload: dict[str, Any], progress_callback=None) -> dict[str, Any]:
         request = self.validate_request(payload)
         train_days = int(payload.get("train_days", 90)); test_days = int(payload.get("test_days", 30)); step_days = int(payload.get("step_days", 30))
         if not 14 <= train_days <= 730 or not 7 <= test_days <= 365 or not 7 <= step_days <= 365:
@@ -175,11 +180,13 @@ class ResearchService:
         if request["timeframe"]=="15m":
             for frame in (("1H","4H","1D") if parameters.enable_daily_context else ("1H","4H")):mtf_data[frame],_=self.history.get_candles(request["instrument"],frame,request["start_ts"],request["end_ts"],warmup)
         windows, cursor = [], request["start_ts"]
+        total_windows=min(36,max(0,(request["end_ts"]-request["start_ts"]-(train_days+test_days)*86400)//(step_days*86400)+1))
         while cursor + (train_days + test_days) * 86400 <= request["end_ts"] and len(windows) < 36:
             train_end = cursor + train_days * 86400 - 1; test_end = train_end + test_days * 86400
             train = run_backtest(candles, request["instrument"], request["timeframe"], parameters, cursor, train_end,timeframe_datasets=mtf_data)
             test = run_backtest(candles, request["instrument"], request["timeframe"], parameters, train_end + 1, test_end,timeframe_datasets=mtf_data)
             windows.append({"train_start": cursor, "train_end": train_end, "test_end": test_end, "train": train["metrics"], "test": test["metrics"]})
+            if progress_callback: progress_callback(len(windows),total_windows)
             cursor += step_days * 86400
         if not windows:
             raise ValueError("Date range is too short for the selected walk-forward windows.")
@@ -193,8 +200,8 @@ class ResearchService:
         return self.jobs.enqueue("WALK_FORWARD",request,requester_key)
 
     def _job_walk_forward(self,job_id:int,payload:dict[str,Any],checkpoint)->dict[str,Any]:
-        checkpoint(job_id,5,"Loading walk-forward data")
-        return self.walk_forward(payload)
+        checkpoint(job_id,5,"research.progress.walk_forward_loading",{})
+        return self.walk_forward(payload,lambda processed,total:checkpoint(job_id,10+int(processed/max(1,total)*85),"research.progress.walk_forward_window",{"processed":processed,"total":total}))
 
     def start_portfolio(self,payload:dict[str,Any],requester_key:str="public")->dict[str,Any]:
         assets=sorted(set(payload.get("assets",[])))

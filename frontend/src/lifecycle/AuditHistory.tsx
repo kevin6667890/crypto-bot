@@ -1,1 +1,18 @@
-import {useLanguage} from "../i18n";export default function AuditHistory({items}:{items:any[]}){const {value}=useLanguage();return <div className="audit-list">{items.map(x=><div key={x.id}><time>{new Date(x.created_at).toLocaleString()}</time><b>{value(x.action)}</b><span>{value(x.from_status)||"—"} → {value(x.to_status)}</span><small>{x.actor}</small></div>)}</div>}
+import { useLanguage } from "../i18n";
+export default function AuditHistory({ items }: { items: any[] }) {
+  const { value } = useLanguage();
+  return (
+    <div className="audit-list">
+      {items.map((x) => (
+        <div key={x.id}>
+          <time>{new Date(x.created_at).toLocaleString()}</time>
+          <b>{value(x.action)}</b>
+          <span>
+            {value(x.from_status) || "—"} → {value(x.to_status)}
+          </span>
+          <small>{x.actor}</small>
+        </div>
+      ))}
+    </div>
+  );
+}

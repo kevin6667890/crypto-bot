@@ -79,7 +79,7 @@ def test_i18n_uses_explicit_context_without_dom_mutation():
 
 def test_async_progress_uses_message_code_and_recovers_by_job_id():
     source=(ROOT/"frontend/src/PortfolioResearch.tsx").read_text(encoding="utf-8")
-    assert "message(job.message_code,job.message_params,job.progress_message)" in source
+    assert re.search(r"message\(\s*job\.message_code,\s*job\.message_params,\s*job\.progress_message\s*\)",source)
     assert "researchApi.job(job.id)" in source and '"CANCEL_REQUESTED"' in source and "setInterval" in source
 
 def test_active_jsx_has_no_known_mixed_language_fragments_or_literal_accessibility_text():
@@ -97,3 +97,55 @@ def test_portfolio_backend_progress_uses_codes_not_display_sentences():
     assert 'f"Loading ' not in portfolio
     assert '"portfolio.progress.loading_candles"' in portfolio
     assert '"portfolio.progress.rate_limited"' in portfolio
+
+def _translation_blocks():
+    source=(ROOT/"frontend/src/i18n.tsx").read_text(encoding="utf-8")
+    en=source.split("const en = {",1)[1].split("} as const;",1)[0]
+    zh=source.split("const zh: Record<TranslationKey, string> = {",1)[1].split("};",1)[0]
+    return source,set(re.findall(r'"([^"]+)"\s*:',en)),set(re.findall(r'"([^"]+)"\s*:',zh))
+
+def test_translation_catalogs_have_identical_keys_and_interpolation_params():
+    source,en_keys,zh_keys=_translation_blocks()
+    assert en_keys==zh_keys,(sorted(en_keys-zh_keys),sorted(zh_keys-en_keys))
+    en=source.split("const en = {",1)[1].split("} as const;",1)[0]
+    zh=source.split("const zh: Record<TranslationKey, string> = {",1)[1].split("};",1)[0]
+    en_values=dict(re.findall(r'"([^"]+)"\s*:\s*"([^"]*)"',en));zh_values=dict(re.findall(r'"([^"]+)"\s*:\s*"([^"]*)"',zh))
+    for key in en_keys:
+        assert set(re.findall(r"\{(\w+)\}",en_values[key]))==set(re.findall(r"\{(\w+)\}",zh_values[key])),key
+
+def test_active_components_have_no_untranslated_visible_english_sentences():
+    active=[ROOT/"frontend/src/App.tsx",ROOT/"frontend/src/PortfolioResearch.tsx",ROOT/"frontend/src/StrategyResearch.tsx",ROOT/"frontend/src/Operations.tsx",ROOT/"frontend/src/ReconciliationPanel.tsx",ROOT/"frontend/src/ResearchCharts.tsx"]
+    active += list((ROOT/"frontend/src/validation").glob("*.tsx"))+list((ROOT/"frontend/src/shadow").glob("*.tsx"))+list((ROOT/"frontend/src/lifecycle").glob("*.tsx"))
+    allowed=re.compile(r"^(?:Crypto-Bot|OKX|DeepSeek|SQLite|AI|API|HTTP|CSV|IS|OOS|PF|P&L|R|SL|TP|MA\d+(?:\s*/\s*MA\d+)?|EMA\d+|RSI|ATR|CVD|OI|Bootstrap|[A-Z]{2,}(?:-[A-Z]+)?|\d+[mHdD])$",re.I)
+    failures=[]
+    for path in active:
+        source=re.sub(r"/\*.*?\*/","",path.read_text(encoding="utf-8"),flags=re.S)
+        for text in re.findall(r">\s*([A-Za-z][A-Za-z0-9 &/·:+.()_-]{2,})\s*</",source):
+            value=" ".join(text.split())
+            if len(re.findall(r"[A-Za-z]+",value))>=2 and not allowed.fullmatch(value):failures.append((path.name,value))
+        for value in re.findall(r'(?:placeholder|title|aria-label)="([^"]+)"',source):
+            if re.search(r"[A-Za-z]",value) and not allowed.fullmatch(value):failures.append((path.name,value))
+    assert not failures,failures
+
+def test_remaining_named_i18n_risks_use_explicit_keys_and_dynamic_codes():
+    strategy=(ROOT/"frontend/src/StrategyResearch.tsx").read_text(encoding="utf-8")
+    assert re.search(r"message\(\s*run\?\.message_code,\s*run\?\.message_params,\s*run\?\.progress_message\s*\)",strategy)
+    for raw in ("Research API unavailable.","Could not refresh backtest status.","Backtest could not start.","Strategy save failed.","Walk-forward queued as job #","My Strategy"):
+        assert raw not in strategy
+    operations=(ROOT/"frontend/src/Operations.tsx").read_text(encoding="utf-8")
+    for key in ("operations.version","operations.gitCommit","operations.uptime","operations.disk","operations.memory"):assert f't("{key}")' in operations
+    reconciliation=(ROOT/"frontend/src/ReconciliationPanel.tsx").read_text(encoding="utf-8")
+    for raw in ('"Signal ID"','"Paper / Backtest"','"Entry Δ"','"Exit"'):assert raw not in reconciliation
+    near=(ROOT/"frontend/src/validation/NearMissPanel.tsx").read_text(encoding="utf-8")
+    assert "selected.what_prevented_entry" not in near and "selected.what_would_have_changed" not in near and "x.failed_gates.join" not in near
+    sensitivity=(ROOT/"frontend/src/validation/SensitivityLab.tsx").read_text(encoding="utf-8")
+    assert "parameterLabels" in sensitivity and "label_codes || x.labels" in sensitivity
+
+def test_single_asset_and_phase4_job_progress_are_structured():
+    research=(ROOT/"dashboard/research_service.py").read_text(encoding="utf-8")
+    repository=(ROOT/"dashboard/research_repository.py").read_text(encoding="utf-8")
+    validation=(ROOT/"dashboard/validation_service.py").read_text(encoding="utf-8")
+    for code in ("research.progress.checking_cache","research.progress.running_backtest","research.progress.saving_results","research.progress.walk_forward_window"):assert code in research
+    assert 'self._ensure_column(connection, "backtest_runs", "message_code", "TEXT")' in repository
+    assert 'self._ensure_column(connection, "backtest_runs", "message_params", "TEXT")' in repository
+    for code in ("validation.progress.loading_decisions","validation.progress.testing_combination","validation.progress.running_benchmark","validation.progress.bootstrap"):assert code in validation

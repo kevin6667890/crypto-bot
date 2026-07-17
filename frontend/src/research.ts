@@ -39,11 +39,11 @@ export type BacktestResult = {
   monthly_returns: Array<{ month: string; return: number }>;
   candles: Array<{ ts: number; open: number; high: number; low: number; close: number }>;
   signal_count: number; execution_model: string; indicator_model: string;
-  validation: { split: number; split_ts: number; in_sample: BacktestMetrics; out_of_sample: BacktestMetrics; overfitting_warning: boolean; message: string };
+  validation: { split: number; split_ts: number; in_sample: BacktestMetrics; out_of_sample: BacktestMetrics; overfitting_warning: boolean; message: string; message_code?: string };
 };
 export type BacktestRun = {
   id: number; status: "QUEUED" | "RUNNING" | "COMPLETED" | "FAILED"; progress: number;
-  progress_message?: string; instrument: string; timeframe: string; start_date: string; end_date: string;
+  progress_message?: string; message_code?: string; message_params?: Record<string,string|number|boolean>; instrument: string; timeframe: string; start_date: string; end_date: string;
   parameters: StrategyParameters; result?: BacktestResult; error?: string; data_quality?: Record<string, unknown>;
   created_at: string;
 };

@@ -1,1 +1,10 @@
-import {useLanguage} from "../i18n";export default function ShadowComparison(){const {t}=useLanguage();return <section className="phase4-card"><h2>{t("shadow.comparison")}</h2><p className="method-note">{t("shadow.disclaimer")}</p></section>}
+import { useLanguage } from "../i18n";
+export default function ShadowComparison() {
+  const { t } = useLanguage();
+  return (
+    <section className="phase4-card">
+      <h2>{t("shadow.comparison")}</h2>
+      <p className="method-note">{t("shadow.disclaimer")}</p>
+    </section>
+  );
+}

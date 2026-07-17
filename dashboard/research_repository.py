@@ -117,6 +117,8 @@ class ResearchRepository:
             self._ensure_column(connection, "backtest_trades", "config_hash", "TEXT")
             self._ensure_column(connection, "backtest_trades", "expected_entry_ts", "INTEGER")
             self._ensure_column(connection, "backtest_trades", "expected_entry_price", "REAL")
+            self._ensure_column(connection, "backtest_runs", "message_code", "TEXT")
+            self._ensure_column(connection, "backtest_runs", "message_params", "TEXT")
             self._ensure_column(connection, "decision_signals", "regime", "TEXT")
             self._ensure_column(connection, "decision_signals", "regime_version", "TEXT")
             self._ensure_column(connection, "decision_signals", "gate_payload", "TEXT")
@@ -126,7 +128,7 @@ class ResearchRepository:
             self._ensure_column(connection, "decision_signal_runs", "regime_version", "TEXT")
             connection.execute("""INSERT OR IGNORE INTO decision_signal_runs(signal_id,run_id,source,decision_payload,gate_payload,regime,regime_version)
                 SELECT signal_id,run_id,source,decision_payload,gate_payload,regime,regime_version FROM decision_signals WHERE run_id IS NOT NULL""")
-            connection.execute("UPDATE backtest_runs SET status='FAILED',progress=100,progress_message='Interrupted by service restart',error='Backtest worker was interrupted by a service restart',updated_at=? WHERE status IN ('QUEUED','RUNNING')", (utc_now(),))
+            connection.execute("UPDATE backtest_runs SET status='FAILED',progress=100,progress_message='Interrupted by service restart',message_code='job.interrupted.restart',message_params='{}',error='Backtest worker was interrupted by a service restart',updated_at=? WHERE status IN ('QUEUED','RUNNING')", (utc_now(),))
             count = connection.execute("SELECT COUNT(*) FROM strategy_configs").fetchone()[0]
             if not count:
                 now = utc_now()
@@ -163,13 +165,13 @@ class ResearchRepository:
     def create_run(self, payload: dict[str, Any]) -> int:
         now = utc_now()
         with self.connect() as connection:
-            cursor = connection.execute("""INSERT INTO backtest_runs(strategy_config_id,status,progress,progress_message,instrument,timeframe,start_date,end_date,parameters,created_at,updated_at)
-                VALUES(?,?,?,?,?,?,?,?,?,?,?)""", (payload.get("strategy_config_id"), "QUEUED", 0, "Queued", payload["instrument"], payload["timeframe"], payload["start_date"], payload["end_date"], json.dumps(payload["parameters"]), now, now))
+            cursor = connection.execute("""INSERT INTO backtest_runs(strategy_config_id,status,progress,progress_message,message_code,message_params,instrument,timeframe,start_date,end_date,parameters,created_at,updated_at)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""", (payload.get("strategy_config_id"), "QUEUED", 0, "Queued", "job.queued", "{}", payload["instrument"], payload["timeframe"], payload["start_date"], payload["end_date"], json.dumps(payload["parameters"]), now, now))
             return int(cursor.lastrowid)
 
     def update_run(self, run_id: int, **fields: Any) -> None:
-        allowed = {"status", "progress", "progress_message", "result", "error", "data_quality"}
-        values = {key: (json.dumps(value) if key in {"result", "data_quality"} and value is not None else value) for key, value in fields.items() if key in allowed}
+        allowed = {"status", "progress", "progress_message", "message_code", "message_params", "result", "error", "data_quality"}
+        values = {key: (json.dumps(value) if key in {"message_params", "result", "data_quality"} and value is not None else value) for key, value in fields.items() if key in allowed}
         values["updated_at"] = utc_now()
         assignments = ",".join(f"{key}=?" for key in values)
         with self.connect() as connection:
@@ -178,7 +180,7 @@ class ResearchRepository:
     @staticmethod
     def _run_dict(row: sqlite3.Row) -> dict[str, Any]:
         item = dict(row)
-        for key in ("parameters", "result", "data_quality"):
+        for key in ("parameters", "message_params", "result", "data_quality"):
             if item.get(key): item[key] = json.loads(item[key])
         return item
 
@@ -211,7 +213,7 @@ class ResearchRepository:
                 summary = {**result["metrics"], "run_id": run_id, "instrument": run["instrument"], "timeframe": run["timeframe"], "start_date": run["start_date"], "end_date": run["end_date"]}
                 connection.execute("UPDATE strategy_configs SET latest_summary=?,updated_at=? WHERE id=?", (json.dumps(summary), utc_now(), run["strategy_config_id"]))
         public_result = {key: value for key, value in result.items() if key not in {"trades", "equity", "decisions"}}
-        self.update_run(run_id, status="COMPLETED", progress=100, progress_message="Completed", result=public_result, data_quality=result.get("data_quality"))
+        self.update_run(run_id, status="COMPLETED", progress=100, progress_message="Completed", message_code="research.progress.completed", message_params={}, result=public_result, data_quality=result.get("data_quality"))
 
     def trades(self, run_id: int) -> list[dict[str, Any]]:
         with self.connect() as connection:

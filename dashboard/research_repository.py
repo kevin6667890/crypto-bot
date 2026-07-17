@@ -270,15 +270,32 @@ class ResearchRepository:
                 connection.execute("INSERT INTO portfolio_backtest_assets(run_id,instrument,weight) VALUES(?,?,?)",(run_id,instrument,float(weight)))
             return run_id
 
-    def save_portfolio_result(self, run_id: int, result: dict[str, Any]) -> None:
+    def save_portfolio_result(self, run_id: int, result: dict[str, Any], progress=None) -> None:
         public={k:v for k,v in result.items() if k not in {"trades","equity"}}
+        exposure_by_ts={x["ts"]:x["gross"] for x in result.get("exposure_timeline",[])}
+        trades=result["trades"]; equity=result["equity"]; total=max(1,len(trades)+len(equity)); saved=0
         with self.connect() as connection:
-            connection.executemany("INSERT INTO portfolio_backtest_trades(run_id,instrument,signal_id,entry_ts,payload) VALUES(?,?,?,?,?)",[(run_id,t["instrument"],t.get("signal_id"),t["entry_ts"],json.dumps(t)) for t in result["trades"]])
-            connection.executemany("INSERT INTO portfolio_backtest_equity(run_id,ts,equity,cash,exposure) VALUES(?,?,?,?,?)",[(run_id,e["ts"],e["equity"],e.get("cash",e["equity"]),next((x["gross"] for x in result.get("exposure_timeline",[]) if x["ts"]==e["ts"]),0)) for e in result["equity"]])
+            if progress: progress("portfolio.progress.persisting_trades",{"saved":0,"total":len(trades)},0)
+            for offset in range(0,len(trades),250):
+                batch=trades[offset:offset+250]
+                connection.executemany("INSERT INTO portfolio_backtest_trades(run_id,instrument,signal_id,entry_ts,payload) VALUES(?,?,?,?,?)",[(run_id,t["instrument"],t.get("signal_id"),t["entry_ts"],json.dumps(t)) for t in batch])
+                connection.commit()
+                saved+=len(batch)
+                if progress: progress("portfolio.progress.persisting_trades",{"saved":min(offset+len(batch),len(trades)),"total":len(trades)},saved/total)
+            if progress: progress("portfolio.progress.persisting_equity",{"saved":0,"total":len(equity)},saved/total)
+            for offset in range(0,len(equity),500):
+                batch=equity[offset:offset+500]
+                connection.executemany("INSERT INTO portfolio_backtest_equity(run_id,ts,equity,cash,exposure) VALUES(?,?,?,?,?)",[(run_id,e["ts"],e["equity"],e.get("cash",e["equity"]),exposure_by_ts.get(e["ts"],0)) for e in batch])
+                connection.commit()
+                saved+=len(batch)
+                if progress: progress("portfolio.progress.persisting_equity",{"saved":min(offset+len(batch),len(equity)),"total":len(equity)},saved/total)
             connection.execute("UPDATE portfolio_backtest_runs SET status='COMPLETED',result=?,completed_at=? WHERE id=?",(json.dumps(public),utc_now(),run_id))
 
     def fail_portfolio_run(self,run_id:int,error:str)->None:
         with self.connect() as connection:connection.execute("UPDATE portfolio_backtest_runs SET status='FAILED',error=?,completed_at=? WHERE id=?",(error[:1000],utc_now(),run_id))
+
+    def cancel_portfolio_run(self,run_id:int)->None:
+        with self.connect() as connection:connection.execute("UPDATE portfolio_backtest_runs SET status='CANCELLED',error=NULL,completed_at=? WHERE id=?",(utc_now(),run_id))
 
     def portfolio_run(self, run_id: int) -> dict[str, Any] | None:
         with self.connect() as connection:

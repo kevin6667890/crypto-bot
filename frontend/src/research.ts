@@ -50,7 +50,7 @@ export type BacktestRun = {
 export type StrategyConfig = { id: number; name: string; parameters: StrategyParameters; instrument: string; timeframe: string; start_date?: string; end_date?: string; latest_summary?: BacktestMetrics & { run_id: number; instrument: string; timeframe: string; start_date: string; end_date: string }; created_at: string; updated_at: string };
 export type ReconciliationItem = { signal_id?: string; instrument: string; candle_close_ts?: number; paper_action?: string; backtest_action?: string; paper_score?: number; backtest_score?: number; expected_entry_time?: number; observed_entry_time?: string; execution_delay?: number; expected_entry_price?: number; observed_entry_price?: number; entry_difference_pct?: number; paper_exit_reason?: string; backtest_exit_reason?: string; paper_result_r?: number; backtest_result_r?: number; match_status: string; divergence_reason?: string };
 export type Reconciliation = { paper_trades: number; backtest_trades: number; paper_signal_count: number; backtest_signal_count: number; matched_count: number; unmatched_count: number; signal_match_rate: number | null; action_mismatch_rate: number | null; median_entry_difference_pct: number | null; unmatched_signal_ratio: number | null; drift_status: "Normal" | "Watch" | "Diverging" | "Insufficient Data"; limitations: string[]; items: ReconciliationItem[] };
-export type ResearchJob = { id:number; job_type:string; status:string; progress:number; progress_message?:string; error?:string; queue_position?:number; created_at:string; started_at?:string; completed_at?:string; result_ref?:string; deduplicated?:boolean };
+export type ResearchJob = { id:number; job_type:string; status:string; progress:number; progress_message?:string; message_code?:string; message_params?:Record<string,string|number|boolean>; error?:string; queue_position?:number; created_at:string; started_at?:string; completed_at?:string; result_ref?:string; deduplicated?:boolean };
 
 const apiBase = (window.__PAPER_API_URL__ || import.meta.env.VITE_PAPER_API_URL || "").replace(/\/$/, "");
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
@@ -76,4 +76,5 @@ export const researchApi = {
   portfolio: (payload: object) => request<ResearchJob>("/api/portfolio/run", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(payload) }),
   portfolioRun: (id:number) => request<Record<string, unknown>>(`/api/portfolio/${id}`),
   jobs: async () => (await request<{items:ResearchJob[]}>("/api/jobs")).items,
+  job: (id:number) => request<ResearchJob>(`/api/jobs/${id}`),
 };

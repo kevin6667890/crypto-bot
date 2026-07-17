@@ -13,7 +13,7 @@ try:
     from okx_history import INSTRUMENTS, TIMEFRAME_SECONDS, OkxHistoryClient
     from research_repository import ResearchRepository, utc_now
     from strategy_rules import DEFAULT_PARAMETERS, validate_parameters
-    from job_queue import JobQueue
+    from job_queue import JobCancelled, JobQueue
     from portfolio_backtest import PortfolioParameters, run_portfolio_backtest
     from reconciliation import reconcile
     from alert_service import AlertService
@@ -22,7 +22,7 @@ except ImportError:
     from .okx_history import INSTRUMENTS, TIMEFRAME_SECONDS, OkxHistoryClient
     from .research_repository import ResearchRepository, utc_now
     from .strategy_rules import DEFAULT_PARAMETERS, validate_parameters
-    from .job_queue import JobQueue
+    from .job_queue import JobCancelled, JobQueue
     from .portfolio_backtest import PortfolioParameters, run_portfolio_backtest
     from .reconciliation import reconcile
     from .alert_service import AlertService
@@ -207,13 +207,35 @@ class ResearchService:
     def _job_portfolio(self,job_id:int,request:dict[str,Any],checkpoint)->dict[str,Any]:
         params=validate_parameters(request["parameters"]); datasets={}
         warmup=max(params.slow_ma,params.ema_pullback_period,params.rsi_period,params.atr_period)+20
-        for index,asset in enumerate(request["assets"]):
-            checkpoint(job_id,5+index*10,f"Loading {asset} confirmed candles")
-            datasets[asset],_=self.history.get_candles(asset,"15m",request["start_ts"],request["end_ts"],warmup)
+        assets=[asset for asset in ("BTC-USDT","ETH-USDT","SOL-USDT") if asset in request["assets"]]
+        stage_width=66/len(assets)
+        checkpoint(job_id,5,"portfolio.progress.checking_cache",{"assets":len(assets)})
+        for index,asset in enumerate(assets):
+            stage_start=8+stage_width*index; stage_end=8+stage_width*(index+1)
+            checkpoint(job_id,int(stage_start),"portfolio.progress.loading_candles",{"instrument":asset})
+            def load_progress(fetched,loaded,expected,cached,asset=asset,stage_start=stage_start,stage_end=stage_end):
+                ratio=min(1,max(loaded,fetched)/max(1,expected))
+                checkpoint(job_id,int(stage_start+(stage_end-stage_start)*ratio),"portfolio.progress.loading_candles",{"instrument":asset,"loaded":loaded,"expected":expected,"cached":cached})
+            def rate_limited(attempt,delay,asset=asset):
+                checkpoint(job_id,None,"portfolio.progress.rate_limited",{"instrument":asset,"attempt":attempt,"seconds":delay})
+            def cancelled(): checkpoint(job_id,None)
+            datasets[asset],_=self.history.get_candles(asset,"15m",request["start_ts"],request["end_ts"],warmup,load_progress,rate_limited,cancelled)
+            checkpoint(job_id,int(stage_end),"portfolio.progress.loaded_candles",{"instrument":asset,"loaded":len(datasets[asset])})
+        checkpoint(job_id,75,"portfolio.progress.aligning_timeline",{})
         run_id=self.repository.create_portfolio_run(request["portfolio_parameters"],job_id)
         try:
-            result=run_portfolio_backtest(datasets,params,PortfolioParameters(**request["portfolio_parameters"]),request["start_ts"],request["end_ts"],lambda p,m:checkpoint(job_id,35+int(p*.6),m))
-            self.repository.save_portfolio_result(run_id,result); return {"portfolio_run_id":run_id}
+            def compute_progress(fraction,code,message_params):
+                if code=="portfolio.progress.aligning_timeline": value=75
+                elif code=="portfolio.progress.calculating_metrics": value=89
+                else: value=78+int(float(fraction)*10)
+                checkpoint(job_id,value,code,message_params)
+            result=run_portfolio_backtest(datasets,params,PortfolioParameters(**request["portfolio_parameters"]),request["start_ts"],request["end_ts"],compute_progress)
+            checkpoint(job_id,94,"portfolio.progress.metrics_complete",{"trades":len(result["trades"]),"points":len(result["equity"])})
+            self.repository.save_portfolio_result(run_id,result,lambda code,message_params,fraction:checkpoint(job_id,95+int(float(fraction)*3),code,message_params))
+            checkpoint(job_id,98,"portfolio.progress.results_saved",{"trades":len(result["trades"]),"points":len(result["equity"])})
+            return {"portfolio_run_id":run_id}
+        except JobCancelled:
+            self.repository.cancel_portfolio_run(run_id); raise
         except Exception as error:
             self.repository.fail_portfolio_run(run_id,str(error)); raise
 

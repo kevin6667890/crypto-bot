@@ -1,6 +1,7 @@
 import { DependencyList, useEffect, useRef, useState } from "react";
 import { AreaSeries, CandlestickSeries, ColorType, createChart, IChartApi, LineSeries, UTCTimestamp } from "lightweight-charts";
 import { Candle, fetchEthCandles, generateCandles, generateEquityCurve } from "./data";
+import {useLanguage} from "./i18n";
 
 const chartTheme = {
   layout: {
@@ -165,6 +166,7 @@ export function EquityChart() {
 }
 
 export function FlowChart({ points, color = "#7c3aed", zeroLine = false }: { points: Array<{ time: number; value: number }>; color?: string; zeroLine?: boolean }) {
+  const {t}=useLanguage();
   const normalized = Array.from(new Map(points.filter((point) => Number.isFinite(point.time) && Number.isFinite(point.value)).map((point) => [point.time, point])).values()).sort((a, b) => a.time - b.time);
   if (normalized.length === 1) normalized.unshift({ time: normalized[0].time - 1, value: normalized[0].value });
   const ref = useResponsiveChart((container) => {
@@ -175,5 +177,5 @@ export function FlowChart({ points, color = "#7c3aed", zeroLine = false }: { poi
     chart.timeScale().fitContent();
     return chart;
   }, [points, color, zeroLine]);
-  return <div className="flow-canvas">{normalized.length ? <div className="flow-canvas-inner" ref={ref} /> : <span className="flow-empty">No series data</span>}</div>;
+  return <div className="flow-canvas">{normalized.length ? <div className="flow-canvas-inner" ref={ref} /> : <span className="flow-empty">{t("research.noSeries")}</span>}</div>;
 }

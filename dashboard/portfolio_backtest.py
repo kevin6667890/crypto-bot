@@ -26,10 +26,12 @@ class PortfolioParameters:
 def run_portfolio_backtest(datasets:dict[str,list[dict[str,Any]]], strategy:StrategyParameters, config:PortfolioParameters,
                            start_ts:int, end_ts:int, progress=None, cancelled=None)->dict[str,Any]:
     if not datasets: raise ValueError("At least one portfolio asset is required.")
+    if progress: progress(0, "portfolio.progress.aligning_timeline", {})
     normalized={asset:sorted({int(r['ts']):dict(r) for r in rows}.values(),key=lambda r:int(r['ts'])) for asset,rows in sorted(datasets.items())}
     indicators={asset:calculate_indicators(rows,strategy) for asset,rows in normalized.items()}
     index_by_ts={asset:{int(r['ts']):i for i,r in enumerate(rows)} for asset,rows in normalized.items()}
     timeline=sorted({int(r['ts']) for rows in normalized.values() for r in rows if start_ts<=int(r['ts'])<=end_ts})
+    if not timeline: raise ValueError("No confirmed portfolio candles overlap the selected range.")
     cash=config.initial_capital; realized=config.initial_capital; positions:dict[str,dict[str,Any]]={}; pending:dict[int,list[dict[str,Any]]]={}
     trades=[]; equity=[]; exposure_timeline=[]; contributions={a:0.0 for a in normalized}; fees_by_asset={a:0.0 for a in normalized}; peak_by_asset={a:0.0 for a in normalized}; dd_by_asset={a:0.0 for a in normalized}; concurrent_max=0
     weights=config.asset_weights or {a:1/len(normalized) for a in normalized}
@@ -44,7 +46,8 @@ def run_portfolio_backtest(datasets:dict[str,list[dict[str,Any]]], strategy:Stra
     last_prices:dict[str,float]={}; portfolio_cooldown_until=-1; asset_cooldown_until={a:-1 for a in normalized}; risk_utilization_peak=0.0
     for ti,ts in enumerate(timeline):
         if cancelled and cancelled(): raise RuntimeError("cancelled")
-        if progress and ti%max(1,len(timeline)//20)==0: progress(int(ti/max(1,len(timeline))*90),"Simulating shared portfolio events")
+        if progress and (ti == 0 or ti % max(1,len(timeline)//100) == 0):
+            progress(ti/max(1,len(timeline)), "portfolio.progress.processing_timestamps", {"processed":ti,"total":len(timeline)})
         for asset,rows in normalized.items():
             idx=index_by_ts[asset].get(ts)
             if idx is None: continue
@@ -118,5 +121,6 @@ def run_portfolio_backtest(datasets:dict[str,list[dict[str,Any]]], strategy:Stra
         for ts in timeline:
             value+=by_exit.get(ts,0); peak=max(peak,value); worst=min(worst,(value-peak)/peak if peak else 0); per_asset_equity[-1]['points'].append({"ts":ts,"equity":value})
         per_asset_drawdown[asset]=abs(worst)*100
+    if progress: progress(1, "portfolio.progress.calculating_metrics", {"trades":len(trades),"points":len(equity)})
     metrics=calculate_metrics(config.initial_capital,equity,trades,900); metrics.update({"exposure":sum(p['gross'] for p in exposure_timeline)/len(exposure_timeline) if exposure_timeline else 0,"cash_utilization":sum(100-e['cash']/max(e['equity'],1e-12)*100 for e in equity)/len(equity) if equity else 0,"long_exposure":max((p['long'] for p in exposure_timeline),default=0),"short_exposure":max((p['short'] for p in exposure_timeline),default=0),"concurrent_positions":concurrent_max,"portfolio_risk_utilization":risk_utilization_peak,"per_asset_pnl":contributions,"per_asset_contribution":{a:v/config.initial_capital*100 for a,v in contributions.items()},"per_asset_drawdown":per_asset_drawdown,"fees_by_asset":fees_by_asset})
     return {"metrics":metrics,"trades":trades,"equity":equity,"drawdown":maximum_drawdown(equity)[1],"monthly_returns":monthly_returns(equity),"exposure_timeline":exposure_timeline,"per_asset_equity":per_asset_equity,"correlation_matrix":correlation_matrix,"rolling_correlation":rolling_correlation,"config":asdict(config),"execution_model":"Unified chronological event stream with shared cash, risk budget, asset and portfolio cooldowns, and adverse next-open slippage."}

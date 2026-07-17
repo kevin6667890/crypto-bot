@@ -129,9 +129,9 @@ def evaluate_decision(parameters: Any, market: MarketContext, timeframes: Timefr
     if flow.available: raw.append(("flow", 15 if flow_aligned else 5, 15))
     base_score = sum(points for _, points, _ in raw)
     score = round(base_score if flow.available else base_score / 85 * 100, 2)
-    contributions = [{"key": key, "label": key.replace("_", " ").title(), "points": points, "max": maximum,
+    contributions = [{"key": key, "label": key.replace("_", " ").title(), "label_code": f"decision.contribution.{key}", "points": points, "max": maximum,
                       "status": "pass" if points == maximum else "watch"} for key, points, maximum in raw]
-    contributions.append({"key": "flow", "label": "Flow unavailable" if not flow.available else "Flow", "points": 0, "max": 0, "status": "unavailable"}) if not flow.available else None
+    contributions.append({"key": "flow", "label": "Flow unavailable" if not flow.available else "Flow", "label_code": "decision.contribution.flow", "points": 0, "max": 0, "status": "unavailable"}) if not flow.available else None
     for gate, passed in (("warmup", warmed), ("trend", bias != "WAIT"), ("pullback", pullback), ("momentum", momentum), ("flow_alignment", flow_aligned), ("risk", risk.allowed)):
         if not passed and gate not in failed: failed.append(gate)
     if not risk.cooldown_clear: failed.append("cooldown")
@@ -163,7 +163,7 @@ def evaluate_decision(parameters: Any, market: MarketContext, timeframes: Timefr
         ("existing_position", "Existing Position", risk.existing_position_clear, True, True),
         ("final_entry_allowed", "Final Entry Allowed", entry_allowed, True, True),
     ]
-    gate_results = [{"key": key, "label": label, "passed": bool(passed) if applicable else True, "applicable": applicable, "blocking": blocking} for key, label, passed, applicable, blocking in gates]
+    gate_results = [{"key": key, "label": label, "label_code": f"gate.{key}", "passed": bool(passed) if applicable else True, "applicable": applicable, "blocking": blocking} for key, label, passed, applicable, blocking in gates]
     regime = classify_regime(market.close, ind)
     return StrategyDecision(sid, market.instrument, market.execution_timeframe, int(market.candle_close_ts), version, cfg_hash,
                             action, bias, score if warmed else 0.0, warmed, contributions, failed, ind, tf_payload, flow_payload,

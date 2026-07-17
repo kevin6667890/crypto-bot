@@ -25,9 +25,10 @@ class OkxHistoryClient:
         self.repository = repository
 
     @staticmethod
-    def _request(params: dict[str, Any]) -> list[list[str]]:
+    def _request(params: dict[str, Any], on_retry=None, cancelled=None) -> list[list[str]]:
         url = "https://www.okx.com/api/v5/market/history-candles?" + urlencode(params)
         for attempt in range(7):
+            if cancelled: cancelled()
             request = Request(url, headers={"User-Agent": "crypto-bot-research/3.0"})
             try:
                 with urlopen(request, timeout=20) as response:  # noqa: S310 - fixed OKX endpoint
@@ -36,16 +37,21 @@ class OkxHistoryClient:
                 if error.code != 429 or attempt == 6:
                     raise
                 retry_after = error.headers.get("Retry-After")
-                time.sleep(float(retry_after) if retry_after and retry_after.isdigit() else min(2 ** attempt, 12))
+                delay = float(retry_after) if retry_after and retry_after.isdigit() else min(2 ** attempt, 12)
+                if on_retry: on_retry(attempt + 1, delay)
+                time.sleep(delay)
                 continue
             if payload.get("code") in {"50011", "50040"} and attempt < 6:
-                time.sleep(min(2 ** attempt, 12)); continue
+                delay = min(2 ** attempt, 12)
+                if on_retry: on_retry(attempt + 1, delay)
+                time.sleep(delay); continue
             if payload.get("code") != "0":
                 raise RuntimeError(f"OKX history error: {payload.get('msg', 'unknown response')}")
             return payload.get("data", [])
         raise RuntimeError("OKX history request exhausted its retry budget.")
 
-    def get_candles(self, instrument: str, timeframe: str, start_ts: int, end_ts: int, warmup_bars: int) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    def get_candles(self, instrument: str, timeframe: str, start_ts: int, end_ts: int, warmup_bars: int,
+                    progress=None, on_retry=None, cancelled=None) -> tuple[list[dict[str, Any]], dict[str, Any]]:
         if instrument not in INSTRUMENTS or timeframe not in TIMEFRAME_SECONDS:
             raise ValueError("Unsupported instrument or timeframe.")
         step = TIMEFRAME_SECONDS[timeframe]
@@ -55,11 +61,14 @@ class OkxHistoryClient:
         minimum, maximum = self.repository.candle_coverage(instrument, timeframe)
         cache_complete = minimum is not None and maximum is not None and minimum <= requested_start and maximum >= last_confirmed_start
         fetched = 0
+        expected = max(1, (last_confirmed_start - requested_start) // step + 1)
+        if progress: progress(0, 0, expected, cache_complete)
         if not cache_complete:
             cursor_ms = min((last_confirmed_start + step) * 1000, int(datetime.now(timezone.utc).timestamp() * 1000))
             oldest_seen: int | None = None
             for _page in range(5000):
-                rows = self._request({"instId": instrument, "bar": timeframe, "after": str(cursor_ms), "limit": "100"})
+                if cancelled: cancelled()
+                rows = self._request({"instId": instrument, "bar": timeframe, "after": str(cursor_ms), "limit": "100"}, on_retry, cancelled)
                 if not rows:
                     break
                 parsed: dict[int, dict[str, Any]] = {}
@@ -71,6 +80,7 @@ class OkxHistoryClient:
                 page = sorted(parsed.values(), key=lambda item: item["ts"])
                 self.repository.upsert_candles(instrument, timeframe, page)
                 fetched += len(page)
+                if progress: progress(fetched, min(expected, fetched), expected, False)
                 if not page:
                     break
                 new_oldest = page[0]["ts"]
@@ -82,6 +92,7 @@ class OkxHistoryClient:
                 cursor_ms = new_oldest * 1000
                 time.sleep(0.04)
         candles = self.repository.candles(instrument, timeframe, requested_start, end_ts)
+        if progress: progress(fetched, len(candles), expected, cache_complete)
         if not candles:
             raise RuntimeError("OKX returned no confirmed candles for the selected range.")
         duplicates = len(candles) - len({row["ts"] for row in candles})

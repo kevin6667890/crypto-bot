@@ -172,11 +172,11 @@ export type SignalAnalysis = {
 
 export type WatchlistItem = { instrument: string; price: number; changePct: number; volume: number };
 export type PaperTrade = { id: number; instrument: string; side: "LONG" | "SHORT"; entry: number; stop_loss: number; take_profit: number; status: string; exit_price?: number; pnl_r?: number; reason?: string; created_at: string; closed_at?: string };
-export type ScoreContribution = { key: string; label: string; points: number; max: number; status: "pass" | "watch" | "fail" | "unavailable"; detail: string };
+export type ScoreContribution = { key: string; label: string; label_code?:string; points: number; max: number; status: "pass" | "watch" | "fail" | "unavailable"; detail: string; detail_code?:string; detail_params?:Record<string,string|number> };
 export type RuntimeAnalysis = { instrument?: string; action?: string; bias?: string; score?: number; price?: number; ema20?: number; rsi14?: number; atr14?: number; volume_ratio?: number; strategy_version?:string; config_hash?:string; signal_id?:string; candle_close_ts?:number; entry_allowed?:boolean; rejection_reason?:string; conditions?: Array<{ label: string; value: string; pass: boolean }>; contributions?: ScoreContribution[]; timeframes?: Record<string, { trend: string; ema20_slope_pct: number; ma60: number; ma200: number }>; updated_at?: string };
 export type FlowStatus = { cvd: number; cvd_delta: number; cvd_series: Array<{ time: number; value: number }>; oi: number; oi_change_pct: number; oi_history: Array<{ created_at: string; oi: number; cvd: number }>; source: string };
 export type RiskStatus = { allowed: boolean; blockers: string[]; open_positions: number; max_open_positions: number; daily_pnl_r: number; daily_loss_limit_r: number; consecutive_losses: number; max_consecutive_losses: number; cooldown_until?: string | null };
-export type EventLog = { id: number; created_at: string; event_type: string; message: string; payload: string };
+export type EventLog = { id: number; created_at: string; event_type: string; message: string; message_code?:string; message_params?:Record<string,string|number>; payload: string };
 export type ReplayItem = { id: number; created_at: string; analysis: RuntimeAnalysis };
 export type ReplayDetail = { id: number; created_at: string; analysis: RuntimeAnalysis; candles: Candle[]; outcome?: { event_type: string; message: string } | null };
 export type PaperStatus = { instrument: string; analysis: RuntimeAnalysis; flow?: FlowStatus | null; risk: RiskStatus; events: EventLog[]; open_trades: PaperTrade[]; closed_trades: PaperTrade[]; ai_brief: { created_at: string; content: string; source: string } | null; summary: { open: number; closed: number; wins: number; win_rate: number; total_r: number } };

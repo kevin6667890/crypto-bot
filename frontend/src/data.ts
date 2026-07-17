@@ -175,10 +175,10 @@ export type PaperTrade = { id: number; instrument: string; side: "LONG" | "SHORT
 export type PaperStatus = { analysis: { action?: string; bias?: string; score?: number; price?: number; ema20?: number; rsi14?: number; atr14?: number; volume_ratio?: number; conditions?: Array<{ label: string; value: string; pass: boolean }>; updated_at?: string }; open_trades: PaperTrade[]; closed_trades: PaperTrade[]; ai_brief: { created_at: string; content: string; source: string } | null; summary: { open: number; closed: number; wins: number; win_rate: number; total_r: number } };
 
 declare global {
-  interface Window { __PAPER_STATUS__?: PaperStatus; }
+  interface Window { __PAPER_STATUS__?: PaperStatus; __PAPER_API_URL__?: string; }
 }
 
-const paperApiBase = (import.meta.env.VITE_PAPER_API_URL || "http://127.0.0.1:8765").replace(/\/$/, "");
+const paperApiBase = (window.__PAPER_API_URL__ || import.meta.env.VITE_PAPER_API_URL || "http://127.0.0.1:8765").replace(/\/$/, "");
 
 export async function fetchPaperStatus(): Promise<PaperStatus> {
   if (window.__PAPER_STATUS__) return window.__PAPER_STATUS__;
@@ -188,9 +188,6 @@ export async function fetchPaperStatus(): Promise<PaperStatus> {
 }
 
 export async function askMarketCopilot(question: string): Promise<string> {
-  if (window.__PAPER_STATUS__) {
-    throw new Error("Interactive Copilot needs a dedicated Paper API URL. Hourly AI briefs still run inside Streamlit.");
-  }
   const response = await fetch(`${paperApiBase}/api/chat`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

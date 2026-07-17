@@ -10,6 +10,9 @@ services:
   dashboard:
     build: .
     env_file: .env
+    environment:
+      PAPER_API_INTERNAL_URL: http://paper-api:8765
+      PAPER_API_URL: ${PAPER_API_URL:-}
     command: streamlit run dashboard/streamlit_app.py
     ports:
       - "8501:8501"

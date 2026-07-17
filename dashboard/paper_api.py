@@ -268,6 +268,8 @@ class Handler(BaseHTTPRequestHandler):
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Access-Control-Allow-Origin", "*")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
@@ -291,6 +293,9 @@ class Handler(BaseHTTPRequestHandler):
                 self._send({"error": "Invalid JSON body"}, HTTPStatus.BAD_REQUEST)
         else:
             self._send({"error": "Not found"}, HTTPStatus.NOT_FOUND)
+
+    def do_OPTIONS(self) -> None:  # noqa: N802
+        self._send({})
 
     def log_message(self, _format: str, *_args: object) -> None:
         return

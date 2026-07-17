@@ -14,6 +14,7 @@ import time
 
 import streamlit as st
 import streamlit.components.v1 as components
+import requests
 
 from paper_api import PaperService
 
@@ -68,7 +69,7 @@ def start_paper_service() -> PaperService:
     return service
 
 
-def load_react_bundle(paper_status: dict) -> str:
+def load_react_bundle(paper_status: dict, paper_api_url: str) -> str:
     index = DIST / "index.html"
     if not index.exists():
         return """
@@ -96,9 +97,18 @@ def load_react_bundle(paper_status: dict) -> str:
         )
 
     status_json = json.dumps(paper_status).replace("</", "<\\/")
-    html = html.replace("</head>", f"<script>window.__PAPER_STATUS__={status_json};</script></head>")
+    api_json = json.dumps(paper_api_url).replace("</", "<\\/")
+    html = html.replace("</head>", f"<script>window.__PAPER_STATUS__={status_json};window.__PAPER_API_URL__={api_json};</script></head>")
     return html
 
 
-paper_service = start_paper_service()
-components.html(load_react_bundle(paper_service.status()), height=1400, scrolling=True)
+internal_api = os.getenv("PAPER_API_INTERNAL_URL", "")
+public_api = os.getenv("PAPER_API_URL", "")
+if internal_api:
+    try:
+        paper_status = requests.get(f"{internal_api.rstrip('/')}/api/status", timeout=5).json()
+    except requests.RequestException:
+        paper_status = {"analysis": {"action": "WAIT", "score": 0}, "open_trades": [], "closed_trades": [], "ai_brief": None, "summary": {"open": 0, "closed": 0, "wins": 0, "win_rate": 0, "total_r": 0}}
+else:
+    paper_status = start_paper_service().status()
+components.html(load_react_bundle(paper_status, public_api), height=1400, scrolling=True)

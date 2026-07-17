@@ -17,6 +17,7 @@ import {
 import { motion } from "framer-motion";
 import { CSSProperties, useEffect, useState } from "react";
 import { EquityChart, FlowChart, MarketChart, ReplayChart } from "./charts";
+import StrategyResearch from "./StrategyResearch";
 import {
   demoSnapshot,
   fetchEthSnapshot,
@@ -750,12 +751,7 @@ function Workspace() {
           {paper?.risk && <div className={`risk-console ${paper.risk.allowed ? "safe" : "blocked"}`}><span className="eyebrow">Risk controls</span><div><span>Portfolio positions</span><b>{paper.risk.open_positions}/{paper.risk.max_open_positions}</b></div><div><span>Daily P&amp;L</span><b>{formatSigned(paper.risk.daily_pnl_r, "R")}</b></div><div><span>Consecutive losses</span><b>{paper.risk.consecutive_losses}/{paper.risk.max_consecutive_losses}</b></div><p>{paper.risk.allowed ? "New paper entries are permitted." : `Blocked: ${paper.risk.blockers.join(", ")}`}</p></div>}
           <div className="paper-mode"><ShieldCheck size={17} /><div><strong>Paper trading only</strong><span>No exchange key or live order is used.</span></div></div>
         </aside>
-      </div> : <section className="research-suite">
-        <div className="research-intro"><span className="eyebrow">Existing project modules</span><h2>Strategy research, backtest & execution history</h2><p>These original modules are retained as research tools rather than removed from the project.</p></div>
-        <StrategyLab />
-        <BacktestIntelligence />
-        <ExecutionConsole basePrice={snapshot.price} />
-      </section>}
+      </div> : <StrategyResearch />}
       {settingsOpen && <div className="settings-backdrop" onClick={() => setSettingsOpen(false)}><section className="settings-drawer" onClick={(event) => event.stopPropagation()}><div className="section-title"><div><span className="eyebrow">Workspace</span><h2>Settings</h2></div><button className="icon-button" onClick={() => setSettingsOpen(false)}>×</button></div><label>Market source<select><option>OKX Public Market Data</option></select></label><label>Watchlist size<select><option>5 liquid USDT pairs</option></select></label><label>Refresh interval<select><option>60 seconds</option><option>5 minutes</option></select></label><label>AI brief cadence<select><option>Every 1 hour (backend required)</option></select></label><p className="settings-note">API keys are intentionally not accepted by this browser workspace.</p></section></div>}
     </div>
   );

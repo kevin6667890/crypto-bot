@@ -1,98 +1,114 @@
-# ETH/USDT Quant Terminal
+# Crypto-Bot Research Workspace
 
-🌐 **Live Demo:** [Crypto-Bot Streamlit Dashboard](https://crypto-bot-kagmts7lraqwzmkumfeeqx.streamlit.app/)
+Crypto-Bot is a paper-trading and historical strategy-research workspace for
+BTC-USDT, ETH-USDT and SOL-USDT. The production UI is React + TypeScript served
+by Nginx; the Python Paper API stores runtime and research data in SQLite.
 
-![Python](https://img.shields.io/badge/Python-3.10+-blue) ![React](https://img.shields.io/badge/Frontend-React_Terminal-00B37E) ![Status](https://img.shields.io/badge/Status-Research_Demo-brightgreen) ![Docker](https://img.shields.io/badge/Docker-Ready-2496ED)
+The project does not place exchange orders. OKX public endpoints provide market
+data, deterministic rules control all paper decisions, and DeepSeek is limited
+to descriptive market summaries and user-requested explanations.
 
-An algorithmic trading research system for ETH/USDT. Features multi-timeframe signal generation, backtesting, SQLite paper trade tracking, DeepSeek AI reviews, and a sleek React-based terminal dashboard.
+## Production architecture
 
-![Terminal Dashboard](docs/dashboard_preview.png)
+- React, TypeScript and Vite frontend
+- Nginx static hosting with `/api/` reverse-proxied to the Paper API
+- Python `ThreadingHTTPServer` application on internal port 8765
+- SQLite persistence under `data_cache/`
+- Docker Compose services `frontend` and `paper-api`
+- OKX public spot candles, trades, ticker and perpetual open interest
 
-## 🚀 Quick Start
+Streamlit remains only as a compatibility wrapper and is not the production
+frontend.
 
-**1. Trading Engine (Python)**
+## Workspaces
+
+### Market Analysis
+
+- Live BTC, ETH and SOL ticker and confirmed candles
+- 1m, 5m, 15m, 1H, 4H and 1D charts with MA60 and MA200
+- Multi-timeframe trend, EMA20 slope, recent-trade CVD proxy and swap OI
+- Explainable deterministic score, risk controls and SQLite paper ledger
+- Historical decision replay and DeepSeek Market Copilot
+
+CVD is a proxy calculated from the latest public taker-trade sample. It is not a
+complete historical order-flow measure and is labelled accordingly.
+
+### Strategy Research
+
+- Real OKX `history-candles` data with pagination, confirmation filtering,
+  deduplication, gap reporting and SQLite caching
+- BTC-USDT, ETH-USDT and SOL-USDT on 15m, 1H and 4H
+- Causal indicators with complete Slow MA warm-up
+- Signal confirmation at candle close and next-candle-open execution
+- Configurable adverse slippage, two-sided fees, ATR stops, reward targets,
+  cooldown and long/short controls
+- Persisted strategy configurations, runs, trades, equity and walk-forward data
+- IS/OOS validation, rolling walk-forward stability and Paper reconciliation
+- Responsive equity, drawdown, candle/execution, R-distribution, monthly-return
+  and long/short diagnostics
+
+Historical CVD and OI are not reconstructed because the required historical
+samples are not reliably available from the endpoints used here. The backtest
+does not synthesize them. If a candle touches stop and target in the same bar,
+the engine conservatively records the stop first.
+
+## Local development
+
 ```bash
-git clone https://github.com/kevin6667890/crypto-bot.git
-cd crypto-bot
-pip install -r requirements.txt
-cp .env.example .env
-python ultimate_bot.py
+python -m pip install -r requirements.txt
+python dashboard/paper_api.py
 ```
 
-**2. Terminal Dashboard (React)**
+In another terminal:
+
 ```bash
 cd frontend
 npm install
 npm run dev
-# Open http://127.0.0.1:5173
 ```
-*Note: To run the Streamlit wrapper locally, use `streamlit run dashboard/streamlit_app.py`.*
 
-### Local paper-trading workspace
+Open `http://127.0.0.1:5173`. Vite proxies `/api` to the local Paper API.
 
-The frontend can run against OKX public market data without an exchange key. In a
-second terminal start the local paper-trading API, then start Vite as usual:
+## Tests and production build
 
 ```bash
-python dashboard/paper_api.py
-cd frontend && npm run dev
+pytest -q
+cd frontend
+npm run build
 ```
 
-The service evaluates multi-timeframe trend, EMA20 pullback, 15m volume and RSI
-once a minute. Only when every entry gate passes does it create a SQLite paper
-position in `data_cache/paper_trades.db`; open positions are checked each cycle
-and automatically closed at their stop-loss or take-profit. It never submits a
-live exchange order or accepts an API key.
+The backtest tests cover causal/no-future indicators, MA warm-up, fees,
+slippage, long and short execution, stop/target handling, drawdown, Profit
+Factor and empty-trade results.
 
-When `DEEPSEEK_API_KEY` is present in the server-side `.env`, the same service
-also stores one cautious AI market brief per hour. AI describes the stored
-indicator snapshot only; deterministic rules remain the sole trade trigger.
+## Research API
 
-On Streamlit Community Cloud, add `DEEPSEEK_API_KEY` in the app's **Settings →
-Secrets**. The Streamlit wrapper then starts the paper-trading loop on the
-server and passes its latest SQLite status to the embedded frontend every
-minute; no separate public Paper API URL is required for that deployment.
+- `POST /api/backtest/run`
+- `GET /api/backtest/{id}`
+- `GET /api/backtest/{id}/trades`
+- `GET /api/backtest/{id}/equity`
+- `GET /api/backtest/history`
+- `GET|POST /api/strategies`
+- `PUT|DELETE /api/strategies/{id}`
+- `POST /api/strategies/{id}/duplicate`
+- `POST /api/compare`
+- `POST /api/walk-forward`
+- `GET /api/reconciliation?run_id={id}`
 
-For Docker deployment, `docker compose up -d paper-api` exposes the service on
-port 8765. Build the frontend with `VITE_PAPER_API_URL` set to its public HTTPS
-URL (for example `https://api.example.com`) so a remotely hosted dashboard does
-not try to call the visitor's own `127.0.0.1`.
+## Docker deployment
 
-## 📈 Strategy Overview
-**Multi-Timeframe EMA20 Pullback**
-- **Trigger:** Score ≥ 70 (based on 4H trend, 1H confirmation, 15m structure)
-- **Entry:** Price touches EMA20 (within 40m timeout window)
-- **Exit Logic:** 3R Take Profit / 1R Break-even / Structure-based Stop Loss
+Build the frontend before starting the services because Nginx mounts the
+generated `frontend/dist` directory:
 
-### Backtest Validation (2 Years)
-| Metric | Value | Metric | Value |
-| :--- | :--- | :--- | :--- |
-| **Profit Factor** | 2.60 | **Win Rate** | 33.8% |
-| **Annual Return** | +46.43% | **Total Trades** | 68 |
-| **Max Drawdown** | 4.14% | **Risk/Reward** | 1:3 |
-
-![Backtest Results](docs/backtest_results.png)
-
-*See full strategy evolution and details in [docs/backtest_results.md](docs/backtest_results.md).*
-
-## 🧠 System Architecture
-
-```mermaid
-graph TD
-    A[Market Data <br/>Binance API + WS] --> D[Strategy Engine]
-    C[News Feeds] --> E[Macro Monitor]
-    D --> F{Score ≥ 70?}
-    F -->|Yes| H[EMA20 Pullback Queue]
-    H -->|Entry Hit| I[Paper Trade Opened]
-    I --> L[Auto Track SL/TP/BE]
-    L --> M[Close Trade + AI Review]
+```bash
+cd frontend && npm ci && npm run build && cd ..
+docker compose up -d --build paper-api frontend
 ```
 
-## 🛠️ Tech Stack
-- **Engine:** Python 3.10, `asyncio`, `pandas`, `ccxt`
-- **Frontend:** React, TypeScript, Vite, Lightweight Charts
-- **Database & AI:** SQLite, DeepSeek API
-- **Infra:** Docker, GitHub Actions, Pytest
+Runtime `.env` files, keys, SQLite databases and candle caches must remain
+outside Git.
 
 ---
-*Disclaimer: For educational and research purposes only. Not financial advice. Cryptocurrency trading involves substantial risk.*
+
+For educational and research purposes only. Past paper or backtest results do
+not predict future performance and are not financial advice.

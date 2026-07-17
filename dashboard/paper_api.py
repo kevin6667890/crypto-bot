@@ -17,6 +17,9 @@ from typing import Any
 from urllib.parse import parse_qs, urlparse
 from urllib.request import Request, urlopen
 
+from research_service import ResearchService
+from strategy_rules import score_rule_components
+
 try:
     from dotenv import load_dotenv
 except ImportError:
@@ -185,6 +188,9 @@ class PaperService:
             {"key": "momentum", "label": "Volume + RSI", "points": 15 if volume_ratio >= 1 and 35 <= rsi <= 68 else 6, "max": 15, "status": "pass" if volume_ratio >= 1 and 35 <= rsi <= 68 else "watch", "detail": f"{volume_ratio:.2f}x volume · RSI {rsi:.1f}"},
             {"key": "flow", "label": "CVD + OI flow", "points": 15 if flow_aligned else 5, "max": 15, "status": "pass" if flow_aligned else "watch", "detail": f"CVD {flow['cvd_delta']:+.0f} · OI {flow['oi_change_pct']:+.3f}%"},
         ]
+        shared_components = score_rule_components(side != "WAIT", pullback, volume_ratio >= 1 and 35 <= rsi <= 68, True, flow_aligned)
+        for contribution, shared in zip(contributions, shared_components):
+            contribution["points"] = shared["points"]
         score = sum(item["points"] for item in contributions)
         action = side if side != "WAIT" and pullback and flow_aligned and score >= 75 else "WAIT"
 
@@ -345,13 +351,14 @@ class PaperService:
 
 
 SERVICE = PaperService()
+RESEARCH = ResearchService(DB_PATH)
 
 
 class Handler(BaseHTTPRequestHandler):
-    def _send(self, payload: dict[str, Any], status: int = HTTPStatus.OK) -> None:
+    def _send(self, payload: Any, status: int = HTTPStatus.OK) -> None:
         body = json.dumps(payload).encode()
         self.send_response(status)
-        for key, value in (("Content-Type", "application/json"), ("Access-Control-Allow-Origin", "*"), ("Access-Control-Allow-Methods", "GET, POST, OPTIONS"), ("Access-Control-Allow-Headers", "Content-Type"), ("Content-Length", str(len(body)))):
+        for key, value in (("Content-Type", "application/json"), ("Access-Control-Allow-Origin", "*"), ("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS"), ("Access-Control-Allow-Headers", "Content-Type"), ("Content-Length", str(len(body)))):
             self.send_header(key, value)
         self.end_headers(); self.wfile.write(body)
 
@@ -360,6 +367,20 @@ class Handler(BaseHTTPRequestHandler):
         instrument = query.get("instrument", ["ETH-USDT"])[0]
         if parsed.path == "/api/status": self._send(SERVICE.status(instrument))
         elif parsed.path == "/api/replay": self._send(SERVICE.replay(instrument, query.get("at", [None])[0]))
+        elif parsed.path == "/api/strategies": self._send({"items": RESEARCH.strategies()})
+        elif parsed.path == "/api/backtest/history": self._send({"items": RESEARCH.repository.run_history()})
+        elif parsed.path == "/api/reconciliation":
+            try: self._send(RESEARCH.reconciliation(int(query.get("run_id", ["0"])[0])))
+            except (ValueError, TypeError) as error: self._send({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+        elif parsed.path.startswith("/api/backtest/"):
+            parts = parsed.path.strip("/").split("/")
+            try:
+                run_id = int(parts[2])
+                if len(parts) == 4 and parts[3] == "trades": payload = {"items": RESEARCH.repository.trades(run_id)}
+                elif len(parts) == 4 and parts[3] == "equity": payload = {"items": RESEARCH.repository.equity(run_id)}
+                else: payload = RESEARCH.run_detail(run_id, include_series=False)
+                self._send(payload if payload is not None else {"error": "Backtest not found"}, HTTPStatus.OK if payload is not None else HTTPStatus.NOT_FOUND)
+            except (ValueError, IndexError) as error: self._send({"error": str(error)}, HTTPStatus.BAD_REQUEST)
         else: self._send({"error": "Not found"}, HTTPStatus.NOT_FOUND)
 
     def do_POST(self) -> None:  # noqa: N802
@@ -372,7 +393,40 @@ class Handler(BaseHTTPRequestHandler):
         elif parsed.path == "/api/chat":
             result = SERVICE.chat(str(payload.get("question", "")), str(payload.get("instrument", "ETH-USDT")))
             self._send(result, HTTPStatus.BAD_REQUEST if "error" in result else HTTPStatus.OK)
+        elif parsed.path == "/api/backtest/run":
+            try: self._send(RESEARCH.start_backtest(payload), HTTPStatus.ACCEPTED)
+            except ValueError as error: self._send({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+        elif parsed.path == "/api/strategies":
+            try: self._send(RESEARCH.save_strategy(payload), HTTPStatus.CREATED)
+            except (ValueError, sqlite3.IntegrityError) as error: self._send({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+        elif parsed.path == "/api/compare":
+            try:
+                items = RESEARCH.compare_strategies([int(value) for value in payload.get("strategy_ids", [])]) if "strategy_ids" in payload else RESEARCH.compare([int(value) for value in payload.get("run_ids", [])])
+                self._send({"items": items})
+            except (ValueError, TypeError) as error: self._send({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+        elif parsed.path == "/api/walk-forward":
+            try: self._send(RESEARCH.walk_forward(payload))
+            except ValueError as error: self._send({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+        elif parsed.path.startswith("/api/strategies/") and parsed.path.endswith("/duplicate"):
+            try: self._send(RESEARCH.duplicate_strategy(int(parsed.path.strip("/").split("/")[2])), HTTPStatus.CREATED)
+            except (ValueError, sqlite3.IntegrityError) as error: self._send({"error": str(error)}, HTTPStatus.BAD_REQUEST)
         else: self._send({"error": "Not found"}, HTTPStatus.NOT_FOUND)
+
+    def do_PUT(self) -> None:  # noqa: N802
+        try:
+            length = int(self.headers.get("Content-Length", "0")); payload = json.loads(self.rfile.read(length).decode() or "{}")
+            strategy_id = int(urlparse(self.path).path.strip("/").split("/")[2])
+            self._send(RESEARCH.save_strategy(payload, strategy_id))
+        except (ValueError, IndexError, json.JSONDecodeError, sqlite3.IntegrityError) as error:
+            self._send({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+
+    def do_DELETE(self) -> None:  # noqa: N802
+        try:
+            strategy_id = int(urlparse(self.path).path.strip("/").split("/")[2])
+            deleted = RESEARCH.repository.delete_strategy(strategy_id)
+            self._send({"deleted": deleted}, HTTPStatus.OK if deleted else HTTPStatus.NOT_FOUND)
+        except (ValueError, IndexError) as error:
+            self._send({"error": str(error)}, HTTPStatus.BAD_REQUEST)
 
     def do_OPTIONS(self) -> None:  # noqa: N802
         self._send({})

@@ -4,10 +4,18 @@ from dashboard.benchmarks import run_asset_benchmarks
 from dashboard.robustness import run_robustness, stress_curve
 from dashboard.sensitivity import parameter_combinations, stability_scores
 from dashboard.strategy_rules import DEFAULT_PARAMETERS
+from dashboard.validation_service import ValidationService
 
 
 def candles(count=240, start=100):
     return [{"ts":i*900,"open":start+i*.1,"high":start+i*.1+1,"low":start+i*.1-1,"close":start+i*.1+.2} for i in range(count)]
+
+
+def test_chart_series_are_deterministically_downsampled():
+    points = [{"ts": index, "equity": index} for index in range(1000)]
+    sampled = ValidationService._downsample(points, 100)
+    assert len(sampled) == 100 and sampled[0] == points[0] and sampled[-1] == points[-1]
+    assert sampled == ValidationService._downsample(points, 100)
 
 
 def trades():

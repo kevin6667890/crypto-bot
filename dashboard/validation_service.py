@@ -118,7 +118,17 @@ class ValidationService:
         run=self.repository.run("benchmark_runs",run_id)
         if not run:raise ValueError("Benchmark run not found.")
         with self.repository.connect() as c:rows=c.execute("SELECT payload FROM benchmark_results WHERE run_id=? ORDER BY id",(run_id,)).fetchall()
-        run["results"]=[json.loads(row[0]) for row in rows];return run
+        results=[]
+        for row in rows:
+            item=json.loads(row[0]);metrics=item.get("metrics",{});drawdown=metrics.pop("drawdown_curve",[])
+            item["equity"]=self._downsample(item.get("equity",[]));item["drawdown"]=self._downsample(drawdown);results.append(item)
+        run["results"]=results;run["series_limit"]=400;return run
+
+    @staticmethod
+    def _downsample(points:list[dict[str,Any]],limit:int=400)->list[dict[str,Any]]:
+        if len(points)<=limit:return points
+        indexes={round(index*(len(points)-1)/(limit-1)) for index in range(limit)}
+        return [points[index] for index in sorted(indexes)]
 
     def start_robustness(self,payload:dict[str,Any],requester:str)->dict[str,Any]:
         input_run_id=int(payload.get("input_run_id",0));run=self.research.repository.run(input_run_id)

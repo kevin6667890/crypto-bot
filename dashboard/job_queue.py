@@ -24,6 +24,7 @@ class JobQueue:
         import sqlite3
         self.sqlite3, self.db_path, self.max_queue = sqlite3, Path(db_path), max_queue
         self.handlers: dict[str, Callable[..., Any]] = {}
+        self.terminal_handlers: dict[str, Callable[[dict[str, Any]], None]] = {}
         self._stop = threading.Event()
         self._init_db()
         self.worker = threading.Thread(target=self._loop, daemon=True, name="research-job-worker")
@@ -56,6 +57,20 @@ class JobQueue:
                 WHERE status IN ('RUNNING','CANCEL_REQUESTED')""", (utc_now(),))
 
     def register(self, job_type: str, handler: Callable[..., Any]) -> None: self.handlers[job_type] = handler
+
+    def register_terminal_handler(self, job_type: str, handler: Callable[[dict[str, Any]], None]) -> None:
+        """Receive durable terminal status changes, including queued-job cancellation."""
+        self.terminal_handlers[job_type] = handler
+
+    def _notify_terminal(self, job_id: int) -> None:
+        job = self.get(job_id)
+        handler = self.terminal_handlers.get(job.get("job_type") if job else "")
+        if handler and job:
+            try:
+                handler(job)
+            except Exception:
+                # A queue status is already durable; a projection failure must not kill the worker.
+                pass
 
     def find_active(self,job_type:str,payload:dict[str,Any],requester_key:str)->dict[str,Any]|None:
         fingerprint=self.fingerprint(job_type,payload)
@@ -104,7 +119,9 @@ class JobQueue:
             if not row: raise ValueError("Job not found.")
             if row[0] == "QUEUED": conn.execute("UPDATE research_jobs SET status='CANCELLED',cancelled_at=?,completed_at=?,progress_message='Cancelled',message_code='job.cancelled',message_params='{}' WHERE id=?", (utc_now(),utc_now(),job_id))
             elif row[0] == "RUNNING": conn.execute("UPDATE research_jobs SET status='CANCEL_REQUESTED',progress_message='Cancellation requested',message_code='job.cancellation_requested',message_params='{}' WHERE id=?", (job_id,))
-        return self.get(job_id) or {}
+        item = self.get(job_id) or {}
+        if item.get("status") == "CANCELLED": self._notify_terminal(job_id)
+        return item
 
     def retry(self, job_id: int, requester_key: str = "public") -> dict[str, Any]:
         job = self.get(job_id)
@@ -140,6 +157,8 @@ class JobQueue:
                 with self.connect() as conn: conn.execute("UPDATE research_jobs SET status='CANCELLED',progress_message='Cancelled',message_code='job.cancelled',message_params='{}',cancelled_at=?,completed_at=? WHERE id=?", (utc_now(),utc_now(),job["id"]))
             except Exception as error:
                 with self.connect() as conn: conn.execute("UPDATE research_jobs SET status='FAILED',progress_message='Failed',message_code='job.failed',message_params=?,error=?,completed_at=? WHERE id=?", (json.dumps({"error":str(error)[:1000]}),str(error)[:1000],utc_now(),job["id"]))
+            finally:
+                self._notify_terminal(job["id"])
 
     def cleanup(self, older_than_days: int = 30) -> int:
         with self.connect() as conn:

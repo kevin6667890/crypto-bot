@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import random
+import time
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -44,6 +46,30 @@ class ResearchService:
         self.jobs.register("BACKTEST", self._job_backtest)
         self.jobs.register("WALK_FORWARD", self._job_walk_forward)
         self.jobs.register("PORTFOLIO_BACKTEST", self._job_portfolio)
+        self.jobs.register("OPTIMIZATION", self._job_optimization)
+        self.jobs.register_terminal_handler("OPTIMIZATION", self._optimization_job_terminal)
+        self.repository.reconcile_optimization_jobs()
+
+    OPTIMIZATION_ENGINE_VERSION = "optimization-lab-v1/canonical-v4"
+    OPTIMIZATION_POLICY = {
+        "version": "optimization-score-v1",
+        "weights": {"validation_return": 30, "profit_factor": 20, "maximum_drawdown": 15, "sharpe": 10, "minimum_trades": 10, "relative_buy_hold": 10, "neighborhood_stability": 5},
+        "minimum_validation_trades": 20,
+        "maximum_trials": 500,
+        "holdout_fraction": 0.20,
+        "method": "deterministic stratified random sampling; not AI or automatic parameter tuning",
+        "neighborhood": {
+            "algorithm": "normalized_euclidean_distance",
+            "parameters": {
+                "minimum_score": [60.0, 90.0], "minimum_volume_ratio": [0.7, 1.6],
+                "stop_loss_atr_multiplier": [0.7, 1.8], "risk_reward_ratio": [1.2, 3.0],
+                "ema_pullback_distance": [0.002, 0.010],
+            },
+            "maximum_distance": 0.25,
+            "stability_formula": "5 × (0.60 × positive-return share + 0.20 × PF≥1 share + 0.20 × drawdown≤30% share); neighbours use validation metrics only",
+        },
+        "retry_semantics": "No in-place resume. Retrying a terminal optimization creates a new run; the original evidence remains terminal.",
+    }
 
     @staticmethod
     def validate_request(payload: dict[str, Any]) -> dict[str, Any]:
@@ -77,6 +103,160 @@ class ResearchService:
             self.repository.update_run(run_id,status="FAILED",progress=100,progress_message="Duplicate request",error="An identical active request already exists")
             return {"id":int(job["request_payload"]["run_id"]),"job_id":job["id"],"status":job["status"],"progress":job["progress"],"deduplicated":True}
         return {"id": run_id, "job_id":job["id"], "status": "QUEUED", "progress": 0, "deduplicated":False}
+
+    def start_optimization(self, payload: dict[str, Any], requester_key: str = "public") -> dict[str, Any]:
+        request = self.validate_request(payload)
+        if request["instrument"] != "BTC-USDT" or request["timeframe"] != "15m":
+            raise ValueError("The first Optimization Lab release supports BTC-USDT 15m only.")
+        trial_budget = int(payload.get("trial_budget", 100))
+        if not 1 <= trial_budget <= self.OPTIMIZATION_POLICY["maximum_trials"]:
+            raise ValueError("Trial budget must be between 1 and 500.")
+        seed = int(payload.get("seed", 20260717))
+        holdout_start = request["start_ts"] + int((request["end_ts"] - request["start_ts"]) * (1 - self.OPTIMIZATION_POLICY["holdout_fraction"]))
+        request.update({"trial_budget": trial_budget, "seed": seed, "holdout_start_ts": holdout_start, "base_parameters": request["parameters"]})
+        existing = self.jobs.find_active("OPTIMIZATION", request, requester_key)
+        if existing:
+            return {"id": existing["request_payload"]["optimization_run_id"], "job_id": existing["id"], "status": existing["status"], "progress": existing["progress"], "deduplicated": True}
+        run_id = self.repository.create_optimization_run(request, self.OPTIMIZATION_POLICY, seed, holdout_start)
+        try:
+            job = self.jobs.enqueue("OPTIMIZATION", {**request, "optimization_run_id": run_id}, requester_key, priority=120, dedupe_payload=request)
+        except OverflowError as error:
+            self.repository.mark_optimization_run_terminal(run_id, "FAILED", str(error))
+            raise
+        if job.get("deduplicated"):
+            # A competing request won the enqueue race. Keep this new audit row terminal,
+            # and return the run actually referenced by the durable existing job payload.
+            self.repository.mark_optimization_run_terminal(run_id, "CANCELLED", "Identical active optimization request already exists")
+            return {"id": int(job["request_payload"]["optimization_run_id"]), "job_id": job["id"], "status": job["status"], "progress": job["progress"], "deduplicated": True}
+        self.repository.update_optimization_run(run_id, job_id=job["id"])
+        return {"id": run_id, "job_id": job["id"], "status": job["status"], "progress": job["progress"], "deduplicated": False}
+
+    @staticmethod
+    def _clamp(value: float, lower: float = 0, upper: float = 1) -> float:
+        return max(lower, min(upper, value))
+
+    def _optimization_parameters(self, base: dict[str, Any], rng: random.Random, trial_number: int) -> dict[str, Any]:
+        # The first trial preserves the supplied canonical configuration; later samples are reproducible strata.
+        if trial_number == 1:
+            return dict(base)
+        strata = (trial_number - 2) % 10
+        sampled = dict(base)
+        sampled.update({
+            "minimum_score": round(60 + ((strata + rng.random()) / 10) * 30),
+            "minimum_volume_ratio": round(0.7 + rng.random() * 0.9, 2),
+            "stop_loss_atr_multiplier": round(0.7 + rng.random() * 1.1, 2),
+            "risk_reward_ratio": round(1.2 + rng.random() * 1.8, 2),
+            "ema_pullback_distance": round(0.002 + rng.random() * 0.008, 4),
+        })
+        return sampled
+
+    def _optimization_score(self, metrics: dict[str, Any], buy_hold_return: float) -> tuple[float, dict[str, float], list[str]]:
+        policy = self.OPTIMIZATION_POLICY
+        trades, pf = int(metrics.get("total_trades") or 0), metrics.get("profit_factor")
+        result_return, drawdown, sharpe = float(metrics.get("total_return") or 0), float(metrics.get("maximum_drawdown") or 100), float(metrics.get("sharpe_ratio") or -1)
+        components = {
+            "validation_return": 30 * self._clamp((result_return + 10) / 40),
+            "profit_factor": 20 * self._clamp(((float(pf) if pf is not None else 0) - 0.8) / 1.2),
+            "maximum_drawdown": 15 * self._clamp((30 - drawdown) / 30),
+            "sharpe": 10 * self._clamp((sharpe + 0.5) / 2),
+            "minimum_trades": 10 * self._clamp(trades / 40),
+            "relative_buy_hold": 10 * self._clamp((result_return - buy_hold_return + 10) / 30),
+            "neighborhood_stability": 0.0,
+        }
+        reasons = []
+        if trades < policy["minimum_validation_trades"]: reasons.append("minimum_validation_trades")
+        if drawdown > 35: reasons.append("maximum_drawdown")
+        return round(sum(components.values()), 4), components, reasons
+
+    @classmethod
+    def _parameter_distance(cls, left: dict[str, Any], right: dict[str, Any]) -> float:
+        ranges = cls.OPTIMIZATION_POLICY["neighborhood"]["parameters"]
+        squares = []
+        for name, (minimum, maximum) in ranges.items():
+            span = maximum - minimum
+            squares.append(((float(left[name]) - float(right[name])) / span) ** 2)
+        return (sum(squares) / len(squares)) ** 0.5
+
+    @classmethod
+    def _neighborhood_stability(cls, trial: dict[str, Any], evaluated_trials: list[dict[str, Any]]) -> tuple[float, int]:
+        threshold = float(cls.OPTIMIZATION_POLICY["neighborhood"]["maximum_distance"])
+        neighbours = [other for other in evaluated_trials if other["id"] != trial["id"] and cls._parameter_distance(trial["parameters"], other["parameters"]) <= threshold]
+        if not neighbours:
+            return 0.0, 0
+        metrics = [item["validation_metrics"] or {} for item in neighbours]
+        positive = sum(float(item.get("total_return") or 0) > 0 for item in metrics) / len(metrics)
+        profitable = sum(float(item.get("profit_factor") or 0) >= 1 for item in metrics) / len(metrics)
+        controlled_drawdown = sum(float(item.get("maximum_drawdown") or 100) <= 30 for item in metrics) / len(metrics)
+        return round(5 * (0.60 * positive + 0.20 * profitable + 0.20 * controlled_drawdown), 4), len(neighbours)
+
+    def _optimization_job_terminal(self, job: dict[str, Any]) -> None:
+        run_id = int(job["request_payload"].get("optimization_run_id", 0))
+        if not run_id or job["status"] not in {"COMPLETED", "CANCELLED", "FAILED", "INTERRUPTED"}:
+            return
+        self.repository.mark_optimization_run_terminal(run_id, job["status"], job.get("error"), job.get("completed_at"))
+
+    @staticmethod
+    def _select_holdout_finalists(ranked_trials: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Only development-ranked, non-eliminated trials can consume the final holdout."""
+        return [trial for trial in ranked_trials if trial["status"] == "COMPLETED"][:10]
+
+    def _job_optimization(self, job_id: int, request: dict[str, Any], checkpoint) -> dict[str, Any]:
+        run_id, budget, seed = int(request["optimization_run_id"]), int(request["trial_budget"]), int(request["seed"])
+        self.repository.update_optimization_run(run_id, status="RUNNING")
+        checkpoint(job_id, 3, "optimization.progress.loading_data", {})
+        parameters = validate_parameters(request["base_parameters"])
+        warmup = max(parameters.slow_ma, parameters.ema_pullback_period, parameters.rsi_period, parameters.atr_period) + 20
+        candles, quality = self.history.get_candles("BTC-USDT", "15m", request["start_ts"], request["end_ts"], warmup)
+        mtf_data = {frame: self.history.get_candles("BTC-USDT", frame, request["start_ts"], request["end_ts"], warmup)[0] for frame in ("1H", "4H")}
+        development_end = int(request["holdout_start_ts"]) - 1
+        validation_start = request["start_ts"] + int((development_end - request["start_ts"]) * 0.70)
+        validation_candles = [row for row in candles if validation_start <= int(row["ts"]) <= development_end]
+        buy_hold_return = ((float(validation_candles[-1]["close"]) / float(validation_candles[0]["open"])) - 1) * 100 if len(validation_candles) > 1 else 0.0
+        rng = random.Random(seed)
+        existing = self.repository.optimization_run(run_id, budget)
+        if existing and existing["trials"]:
+            raise RuntimeError("Optimization runs do not resume in place; retry creates a new run.")
+        for index in range(1, budget + 1):
+            checkpoint(job_id, 5 + int((index - 1) / budget * 75), "optimization.progress.running_trial", {"processed": index - 1, "total": budget})
+            values = self._optimization_parameters(request["base_parameters"], rng, index)
+            trial_id = self.repository.create_optimization_trial(run_id, index, values, seed, self.OPTIMIZATION_ENGINE_VERSION)
+            started = time.monotonic()
+            try:
+                trial_params = validate_parameters(values)
+                train = run_backtest(candles, "BTC-USDT", "15m", trial_params, request["start_ts"], validation_start - 1, timeframe_datasets=mtf_data)
+                validation = run_backtest(candles, "BTC-USDT", "15m", trial_params, validation_start, development_end, timeframe_datasets=mtf_data)
+                score, components, reasons = self._optimization_score(validation["metrics"], buy_hold_return)
+                self.repository.complete_optimization_trial(trial_id, "ELIMINATED" if reasons else "COMPLETED", train_metrics=train["metrics"], validation_metrics=validation["metrics"], score=score, score_components=components, elimination_reasons=reasons, runtime_ms=int((time.monotonic() - started) * 1000))
+            except Exception as error:
+                self.repository.complete_optimization_trial(trial_id, "FAILED", elimination_reasons=["trial_error"], error=str(error)[:1000], runtime_ms=int((time.monotonic() - started) * 1000))
+        detail = self.repository.optimization_run(run_id, budget) or {}
+        evaluated = [trial for trial in detail["trials"] if trial["status"] in {"COMPLETED", "ELIMINATED"} and trial.get("validation_metrics")]
+        eligible = [trial for trial in evaluated if trial["status"] == "COMPLETED"]
+        for trial in eligible:
+            stability, neighbour_count = self._neighborhood_stability(trial, evaluated)
+            components = trial["score_components"] or {}; components["neighborhood_stability"] = stability; components["neighborhood_count"] = neighbour_count
+            self.repository.complete_optimization_trial(trial["id"], "COMPLETED", score=round(sum(float(components.get(key, 0)) for key in self.OPTIMIZATION_POLICY["weights"]), 4), score_components=components, elimination_reasons=[])
+        ranked = (self.repository.optimization_run(run_id, budget) or {})["trials"]
+        finalists = self._select_holdout_finalists(ranked)
+        checkpoint(job_id, 82, "optimization.progress.evaluating_holdout", {"count": len(finalists)})
+        for position, trial in enumerate(finalists, 1):
+            checkpoint(job_id, 82 + int(position / max(1, len(finalists)) * 15), "optimization.progress.evaluating_holdout", {"count": len(finalists), "processed": position})
+            holdout = run_backtest(candles, "BTC-USDT", "15m", validate_parameters(trial["parameters"]), int(request["holdout_start_ts"]), request["end_ts"], timeframe_datasets=mtf_data)
+            self.repository.complete_optimization_trial(trial["id"], "COMPLETED", holdout_metrics=holdout["metrics"])
+        result = {"method": self.OPTIMIZATION_POLICY["method"], "data_quality": quality, "development_end_ts": development_end, "holdout_start_ts": request["holdout_start_ts"], "holdout_candidates": len(finalists), "warning": "Holdout metrics are reported after ranking and are never included in the optimization score. No strategy is promoted or traded automatically."}
+        self.repository.update_optimization_run(run_id, status="COMPLETED", result=json.dumps(result), completed_at=utc_now())
+        checkpoint(job_id, 99, "optimization.progress.completed", {"processed": budget, "total": budget})
+        return {"optimization_run_id": run_id}
+
+    def retry_optimization_job(self, job_id: int, requester_key: str = "public") -> dict[str, Any]:
+        job = self.jobs.get(job_id)
+        if not job or job["job_type"] != "OPTIMIZATION":
+            raise ValueError("Optimization job not found.")
+        if job["status"] not in {"FAILED", "CANCELLED", "INTERRUPTED"}:
+            raise ValueError("Only failed, cancelled or interrupted optimization jobs can be retried.")
+        payload = dict(job["request_payload"])
+        payload.pop("optimization_run_id", None)
+        return self.start_optimization(payload, requester_key)
 
     def _job_backtest(self, job_id: int, request: dict[str, Any], checkpoint) -> dict[str, Any]:
         run_id=int(request["run_id"])

@@ -104,6 +104,24 @@ class ResearchRepository:
                 CREATE INDEX IF NOT EXISTS idx_decision_lookup ON decision_signals(instrument,strategy_version,candle_close_ts);
                 CREATE INDEX IF NOT EXISTS idx_decision_signal_runs_run ON decision_signal_runs(run_id,signal_id);
                 CREATE INDEX IF NOT EXISTS idx_portfolio_trades_run ON portfolio_backtest_trades(run_id,entry_ts);
+                CREATE TABLE IF NOT EXISTS optimization_runs (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, job_id INTEGER, status TEXT NOT NULL,
+                    request TEXT NOT NULL, scoring_policy TEXT NOT NULL, seed INTEGER NOT NULL,
+                    holdout_start_ts INTEGER NOT NULL, result TEXT, error TEXT,
+                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL, completed_at TEXT
+                );
+                CREATE TABLE IF NOT EXISTS optimization_trials (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, optimization_run_id INTEGER NOT NULL,
+                    trial_number INTEGER NOT NULL, status TEXT NOT NULL, parameters TEXT NOT NULL,
+                    train_metrics TEXT, validation_metrics TEXT, holdout_metrics TEXT, score REAL,
+                    score_components TEXT, elimination_reasons TEXT, runtime_ms INTEGER,
+                    random_seed INTEGER NOT NULL, engine_version TEXT NOT NULL, error TEXT,
+                    created_at TEXT NOT NULL, completed_at TEXT,
+                    UNIQUE(optimization_run_id, trial_number),
+                    FOREIGN KEY(optimization_run_id) REFERENCES optimization_runs(id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_optimization_runs_created ON optimization_runs(created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_optimization_trials_run ON optimization_trials(optimization_run_id, score DESC);
             """)
             self._ensure_column(connection, "paper_trades", "signal_id", "TEXT")
             self._ensure_column(connection, "paper_trades", "strategy_version", "TEXT")
@@ -129,6 +147,9 @@ class ResearchRepository:
             connection.execute("""INSERT OR IGNORE INTO decision_signal_runs(signal_id,run_id,source,decision_payload,gate_payload,regime,regime_version)
                 SELECT signal_id,run_id,source,decision_payload,gate_payload,regime,regime_version FROM decision_signals WHERE run_id IS NOT NULL""")
             connection.execute("UPDATE backtest_runs SET status='FAILED',progress=100,progress_message='Interrupted by service restart',message_code='job.interrupted.restart',message_params='{}',error='Backtest worker was interrupted by a service restart',updated_at=? WHERE status IN ('QUEUED','RUNNING')", (utc_now(),))
+            now = utc_now()
+            connection.execute("UPDATE optimization_runs SET status='INTERRUPTED',error='Service restarted while optimization was running',updated_at=?,completed_at=? WHERE status='RUNNING'", (now, now))
+            connection.execute("UPDATE optimization_trials SET status='INTERRUPTED',error='Service restarted while trial was running',completed_at=? WHERE status='RUNNING' AND optimization_run_id IN (SELECT id FROM optimization_runs WHERE status='INTERRUPTED' AND error='Service restarted while optimization was running')", (now,))
             count = connection.execute("SELECT COUNT(*) FROM strategy_configs").fetchone()[0]
             if not count:
                 now = utc_now()
@@ -141,6 +162,83 @@ class ResearchRepository:
             return
         if column not in {row[1] for row in connection.execute(f"PRAGMA table_info({table})")}:
             connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {declaration}")
+
+    def create_optimization_run(self, request: dict[str, Any], scoring_policy: dict[str, Any], seed: int, holdout_start_ts: int) -> int:
+        now = utc_now()
+        with self.connect() as connection:
+            cursor = connection.execute("INSERT INTO optimization_runs(job_id,status,request,scoring_policy,seed,holdout_start_ts,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)", (None, "QUEUED", json.dumps(request), json.dumps(scoring_policy), seed, holdout_start_ts, now, now))
+            return int(cursor.lastrowid)
+
+    def update_optimization_run(self, run_id: int, **values: Any) -> None:
+        if not values:
+            return
+        values["updated_at"] = utc_now()
+        assignments = ",".join(f"{key}=?" for key in values)
+        with self.connect() as connection:
+            connection.execute(f"UPDATE optimization_runs SET {assignments} WHERE id=?", (*values.values(), run_id))
+
+    def mark_optimization_run_terminal(self, run_id: int, status: str, error: str | None = None, completed_at: str | None = None) -> None:
+        if status not in {"COMPLETED", "CANCELLED", "FAILED", "INTERRUPTED"}:
+            raise ValueError("Unsupported optimization terminal status.")
+        now = completed_at or utc_now()
+        with self.connect() as connection:
+            connection.execute("UPDATE optimization_runs SET status=?,error=COALESCE(?,error),updated_at=?,completed_at=? WHERE id=?", (status, error, now, now, run_id))
+            if status != "COMPLETED":
+                connection.execute("UPDATE optimization_trials SET status=?,error=COALESCE(error,?),completed_at=? WHERE optimization_run_id=? AND status='RUNNING'", (status, error or f"Optimization {status.lower()}", now, run_id))
+
+    def reconcile_optimization_jobs(self) -> None:
+        """Project durable queue terminal state after a restart without deleting evidence."""
+        with self.connect() as connection:
+            rows = connection.execute("SELECT o.id,j.status,j.error,j.completed_at FROM optimization_runs o JOIN research_jobs j ON j.id=o.job_id WHERE o.status IN ('QUEUED','RUNNING') AND j.status IN ('COMPLETED','CANCELLED','FAILED','INTERRUPTED')").fetchall()
+        for row in rows:
+            self.mark_optimization_run_terminal(int(row["id"]), str(row["status"]), row["error"], row["completed_at"])
+
+    def create_optimization_trial(self, run_id: int, trial_number: int, parameters: dict[str, Any], seed: int, engine_version: str) -> int:
+        with self.connect() as connection:
+            cursor = connection.execute("INSERT INTO optimization_trials(optimization_run_id,trial_number,status,parameters,random_seed,engine_version,created_at) VALUES(?,?,?,?,?,?,?)", (run_id, trial_number, "RUNNING", json.dumps(parameters), seed, engine_version, utc_now()))
+            return int(cursor.lastrowid)
+
+    def complete_optimization_trial(self, trial_id: int, status: str, **values: Any) -> None:
+        json_fields = {"train_metrics", "validation_metrics", "holdout_metrics", "score_components", "elimination_reasons"}
+        payload = {key: json.dumps(value) if key in json_fields and value is not None else value for key, value in values.items()}
+        payload.update({"status": status, "completed_at": utc_now()})
+        assignments = ",".join(f"{key}=?" for key in payload)
+        with self.connect() as connection:
+            connection.execute(f"UPDATE optimization_trials SET {assignments} WHERE id=?", (*payload.values(), trial_id))
+
+    @staticmethod
+    def _optimization_trial_dict(row: sqlite3.Row) -> dict[str, Any]:
+        item = dict(row)
+        for key in ("parameters", "train_metrics", "validation_metrics", "holdout_metrics", "score_components", "elimination_reasons"):
+            if item.get(key):
+                item[key] = json.loads(item[key])
+            elif key in item:
+                item[key] = None
+        return item
+
+    def optimization_run(self, run_id: int, limit: int = 500) -> dict[str, Any] | None:
+        with self.connect() as connection:
+            run = connection.execute("SELECT * FROM optimization_runs WHERE id=?", (run_id,)).fetchone()
+            if not run:
+                return None
+            item = dict(run)
+            for key in ("request", "scoring_policy", "result"):
+                item[key] = json.loads(item[key]) if item.get(key) else None
+            rows = connection.execute("SELECT * FROM optimization_trials WHERE optimization_run_id=? ORDER BY CASE WHEN score IS NULL THEN 1 ELSE 0 END, score DESC, trial_number LIMIT ?", (run_id, min(max(1, limit), 500))).fetchall()
+            item["trials"] = [self._optimization_trial_dict(row) for row in rows]
+            return item
+
+    def optimization_history(self, limit: int = 30) -> list[dict[str, Any]]:
+        with self.connect() as connection:
+            rows = connection.execute("SELECT * FROM optimization_runs ORDER BY id DESC LIMIT ?", (min(max(1, limit), 100),)).fetchall()
+        output = []
+        for row in rows:
+            item = dict(row)
+            item["request"] = json.loads(item["request"])
+            item["scoring_policy"] = json.loads(item["scoring_policy"])
+            item["result"] = json.loads(item["result"]) if item.get("result") else None
+            output.append(item)
+        return output
 
     def upsert_candles(self, instrument: str, timeframe: str, candles: list[dict[str, Any]]) -> None:
         if not candles:

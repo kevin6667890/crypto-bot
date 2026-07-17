@@ -29,6 +29,7 @@ import ReconciliationPanel from "./ReconciliationPanel";
 import ValidationWorkspace from "./validation/ValidationWorkspace";
 import ShadowExperiments from "./shadow/ShadowExperiments";
 import StrategyLifecycle from "./lifecycle/StrategyLifecycle";
+import OptimizationLab from "./optimization/OptimizationLab";
 import { translations, useLanguage, type TranslationKey } from "./i18n";
 
 const dateText = (date: Date) => date.toISOString().slice(0, 10);
@@ -177,7 +178,8 @@ type ResearchMode =
   | "portfolio"
   | "validation"
   | "shadow"
-  | "lifecycle";
+  | "lifecycle"
+  | "optimization";
 function ResearchModeNav({
   mode,
   setMode,
@@ -194,6 +196,7 @@ function ResearchModeNav({
         ["validation", t("validation.title")],
         ["shadow", t("shadow.title")],
         ["lifecycle", t("lifecycle.title")],
+        ["optimization", t("optimization.title")],
       ].map(([key, label]) => (
         <button
           key={key}
@@ -556,6 +559,13 @@ export default function StrategyResearch() {
       <main className="research-workspace">
         <ResearchModeNav mode={researchMode} setMode={setResearchMode} />
         <StrategyLifecycle />
+      </main>
+    );
+  if (researchMode === "optimization")
+    return (
+      <main className="research-workspace">
+        <ResearchModeNav mode={researchMode} setMode={setResearchMode} />
+        <OptimizationLab endDate={endDate} parameters={parameters} />
       </main>
     );
 

@@ -465,6 +465,12 @@ class Handler(BaseHTTPRequestHandler):
         elif parsed.path == "/api/replay": self._send(SERVICE.replay(instrument, query.get("at", [None])[0]))
         elif parsed.path == "/api/strategies": self._send({"items": RESEARCH.strategies()})
         elif parsed.path == "/api/backtest/history": self._send({"items": RESEARCH.repository.run_history()})
+        elif parsed.path == "/api/optimization/history": self._send({"items": RESEARCH.repository.optimization_history()})
+        elif parsed.path.startswith("/api/optimization/"):
+            try:
+                item = RESEARCH.repository.optimization_run(int(parsed.path.rsplit("/", 1)[1]))
+                self._send(item or {"error": "Optimization run not found"}, HTTPStatus.OK if item else HTTPStatus.NOT_FOUND)
+            except ValueError: self._send({"error": "Invalid optimization run id"}, HTTPStatus.BAD_REQUEST)
         elif parsed.path == "/api/reconciliation":
             try: self._send(RESEARCH.reconciliation(int(query.get("run_id", ["0"])[0])))
             except (ValueError, TypeError) as error: self._send({"error": str(error)}, HTTPStatus.BAD_REQUEST)
@@ -524,6 +530,10 @@ class Handler(BaseHTTPRequestHandler):
             try: self._send(RESEARCH.start_backtest(payload,self._client()), HTTPStatus.ACCEPTED)
             except OverflowError as error: ALERTS.raise_alert("Queue Full","warning","job_queue",str(error)); self._send({"error":str(error)},HTTPStatus.TOO_MANY_REQUESTS)
             except ValueError as error: self._send({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+        elif parsed.path == "/api/optimization/run":
+            if self._limited("optimization-day", 1, 86400): return
+            try: self._send(RESEARCH.start_optimization(payload, self._client()), HTTPStatus.ACCEPTED)
+            except (ValueError, OverflowError) as error: self._send({"error": str(error)}, HTTPStatus.BAD_REQUEST if isinstance(error, ValueError) else HTTPStatus.TOO_MANY_REQUESTS)
         elif parsed.path == "/api/portfolio/run":
             if self._limited("backtest-minute",2,60) or self._limited("backtest-day",20,86400):return
             try:self._send(RESEARCH.start_portfolio(payload,self._client()),HTTPStatus.ACCEPTED)
@@ -550,7 +560,9 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError as error:self._send({"error":str(error)},HTTPStatus.BAD_REQUEST)
         elif parsed.path.startswith("/api/jobs/") and parsed.path.endswith("/retry"):
             if not self._admin():return
-            try:self._send(RESEARCH.jobs.retry(int(parsed.path.split("/")[3]),self._client()),HTTPStatus.ACCEPTED)
+            try:
+                job_id=int(parsed.path.split("/")[3]); job=RESEARCH.jobs.get(job_id)
+                self._send(RESEARCH.retry_optimization_job(job_id,self._client()) if job and job["job_type"]=="OPTIMIZATION" else RESEARCH.jobs.retry(job_id,self._client()),HTTPStatus.ACCEPTED)
             except (ValueError,OverflowError) as error:self._send({"error":str(error)},HTTPStatus.BAD_REQUEST)
         elif parsed.path.startswith("/api/alerts/") and parsed.path.endswith("/acknowledge"):
             if not self._admin():return

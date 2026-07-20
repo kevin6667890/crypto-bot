@@ -147,16 +147,21 @@ export function MarketChart({ instrument = "ETH-USDT", interval = "15m", flow }:
       series.setData(generateCandles());
     }
     chart.timeScale().fitContent();
+    // Keep the initial viewport tied to the candle history.  Flow data starts
+    // collecting later than the price history, especially on higher intervals.
+    // It must not determine the visible time range.
+    if (visibleCandles.length > 1) {
+      chart.timeScale().setVisibleRange({
+        from: visibleCandles[0].time,
+        to: visibleCandles[visibleCandles.length - 1].time,
+      });
+    }
     const panes = chart.panes();
     panes[0]?.setStretchFactor(3);
     panes[1]?.setStretchFactor(1);
     panes[2]?.setStretchFactor(1);
-    if (flow?.cvd_series.length) {
-      const alignedCvd = alignFlowToCandles(visibleCandles, flow.cvd_series, interval);
-      if (alignedCvd.length > 1) chart.timeScale().setVisibleRange({ from: alignedCvd[0].time, to: visibleCandles[visibleCandles.length - 1].time });
-    }
     return chart;
-  }, [candles, flow]);
+  }, [candles, flow, interval]);
 
   return <div className="chart-canvas" ref={ref} />;
 }

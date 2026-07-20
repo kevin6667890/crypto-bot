@@ -61,10 +61,23 @@ type Health = {
   promotion_audit_alerts?: number;
   validation_job_types?: string[];
 };
+const paperApiBase = (
+  window.__PAPER_API_URL__ || import.meta.env.VITE_PAPER_API_URL || ""
+).replace(/\/$/, "");
+
 async function api<T>(path: string, options?: RequestInit): Promise<T> {
-  const response = await fetch(path, options);
-  const body = await response.json();
-  if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
+  const response = await fetch(`${paperApiBase}${path}`, options);
+  const text = await response.text();
+  let body: (T & { error?: string }) | undefined;
+
+  try {
+    body = text ? (JSON.parse(text) as T & { error?: string }) : undefined;
+  } catch {
+    throw new Error(`接口返回的不是 JSON 数据（HTTP ${response.status}）。`);
+  }
+
+  if (!response.ok) throw new Error(body?.error || `HTTP ${response.status}`);
+  if (!body) throw new Error(`接口返回为空（HTTP ${response.status}）。`);
   return body;
 }
 export default function Operations() {

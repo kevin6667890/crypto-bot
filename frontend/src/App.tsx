@@ -35,6 +35,8 @@ import {
   askMarketCopilot,
   PaperStatus,
   fetchPaperStatus,
+  fetchVpvrProfile,
+  VpvrProfile,
   fetchReplayItems,
   fetchReplayDetail,
   ReplayItem,
@@ -48,7 +50,7 @@ function formatSigned(value: number, suffix = "") {
 }
 
 function VpvrHistogram({ profile, poc, vah, val, professional }: { profile: Array<{ price_low: number; price_high: number; volume: number; delta: number; trades: number }>; poc?: number; vah?: number; val?: number; professional?: boolean }) {
-  const rows = [...profile].sort((a, b) => b.price_low - a.price_low);
+  const rows = [...profile].sort((a, b) => b.price_low - a.price_low).slice(0, 36);
   const maxVolume = Math.max(...rows.map((row) => row.volume), 1);
   return <div className="vpvr-histogram">
     <div className="vpvr-histogram-head"><span>成交价档位分布</span><small>{professional ? "绿色：主动买盘 Delta；红色：主动卖盘 Delta" : "逐笔流就绪前显示 K 线成交量近似"}</small></div>
@@ -651,6 +653,7 @@ function Workspace() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [paper, setPaper] = useState<PaperStatus | null>(null);
+  const [vpvr, setVpvr] = useState<VpvrProfile | null>(null);
   const [activePage, setActivePage] = useState<
     "market" | "research" | "operations"
   >("market");
@@ -706,8 +709,18 @@ function Workspace() {
     return () => window.clearInterval(timer);
   }, [instrument]);
 
+  useEffect(() => {
+    let cancelled = false;
+    if (!engineInstruments.includes(instrument)) { setVpvr(null); return; }
+    const load = () => fetchVpvrProfile(instrument, interval).then((profile) => { if (!cancelled) setVpvr(profile); }).catch(() => { if (!cancelled) setVpvr(null); });
+    load();
+    const timer = window.setInterval(load, 60_000);
+    return () => { cancelled = true; window.clearInterval(timer); };
+  }, [instrument, interval]);
+
   const runtimeAnalysis =
     paper?.instrument === instrument ? paper.analysis : null;
+  const legacyVpvr = runtimeAnalysis?.vpvr;
   const action =
     runtimeAnalysis?.action || (signal.score >= 70 ? "WATCH" : "WAIT");
   const decisionScore = runtimeAnalysis?.score ?? signal.score;
@@ -947,6 +960,7 @@ function Workspace() {
               </div>
               <div className="workspace-chart">
                 <MarketChart instrument={instrument} interval={interval} />
+                {!!vpvr?.available && !!vpvr.profile?.length && <VpvrHistogram profile={vpvr.profile} poc={vpvr.poc} vah={vpvr.vah} val={vpvr.val} professional={vpvr.professional} />}
               </div>
               <div className="chart-legend">
                 <span>
@@ -958,20 +972,20 @@ function Workspace() {
                 <span className="muted">{t("market.flowProxy")}</span>
               </div>
             </section>
-            {runtimeAnalysis?.vpvr?.available && (
-              <section className="flow-panel">
+            {legacyVpvr?.available && (
+              <section className="flow-panel legacy-vpvr">
                 <div className="section-title">
                   <div>
-                    <span className="eyebrow">{runtimeAnalysis.vpvr.professional ? t("market.vpvrProfessional") : t("market.vpvrMethod")}</span>
+                    <span className="eyebrow">{legacyVpvr.professional ? t("market.vpvrProfessional") : t("market.vpvrMethod")}</span>
                     <h2>{t("market.vpvrTitle")}</h2>
                   </div>
-                  <small>{runtimeAnalysis.vpvr.professional ? t("market.vpvrCoverage", { count: Math.round((runtimeAnalysis.vpvr.coverage_seconds || 0) / 60) }) : t("market.vpvrCollecting", { count: Math.round((runtimeAnalysis.vpvr.collection?.coverage_seconds || 0) / 60) })}</small>
+                  <small>{legacyVpvr.professional ? t("market.vpvrCoverage", { count: Math.round((legacyVpvr.coverage_seconds || 0) / 60) }) : t("market.vpvrCollecting", { count: Math.round((legacyVpvr.collection?.coverage_seconds || 0) / 60) })}</small>
                 </div>
                 <div className="flow-grid">
-                  <article><div className="flow-head"><span>{t("market.vpvrPoc")}</span><b>${runtimeAnalysis.vpvr.poc?.toFixed(2)}</b></div><small>{t("market.vpvrPocHelp")}</small></article>
-                  <article><div className="flow-head"><span>{t("market.vpvrValueArea")}</span><b>${runtimeAnalysis.vpvr.val?.toFixed(2)} – ${runtimeAnalysis.vpvr.vah?.toFixed(2)}</b></div><small>{t("market.vpvrValueAreaHelp", { percent: runtimeAnalysis.vpvr.value_area_pct || 0 })}</small></article>
+                  <article><div className="flow-head"><span>{t("market.vpvrPoc")}</span><b>${legacyVpvr.poc?.toFixed(2)}</b></div><small>{t("market.vpvrPocHelp")}</small></article>
+                  <article><div className="flow-head"><span>{t("market.vpvrValueArea")}</span><b>${legacyVpvr.val?.toFixed(2)} – ${legacyVpvr.vah?.toFixed(2)}</b></div><small>{t("market.vpvrValueAreaHelp", { percent: legacyVpvr.value_area_pct || 0 })}</small></article>
                 </div>
-                {!!runtimeAnalysis.vpvr.profile?.length && <VpvrHistogram profile={runtimeAnalysis.vpvr.profile} poc={runtimeAnalysis.vpvr.poc} vah={runtimeAnalysis.vpvr.vah} val={runtimeAnalysis.vpvr.val} professional={runtimeAnalysis.vpvr.professional} />}
+                {!!legacyVpvr.profile?.length && <VpvrHistogram profile={legacyVpvr.profile} poc={legacyVpvr.poc} vah={legacyVpvr.vah} val={legacyVpvr.val} professional={legacyVpvr.professional} />}
               </section>
             )}
             {paper?.flow && (

@@ -68,6 +68,7 @@ FLOW_RETENTION_SECONDS = 7 * 86400
 FLOW_DISPLAY_WINDOW_SECONDS = 6 * 3600
 VPVR_WINDOW_SECONDS = 24 * 3600
 VPVR_MIN_COVERAGE_SECONDS = 15 * 60
+VPVR_TIMEFRAME_CONFIG = {"15m": ("15m", 96), "1H": ("1H", 168), "4H": ("4H", 180), "1D": ("1D", 180)}
 OI_SAMPLE_SECONDS = 15
 
 load_dotenv(ROOT / ".env")
@@ -268,6 +269,22 @@ class PaperService:
         profile.update({"source": "OKX trades-all WebSocket", "window_seconds": VPVR_WINDOW_SECONDS, "coverage_seconds": coverage, "trade_count": int(bounds["trade_count"] or 0) if bounds else 0, "ready": bool(profile.get("available")) and coverage >= VPVR_MIN_COVERAGE_SECONDS})
         if not profile["ready"]:
             profile["reason"] = "collecting_trade_coverage" if profile.get("available") else profile.get("reason")
+        return profile
+
+    def vpvr_profile(self, instrument: str, interval: str = "15m") -> dict[str, Any]:
+        """Return a display-only VPVR matched to the selected chart timeframe."""
+        interval = {"1h": "1H", "4h": "4H", "1d": "1D"}.get(interval, interval)
+        bar, lookback = VPVR_TIMEFRAME_CONFIG.get(interval, VPVR_TIMEFRAME_CONFIG["15m"])
+        if bar == "15m":
+            streamed = self._professional_vpvr(instrument)
+            if streamed.get("ready"):
+                return {**streamed, "professional": True, "interval": bar}
+        candles = [row for row in self._candles(instrument, bar, lookback) if row.get("confirmed", True)]
+        profile = calculate_volume_profile(candles[-lookback:])
+        profile.update({"source": "confirmed_ohlcv_fallback", "professional": False, "interval": bar, "lookback_bars": min(len(candles), lookback)})
+        if bar == "15m":
+            streamed = self._professional_vpvr(instrument)
+            profile["collection"] = {"coverage_seconds": streamed.get("coverage_seconds", 0), "trade_count": streamed.get("trade_count", 0), "reason": streamed.get("reason")}
         return profile
 
     def _ingest_flow_trade(self, instrument: str, payload: dict[str, Any]) -> None:
@@ -699,6 +716,7 @@ class Handler(BaseHTTPRequestHandler):
         parsed, query = urlparse(self.path), parse_qs(urlparse(self.path).query)
         instrument = query.get("instrument", ["ETH-USDT"])[0]
         if parsed.path == "/api/status": self._send(SERVICE.status(instrument))
+        elif parsed.path == "/api/vpvr": self._send(SERVICE.vpvr_profile(instrument, query.get("interval", ["15m"])[0]))
         elif parsed.path == "/api/health": self._send(HEALTH.payload(False))
         elif parsed.path == "/api/health/details":
             details=HEALTH.payload(True); shadows=SHADOW.list(); counts=VALIDATION.repository.table_counts(); details.update({"shadow_scheduler_status":"running","active_shadow_strategies":sum(x["status"]=="RUNNING" for x in shadows),"validation_job_types":["GATE_ANALYSIS","SENSITIVITY","BENCHMARK","ROBUSTNESS"],"phase4_database_rows":sum(counts.get(name,0) for name in counts if name.startswith(("gate_","near_","sensitivity_","benchmark_","robustness_","shadow_","strategy_lifecycle","promotion_","strategy_audit"))),"promotion_audit_alerts":sum(str(x.get("severity","")).lower()=="critical" and str(x.get("status","")).lower()=="open" for x in ALERTS.list())});self._send(details)

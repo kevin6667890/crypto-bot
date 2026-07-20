@@ -410,6 +410,14 @@ export async function fetchPaperStatus(
   return response.json() as Promise<PaperStatus>;
 }
 
+export type VpvrProfile = NonNullable<NonNullable<PaperStatus["analysis"]>["vpvr"]>;
+
+export async function fetchVpvrProfile(instrument = "ETH-USDT", interval = "15m"): Promise<VpvrProfile> {
+  const response = await fetch(`${paperApiBase}/api/vpvr?instrument=${encodeURIComponent(instrument)}&interval=${encodeURIComponent(interval)}`);
+  if (!response.ok) throw new Error(`VPVR request failed: ${response.status}`);
+  return response.json() as Promise<VpvrProfile>;
+}
+
 export async function askMarketCopilot(
   question: string,
   instrument = "ETH-USDT"

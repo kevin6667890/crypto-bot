@@ -15,7 +15,7 @@ import {
   Zap,
 } from "lucide-react";
 import { motion } from "framer-motion";
-import { CSSProperties, useCallback, useEffect, useRef, useState } from "react";
+import { CSSProperties, useEffect, useState } from "react";
 import { EquityChart, FlowChart, MarketChart, ReplayChart } from "./charts";
 import StrategyResearch from "./StrategyResearch";
 import Operations from "./Operations";
@@ -654,8 +654,6 @@ function Workspace() {
   const [loading, setLoading] = useState(false);
   const [paper, setPaper] = useState<PaperStatus | null>(null);
   const [vpvr, setVpvr] = useState<VpvrProfile | null>(null);
-  const [vpvrViewport, setVpvrViewport] = useState<{ low: number; high: number; bins: number; top: number; bottom: number } | undefined>();
-  const vpvrViewportTimer = useRef<number | undefined>();
   const [activePage, setActivePage] = useState<
     "market" | "research" | "operations"
   >("market");
@@ -714,16 +712,11 @@ function Workspace() {
   useEffect(() => {
     let cancelled = false;
     if (!engineInstruments.includes(instrument)) { setVpvr(null); return; }
-    const load = () => fetchVpvrProfile(instrument, interval, vpvrViewport).then((profile) => { if (!cancelled) setVpvr(profile); }).catch(() => { if (!cancelled) setVpvr(null); });
+    const load = () => fetchVpvrProfile(instrument, interval).then((profile) => { if (!cancelled) setVpvr(profile); }).catch(() => { if (!cancelled) setVpvr(null); });
     load();
     const timer = window.setInterval(load, 60_000);
     return () => { cancelled = true; window.clearInterval(timer); };
-  }, [instrument, interval, vpvrViewport]);
-
-  const handleVpvrViewport = useCallback((viewport: { low: number; high: number; bins: number; top: number; bottom: number }) => {
-    window.clearTimeout(vpvrViewportTimer.current);
-    vpvrViewportTimer.current = window.setTimeout(() => setVpvrViewport((current) => !current || Math.abs(current.low - viewport.low) > 0.000001 || Math.abs(current.high - viewport.high) > 0.000001 || current.bins !== viewport.bins ? viewport : current), 180);
-  }, []);
+  }, [instrument, interval]);
 
   const runtimeAnalysis =
     paper?.instrument === instrument ? paper.analysis : null;
@@ -963,8 +956,7 @@ function Workspace() {
                 </div>
               </div>
               <div className="workspace-chart">
-                <MarketChart instrument={instrument} interval={interval} onViewportChange={handleVpvrViewport} />
-                {!!vpvr?.available && !!vpvr.profile?.length && <VpvrHistogram profile={vpvr.profile} poc={vpvr.poc} vah={vpvr.vah} val={vpvr.val} professional={vpvr.professional} viewport={vpvrViewport} />}
+                <MarketChart instrument={instrument} interval={interval} />
               </div>
               <div className="chart-legend">
                 <span>
@@ -1420,6 +1412,16 @@ function Workspace() {
                 <b>{(snapshot.price + risk * 2).toFixed(2)}</b>
               </div>
             </div>
+            {vpvr?.available && (
+              <div className="vpvr-summary">
+                <span className="eyebrow">VPVR · {vpvr.interval || interval} · {vpvr.professional ? "逐笔成交价" : "已确认K线"}</span>
+                <div><span>成交量控制点 POC</span><b>${vpvr.poc?.toFixed(2)}</b></div>
+                <div><span>价值区下沿 · 支撑</span><b>${vpvr.val?.toFixed(2)}</b></div>
+                <div><span>价值区上沿 · 压力</span><b>${vpvr.vah?.toFixed(2)}</b></div>
+                <div><span>筹码密集区</span><b>${vpvr.val?.toFixed(2)} – ${vpvr.vah?.toFixed(2)}</b></div>
+                <small>{snapshot.price > (vpvr.vah || Infinity) ? "现价位于价值区上方" : snapshot.price < (vpvr.val || -Infinity) ? "现价位于价值区下方" : "现价位于筹码密集区"}</small>
+              </div>
+            )}
             <div className="rule-list">
               <span className="eyebrow">{t("decision.ruleChecks")}</span>
               {decisionConditions.map((condition) => (

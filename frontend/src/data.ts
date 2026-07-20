@@ -298,6 +298,7 @@ export type RuntimeAnalysis = {
     available: boolean;
     method?: string;
     source?: string;
+    interval?: string;
     professional?: boolean;
     lookback_bars?: number;
     coverage_seconds?: number;

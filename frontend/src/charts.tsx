@@ -121,8 +121,8 @@ export function MarketChart({ instrument = "ETH-USDT", interval = "15m", flow }:
       wickUpColor: "#00b37e",
       wickDownColor: "#f6465d",
     });
+    const visibleCandles = candles.slice(-260);
     try {
-      const visibleCandles = candles.slice(-260);
       series.setData(visibleCandles);
       const closes = candles.map((c) => c.close);
       const movingAverage = (period: number) => candles.slice(period - 1).map((c, i) => ({
@@ -135,7 +135,8 @@ export function MarketChart({ instrument = "ETH-USDT", interval = "15m", flow }:
       ma200.setData(movingAverage(200).slice(-260));
       if (flow?.cvd_series.length) {
         const cvd = chart.addSeries(AreaSeries, { lineColor: "#7c3aed", topColor: "rgba(124,58,237,.22)", bottomColor: "rgba(124,58,237,.02)", lineWidth: 2, priceLineVisible: false, lastValueVisible: true }, 1);
-        cvd.setData(alignFlowToCandles(visibleCandles, flow.cvd_series, interval));
+        const alignedCvd = alignFlowToCandles(visibleCandles, flow.cvd_series, interval);
+        cvd.setData(alignedCvd);
         cvd.createPriceLine({ price: 0, color: "rgba(71,84,103,.45)", lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: "0" });
         chart.panes()[1]?.setHeight(150);
       }
@@ -148,6 +149,10 @@ export function MarketChart({ instrument = "ETH-USDT", interval = "15m", flow }:
       series.setData(generateCandles());
     }
     chart.timeScale().fitContent();
+    if (flow?.cvd_series.length) {
+      const alignedCvd = alignFlowToCandles(visibleCandles, flow.cvd_series, interval);
+      if (alignedCvd.length > 1) chart.timeScale().setVisibleRange({ from: alignedCvd[0].time, to: visibleCandles[visibleCandles.length - 1].time });
+    }
     return chart;
   }, [candles, flow]);
 

@@ -138,17 +138,19 @@ export function MarketChart({ instrument = "ETH-USDT", interval = "15m", flow }:
         const alignedCvd = alignFlowToCandles(visibleCandles, flow.cvd_series, interval);
         cvd.setData(alignedCvd);
         cvd.createPriceLine({ price: 0, color: "rgba(71,84,103,.45)", lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: "0" });
-        chart.panes()[1]?.setHeight(185);
       }
       if (flow?.oi_series.length) {
         const oi = chart.addSeries(AreaSeries, { lineColor: "#0ea5e9", topColor: "rgba(14,165,233,.20)", bottomColor: "rgba(14,165,233,.02)", lineWidth: 2, priceLineVisible: false, lastValueVisible: true }, 2);
         oi.setData(alignFlowToCandles(visibleCandles, flow.oi_series, interval));
-        chart.panes()[2]?.setHeight(120);
       }
     } catch {
       series.setData(generateCandles());
     }
     chart.timeScale().fitContent();
+    const panes = chart.panes();
+    panes[0]?.setStretchFactor(2);
+    panes[1]?.setStretchFactor(1.5);
+    panes[2]?.setStretchFactor(1);
     if (flow?.cvd_series.length) {
       const alignedCvd = alignFlowToCandles(visibleCandles, flow.cvd_series, interval);
       if (alignedCvd.length > 1) chart.timeScale().setVisibleRange({ from: alignedCvd[0].time, to: visibleCandles[visibleCandles.length - 1].time });

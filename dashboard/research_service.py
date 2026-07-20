@@ -108,8 +108,8 @@ class ResearchService:
 
     def start_optimization(self, payload: dict[str, Any], requester_key: str = "public") -> dict[str, Any]:
         request = self.validate_request(payload)
-        if request["instrument"] != "BTC-USDT" or request["timeframe"] != "15m":
-            raise ValueError("The first Optimization Lab release supports BTC-USDT 15m only.")
+        if request["instrument"] not in INSTRUMENTS or request["timeframe"] != "15m":
+            raise ValueError("Optimization Lab supports BTC-USDT, ETH-USDT and SOL-USDT on 15m only.")
         trial_budget = int(payload.get("trial_budget", 100))
         if not 1 <= trial_budget <= self.OPTIMIZATION_POLICY["maximum_trials"]:
             raise ValueError("Trial budget must be between 1 and 500.")
@@ -133,7 +133,7 @@ class ResearchService:
                 changed_space = bool(prior_detail and prior_detail["scoring_policy"].get("neighborhood", {}).get("parameters") != self.OPTIMIZATION_POLICY["neighborhood"]["parameters"])
                 contamination = {"post_holdout_adjustment": changed_base or changed_space, "base_parameters_changed": changed_base, "search_space_changed": changed_space}
         request.update({"trial_budget": trial_budget, "seed": seed, "holdout_start_ts": holdout_start, "base_parameters": request["parameters"]})
-        if family: request.update({"experiment_family_id": int(family_id), "final_oot_start_ts": family.get("final_oot_start_ts"), "final_oot_end_ts": family.get("final_oot_end_ts")})
+        if family: request.update({"experiment_family_id": int(family_id), "development_end_ts": family["development_end_ts"], "holdout_start_ts": family["holdout_start_ts"], "holdout_end_ts": family["holdout_end_ts"], "final_oot_start_ts": family.get("final_oot_start_ts"), "final_oot_end_ts": family.get("final_oot_end_ts")})
         existing = self.jobs.find_active("OPTIMIZATION", request, requester_key)
         if existing:
             return {"id": existing["request_payload"]["optimization_run_id"], "job_id": existing["id"], "status": existing["status"], "progress": existing["progress"], "deduplicated": True}
@@ -297,9 +297,12 @@ class ResearchService:
         checkpoint(job_id, 3, "optimization.progress.loading_data", {})
         parameters = validate_parameters(request["base_parameters"])
         warmup = max(parameters.slow_ma, parameters.ema_pullback_period, parameters.rsi_period, parameters.atr_period) + 20
-        candles, quality = self.history.get_candles("BTC-USDT", "15m", request["start_ts"], request["end_ts"], warmup)
-        mtf_data = {frame: self.history.get_candles("BTC-USDT", frame, request["start_ts"], request["end_ts"], warmup)[0] for frame in ("1H", "4H")}
-        development_end = int(request["holdout_start_ts"]) - 1
+        instrument, timeframe = request["instrument"], request["timeframe"]
+        # Family gaps and final OOT are deliberately never loaded for optimization.
+        development_end = int(request.get("development_end_ts") or (int(request["holdout_start_ts"]) - 1))
+        holdout_end = int(request.get("holdout_end_ts") or request["end_ts"])
+        candles, quality = self.history.get_candles(instrument, timeframe, request["start_ts"], holdout_end, warmup)
+        mtf_data = {frame: self.history.get_candles(instrument, frame, request["start_ts"], holdout_end, warmup)[0] for frame in ("1H", "4H")}
         validation_start = request["start_ts"] + int((development_end - request["start_ts"]) * 0.70)
         validation_candles = [row for row in candles if validation_start <= int(row["ts"]) <= development_end]
         buy_hold_return = ((float(validation_candles[-1]["close"]) / float(validation_candles[0]["open"])) - 1) * 100 if len(validation_candles) > 1 else 0.0
@@ -314,8 +317,8 @@ class ResearchService:
             started = time.monotonic()
             try:
                 trial_params = validate_parameters(values)
-                train = run_backtest(candles, "BTC-USDT", "15m", trial_params, request["start_ts"], validation_start - 1, timeframe_datasets=mtf_data)
-                validation = run_backtest(candles, "BTC-USDT", "15m", trial_params, validation_start, development_end, timeframe_datasets=mtf_data)
+                train = run_backtest(candles, instrument, timeframe, trial_params, request["start_ts"], validation_start - 1, timeframe_datasets=mtf_data)
+                validation = run_backtest(candles, instrument, timeframe, trial_params, validation_start, development_end, timeframe_datasets=mtf_data)
                 score, components, reasons = self._optimization_score(validation["metrics"], buy_hold_return)
                 self.repository.complete_optimization_trial(trial_id, "ELIMINATED" if reasons else "COMPLETED", train_metrics=train["metrics"], validation_metrics=validation["metrics"], score=score, score_components=components, elimination_reasons=reasons, runtime_ms=int((time.monotonic() - started) * 1000))
             except Exception as error:
@@ -332,9 +335,9 @@ class ResearchService:
         checkpoint(job_id, 82, "optimization.progress.evaluating_holdout", {"count": len(finalists)})
         for position, trial in enumerate(finalists, 1):
             checkpoint(job_id, 82 + int(position / max(1, len(finalists)) * 15), "optimization.progress.evaluating_holdout", {"count": len(finalists), "processed": position})
-            holdout = run_backtest(candles, "BTC-USDT", "15m", validate_parameters(trial["parameters"]), int(request["holdout_start_ts"]), request["end_ts"], timeframe_datasets=mtf_data)
+            holdout = run_backtest(candles, instrument, timeframe, validate_parameters(trial["parameters"]), int(request["holdout_start_ts"]), holdout_end, timeframe_datasets=mtf_data)
             self.repository.complete_optimization_trial(trial["id"], "COMPLETED", holdout_metrics=holdout["metrics"])
-        result = {"method": self.OPTIMIZATION_POLICY["method"], "data_quality": quality, "development_end_ts": development_end, "holdout_start_ts": request["holdout_start_ts"], "holdout_candidates": len(finalists), "warning": "Holdout metrics are reported after ranking and are never included in the optimization score. No strategy is promoted or traded automatically."}
+        result = {"method": self.OPTIMIZATION_POLICY["method"], "data_quality": quality, "development_start_ts": request["start_ts"], "validation_start_ts": validation_start, "development_end_ts": development_end, "holdout_start_ts": request["holdout_start_ts"], "holdout_end_ts": holdout_end, "unused_gap_start_ts": development_end + 1 if development_end + 1 < int(request["holdout_start_ts"]) else None, "unused_gap_end_ts": int(request["holdout_start_ts"]) - 1 if development_end + 1 < int(request["holdout_start_ts"]) else None, "holdout_candidates": len(finalists), "warning": "Holdout metrics are reported after ranking and are never included in the optimization score. No strategy is promoted or traded automatically."}
         self.repository.update_optimization_run(run_id, status="COMPLETED", result=json.dumps(result), completed_at=utc_now())
         checkpoint(job_id, 99, "optimization.progress.completed", {"processed": budget, "total": budget})
         return {"optimization_run_id": run_id}
@@ -348,6 +351,21 @@ class ResearchService:
         payload = dict(job["request_payload"])
         payload.pop("optimization_run_id", None)
         return self.start_optimization(payload, requester_key)
+
+    def retry_validation_suite_job(self, job_id: int, requester_key: str = "public") -> dict[str, Any]:
+        job = self.jobs.get(job_id)
+        if not job or job["job_type"] != "VALIDATION_SUITE":
+            raise ValueError("Validation suite job not found.")
+        if job["status"] not in {"FAILED", "CANCELLED", "INTERRUPTED"}:
+            raise ValueError("Only failed, cancelled or interrupted validation suite jobs can be retried.")
+        original_id = int(job["request_payload"].get("validation_suite_id", 0))
+        suite_id = self.repository.create_validation_suite_retry(original_id, requester_key)
+        suite = self.repository.validation_suite(suite_id)
+        assert suite is not None
+        payload = {**suite["request"], "validation_suite_id": suite_id}
+        queued = self.jobs.enqueue("VALIDATION_SUITE", payload, requester_key, priority=110, dedupe_payload={"suite": suite_id})
+        self.repository.update_validation_suite(suite_id, job_id=queued["id"])
+        return {"id": suite_id, "job_id": queued["id"], "status": queued["status"], "retry_of_suite_id": original_id}
 
     def _job_backtest(self, job_id: int, request: dict[str, Any], checkpoint) -> dict[str, Any]:
         run_id=int(request["run_id"])

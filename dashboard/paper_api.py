@@ -896,7 +896,7 @@ class Handler(BaseHTTPRequestHandler):
             if not self._admin():return
             try:
                 job_id=int(parsed.path.split("/")[3]); job=RESEARCH.jobs.get(job_id)
-                self._send(RESEARCH.retry_optimization_job(job_id,self._client()) if job and job["job_type"]=="OPTIMIZATION" else RESEARCH.jobs.retry(job_id,self._client()),HTTPStatus.ACCEPTED)
+                self._send(RESEARCH.retry_optimization_job(job_id,self._client()) if job and job["job_type"]=="OPTIMIZATION" else RESEARCH.retry_validation_suite_job(job_id,self._client()) if job and job["job_type"]=="VALIDATION_SUITE" else RESEARCH.jobs.retry(job_id,self._client()),HTTPStatus.ACCEPTED)
             except (ValueError,OverflowError) as error:self._send({"error":str(error)},HTTPStatus.BAD_REQUEST)
         elif parsed.path.startswith("/api/alerts/") and parsed.path.endswith("/acknowledge"):
             if not self._admin():return

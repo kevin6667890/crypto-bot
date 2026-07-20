@@ -130,6 +130,7 @@ class ResearchRepository:
                     source_optimization_run_id INTEGER NOT NULL, source_trial_id INTEGER NOT NULL,
                     job_id INTEGER, status TEXT NOT NULL, request TEXT NOT NULL, policy_version TEXT NOT NULL,
                     created_at TEXT NOT NULL, completed_at TEXT, error TEXT,
+                    retry_of_suite_id INTEGER, attempt_number INTEGER NOT NULL DEFAULT 1,
                     FOREIGN KEY(experiment_family_id) REFERENCES optimization_families(id),
                     FOREIGN KEY(source_optimization_run_id) REFERENCES optimization_runs(id),
                     FOREIGN KEY(source_trial_id) REFERENCES optimization_trials(id)
@@ -161,6 +162,8 @@ class ResearchRepository:
             self._ensure_column(connection, "optimization_runs", "base_parameters_changed", "INTEGER NOT NULL DEFAULT 0")
             self._ensure_column(connection, "optimization_runs", "holdout_revealed_at", "TEXT")
             self._ensure_column(connection, "optimization_runs", "request_fingerprint", "TEXT")
+            self._ensure_column(connection, "validation_suites", "retry_of_suite_id", "INTEGER")
+            self._ensure_column(connection, "validation_suites", "attempt_number", "INTEGER NOT NULL DEFAULT 1")
             self._ensure_column(connection, "paper_trades", "strategy_version", "TEXT")
             self._ensure_column(connection, "paper_trades", "config_hash", "TEXT")
             self._ensure_column(connection, "paper_trades", "expected_entry_price", "REAL")
@@ -223,7 +226,9 @@ class ResearchRepository:
             row = connection.execute("SELECT * FROM optimization_families WHERE id=?", (family_id,)).fetchone()
             if not row: return None
             item = dict(row)
-            item["runs"] = [dict(run) for run in connection.execute("SELECT id,status,seed,created_at,post_holdout_adjustment FROM optimization_runs WHERE experiment_family_id=? ORDER BY id DESC", (family_id,))]
+            item["runs"] = [dict(run) for run in connection.execute("SELECT id,status,seed,created_at,request,post_holdout_adjustment,search_space_changed,base_parameters_changed,parent_run_id,holdout_revealed_at FROM optimization_runs WHERE experiment_family_id=? ORDER BY id DESC", (family_id,))]
+            for run in item["runs"]:
+                run["request"] = json.loads(run["request"])
             return item
 
     def reveal_optimization_holdout(self, run_id: int) -> dict[str, Any] | None:
@@ -325,6 +330,18 @@ class ResearchRepository:
     def create_validation_suite(self, family_id: int, run_id: int, trial_id: int, request: dict[str, Any]) -> int:
         with self.connect() as connection:
             cursor = connection.execute("INSERT INTO validation_suites(experiment_family_id,source_optimization_run_id,source_trial_id,status,request,policy_version,created_at) VALUES(?,?,?,?,?,?,?)", (family_id, run_id, trial_id, "QUEUED", json.dumps(request), "oot-validation-v1", utc_now()))
+            return int(cursor.lastrowid)
+
+    def create_validation_suite_retry(self, original_suite_id: int, requester_key: str = "public") -> int:
+        """Create immutable retry evidence; never resume or mutate the original suite."""
+        with self.connect() as connection:
+            original = connection.execute("SELECT * FROM validation_suites WHERE id=?", (original_suite_id,)).fetchone()
+            if not original:
+                raise ValueError("Validation suite not found.")
+            if original["status"] not in {"FAILED", "CANCELLED", "INTERRUPTED"}:
+                raise ValueError("Only failed, cancelled or interrupted validation suites can be retried.")
+            cursor = connection.execute("""INSERT INTO validation_suites(experiment_family_id,source_optimization_run_id,source_trial_id,status,request,policy_version,created_at,retry_of_suite_id,attempt_number)
+                VALUES(?,?,?,?,?,?,?,?,?)""", (original["experiment_family_id"], original["source_optimization_run_id"], original["source_trial_id"], "QUEUED", original["request"], original["policy_version"], utc_now(), original_suite_id, int(original["attempt_number"] or 1) + 1))
             return int(cursor.lastrowid)
 
     def update_validation_suite(self, suite_id: int, **values: Any) -> None:

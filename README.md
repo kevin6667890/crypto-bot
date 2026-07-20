@@ -189,3 +189,12 @@ orders, no AI parameter search, no automatic parameter activation or promotion.
 
 For educational and research purposes only. Past paper or backtest results do
 not predict future performance and are not financial advice.
+# Experiment-family research governance
+
+The Optimization Lab supports governed experiment families: configure a 15m BTC-USDT, ETH-USDT, or SOL-USDT development period, a primary holdout, and an optional final OOT period. Family ranges are locked; any gap between development and holdout is excluded from research. Start optimization from the selected family to retain its fingerprint and evidence lineage.
+
+Primary holdout metrics remain hidden until **Reveal Primary Holdout** is explicitly confirmed. Later changed base parameters or search space are marked as contaminated evidence. Final OOT and cross-asset validation are recorded as validation suites and never affect optimization ranking or strategy activation. Retrying a failed, cancelled, or interrupted suite creates a new suite and job while preserving the original evidence.
+
+Public Markdown/JSON reports use a safe allowlist and exclude hidden holdout results, queue internals, secrets, and local paths. This project is paper/research only: it sends no live exchange orders, automatically activates no parameters, and does not use AI parameter search.
+
+CI checks: `pytest -q`, `python -m compileall dashboard tests scripts`, and `cd frontend && npm ci && npm run build`.

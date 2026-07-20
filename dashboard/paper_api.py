@@ -401,6 +401,13 @@ class PaperService:
         datasets={bar:[row for row in self._candles(instrument,bar,300) if row.get("confirmed",True)] for bar in ("15m","1H","4H","1D")}
         c15=datasets["15m"]
         if not c15: raise RuntimeError("No confirmed 15m candle is available")
+        professional_flow = flow.get("professional") or {}
+        oi_series = professional_flow.get("oi_series") or []
+        if professional_flow.get("available") and len(c15) >= 5 and len(oi_series) >= 2:
+            price_change = (float(c15[-1]["close"]) / float(c15[-5]["close"]) - 1) * 100
+            oi_change = (float(oi_series[-1]["value"]) / float(oi_series[0]["value"]) - 1) * 100 if oi_series[0].get("value") else 0.0
+            state = "多头增仓" if price_change >= 0 and oi_change >= 0 else "空头回补" if price_change >= 0 else "多头平仓" if oi_change <= 0 else "空头增仓"
+            professional_flow["price_oi_state"] = {"label": state, "price_change_pct": round(price_change, 3), "oi_change_pct": round(oi_change, 3)}
         self._store_candles(instrument,c15)
         streamed_vpvr = self._professional_vpvr(instrument)
         if streamed_vpvr.get("ready"):

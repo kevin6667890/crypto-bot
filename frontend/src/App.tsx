@@ -1423,6 +1423,15 @@ function Workspace() {
                 <small>{snapshot.price > (vpvr.vah || Infinity) ? "现价位于价值区上方" : snapshot.price < (vpvr.val || -Infinity) ? "现价位于价值区下方" : "现价位于筹码密集区"}</small>
               </div>
             )}
+            {paper?.flow?.professional?.available && (
+              <div className="flow-quality-summary">
+                <span className="eyebrow">CVD / OI 数据质量</span>
+                <div><span>价格 - OI 状态</span><b>{paper.flow.professional.price_oi_state?.label || "采集中"}</b></div>
+                <div><span>逐笔覆盖</span><b>{Math.round(paper.flow.professional.coverage_seconds / 60)} 分钟</b></div>
+                <div><span>数据缺口</span><b>{paper.flow.professional.quality?.gap_count ?? 0}</b></div>
+                <div><span>OI 采样数</span><b>{paper.flow.professional.quality?.oi_samples ?? 0}</b></div>
+              </div>
+            )}
             <div className="rule-list">
               <span className="eyebrow">{t("decision.ruleChecks")}</span>
               {decisionConditions.map((condition) => (

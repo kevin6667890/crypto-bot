@@ -957,6 +957,7 @@ footer span {
 .legacy-vpvr { display:none; }
 .flow-legacy { display:none; }.flow-pane-labels { position:absolute; z-index:5; left:8px; bottom:4px; display:flex; gap:110px; pointer-events:none; color:#667085; font:600 9px "JetBrains Mono",monospace; }
 .vpvr-summary { margin-top:16px; padding:11px; border:1px solid var(--line); background:var(--surface-soft); }.vpvr-summary > .eyebrow { display:block; margin-bottom:5px; }.vpvr-summary > div { display:flex; justify-content:space-between; gap:8px; padding:6px 0; border-top:1px solid var(--line); color:var(--muted); font-size:10px; }.vpvr-summary b { color:#344054; font:600 10px "JetBrains Mono",monospace; text-align:right; }.vpvr-summary small { display:block; margin-top:7px; color:#027a5f; font-size:10px; }
+.flow-quality-summary { margin-top:12px; padding:11px; border:1px solid #d1fadf; background:#f6fef9; }.flow-quality-summary > .eyebrow { display:block; margin-bottom:5px; }.flow-quality-summary > div { display:flex; justify-content:space-between; gap:8px; padding:5px 0; border-top:1px solid #d1fadf; color:#667085; font-size:10px; }.flow-quality-summary b { color:#027a5f; font:600 10px "JetBrains Mono",monospace; }
 
 /* Real strategy research workspace */
 .research-workspace { max-width:1572px; margin:0 auto; padding:16px 14px 40px; display:grid; gap:12px; min-width:0; }

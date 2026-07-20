@@ -40,12 +40,16 @@ def calculate_volume_profile(candles: list[dict[str, Any]], bins: int = 48, valu
             lower -= 1
             covered += volumes[lower]
     price = lambda index: round(low + (index + 0.5) * width, 6)
+    display = [
+        {"price_low": round(low + index * width, 6), "price_high": round(low + (index + 1) * width, 6), "volume": round(volume, 6), "delta": 0.0, "trades": 0}
+        for index, volume in enumerate(volumes) if volume > 0
+    ]
     return {
         "available": True, "method": "ohlcv_uniform_range_v1", "lookback_bars": len(rows), "bins": bins,
         "poc": price(poc_index), "vah": round(low + (upper + 1) * width, 6), "val": round(low + lower * width, 6),
         "value_area_pct": round(covered / total * 100, 2), "profile_low": round(low, 6), "profile_high": round(high, 6),
         "total_volume": round(total, 6), "start_ts": int(rows[0].get("ts") or 0),
-        "end_ts": int(rows[-1].get("candle_close_ts") or rows[-1].get("ts") or 0),
+        "end_ts": int(rows[-1].get("candle_close_ts") or rows[-1].get("ts") or 0), "profile": display,
     }
 
 

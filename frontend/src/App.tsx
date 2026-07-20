@@ -47,6 +47,23 @@ function formatSigned(value: number, suffix = "") {
   return `${value >= 0 ? "+" : ""}${value.toFixed(2)}${suffix}`;
 }
 
+function VpvrHistogram({ profile, poc, vah, val, professional }: { profile: Array<{ price_low: number; price_high: number; volume: number; delta: number; trades: number }>; poc?: number; vah?: number; val?: number; professional?: boolean }) {
+  const rows = [...profile].sort((a, b) => b.price_low - a.price_low);
+  const maxVolume = Math.max(...rows.map((row) => row.volume), 1);
+  return <div className="vpvr-histogram">
+    <div className="vpvr-histogram-head"><span>成交价档位分布</span><small>{professional ? "绿色：主动买盘 Delta；红色：主动卖盘 Delta" : "逐笔流就绪前显示 K 线成交量近似"}</small></div>
+    <div className="vpvr-rows">{rows.map((row) => {
+      const midpoint = (row.price_low + row.price_high) / 2;
+      const inValueArea = midpoint >= (val ?? -Infinity) && midpoint <= (vah ?? Infinity);
+      const isPoc = poc !== undefined && Math.abs(midpoint - poc) <= (row.price_high - row.price_low) / 2;
+      const deltaClass = professional ? (row.delta >= 0 ? "buy" : "sell") : "neutral";
+      return <div className={`vpvr-row ${inValueArea ? "value-area" : ""} ${isPoc ? "poc" : ""}`} key={`${row.price_low}-${row.price_high}`}>
+        <span className="vpvr-price">${midpoint.toFixed(2)}</span><div className="vpvr-track"><i className={deltaClass} style={{ width: `${Math.max(2, row.volume / maxVolume * 100)}%` }} /></div><span className="vpvr-tags">{isPoc ? "POC" : inValueArea ? "VA" : ""}</span>
+      </div>;
+    })}</div>
+  </div>;
+}
+
 const demoSignal: SignalAnalysis = {
   score: 0,
   title: "Loading signal state",
@@ -954,6 +971,7 @@ function Workspace() {
                   <article><div className="flow-head"><span>{t("market.vpvrPoc")}</span><b>${runtimeAnalysis.vpvr.poc?.toFixed(2)}</b></div><small>{t("market.vpvrPocHelp")}</small></article>
                   <article><div className="flow-head"><span>{t("market.vpvrValueArea")}</span><b>${runtimeAnalysis.vpvr.val?.toFixed(2)} – ${runtimeAnalysis.vpvr.vah?.toFixed(2)}</b></div><small>{t("market.vpvrValueAreaHelp", { percent: runtimeAnalysis.vpvr.value_area_pct || 0 })}</small></article>
                 </div>
+                {!!runtimeAnalysis.vpvr.profile?.length && <VpvrHistogram profile={runtimeAnalysis.vpvr.profile} poc={runtimeAnalysis.vpvr.poc} vah={runtimeAnalysis.vpvr.vah} val={runtimeAnalysis.vpvr.val} professional={runtimeAnalysis.vpvr.professional} />}
               </section>
             )}
             {paper?.flow && (

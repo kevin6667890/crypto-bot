@@ -306,6 +306,7 @@ export type RuntimeAnalysis = {
     vah?: number;
     val?: number;
     value_area_pct?: number;
+    profile?: Array<{ price_low: number; price_high: number; volume: number; delta: number; trades: number }>;
     collection?: { coverage_seconds?: number; trade_count?: number; reason?: string };
   };
   updated_at?: string;

@@ -50,7 +50,7 @@ function formatSigned(value: number, suffix = "") {
 }
 
 function VpvrHistogram({ profile, poc, vah, val, professional, viewport }: { profile: Array<{ price_low: number; price_high: number; volume: number; delta: number; trades: number }>; poc?: number; vah?: number; val?: number; professional?: boolean; viewport?: { top: number; bottom: number } }) {
-  const rows = [...profile].sort((a, b) => b.price_low - a.price_low).slice(0, 36);
+  const rows = [...profile].sort((a, b) => b.price_low - a.price_low);
   const maxVolume = Math.max(...rows.map((row) => row.volume), 1);
   return <div className="vpvr-histogram" style={viewport ? { top: viewport.top, bottom: `calc(100% - ${viewport.bottom}px)` } : undefined}>
     <div className="vpvr-histogram-head"><span>成交价档位分布</span><small>{professional ? "绿色：主动买盘 Delta；红色：主动卖盘 Delta" : "逐笔流就绪前显示 K 线成交量近似"}</small></div>
@@ -58,9 +58,9 @@ function VpvrHistogram({ profile, poc, vah, val, professional, viewport }: { pro
       const midpoint = (row.price_low + row.price_high) / 2;
       const inValueArea = midpoint >= (val ?? -Infinity) && midpoint <= (vah ?? Infinity);
       const isPoc = poc !== undefined && Math.abs(midpoint - poc) <= (row.price_high - row.price_low) / 2;
-      const deltaClass = professional ? (row.delta >= 0 ? "buy" : "sell") : "neutral";
+      const deltaClass = professional ? (row.delta >= 0 ? "buy" : "sell") : "fallback";
       return <div className={`vpvr-row ${inValueArea ? "value-area" : ""} ${isPoc ? "poc" : ""}`} key={`${row.price_low}-${row.price_high}`}>
-        <span className="vpvr-price">${midpoint.toFixed(2)}</span><div className="vpvr-track"><i className={deltaClass} style={{ width: `${Math.max(2, row.volume / maxVolume * 100)}%` }} /></div><span className="vpvr-tags">{isPoc ? "POC" : inValueArea ? "VA" : ""}</span>
+        <span className="vpvr-price" /><div className="vpvr-track"><i className={deltaClass} style={{ width: `${Math.max(2, row.volume / maxVolume * 100)}%` }} /></div><span className="vpvr-tags">{isPoc ? "POC" : ""}</span>
       </div>;
     })}</div>
   </div>;

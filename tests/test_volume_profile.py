@@ -27,3 +27,4 @@ def test_trade_volume_profile_uses_executed_trade_prices_not_candle_ranges():
     assert result["available"] is True
     assert 100 < result["poc"] < 102
     assert result["val"] <= result["poc"] <= result["vah"]
+    assert len(result["profile"]) == 12  # Empty levels must remain for price-scale alignment.

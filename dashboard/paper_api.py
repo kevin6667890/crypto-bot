@@ -68,7 +68,7 @@ FLOW_RETENTION_SECONDS = 7 * 86400
 FLOW_DISPLAY_WINDOW_SECONDS = 6 * 3600
 VPVR_WINDOW_SECONDS = 24 * 3600
 VPVR_MIN_COVERAGE_SECONDS = 15 * 60
-VPVR_TIMEFRAME_CONFIG = {"15m": ("15m", 96), "1H": ("1H", 168), "4H": ("4H", 180), "1D": ("1D", 180)}
+VPVR_TIMEFRAME_CONFIG = {"1m": ("1m", 300), "5m": ("5m", 288), "15m": ("15m", 96), "1H": ("1H", 168), "4H": ("4H", 180), "1D": ("1D", 180)}
 OI_SAMPLE_SECONDS = 15
 
 load_dotenv(ROOT / ".env")
@@ -204,7 +204,7 @@ class PaperService:
 
     def _candles(self, instrument: str, bar: str, limit: int = 300) -> list[dict[str, float]]:
         payload = self._json(f"https://www.okx.com/api/v5/market/candles?instId={instrument}&bar={bar}&limit={limit}")
-        seconds={"15m":900,"1H":3600,"4H":14400,"1D":86400}.get(bar,0)
+        seconds={"1m":60,"5m":300,"15m":900,"1H":3600,"4H":14400,"1D":86400}.get(bar,0)
         candles = [{"ts": int(row[0]) // 1000, "candle_close_ts": int(row[0]) // 1000 + seconds, "open": float(row[1]), "high": float(row[2]), "low": float(row[3]), "close": float(row[4]), "volume": float(row[5]), "confirmed": bool(int(row[8])) if len(row)>8 else True} for row in payload.get("data", [])]
         return list(reversed(candles))
 

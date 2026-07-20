@@ -329,6 +329,7 @@ export type FlowStatus = {
     oi_series: Array<{ time: number; value: number }>;
     source: string;
     scoring_mode: string;
+    quality?: { last_trade_age_seconds: number | null; gap_count: number; max_gap_seconds: number; oi_samples: number };
   };
 };
 export type RiskStatus = {

@@ -65,7 +65,7 @@ AI_STALE_AFTER_SECONDS = 7200
 AI_RETRY_BASE_SECONDS = 60
 AI_RETRY_MAX_SECONDS = 3600
 FLOW_RETENTION_SECONDS = 7 * 86400
-FLOW_DISPLAY_WINDOW_SECONDS = 6 * 3600
+FLOW_DISPLAY_WINDOW_SECONDS = 7 * 86400
 VPVR_WINDOW_SECONDS = 24 * 3600
 VPVR_MIN_COVERAGE_SECONDS = 15 * 60
 VPVR_TIMEFRAME_CONFIG = {"1m": ("1m", 300), "5m": ("5m", 288), "15m": ("15m", 96), "1H": ("1H", 168), "4H": ("4H", 180), "1D": ("1D", 180)}
@@ -257,7 +257,8 @@ class PaperService:
             cvd_series.append({"time": int(row["minute"]), "value": round(cumulative, 2), "delta": round(float(row["delta"] or 0), 2), "trades": int(row["trades"] or 0)})
         oi_series = [{"time": int(row["ts"]), "value": float(row["oi"] or 0)} for row in oi_rows]
         coverage = (cvd_series[-1]["time"] - cvd_series[0]["time"] + 60) if len(cvd_series) > 1 else 0
-        return {"available": bool(cvd_series), "window_seconds": FLOW_DISPLAY_WINDOW_SECONDS, "coverage_seconds": coverage, "cvd": round(cumulative, 2), "cvd_series": cvd_series, "oi_series": oi_series, "source": "OKX public WebSocket trades + periodic SWAP OI", "scoring_mode": "unchanged"}
+        gaps = [cvd_series[index]["time"] - cvd_series[index - 1]["time"] for index in range(1, len(cvd_series))]
+        return {"available": bool(cvd_series), "window_seconds": FLOW_DISPLAY_WINDOW_SECONDS, "coverage_seconds": coverage, "cvd": round(cumulative, 2), "cvd_series": cvd_series, "oi_series": oi_series, "source": "OKX public WebSocket trades + periodic SWAP OI", "scoring_mode": "unchanged", "quality": {"last_trade_age_seconds": max(0, int(time.time()) - int(cvd_series[-1]["time"])) if cvd_series else None, "gap_count": sum(gap > 120 for gap in gaps), "max_gap_seconds": max(gaps, default=0), "oi_samples": len(oi_series)}}
 
     def _professional_vpvr(self, instrument: str, bins: int = 32, price_low: float | None = None, price_high: float | None = None) -> dict[str, Any]:
         since = int(time.time()) - VPVR_WINDOW_SECONDS

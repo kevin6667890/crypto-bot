@@ -956,7 +956,8 @@ function Workspace() {
                 </div>
               </div>
               <div className="workspace-chart">
-                <MarketChart instrument={instrument} interval={interval} />
+                <MarketChart instrument={instrument} interval={interval} flow={paper?.flow?.professional?.available ? { cvd_series: paper.flow.professional.cvd_series, oi_series: paper.flow.professional.oi_series } : undefined} />
+                {paper?.flow?.professional?.available && <div className="flow-pane-labels"><span>CVD · 逐笔主动成交差</span><span>OI · 永续未平仓量</span></div>}
               </div>
               <div className="chart-legend">
                 <span>
@@ -985,7 +986,7 @@ function Workspace() {
               </section>
             )}
             {paper?.flow && (
-              <section className="flow-panel">
+              <section className="flow-panel flow-legacy">
                 <div className="section-title">
                   <div>
                     <span className="eyebrow">

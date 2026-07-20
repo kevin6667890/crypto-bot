@@ -68,7 +68,9 @@ function useResponsiveChart(factory: (container: HTMLDivElement) => IChartApi, d
   return ref;
 }
 
-export function MarketChart({ instrument = "ETH-USDT", interval = "15m", onViewportChange }: { instrument?: string; interval?: string; onViewportChange?: (viewport: { low: number; high: number; bins: number; top: number; bottom: number }) => void }) {
+type FlowPaneData = { cvd_series: Array<{ time: number; value: number }>; oi_series: Array<{ time: number; value: number }> };
+
+export function MarketChart({ instrument = "ETH-USDT", interval = "15m", flow }: { instrument?: string; interval?: string; flow?: FlowPaneData }) {
   const [candles, setCandles] = useState<Candle[]>(() => generateCandles());
 
   useEffect(() => {
@@ -118,24 +120,23 @@ export function MarketChart({ instrument = "ETH-USDT", interval = "15m", onViewp
       const ma200 = chart.addSeries(LineSeries, { color: "#7c3aed", lineWidth: 2, priceLineVisible: false });
       ma60.setData(movingAverage(60).slice(-260));
       ma200.setData(movingAverage(200).slice(-260));
-      const reportViewport = () => {
-        const range = chart.timeScale().getVisibleLogicalRange();
-        if (!range || !onViewportChange) return;
-        const from = Math.max(0, Math.floor(range.from));
-        const to = Math.min(candles.length - 1, Math.ceil(range.to));
-        const visible = candles.slice(from, to + 1);
-        if (!visible.length) return;
-        const low = Math.min(...visible.map((item) => item.low)), high = Math.max(...visible.map((item) => item.high));
-        onViewportChange({ low, high, bins: Math.max(18, Math.min(42, Math.round(container.clientHeight / 15))), top: series.priceToCoordinate(high) ?? 12, bottom: series.priceToCoordinate(low) ?? container.clientHeight - 28 });
-      };
-      chart.timeScale().subscribeVisibleLogicalRangeChange(reportViewport);
-      window.setTimeout(reportViewport, 0);
+      if (flow?.cvd_series.length) {
+        const cvd = chart.addSeries(AreaSeries, { lineColor: "#7c3aed", topColor: "rgba(124,58,237,.22)", bottomColor: "rgba(124,58,237,.02)", lineWidth: 2, priceLineVisible: false, lastValueVisible: true }, 1);
+        cvd.setData(flow.cvd_series.map((point) => ({ time: point.time as UTCTimestamp, value: point.value })));
+        cvd.createPriceLine({ price: 0, color: "rgba(71,84,103,.45)", lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: "0" });
+        chart.panes()[1]?.setHeight(105);
+      }
+      if (flow?.oi_series.length) {
+        const oi = chart.addSeries(AreaSeries, { lineColor: "#0ea5e9", topColor: "rgba(14,165,233,.20)", bottomColor: "rgba(14,165,233,.02)", lineWidth: 2, priceLineVisible: false, lastValueVisible: true }, 2);
+        oi.setData(flow.oi_series.map((point) => ({ time: point.time as UTCTimestamp, value: point.value })));
+        chart.panes()[2]?.setHeight(105);
+      }
     } catch {
       series.setData(generateCandles());
     }
     chart.timeScale().fitContent();
     return chart;
-  }, [candles, onViewportChange]);
+  }, [candles, flow]);
 
   return <div className="chart-canvas" ref={ref} />;
 }

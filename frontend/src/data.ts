@@ -1068,9 +1068,10 @@ async function fetchBinanceSnapshot(): Promise<MarketSnapshot> {
 async function fetchOkxSnapshot(
   instrument = "ETH-USDT"
 ): Promise<MarketSnapshot> {
+  const marketInstrument = instrument.endsWith("-SWAP") ? instrument : instrument.replace("-USDT", "-USDT-SWAP");
   const [tickerResponse, candles] = await Promise.all([
-    fetch(`https://www.okx.com/api/v5/market/ticker?instId=${instrument}`),
-    fetchOkxCandles("15m", 25, instrument),
+    fetch(`https://www.okx.com/api/v5/market/ticker?instId=${marketInstrument}`),
+    fetchOkxCandles("15m", 25, marketInstrument),
   ]);
   if (!tickerResponse.ok) {
     throw new Error(`OKX ticker request failed: ${tickerResponse.status}`);

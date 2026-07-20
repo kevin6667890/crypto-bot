@@ -643,6 +643,7 @@ function Workspace() {
     message,
   } = useLanguage();
   const engineInstruments = ["BTC-USDT", "ETH-USDT"];
+  const perpetualInstrument = (symbol: string) => symbol.endsWith("-SWAP") ? symbol : symbol.replace("-USDT", "-USDT-SWAP");
   const [snapshot, setSnapshot] = useState<MarketSnapshot>(() =>
     demoSnapshot()
   );
@@ -715,7 +716,7 @@ function Workspace() {
     let closed = false;
     const connect = () => {
       socket = new WebSocket("wss://ws.okx.com:8443/ws/v5/public");
-      socket.onopen = () => socket?.send(JSON.stringify({ op: "subscribe", args: [{ channel: "tickers", instId: instrument }] }));
+      socket.onopen = () => socket?.send(JSON.stringify({ op: "subscribe", args: [{ channel: "tickers", instId: perpetualInstrument(instrument) }] }));
       socket.onmessage = (event) => {
         try {
           const row = JSON.parse(event.data)?.data?.[0];
@@ -874,7 +875,7 @@ function Workspace() {
           <aside className="watchlist-panel">
             <div className="section-title">
               <div>
-                <span className="eyebrow">{t("market.okxSpot")}</span>
+                <span className="eyebrow">{t("market.publicDerivatives")}</span>
                 <h2>{t("market.scanner")}</h2>
               </div>
               <span className="count-badge">{watchlist.length || 2}</span>
@@ -924,7 +925,7 @@ function Workspace() {
             <section className="market-summary">
               <div>
                 <span className="eyebrow">
-                  {instrument} · {t("market.okxSpot")}
+                  {perpetualInstrument(instrument)} · {t("market.publicDerivatives")}
                 </span>
                 <div className="price-line">
                   <strong>
@@ -979,8 +980,8 @@ function Workspace() {
                 </div>
               </div>
               <div className="workspace-chart">
-                <MarketChart instrument={instrument} interval={interval} flow={chartFlow} />
-                {paper?.flow?.professional?.available && <div className="flow-pane-labels"><span>CVD · 逐笔主动成交差</span><span>OI · 永续未平仓量</span></div>}
+                <MarketChart instrument={perpetualInstrument(instrument)} interval={interval} flow={chartFlow} />
+                {paper?.flow?.professional?.available && <div className="flow-pane-labels"><span className="cvd-pane-label">CVD · 逐笔主动成交差</span><span className="oi-pane-label">OI · 永续未平仓量</span></div>}
               </div>
               <div className="chart-legend">
                 <span>

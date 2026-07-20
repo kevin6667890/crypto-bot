@@ -11,6 +11,7 @@ venv/
 !docs/backtest_results.png
 !docs/dashboard_preview.png
 backtest_outputs/
+reports/
 backtest_img/
 mini_bt_outputs/
 dist/

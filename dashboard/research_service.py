@@ -47,7 +47,9 @@ class ResearchService:
         self.jobs.register("WALK_FORWARD", self._job_walk_forward)
         self.jobs.register("PORTFOLIO_BACKTEST", self._job_portfolio)
         self.jobs.register("OPTIMIZATION", self._job_optimization)
+        self.jobs.register("VALIDATION_SUITE", self._job_validation_suite)
         self.jobs.register_terminal_handler("OPTIMIZATION", self._optimization_job_terminal)
+        self.jobs.register_terminal_handler("VALIDATION_SUITE", self._validation_suite_terminal)
         self.repository.reconcile_optimization_jobs()
 
     OPTIMIZATION_ENGINE_VERSION = "optimization-lab-v1/canonical-v4"
@@ -112,12 +114,30 @@ class ResearchService:
         if not 1 <= trial_budget <= self.OPTIMIZATION_POLICY["maximum_trials"]:
             raise ValueError("Trial budget must be between 1 and 500.")
         seed = int(payload.get("seed", 20260717))
+        family_id = payload.get("experiment_family_id")
+        family = self.repository.optimization_family(int(family_id)) if family_id is not None else None
+        if family_id is not None and not family:
+            raise ValueError("Experiment family not found.")
         holdout_start = request["start_ts"] + int((request["end_ts"] - request["start_ts"]) * (1 - self.OPTIMIZATION_POLICY["holdout_fraction"]))
+        contamination: dict[str, bool] = {}
+        if family:
+            locked = {"instrument": family["instrument"], "timeframe": family["timeframe"], "start_ts": family["start_ts"], "end_ts": family["holdout_end_ts"]}
+            attempted = {"instrument": request["instrument"], "timeframe": request["timeframe"], "start_ts": request["start_ts"], "end_ts": request["end_ts"]}
+            if locked != attempted:
+                raise ValueError("Experiment family locks instrument, timeframe, development and primary holdout boundaries; create a new family for different ranges.")
+            holdout_start = int(family["holdout_start_ts"])
+            previous = family["runs"][0] if family["runs"] else None
+            if family.get("holdout_revealed_at") or family.get("final_oot_revealed_at"):
+                prior_detail = self.repository.optimization_run(int(previous["id"])) if previous else None
+                changed_base = bool(prior_detail and prior_detail["request"].get("base_parameters") != request["parameters"])
+                changed_space = bool(prior_detail and prior_detail["scoring_policy"].get("neighborhood", {}).get("parameters") != self.OPTIMIZATION_POLICY["neighborhood"]["parameters"])
+                contamination = {"post_holdout_adjustment": changed_base or changed_space, "base_parameters_changed": changed_base, "search_space_changed": changed_space}
         request.update({"trial_budget": trial_budget, "seed": seed, "holdout_start_ts": holdout_start, "base_parameters": request["parameters"]})
+        if family: request.update({"experiment_family_id": int(family_id), "final_oot_start_ts": family.get("final_oot_start_ts"), "final_oot_end_ts": family.get("final_oot_end_ts")})
         existing = self.jobs.find_active("OPTIMIZATION", request, requester_key)
         if existing:
             return {"id": existing["request_payload"]["optimization_run_id"], "job_id": existing["id"], "status": existing["status"], "progress": existing["progress"], "deduplicated": True}
-        run_id = self.repository.create_optimization_run(request, self.OPTIMIZATION_POLICY, seed, holdout_start)
+        run_id = self.repository.create_optimization_run(request, self.OPTIMIZATION_POLICY, seed, holdout_start, int(family_id) if family else None, payload.get("parent_run_id"), contamination)
         try:
             job = self.jobs.enqueue("OPTIMIZATION", {**request, "optimization_run_id": run_id}, requester_key, priority=120, dedupe_payload=request)
         except OverflowError as error:
@@ -130,6 +150,77 @@ class ResearchService:
             return {"id": int(job["request_payload"]["optimization_run_id"]), "job_id": job["id"], "status": job["status"], "progress": job["progress"], "deduplicated": True}
         self.repository.update_optimization_run(run_id, job_id=job["id"])
         return {"id": run_id, "job_id": job["id"], "status": job["status"], "progress": job["progress"], "deduplicated": False}
+
+    def create_optimization_family(self, payload: dict[str, Any]) -> dict[str, Any]:
+        instrument, timeframe = str(payload.get("instrument", "BTC-USDT")), str(payload.get("timeframe", "15m"))
+        if instrument not in INSTRUMENTS or timeframe != "15m":
+            raise ValueError("Experiment families currently support BTC-USDT, ETH-USDT and SOL-USDT on 15m.")
+        try:
+            start_ts = _date_ts(str(payload["start_date"])); development_end_ts = _date_ts(str(payload["development_end_date"]), True)
+            holdout_start_ts = _date_ts(str(payload["holdout_start_date"])); holdout_end_ts = _date_ts(str(payload["holdout_end_date"]), True)
+            final_start = _date_ts(str(payload["final_oot_start_date"])) if payload.get("final_oot_start_date") else None
+            final_end = _date_ts(str(payload["final_oot_end_date"]), True) if payload.get("final_oot_end_date") else None
+        except (KeyError, ValueError) as error:
+            raise ValueError("Family date fields must use YYYY-MM-DD.") from error
+        if not start_ts <= development_end_ts < holdout_start_ts <= holdout_end_ts or (final_start is not None and not (holdout_end_ts < final_start <= (final_end or 0))):
+            raise ValueError("Family periods must be ordered: development, primary holdout, then optional final OOT.")
+        return self.repository.create_optimization_family({"name": payload.get("name"), "instrument": instrument, "timeframe": timeframe, "start_ts": start_ts, "development_end_ts": development_end_ts, "holdout_start_ts": holdout_start_ts, "holdout_end_ts": holdout_end_ts, "final_oot_start_ts": final_start, "final_oot_end_ts": final_end, "notes": payload.get("notes")})
+
+    def optimization_comparison(self, run_ids: list[int]) -> dict[str, Any]:
+        if not 1 <= len(run_ids) <= 5: raise ValueError("Select between one and five optimization runs.")
+        runs = [self.repository.optimization_run(run_id, include_holdout=False) for run_id in run_ids]
+        if any(run is None for run in runs): raise ValueError("One or more optimization runs were not found.")
+        data = [run for run in runs if run]
+        instruments = {run["request"].get("instrument") for run in data}; timeframes = {run["request"].get("timeframe") for run in data}
+        return {"runs": data, "comparison": {"common_instrument": instruments.pop() if len(instruments) == 1 else None, "common_timeframe": timeframes.pop() if len(timeframes) == 1 else None, "warnings": ["Optimization score uses development/validation only; primary holdout, final OOT and cross-asset evidence are excluded from ranking.", "A higher score is not proof of future profitability."], "differences": ["ranges, seeds, budgets and policy versions are retained per run"]}}
+
+    def start_validation_suite(self, payload: dict[str, Any], requester_key: str = "public") -> dict[str, Any]:
+        family_id, run_id, trial_id = int(payload["experiment_family_id"]), int(payload["optimization_run_id"]), int(payload["trial_id"])
+        family = self.repository.optimization_family(family_id); run = self.repository.optimization_run(run_id); trial = next((item for item in (run or {}).get("trials", []) if item["id"] == trial_id), None)
+        if not family or not run or not trial or run.get("experiment_family_id") != family_id:
+            raise ValueError("Validation suite must reference an exact trial belonging to an optimization run in the selected family.")
+        if trial["status"] != "COMPLETED": raise ValueError("Only completed development-ranked trials can be validated out of time.")
+        if payload.get("include_final_out_of_time") and not family.get("final_oot_start_ts"):
+            raise ValueError("This family has no final out-of-time period.")
+        if payload.get("include_final_out_of_time"):
+            # Starting this explicit suite consumes the final untouched period; preserve that audit fact.
+            self.repository.reveal_final_oot(family_id)
+        instruments = payload.get("instruments", [family["instrument"]]); allowed = {"BTC-USDT", "ETH-USDT", "SOL-USDT"}
+        if not set(instruments).issubset(allowed): raise ValueError("Validation instruments must be BTC-USDT, ETH-USDT or SOL-USDT.")
+        request = {"instruments": instruments, "timeframe": "15m", "include_primary_holdout": bool(payload.get("include_primary_holdout", True)), "include_final_out_of_time": bool(payload.get("include_final_out_of_time")), "include_cross_asset_transfer": bool(payload.get("include_cross_asset_transfer", True)), "parameters": trial["parameters"]}
+        suite_id = self.repository.create_validation_suite(family_id, run_id, trial_id, request)
+        job = self.jobs.enqueue("VALIDATION_SUITE", {**request, "validation_suite_id": suite_id}, requester_key, priority=110, dedupe_payload={"suite": suite_id})
+        self.repository.update_validation_suite(suite_id, job_id=job["id"])
+        return {"id": suite_id, "job_id": job["id"], "status": job["status"]}
+
+    def _validation_suite_terminal(self, job: dict[str, Any]) -> None:
+        suite_id = int(job["request_payload"].get("validation_suite_id", 0))
+        if suite_id and job["status"] in {"COMPLETED", "CANCELLED", "FAILED", "INTERRUPTED"}:
+            self.repository.update_validation_suite(suite_id, status=job["status"], error=job.get("error"), completed_at=job.get("completed_at") or utc_now())
+
+    def _job_validation_suite(self, job_id: int, request: dict[str, Any], checkpoint) -> dict[str, Any]:
+        suite_id = int(request["validation_suite_id"]); suite = self.repository.validation_suite(suite_id)
+        if not suite: raise ValueError("Validation suite not found.")
+        family = self.repository.optimization_family(int(suite["experiment_family_id"])); self.repository.update_validation_suite(suite_id, status="RUNNING")
+        stages: list[tuple[str, str, int, int]] = []
+        if request["include_primary_holdout"]: stages.append(("primary_holdout", family["instrument"], family["holdout_start_ts"], family["holdout_end_ts"]))
+        if request["include_final_out_of_time"]: stages.append(("final_out_of_time", family["instrument"], family["final_oot_start_ts"], family["final_oot_end_ts"]))
+        if request["include_cross_asset_transfer"]:
+            for instrument in request["instruments"]:
+                if instrument != family["instrument"]: stages.append(("cross_asset_transfer", instrument, family["holdout_start_ts"], family["holdout_end_ts"]))
+        for index, (stage, instrument, start_ts, end_ts) in enumerate(stages, 1):
+            checkpoint(job_id, int((index - 1) / max(1, len(stages)) * 90), "optimization.progress.loading_data", {})
+            try:
+                params = validate_parameters(request["parameters"]); warmup = max(params.slow_ma, params.ema_pullback_period, params.rsi_period, params.atr_period) + 20
+                candles, quality = self.history.get_candles(instrument, "15m", start_ts, end_ts, warmup)
+                mtf = {frame: self.history.get_candles(instrument, frame, start_ts, end_ts, warmup)[0] for frame in ("1H", "4H")}
+                result = run_backtest(candles, instrument, "15m", params, start_ts, end_ts, timeframe_datasets=mtf)
+                closes = [row["close"] for row in candles if start_ts <= row["ts"] <= end_ts]; buy_hold = {"total_return": ((closes[-1] / closes[0]) - 1) * 100 if len(closes) > 1 else None}
+                self.repository.add_validation_result(suite_id, stage=stage, instrument=instrument, timeframe="15m", start_ts=start_ts, end_ts=end_ts, metrics=result["metrics"], buy_hold_metrics=buy_hold, data_quality=quality, status="COMPLETED", error=None)
+            except Exception as error:
+                self.repository.add_validation_result(suite_id, stage=stage, instrument=instrument, timeframe="15m", start_ts=start_ts, end_ts=end_ts, metrics=None, buy_hold_metrics=None, data_quality=None, status="FAILED", error=str(error)[:1000])
+        self.repository.update_validation_suite(suite_id, status="COMPLETED", completed_at=utc_now())
+        return {"validation_suite_id": suite_id}
 
     @staticmethod
     def _clamp(value: float, lower: float = 0, upper: float = 1) -> float:

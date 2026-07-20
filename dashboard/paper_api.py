@@ -777,9 +777,19 @@ class Handler(BaseHTTPRequestHandler):
         elif parsed.path == "/api/strategies": self._send({"items": RESEARCH.strategies()})
         elif parsed.path == "/api/backtest/history": self._send({"items": RESEARCH.repository.run_history()})
         elif parsed.path == "/api/optimization/history": self._send({"items": RESEARCH.repository.optimization_history()})
+        elif parsed.path == "/api/optimization/families": self._send({"items": RESEARCH.repository.optimization_families()})
+        elif parsed.path.startswith("/api/optimization/families/"):
+            try:
+                item = RESEARCH.repository.optimization_family(int(parsed.path.rsplit("/", 1)[1])); self._send(item or {"error": "Experiment family not found"}, HTTPStatus.OK if item else HTTPStatus.NOT_FOUND)
+            except ValueError: self._send({"error": "Invalid experiment family id"}, HTTPStatus.BAD_REQUEST)
+        elif parsed.path == "/api/validation-suites": self._send({"items": RESEARCH.repository.validation_suites()})
+        elif parsed.path.startswith("/api/validation-suites/"):
+            try:
+                item = RESEARCH.repository.validation_suite(int(parsed.path.rsplit("/", 1)[1])); self._send(item or {"error": "Validation suite not found"}, HTTPStatus.OK if item else HTTPStatus.NOT_FOUND)
+            except ValueError: self._send({"error": "Invalid validation suite id"}, HTTPStatus.BAD_REQUEST)
         elif parsed.path.startswith("/api/optimization/"):
             try:
-                item = RESEARCH.repository.optimization_run(int(parsed.path.rsplit("/", 1)[1]))
+                item = RESEARCH.repository.optimization_run(int(parsed.path.rsplit("/", 1)[1]), include_holdout=False)
                 self._send(item or {"error": "Optimization run not found"}, HTTPStatus.OK if item else HTTPStatus.NOT_FOUND)
             except ValueError: self._send({"error": "Invalid optimization run id"}, HTTPStatus.BAD_REQUEST)
         elif parsed.path == "/api/reconciliation":
@@ -844,6 +854,19 @@ class Handler(BaseHTTPRequestHandler):
         elif parsed.path == "/api/optimization/run":
             if self._limited("optimization-day", 1, 86400): return
             try: self._send(RESEARCH.start_optimization(payload, self._client()), HTTPStatus.ACCEPTED)
+            except (ValueError, OverflowError) as error: self._send({"error": str(error)}, HTTPStatus.BAD_REQUEST if isinstance(error, ValueError) else HTTPStatus.TOO_MANY_REQUESTS)
+        elif parsed.path == "/api/optimization/compare":
+            try: self._send(RESEARCH.optimization_comparison([int(value) for value in payload.get("run_ids", [])]))
+            except (ValueError, TypeError) as error: self._send({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+        elif parsed.path == "/api/optimization/families":
+            try: self._send(RESEARCH.create_optimization_family(payload), HTTPStatus.CREATED)
+            except ValueError as error: self._send({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+        elif parsed.path.startswith("/api/optimization/") and parsed.path.endswith("/reveal-holdout"):
+            try:
+                item = RESEARCH.repository.reveal_optimization_holdout(int(parsed.path.split("/")[3])); self._send(item or {"error": "Optimization run not found"}, HTTPStatus.OK if item else HTTPStatus.NOT_FOUND)
+            except ValueError: self._send({"error": "Invalid optimization run id"}, HTTPStatus.BAD_REQUEST)
+        elif parsed.path == "/api/validation-suites/run":
+            try: self._send(RESEARCH.start_validation_suite(payload, self._client()), HTTPStatus.ACCEPTED)
             except (ValueError, OverflowError) as error: self._send({"error": str(error)}, HTTPStatus.BAD_REQUEST if isinstance(error, ValueError) else HTTPStatus.TOO_MANY_REQUESTS)
         elif parsed.path == "/api/portfolio/run":
             if self._limited("backtest-minute",2,60) or self._limited("backtest-day",20,86400):return

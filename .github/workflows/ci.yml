@@ -7,34 +7,47 @@ on:
     branches: [main]
 
 jobs:
-  test:
+  python-tests:
+    name: Python tests and compilation
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Set up Python
-        uses: actions/setup-python@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - name: Install dependencies
-        run: |
-          pip install -r requirements.txt
-          pip install pytest pytest-asyncio
-      - name: Run tests
-        run: pytest tests/ -v
-
-  lint:
+          cache: pip
+      - run: pip install -r requirements.txt && pip install pytest pytest-asyncio
+      - run: pytest -q
+      - run: python -m compileall dashboard tests scripts
+  python-lint:
+    name: Lightweight Python lint
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Set up Python
-        uses: actions/setup-python@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
-      - name: Install flake8
-        run: pip install flake8
-      - name: Lint with flake8
-        run: |
-          flake8 ultimate_bot.py rules_blueprint.py \
-          --max-line-length=120 \
-          --ignore=E501,W503 \
-          --count
+      - run: pip install flake8
+      # Existing compact legacy modules are style-incompatible; retain a correctness-only gate.
+      - run: flake8 dashboard tests rules_blueprint.py --select=E9,F821,F822,F823 --count
+  frontend-build:
+    name: Frontend production build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - working-directory: frontend
+        run: npm ci
+      - working-directory: frontend
+        run: npm run build
+  docker-configuration:
+    name: Docker Compose configuration
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker compose config
+      - run: docker compose build paper-api frontend

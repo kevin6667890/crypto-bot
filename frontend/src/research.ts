@@ -52,7 +52,8 @@ export type ReconciliationItem = { signal_id?: string; instrument: string; candl
 export type Reconciliation = { paper_trades: number; backtest_trades: number; paper_signal_count: number; backtest_signal_count: number; matched_count: number; unmatched_count: number; signal_match_rate: number | null; action_mismatch_rate: number | null; median_entry_difference_pct: number | null; unmatched_signal_ratio: number | null; drift_status: "Normal" | "Watch" | "Diverging" | "Insufficient Data"; limitations: string[]; items: ReconciliationItem[] };
 export type ResearchJob = { id:number; job_type:string; status:string; progress:number; progress_message?:string; message_code?:string; message_params?:Record<string,string|number|boolean>; error?:string; queue_position?:number; created_at:string; started_at?:string; completed_at?:string; result_ref?:string; deduplicated?:boolean };
 export type OptimizationTrial = { id:number; trial_number:number; status:string; parameters:StrategyParameters; validation_metrics?:BacktestMetrics; holdout_metrics?:BacktestMetrics; score?:number; score_components?:Record<string,number>; elimination_reasons?:string[]; runtime_ms?:number; error?:string };
-export type OptimizationRun = { id:number; job_id?:number; status:string; seed:number; holdout_start_ts:number; request: {trial_budget:number; seed:number; start_date:string; end_date:string}; scoring_policy:{weights:Record<string,number>; method:string}; result?:{warning?:string}; trials:OptimizationTrial[]; error?:string };
+export type OptimizationRun = { id:number; job_id?:number; status:string; seed:number; holdout_start_ts:number; experiment_family_id?:number; holdout_revealed_at?:string; post_holdout_adjustment?:boolean; search_space_changed?:boolean; base_parameters_changed?:boolean; request: {trial_budget:number; seed:number; start_date:string; end_date:string; instrument?:string; timeframe?:string}; scoring_policy:{version?:string;weights:Record<string,number>; method:string}; result?:{warning?:string}; trials:OptimizationTrial[]; error?:string };
+export type ValidationSuite = {id:number; status:string; source_optimization_run_id:number; source_trial_id:number; results?:Array<{stage:string;instrument:string;status:string;metrics?:BacktestMetrics;buy_hold_metrics?:{total_return?:number};error?:string}>};
 
 const apiBase = (window.__PAPER_API_URL__ || import.meta.env.VITE_PAPER_API_URL || "").replace(/\/$/, "");
 async function request<T>(path: string, options?: RequestInit): Promise<T> {
@@ -82,4 +83,9 @@ export const researchApi = {
   optimization: (payload: object) => request<{id:number;job_id:number;status:string;progress:number}>("/api/optimization/run", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(payload) }),
   optimizationRun: (id:number) => request<OptimizationRun>(`/api/optimization/${id}`),
   optimizationHistory: async () => (await request<{items:OptimizationRun[]}>("/api/optimization/history")).items,
+  optimizationCompare: (run_ids:number[]) => request<{runs:OptimizationRun[];comparison:{warnings:string[]}}>("/api/optimization/compare", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({run_ids})}),
+  revealOptimizationHoldout: (id:number) => request<OptimizationRun>(`/api/optimization/${id}/reveal-holdout`, {method:"POST",headers:{"Content-Type":"application/json"},body:"{}"}),
+  validationSuites: async () => (await request<{items:ValidationSuite[]}>("/api/validation-suites")).items,
+  validationSuite: (id:number) => request<ValidationSuite>(`/api/validation-suites/${id}`),
+  validationSuiteRun: (payload:object) => request<{id:number;job_id:number;status:string}>("/api/validation-suites/run", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)}),
 };

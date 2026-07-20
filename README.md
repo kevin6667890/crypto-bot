@@ -1,5 +1,7 @@
 # Crypto-Bot Research Workspace
 
+[![CI](https://github.com/kevin6667890/crypto-bot/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/kevin6667890/crypto-bot/actions/workflows/ci.yml)
+
 Crypto-Bot is a paper-trading and historical strategy-research workspace for
 BTC-USDT, ETH-USDT and SOL-USDT. The production UI is React + TypeScript served
 by Nginx; the Python Paper API stores runtime and research data in SQLite.
@@ -53,6 +55,10 @@ complete historical order-flow measure and is labelled accordingly.
 - Isolated restart-safe Shadow candidates and an evidence-based, audited
   strategy lifecycle with manual-only Active promotion and rollback
 - Causal deterministic market regimes stored with new decisions
+- Optimization run history/comparison, explicit experiment-family holdout locking,
+  contamination audit flags and anonymized research-report export
+- Persistent multi-stage out-of-time validation suites. BTC holdout/final-OOT and
+  ETH/SOL transfer evidence are descriptive only and never influence ranking.
 
 Historical CVD and OI are not reconstructed because the required historical
 samples are not reliably available from the endpoints used here. The backtest
@@ -130,6 +136,15 @@ Factor and empty-trade results.
 - `POST /api/sensitivity/run`
 - `POST /api/benchmarks/run`
 - `POST /api/robustness/run`
+- `GET|POST /api/optimization/families`
+- `GET /api/optimization/families/{id}`
+- `POST /api/optimization/run`
+- `GET /api/optimization/history`
+- `GET /api/optimization/{id}` (holdout hidden by default)
+- `POST /api/optimization/{id}/reveal-holdout`
+- `POST /api/optimization/compare`
+- `POST /api/validation-suites/run`
+- `GET /api/validation-suites`, `GET /api/validation-suites/{id}`
 - `GET|POST /api/shadow-strategies`
 - `GET /api/strategy-lifecycle`
 - `GET /api/health`
@@ -152,6 +167,23 @@ docker compose up -d --build paper-api frontend
 
 Runtime `.env` files, keys, SQLite databases and candle caches must remain
 outside Git.
+
+## Research report export
+
+Export only sanitized persisted evidence; generated reports are ignored by Git.
+
+```bash
+python scripts/export_research_report.py --optimization-run 12 --output reports/optimization-run-12.md
+python scripts/export_research_report.py --experiment-family 3 --output reports/family-3.md
+```
+
+Experiment families lock instrument, timeframe, development, primary holdout and
+optional final OOT periods. Revealing a holdout is explicit and durable. Later
+parameter or search-space changes are flagged as contaminated rather than
+silently treated as untouched validation. Optimization ranking is based only on
+development/validation metrics: holdout, final OOT and cross-asset transfer
+results never affect it. The workspace remains paper/research only: no real
+orders, no AI parameter search, no automatic parameter activation or promotion.
 
 ---
 

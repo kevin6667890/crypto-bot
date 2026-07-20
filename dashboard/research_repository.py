@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import sqlite3
 from contextlib import contextmanager
 from datetime import datetime, timezone
@@ -74,6 +75,11 @@ class ResearchRepository:
                     volume REAL NOT NULL, confirmed INTEGER NOT NULL DEFAULT 1, source TEXT NOT NULL DEFAULT 'OKX',
                     PRIMARY KEY(instrument, timeframe, ts)
                 );
+                CREATE TABLE IF NOT EXISTS historical_flow (
+                    instrument TEXT NOT NULL, timeframe TEXT NOT NULL, ts INTEGER NOT NULL,
+                    buy_volume REAL NOT NULL, sell_volume REAL NOT NULL, cvd_delta REAL NOT NULL,
+                    source TEXT NOT NULL, PRIMARY KEY(instrument, timeframe, ts)
+                );
                 CREATE TABLE IF NOT EXISTS walk_forward_runs (
                     id INTEGER PRIMARY KEY AUTOINCREMENT, instrument TEXT NOT NULL, timeframe TEXT NOT NULL,
                     parameters TEXT NOT NULL, windows TEXT NOT NULL, result TEXT NOT NULL, created_at TEXT NOT NULL
@@ -81,6 +87,7 @@ class ResearchRepository:
                 CREATE INDEX IF NOT EXISTS idx_backtest_history ON backtest_runs(created_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_backtest_trades_run ON backtest_trades(run_id, entry_ts);
                 CREATE INDEX IF NOT EXISTS idx_historical_range ON historical_candles(instrument, timeframe, ts);
+                CREATE INDEX IF NOT EXISTS idx_historical_flow_range ON historical_flow(instrument, timeframe, ts);
                 CREATE INDEX IF NOT EXISTS idx_strategy_updated ON strategy_configs(updated_at DESC);
                 CREATE TABLE IF NOT EXISTS decision_signals (
                     id INTEGER PRIMARY KEY AUTOINCREMENT, signal_id TEXT NOT NULL UNIQUE, source TEXT NOT NULL,
@@ -110,6 +117,29 @@ class ResearchRepository:
                     holdout_start_ts INTEGER NOT NULL, result TEXT, error TEXT,
                     created_at TEXT NOT NULL, updated_at TEXT NOT NULL, completed_at TEXT
                 );
+                CREATE TABLE IF NOT EXISTS optimization_families (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL, instrument TEXT NOT NULL,
+                    timeframe TEXT NOT NULL, start_ts INTEGER NOT NULL, development_end_ts INTEGER NOT NULL,
+                    holdout_start_ts INTEGER NOT NULL, holdout_end_ts INTEGER NOT NULL,
+                    final_oot_start_ts INTEGER, final_oot_end_ts INTEGER, family_fingerprint TEXT NOT NULL UNIQUE,
+                    created_at TEXT NOT NULL, updated_at TEXT NOT NULL, holdout_revealed_at TEXT, final_oot_revealed_at TEXT,
+                    notes TEXT
+                );
+                CREATE TABLE IF NOT EXISTS validation_suites (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, experiment_family_id INTEGER NOT NULL,
+                    source_optimization_run_id INTEGER NOT NULL, source_trial_id INTEGER NOT NULL,
+                    job_id INTEGER, status TEXT NOT NULL, request TEXT NOT NULL, policy_version TEXT NOT NULL,
+                    created_at TEXT NOT NULL, completed_at TEXT, error TEXT,
+                    FOREIGN KEY(experiment_family_id) REFERENCES optimization_families(id),
+                    FOREIGN KEY(source_optimization_run_id) REFERENCES optimization_runs(id),
+                    FOREIGN KEY(source_trial_id) REFERENCES optimization_trials(id)
+                );
+                CREATE TABLE IF NOT EXISTS validation_suite_results (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, suite_id INTEGER NOT NULL, stage TEXT NOT NULL,
+                    instrument TEXT NOT NULL, timeframe TEXT NOT NULL, start_ts INTEGER NOT NULL, end_ts INTEGER NOT NULL,
+                    metrics TEXT, buy_hold_metrics TEXT, data_quality TEXT, status TEXT NOT NULL, error TEXT, created_at TEXT NOT NULL,
+                    FOREIGN KEY(suite_id) REFERENCES validation_suites(id) ON DELETE CASCADE
+                );
                 CREATE TABLE IF NOT EXISTS optimization_trials (
                     id INTEGER PRIMARY KEY AUTOINCREMENT, optimization_run_id INTEGER NOT NULL,
                     trial_number INTEGER NOT NULL, status TEXT NOT NULL, parameters TEXT NOT NULL,
@@ -124,6 +154,13 @@ class ResearchRepository:
                 CREATE INDEX IF NOT EXISTS idx_optimization_trials_run ON optimization_trials(optimization_run_id, score DESC);
             """)
             self._ensure_column(connection, "paper_trades", "signal_id", "TEXT")
+            self._ensure_column(connection, "optimization_runs", "experiment_family_id", "INTEGER")
+            self._ensure_column(connection, "optimization_runs", "parent_run_id", "INTEGER")
+            self._ensure_column(connection, "optimization_runs", "post_holdout_adjustment", "INTEGER NOT NULL DEFAULT 0")
+            self._ensure_column(connection, "optimization_runs", "search_space_changed", "INTEGER NOT NULL DEFAULT 0")
+            self._ensure_column(connection, "optimization_runs", "base_parameters_changed", "INTEGER NOT NULL DEFAULT 0")
+            self._ensure_column(connection, "optimization_runs", "holdout_revealed_at", "TEXT")
+            self._ensure_column(connection, "optimization_runs", "request_fingerprint", "TEXT")
             self._ensure_column(connection, "paper_trades", "strategy_version", "TEXT")
             self._ensure_column(connection, "paper_trades", "config_hash", "TEXT")
             self._ensure_column(connection, "paper_trades", "expected_entry_price", "REAL")
@@ -150,6 +187,7 @@ class ResearchRepository:
             now = utc_now()
             connection.execute("UPDATE optimization_runs SET status='INTERRUPTED',error='Service restarted while optimization was running',updated_at=?,completed_at=? WHERE status='RUNNING'", (now, now))
             connection.execute("UPDATE optimization_trials SET status='INTERRUPTED',error='Service restarted while trial was running',completed_at=? WHERE status='RUNNING' AND optimization_run_id IN (SELECT id FROM optimization_runs WHERE status='INTERRUPTED' AND error='Service restarted while optimization was running')", (now,))
+            connection.execute("UPDATE validation_suites SET status='INTERRUPTED',error='Service restarted while validation was running',completed_at=? WHERE status='RUNNING'", (now,))
             count = connection.execute("SELECT COUNT(*) FROM strategy_configs").fetchone()[0]
             if not count:
                 now = utc_now()
@@ -163,10 +201,51 @@ class ResearchRepository:
         if column not in {row[1] for row in connection.execute(f"PRAGMA table_info({table})")}:
             connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {declaration}")
 
-    def create_optimization_run(self, request: dict[str, Any], scoring_policy: dict[str, Any], seed: int, holdout_start_ts: int) -> int:
+    @staticmethod
+    def fingerprint(payload: dict[str, Any]) -> str:
+        return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+    def create_optimization_family(self, request: dict[str, Any]) -> dict[str, Any]:
+        locked = {key: request.get(key) for key in ("instrument", "timeframe", "start_ts", "development_end_ts", "holdout_start_ts", "holdout_end_ts", "final_oot_start_ts", "final_oot_end_ts")}
+        fingerprint = self.fingerprint(locked); now = utc_now()
+        with self.connect() as connection:
+            cursor = connection.execute("""INSERT INTO optimization_families(name,instrument,timeframe,start_ts,development_end_ts,holdout_start_ts,holdout_end_ts,final_oot_start_ts,final_oot_end_ts,family_fingerprint,created_at,updated_at,notes)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""", (request.get("name") or f"{locked['instrument']} {locked['timeframe']} family", locked["instrument"], locked["timeframe"], locked["start_ts"], locked["development_end_ts"], locked["holdout_start_ts"], locked["holdout_end_ts"], locked["final_oot_start_ts"], locked["final_oot_end_ts"], fingerprint, now, now, request.get("notes")))
+            family_id = int(cursor.lastrowid)
+        return self.optimization_family(family_id) or {}
+
+    def optimization_families(self) -> list[dict[str, Any]]:
+        with self.connect() as connection:
+            return [dict(row) for row in connection.execute("SELECT * FROM optimization_families ORDER BY id DESC")]
+
+    def optimization_family(self, family_id: int) -> dict[str, Any] | None:
+        with self.connect() as connection:
+            row = connection.execute("SELECT * FROM optimization_families WHERE id=?", (family_id,)).fetchone()
+            if not row: return None
+            item = dict(row)
+            item["runs"] = [dict(run) for run in connection.execute("SELECT id,status,seed,created_at,post_holdout_adjustment FROM optimization_runs WHERE experiment_family_id=? ORDER BY id DESC", (family_id,))]
+            return item
+
+    def reveal_optimization_holdout(self, run_id: int) -> dict[str, Any] | None:
         now = utc_now()
         with self.connect() as connection:
-            cursor = connection.execute("INSERT INTO optimization_runs(job_id,status,request,scoring_policy,seed,holdout_start_ts,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)", (None, "QUEUED", json.dumps(request), json.dumps(scoring_policy), seed, holdout_start_ts, now, now))
+            row = connection.execute("SELECT experiment_family_id FROM optimization_runs WHERE id=?", (run_id,)).fetchone()
+            if not row: return None
+            connection.execute("UPDATE optimization_runs SET holdout_revealed_at=COALESCE(holdout_revealed_at,?),updated_at=? WHERE id=?", (now, now, run_id))
+            if row["experiment_family_id"]:
+                connection.execute("UPDATE optimization_families SET holdout_revealed_at=COALESCE(holdout_revealed_at,?),updated_at=? WHERE id=?", (now, now, row["experiment_family_id"]))
+        return self.optimization_run(run_id, include_holdout=True)
+
+    def reveal_final_oot(self, family_id: int) -> None:
+        with self.connect() as connection:
+            connection.execute("UPDATE optimization_families SET final_oot_revealed_at=COALESCE(final_oot_revealed_at,?),updated_at=? WHERE id=?", (utc_now(), utc_now(), family_id))
+
+    def create_optimization_run(self, request: dict[str, Any], scoring_policy: dict[str, Any], seed: int, holdout_start_ts: int, family_id: int | None = None, parent_run_id: int | None = None, contamination: dict[str, bool] | None = None) -> int:
+        now = utc_now()
+        contamination = contamination or {}
+        with self.connect() as connection:
+            cursor = connection.execute("""INSERT INTO optimization_runs(job_id,status,request,scoring_policy,seed,holdout_start_ts,experiment_family_id,parent_run_id,post_holdout_adjustment,search_space_changed,base_parameters_changed,request_fingerprint,created_at,updated_at)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", (None, "QUEUED", json.dumps(request), json.dumps(scoring_policy), seed, holdout_start_ts, family_id, parent_run_id, int(contamination.get("post_holdout_adjustment", False)), int(contamination.get("search_space_changed", False)), int(contamination.get("base_parameters_changed", False)), self.fingerprint(request), now, now))
             return int(cursor.lastrowid)
 
     def update_optimization_run(self, run_id: int, **values: Any) -> None:
@@ -216,7 +295,7 @@ class ResearchRepository:
                 item[key] = None
         return item
 
-    def optimization_run(self, run_id: int, limit: int = 500) -> dict[str, Any] | None:
+    def optimization_run(self, run_id: int, limit: int = 500, include_holdout: bool = True) -> dict[str, Any] | None:
         with self.connect() as connection:
             run = connection.execute("SELECT * FROM optimization_runs WHERE id=?", (run_id,)).fetchone()
             if not run:
@@ -226,9 +305,11 @@ class ResearchRepository:
                 item[key] = json.loads(item[key]) if item.get(key) else None
             rows = connection.execute("SELECT * FROM optimization_trials WHERE optimization_run_id=? ORDER BY CASE WHEN score IS NULL THEN 1 ELSE 0 END, score DESC, trial_number LIMIT ?", (run_id, min(max(1, limit), 500))).fetchall()
             item["trials"] = [self._optimization_trial_dict(row) for row in rows]
+            if not include_holdout:
+                for trial in item["trials"]: trial["holdout_metrics"] = None
             return item
 
-    def optimization_history(self, limit: int = 30) -> list[dict[str, Any]]:
+    def optimization_history(self, limit: int = 30, include_holdout: bool = False) -> list[dict[str, Any]]:
         with self.connect() as connection:
             rows = connection.execute("SELECT * FROM optimization_runs ORDER BY id DESC LIMIT ?", (min(max(1, limit), 100),)).fetchall()
         output = []
@@ -237,20 +318,64 @@ class ResearchRepository:
             item["request"] = json.loads(item["request"])
             item["scoring_policy"] = json.loads(item["scoring_policy"])
             item["result"] = json.loads(item["result"]) if item.get("result") else None
+            if not include_holdout: item["holdout_revealed"] = bool(item.get("holdout_revealed_at"))
             output.append(item)
         return output
 
-    def upsert_candles(self, instrument: str, timeframe: str, candles: list[dict[str, Any]]) -> None:
+    def create_validation_suite(self, family_id: int, run_id: int, trial_id: int, request: dict[str, Any]) -> int:
+        with self.connect() as connection:
+            cursor = connection.execute("INSERT INTO validation_suites(experiment_family_id,source_optimization_run_id,source_trial_id,status,request,policy_version,created_at) VALUES(?,?,?,?,?,?,?)", (family_id, run_id, trial_id, "QUEUED", json.dumps(request), "oot-validation-v1", utc_now()))
+            return int(cursor.lastrowid)
+
+    def update_validation_suite(self, suite_id: int, **values: Any) -> None:
+        if not values: return
+        fields = ",".join(f"{key}=?" for key in values)
+        with self.connect() as connection: connection.execute(f"UPDATE validation_suites SET {fields} WHERE id=?", (*values.values(), suite_id))
+
+    def add_validation_result(self, suite_id: int, **values: Any) -> int:
+        keys = ("stage", "instrument", "timeframe", "start_ts", "end_ts", "metrics", "buy_hold_metrics", "data_quality", "status", "error")
+        payload = [json.dumps(values[key]) if key in {"metrics", "buy_hold_metrics", "data_quality"} and values.get(key) is not None else values.get(key) for key in keys]
+        with self.connect() as connection:
+            cursor = connection.execute(f"INSERT INTO validation_suite_results(suite_id,{','.join(keys)},created_at) VALUES(?,{','.join('?' for _ in keys)},?)", (suite_id, *payload, utc_now()))
+            return int(cursor.lastrowid)
+
+    def validation_suite(self, suite_id: int) -> dict[str, Any] | None:
+        with self.connect() as connection:
+            row = connection.execute("SELECT * FROM validation_suites WHERE id=?", (suite_id,)).fetchone()
+            if not row: return None
+            item = dict(row); item["request"] = json.loads(item["request"])
+            results = [dict(result) for result in connection.execute("SELECT * FROM validation_suite_results WHERE suite_id=? ORDER BY id", (suite_id,))]
+        for result in results:
+            for key in ("metrics", "buy_hold_metrics", "data_quality"): result[key] = json.loads(result[key]) if result.get(key) else None
+        item["results"] = results; return item
+
+    def validation_suites(self) -> list[dict[str, Any]]:
+        with self.connect() as connection:
+            return [dict(row) for row in connection.execute("SELECT * FROM validation_suites ORDER BY id DESC")]
+
+    def upsert_candles(self, instrument: str, timeframe: str, candles: list[dict[str, Any]], source: str = "OKX") -> None:
         if not candles:
             return
         with self.connect() as connection:
             connection.executemany("""INSERT OR REPLACE INTO historical_candles
                 (instrument,timeframe,ts,open,high,low,close,volume,confirmed,source) VALUES(?,?,?,?,?,?,?,?,?,?)""",
-                [(instrument, timeframe, int(row["ts"]), row["open"], row["high"], row["low"], row["close"], row["volume"], int(row.get("confirmed", 1)), "OKX") for row in candles])
+                [(instrument, timeframe, int(row["ts"]), row["open"], row["high"], row["low"], row["close"], row["volume"], int(row.get("confirmed", 1)), source) for row in candles])
 
     def candles(self, instrument: str, timeframe: str, start_ts: int, end_ts: int) -> list[dict[str, Any]]:
         with self.connect() as connection:
             return [dict(row) for row in connection.execute("SELECT ts,open,high,low,close,volume,confirmed FROM historical_candles WHERE instrument=? AND timeframe=? AND ts BETWEEN ? AND ? AND confirmed=1 ORDER BY ts", (instrument, timeframe, start_ts, end_ts))]
+
+    def upsert_flow(self, instrument: str, timeframe: str, rows: list[dict[str, Any]], source: str) -> None:
+        if not rows:
+            return
+        with self.connect() as connection:
+            connection.executemany("""INSERT OR REPLACE INTO historical_flow
+                (instrument,timeframe,ts,buy_volume,sell_volume,cvd_delta,source) VALUES(?,?,?,?,?,?,?)""",
+                [(instrument, timeframe, int(row["ts"]), float(row["buy_volume"]), float(row["sell_volume"]), float(row["buy_volume"]) - float(row["sell_volume"]), source) for row in rows])
+
+    def flow(self, instrument: str, timeframe: str, start_ts: int, end_ts: int) -> list[dict[str, Any]]:
+        with self.connect() as connection:
+            return [dict(row) for row in connection.execute("SELECT ts,buy_volume,sell_volume,cvd_delta,source FROM historical_flow WHERE instrument=? AND timeframe=? AND ts BETWEEN ? AND ? ORDER BY ts", (instrument, timeframe, start_ts, end_ts))]
 
     def candle_coverage(self, instrument: str, timeframe: str) -> tuple[int | None, int | None]:
         with self.connect() as connection:

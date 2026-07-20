@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import hmac
 import os
+import queue
 import sqlite3
 import threading
 import time
@@ -53,6 +54,10 @@ MAX_OPEN_POSITIONS = 3
 MAX_DAILY_LOSS_R = -2.0
 MAX_CONSECUTIVE_LOSSES = 3
 COOLDOWN_HOURS = 4
+AI_BRIEF_INTERVAL_SECONDS = 3600
+AI_STALE_AFTER_SECONDS = 7200
+AI_RETRY_BASE_SECONDS = 60
+AI_RETRY_MAX_SECONDS = 3600
 
 load_dotenv(ROOT / ".env")
 
@@ -72,6 +77,11 @@ class PaperService:
         }
         self.last_ai_at = {instrument: 0.0 for instrument in INSTRUMENTS}
         self.scheduler_running=False; self.last_cycle_started_at=None; self.last_cycle_completed_at=None; self.last_cycle_duration_ms=None; self.next_cycle_at=None; self.last_okx_success=None; self.last_okx_error=None; self.last_ai_success=None
+        self._ai_lock = threading.Lock()
+        self._ai_queue: queue.Queue[dict[str, Any]] = queue.Queue()
+        self._ai_workers_started = False
+        self._started_at = time.time()
+        self.ai_state = self._load_ai_state()
 
     @contextmanager
     def _connect(self) -> Iterator[sqlite3.Connection]:
@@ -108,9 +118,14 @@ class PaperService:
                 id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT NOT NULL, content TEXT NOT NULL, source TEXT NOT NULL)""")
             conn.execute("""CREATE TABLE IF NOT EXISTS flow_snapshots (
                 id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT NOT NULL, oi REAL, cvd REAL)""")
+            conn.execute("""CREATE TABLE IF NOT EXISTS ai_health (
+                instrument TEXT PRIMARY KEY, last_success_at TEXT, last_attempt_at TEXT, last_error TEXT,
+                failure_count INTEGER NOT NULL DEFAULT 0, next_retry_at TEXT, updated_at TEXT NOT NULL)""")
             self._ensure_column(conn, "analysis_snapshots", "instrument", "TEXT")
             self._ensure_column(conn, "ai_briefs", "instrument", "TEXT")
             self._ensure_column(conn, "flow_snapshots", "instrument", "TEXT")
+            for column, declaration in (("trade_count", "INTEGER"), ("window_seconds", "INTEGER"), ("last_trade_ts", "INTEGER")):
+                self._ensure_column(conn, "flow_snapshots", column, declaration)
             for column,declaration in (("signal_id","TEXT"),("strategy_version","TEXT"),("config_hash","TEXT"),("expected_entry_price","REAL"),("observed_entry_price","REAL"),("execution_delay_ms","INTEGER"),("observed_slippage_pct","REAL"),("candle_close_ts","INTEGER"),("signal_score","REAL")):
                 self._ensure_column(conn,"paper_trades",column,declaration)
             conn.execute("""CREATE TABLE IF NOT EXISTS decision_signals(id INTEGER PRIMARY KEY AUTOINCREMENT,signal_id TEXT NOT NULL UNIQUE,source TEXT NOT NULL,run_id INTEGER,instrument TEXT NOT NULL,execution_timeframe TEXT NOT NULL,candle_close_ts INTEGER NOT NULL,strategy_version TEXT NOT NULL,config_hash TEXT NOT NULL,action TEXT NOT NULL,bias TEXT NOT NULL,score REAL NOT NULL,decision_payload TEXT NOT NULL,created_at TEXT NOT NULL)""")
@@ -123,6 +138,31 @@ class PaperService:
                 PRIMARY KEY(instrument, bar, ts))""")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_analysis_instrument ON analysis_snapshots(instrument, id DESC)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_events_instrument ON event_logs(instrument, id DESC)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_flow_instrument_created ON flow_snapshots(instrument, created_at DESC)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_ai_health_updated ON ai_health(updated_at DESC)")
+
+    def _load_ai_state(self) -> dict[str, dict[str, Any]]:
+        states = {instrument: {"failure_count": 0, "last_error": None, "last_success_at": None, "next_retry_at": 0.0, "queued": False} for instrument in INSTRUMENTS}
+        with self._connect() as conn:
+            rows = conn.execute("SELECT instrument,last_success_at,last_error,failure_count,next_retry_at FROM ai_health").fetchall()
+        for row in rows:
+            if row["instrument"] not in states:
+                continue
+            retry_at = 0.0
+            try:
+                retry_at = datetime.fromisoformat(row["next_retry_at"]).timestamp() if row["next_retry_at"] else 0.0
+            except (TypeError, ValueError):
+                pass
+            states[row["instrument"]].update({"failure_count": int(row["failure_count"] or 0), "last_error": row["last_error"], "last_success_at": row["last_success_at"], "next_retry_at": retry_at})
+        successful = [state["last_success_at"] for state in states.values() if state["last_success_at"]]
+        self.last_ai_success = max(successful) if successful else None
+        return states
+
+    def _save_ai_state(self, instrument: str, state: dict[str, Any], attempted_at: str) -> None:
+        retry_at = datetime.fromtimestamp(state["next_retry_at"], timezone.utc).replace(microsecond=0).isoformat() if state["next_retry_at"] else None
+        with self._connect() as conn:
+            conn.execute("""INSERT INTO ai_health(instrument,last_success_at,last_attempt_at,last_error,failure_count,next_retry_at,updated_at)
+                VALUES(?,?,?,?,?,?,?) ON CONFLICT(instrument) DO UPDATE SET last_success_at=excluded.last_success_at,last_attempt_at=excluded.last_attempt_at,last_error=excluded.last_error,failure_count=excluded.failure_count,next_retry_at=excluded.next_retry_at,updated_at=excluded.updated_at""", (instrument, state["last_success_at"], attempted_at, state["last_error"], state["failure_count"], retry_at, now_iso()))
 
     @staticmethod
     def _json(url: str) -> dict[str, Any]:
@@ -147,25 +187,29 @@ class PaperService:
     def _flow_metrics(self, instrument: str) -> dict[str, Any]:
         trades = self._json(f"https://www.okx.com/api/v5/market/trades?instId={instrument}&limit=100").get("data", [])
         cumulative, per_second = 0.0, {}
+        trade_timestamps: list[int] = []
         for row in reversed(trades):
             cumulative += float(row["sz"]) * float(row["px"]) * (1 if row.get("side") == "buy" else -1)
             # Lightweight Charts requires strictly increasing, unique timestamps.
             # OKX often returns several trades in one second, so retain the last
             # cumulative value for each second rather than emitting duplicates.
-            per_second[int(row["ts"]) // 1000] = round(cumulative, 2)
+            timestamp = int(row["ts"]) // 1000
+            trade_timestamps.append(timestamp)
+            per_second[timestamp] = round(cumulative, 2)
         series = [{"time": timestamp, "value": value} for timestamp, value in sorted(per_second.items())]
         swap = instrument.replace("-USDT", "-USDT-SWAP")
         oi_row = self._json(f"https://www.okx.com/api/v5/public/open-interest?instType=SWAP&instId={swap}").get("data", [{}])[0]
         oi = float(oi_row.get("oiUsd") or oi_row.get("oi") or 0)
         with self._connect() as conn:
             previous = conn.execute("SELECT oi FROM flow_snapshots WHERE instrument=? ORDER BY id DESC LIMIT 1", (instrument,)).fetchone()
-            conn.execute("INSERT INTO flow_snapshots(created_at,instrument,oi,cvd) VALUES(?,?,?,?)", (now_iso(), instrument, oi, cumulative))
+            conn.execute("INSERT INTO flow_snapshots(created_at,instrument,oi,cvd,trade_count,window_seconds,last_trade_ts) VALUES(?,?,?,?,?,?,?)", (now_iso(), instrument, oi, cumulative, len(trade_timestamps), max(trade_timestamps) - min(trade_timestamps) if trade_timestamps else 0, max(trade_timestamps) if trade_timestamps else None))
             history = [dict(row) for row in conn.execute("SELECT created_at,oi,cvd FROM flow_snapshots WHERE instrument=? ORDER BY id DESC LIMIT 60", (instrument,))]
         previous_oi = float(previous["oi"]) if previous and previous["oi"] else oi
         return {
             "cvd": round(cumulative, 2), "cvd_delta": round(cumulative, 2), "cvd_series": series,
             "oi": oi, "oi_change_pct": round((oi - previous_oi) / previous_oi * 100, 4) if previous_oi else 0,
             "oi_history": list(reversed(history)), "source": "OKX public trades + SWAP OI",
+            "quality": {"trade_count": len(trade_timestamps), "window_seconds": max(trade_timestamps) - min(trade_timestamps) if trade_timestamps else 0, "last_trade_ts": max(trade_timestamps) if trade_timestamps else None, "sampled_at": now_iso()},
         }
 
     def _store_candles(self, instrument: str, candles: list[dict[str, float]]) -> None:
@@ -274,13 +318,37 @@ class PaperService:
         for event in closed_events:
             self._event(instrument, "TRADE_CLOSED", f"Paper trade closed by {event['reason']}", event)
 
+    def start_ai_workers(self) -> None:
+        if self._ai_workers_started:
+            return
+        self._ai_workers_started = True
+        threading.Thread(target=self._ai_worker, daemon=True, name="ai-brief-worker").start()
+        threading.Thread(target=self._ai_health_monitor, daemon=True, name="ai-health-monitor").start()
+
     def maybe_create_ai_brief(self, analysis: dict[str, Any]) -> None:
         instrument = analysis["instrument"]
-        if time.time() - self.last_ai_at[instrument] < 3600: return
-        self.last_ai_at[instrument] = time.time()
+        now = time.time()
+        with self._ai_lock:
+            state = self.ai_state[instrument]
+            if state["queued"] or now < state["next_retry_at"] or (self.last_ai_at[instrument] and now - self.last_ai_at[instrument] < AI_BRIEF_INTERVAL_SECONDS):
+                return
+            state["queued"] = True
+        self._ai_queue.put({"instrument": instrument, "analysis": analysis})
+
+    def _ai_worker(self) -> None:
+        while True:
+            job = self._ai_queue.get()
+            try:
+                self._create_ai_brief(job["instrument"], job["analysis"])
+            finally:
+                self._ai_queue.task_done()
+
+    def _create_ai_brief(self, instrument: str, analysis: dict[str, Any]) -> None:
+        attempted_at = now_iso()
         key = os.getenv("DEEPSEEK_API_KEY", "")
         if not key:
-            content, source = "AI brief disabled: set DEEPSEEK_API_KEY on the server.", "disabled"
+            self._record_ai_failure(instrument, "DeepSeek API key is not configured", attempted_at)
+            return
         else:
             prompt = f"用中文在120字内总结 {instrument}。必须引用多周期MA60/MA200、EMA20斜率、CVD/OI和风险状态，解释规则为何给出{analysis['action']}，不要承诺收益。数据：{json.dumps(analysis, ensure_ascii=False)}"
             request = Request("https://api.deepseek.com/chat/completions", data=json.dumps({"model": "deepseek-chat", "messages": [{"role": "user", "content": prompt}], "temperature": 0.2, "max_tokens": 300}).encode(), headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"})
@@ -288,14 +356,59 @@ class PaperService:
                 with urlopen(request, timeout=25) as response:  # noqa: S310
                     content = json.loads(response.read().decode())["choices"][0]["message"]["content"].strip()
                 source = "DeepSeek"
-                self.last_ai_success=now_iso(); alerts=globals().get("ALERTS")
+                self._record_ai_success(instrument, attempted_at); alerts=globals().get("ALERTS")
                 if alerts:alerts.resolve(f"deepseek|{instrument}")
             except Exception as error:
-                content, source = f"AI brief unavailable: {error}", "error"
-                alerts=globals().get("ALERTS")
-                if alerts:alerts.raise_alert("DeepSeek Error","warning","ai","AI brief request failed",instrument,key=f"deepseek|{instrument}")
+                self._record_ai_failure(instrument, type(error).__name__, attempted_at)
+                return
         with self._connect() as conn:
             conn.execute("INSERT INTO ai_briefs(created_at,instrument,content,source) VALUES(?,?,?,?)", (now_iso(), instrument, content, source))
+
+    def _record_ai_success(self, instrument: str, attempted_at: str) -> None:
+        with self._ai_lock:
+            state = self.ai_state[instrument]
+            state.update({"failure_count": 0, "last_error": None, "last_success_at": attempted_at, "next_retry_at": time.time() + AI_BRIEF_INTERVAL_SECONDS, "queued": False})
+            self.last_ai_at[instrument] = time.time()
+            self.last_ai_success = attempted_at
+            self._save_ai_state(instrument, state, attempted_at)
+
+    def _record_ai_failure(self, instrument: str, error_type: str, attempted_at: str) -> None:
+        with self._ai_lock:
+            state = self.ai_state[instrument]
+            failures = state["failure_count"] + 1
+            delay = min(AI_RETRY_MAX_SECONDS, AI_RETRY_BASE_SECONDS * 2 ** (failures - 1))
+            state.update({"failure_count": failures, "last_error": error_type[:120], "next_retry_at": time.time() + delay, "queued": False})
+            self._save_ai_state(instrument, state, attempted_at)
+        alerts=globals().get("ALERTS")
+        if alerts:alerts.raise_alert("DeepSeek Error","warning","ai",f"{instrument} AI brief request failed ({error_type}); retry in {delay}s",instrument,key=f"deepseek|{instrument}")
+
+    def ai_health(self) -> dict[str, Any]:
+        now = time.time()
+        states: dict[str, dict[str, Any]] = {}
+        with self._ai_lock:
+            for instrument, state in self.ai_state.items():
+                last_success = state["last_success_at"]
+                age = None
+                try:
+                    age = now - datetime.fromisoformat(last_success).timestamp() if last_success else None
+                except (TypeError, ValueError):
+                    pass
+                status = "disabled" if not os.getenv("DEEPSEEK_API_KEY") else "stale" if age is not None and age > AI_STALE_AFTER_SECONDS else "retrying" if state["failure_count"] else "starting" if not last_success else "healthy"
+                states[instrument] = {"status": status, "last_success_at": last_success, "last_success_age_seconds": round(age, 1) if age is not None else None, "failure_count": state["failure_count"], "last_error": state["last_error"], "next_retry_at": datetime.fromtimestamp(state["next_retry_at"], timezone.utc).replace(microsecond=0).isoformat() if state["next_retry_at"] else None}
+        return {"status": "disabled" if not os.getenv("DEEPSEEK_API_KEY") else "stale" if any(item["status"] == "stale" for item in states.values()) else "retrying" if any(item["status"] == "retrying" for item in states.values()) else "healthy" if all(item["status"] == "healthy" for item in states.values()) else "starting", "queue_depth": self._ai_queue.qsize(), "instruments": states}
+
+    def _ai_health_monitor(self) -> None:
+        while True:
+            health = self.ai_health()
+            alerts = globals().get("ALERTS")
+            if alerts:
+                for instrument, state in health["instruments"].items():
+                    key = f"ai-stale|{instrument}"
+                    if state["status"] == "stale":
+                        alerts.raise_alert("AI Brief Stale", "warning", "ai", f"{instrument} AI brief has not succeeded for over 2 hours", instrument, key=key)
+                    else:
+                        alerts.resolve(key)
+            time.sleep(60)
 
     def cycle_instrument(self, instrument: str) -> dict[str, Any]:
         try:
@@ -603,6 +716,7 @@ def run() -> None:
         SERVICE.scheduler_running=True
         while True:
             SERVICE.cycle(); log_event(LOGGER,"INFO","paper_scheduler","cycle_completed",duration_ms=SERVICE.last_cycle_duration_ms); time.sleep(60)
+    SERVICE.start_ai_workers()
     threading.Thread(target=scheduler, daemon=True).start()
     host = os.getenv("PAPER_API_HOST", "127.0.0.1")
     ThreadingHTTPServer((host, int(os.getenv("PAPER_API_PORT", "8765"))), Handler).serve_forever()

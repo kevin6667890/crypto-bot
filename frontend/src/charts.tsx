@@ -148,8 +148,8 @@ export function MarketChart({ instrument = "ETH-USDT", interval = "15m", flow }:
     }
     chart.timeScale().fitContent();
     const panes = chart.panes();
-    panes[0]?.setStretchFactor(2);
-    panes[1]?.setStretchFactor(1.5);
+    panes[0]?.setStretchFactor(3);
+    panes[1]?.setStretchFactor(1);
     panes[2]?.setStretchFactor(1);
     if (flow?.cvd_series.length) {
       const alignedCvd = alignFlowToCandles(visibleCandles, flow.cvd_series, interval);

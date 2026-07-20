@@ -941,6 +941,21 @@ function Workspace() {
                 <span className="muted">{t("market.flowProxy")}</span>
               </div>
             </section>
+            {runtimeAnalysis?.vpvr?.available && (
+              <section className="flow-panel">
+                <div className="section-title">
+                  <div>
+                    <span className="eyebrow">{t("market.vpvrMethod")}</span>
+                    <h2>{t("market.vpvrTitle")}</h2>
+                  </div>
+                  <small>{t("market.vpvrLookback", { count: runtimeAnalysis.vpvr.lookback_bars || 0 })}</small>
+                </div>
+                <div className="flow-grid">
+                  <article><div className="flow-head"><span>{t("market.vpvrPoc")}</span><b>${runtimeAnalysis.vpvr.poc?.toFixed(2)}</b></div><small>{t("market.vpvrPocHelp")}</small></article>
+                  <article><div className="flow-head"><span>{t("market.vpvrValueArea")}</span><b>${runtimeAnalysis.vpvr.val?.toFixed(2)} – ${runtimeAnalysis.vpvr.vah?.toFixed(2)}</b></div><small>{t("market.vpvrValueAreaHelp", { percent: runtimeAnalysis.vpvr.value_area_pct || 0 })}</small></article>
+                </div>
+              </section>
+            )}
             {paper?.flow && (
               <section className="flow-panel">
                 <div className="section-title">

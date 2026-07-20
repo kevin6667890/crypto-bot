@@ -294,6 +294,15 @@ export type RuntimeAnalysis = {
     string,
     { trend: string; ema20_slope_pct: number; ma60: number; ma200: number }
   >;
+  vpvr?: {
+    available: boolean;
+    method?: string;
+    lookback_bars?: number;
+    poc?: number;
+    vah?: number;
+    val?: number;
+    value_area_pct?: number;
+  };
   updated_at?: string;
 };
 export type FlowStatus = {

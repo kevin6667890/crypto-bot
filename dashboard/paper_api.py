@@ -32,6 +32,7 @@ try:
     from validation_service import ValidationService
     from shadow_service import ShadowService
     from lifecycle_service import LifecycleService
+    from volume_profile import calculate_volume_profile
 except ImportError:
     from .research_service import ResearchService
     from .strategy_rules import StrategyParameters, calculate_indicators, validate_parameters
@@ -42,6 +43,7 @@ except ImportError:
     from .validation_service import ValidationService
     from .shadow_service import ShadowService
     from .lifecycle_service import LifecycleService
+    from .volume_profile import calculate_volume_profile
 
 try:
     from dotenv import load_dotenv
@@ -314,6 +316,7 @@ class PaperService:
         c15=datasets["15m"]
         if not c15: raise RuntimeError("No confirmed 15m candle is available")
         self._store_candles(instrument,c15)
+        vpvr = calculate_volume_profile(c15[-96:])
         params,active_version=self._active_strategy(); ind15=calculate_indicators(c15,params)[-1]; execution=c15[-1]; close_ts=int(execution["candle_close_ts"])
         frames={}
         for frame in ("1H","4H","1D"):
@@ -328,7 +331,7 @@ class PaperService:
             item["detail_code"]=f"decision.contribution_detail.{item['key']}"
             item["detail_params"]={"close":f"{decision.get('decision_input_summary',{}).get('close',0):.2f}","volume":f"{ind15.get('volume_ratio') or 0:.2f}","rsi":f"{ind15.get('rsi') or 0:.1f}","cvd":f"{flow.get('cvd_delta',0):+.0f}","oi":f"{flow.get('oi_change_pct',0):+.3f}"}
         distance_pct=(float(execution["close"])-float(ind15["ema"]))/float(ind15["ema"])*100 if ind15.get("ema") else None
-        analysis={**decision,"price":round(float(execution["close"]),4),"ema20":ind15["ema"],"rsi14":ind15["rsi"],"atr14":ind15["atr"],"volume_ratio":ind15["volume_ratio"],"distance_ema20_pct":distance_pct,"timeframes":{"15m":{"trend":decision["bias"],"ma60":ind15["fast_ma"],"ma200":ind15["slow_ma"],"ema20_slope_pct":0},**frames},"flow":flow,"conditions":[{"label":x["label"],"value":x["detail"],"pass":x["status"]=="pass"} for x in decision["contributions"]],"updated_at":now_iso()}
+        analysis={**decision,"price":round(float(execution["close"]),4),"ema20":ind15["ema"],"rsi14":ind15["rsi"],"atr14":ind15["atr"],"volume_ratio":ind15["volume_ratio"],"distance_ema20_pct":distance_pct,"timeframes":{"15m":{"trend":decision["bias"],"ma60":ind15["fast_ma"],"ma200":ind15["slow_ma"],"ema20_slope_pct":0},**frames},"flow":flow,"vpvr":vpvr,"conditions":[{"label":x["label"],"value":x["detail"],"pass":x["status"]=="pass"} for x in decision["contributions"]],"updated_at":now_iso()}
         with self._connect() as conn:
             conn.execute("INSERT INTO analysis_snapshots(created_at,instrument,payload) VALUES(?,?,?)",(analysis["updated_at"],instrument,json.dumps(analysis)))
             conn.execute("""INSERT OR IGNORE INTO decision_signals(signal_id,source,instrument,execution_timeframe,candle_close_ts,strategy_version,config_hash,action,bias,score,decision_payload,created_at,regime,regime_version,gate_payload) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",(decision["signal_id"],"PAPER",instrument,"15m",close_ts,decision["strategy_version"],decision["config_hash"],decision["action"],decision["bias"],decision["score"],json.dumps(decision),analysis["updated_at"],decision["regime"],decision["regime_version"],json.dumps(decision["gate_results"])))

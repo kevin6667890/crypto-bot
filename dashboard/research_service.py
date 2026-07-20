@@ -363,7 +363,13 @@ class ResearchService:
         suite = self.repository.validation_suite(suite_id)
         assert suite is not None
         payload = {**suite["request"], "validation_suite_id": suite_id}
-        queued = self.jobs.enqueue("VALIDATION_SUITE", payload, requester_key, priority=110, dedupe_payload={"suite": suite_id})
+        try:
+            queued = self.jobs.enqueue("VALIDATION_SUITE", payload, requester_key, priority=110, dedupe_payload={"suite": suite_id})
+        except Exception as error:
+            # The retry is immutable evidence too.  A failed enqueue must not leave it
+            # appearing queued without a job that can ever execute it.
+            self.repository.update_validation_suite(suite_id, status="FAILED", error=str(error), completed_at=utc_now())
+            raise
         self.repository.update_validation_suite(suite_id, job_id=queued["id"])
         return {"id": suite_id, "job_id": queued["id"], "status": queued["status"], "retry_of_suite_id": original_id}
 

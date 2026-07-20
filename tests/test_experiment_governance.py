@@ -66,3 +66,26 @@ def test_validation_suite_links_exact_family_run_and_trial_and_report_is_sanitiz
     text = output.read_text(encoding="utf-8")
     assert "cross_asset_transfer" in text and "data_cache" not in text and "API_KEY" not in text
     assert "Primary holdout metrics are unavailable" in text
+
+
+def test_validation_suite_retry_enqueue_failure_is_terminal_and_immutable(tmp_path):
+    repository = ResearchRepository(tmp_path / "research.db")
+    item = family(repository); run_id = run(repository, item["id"])
+    trial_id = repository.create_optimization_trial(run_id, 1, params(), 7, "engine")
+    repository.complete_optimization_trial(trial_id, "COMPLETED", validation_metrics={"total_return": 2, "profit_factor": 1.1, "maximum_drawdown": 5, "total_trades": 22, "sharpe_ratio": 1}, score=50, elimination_reasons=[])
+    original = repository.create_validation_suite(item["id"], run_id, trial_id, {"parameters": params()})
+    repository.update_validation_suite(original, status="FAILED", error="original failure", completed_at="2026-01-01T00:00:00+00:00", job_id=9)
+    class Queue:
+        def get(self, job_id): return {"id": job_id, "job_type": "VALIDATION_SUITE", "status": "FAILED", "request_payload": {"validation_suite_id": original}}
+        def enqueue(self, *_args, **_kwargs): raise OverflowError("queue full")
+    service = object.__new__(ResearchService); service.repository = repository; service.jobs = Queue()
+    try:
+        service.retry_validation_suite_job(9)
+        assert False, "enqueue failure must be returned to the caller"
+    except OverflowError:
+        pass
+    attempts = repository.validation_suites()
+    retry = next(row for row in attempts if row["retry_of_suite_id"] == original)
+    assert retry["status"] == "FAILED" and retry["job_id"] is None and retry["completed_at"]
+    assert retry["attempt_number"] == 2 and "queue full" in retry["error"]
+    assert repository.validation_suite(original)["status"] == "FAILED"

@@ -93,4 +93,6 @@ export const researchApi = {
   validationSuites: async () => (await request<{items:ValidationSuite[]}>("/api/validation-suites")).items,
   validationSuite: (id:number) => request<ValidationSuite>(`/api/validation-suites/${id}`),
   validationSuiteRun: (payload:object) => request<{id:number;job_id:number;status:string}>("/api/validation-suites/run", {method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)}),
+  cancelJob: (id:number) => request<ResearchJob>(`/api/jobs/${id}/cancel`, {method:"POST",headers:{"Content-Type":"application/json"},body:"{}"}),
+  retryJob: (id:number) => request<{id:number;job_id:number;status:string;retry_of_suite_id?:number}>(`/api/jobs/${id}/retry`, {method:"POST",headers:{"Content-Type":"application/json"},body:"{}"}),
 };

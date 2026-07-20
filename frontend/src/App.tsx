@@ -945,10 +945,10 @@ function Workspace() {
               <section className="flow-panel">
                 <div className="section-title">
                   <div>
-                    <span className="eyebrow">{t("market.vpvrMethod")}</span>
+                    <span className="eyebrow">{runtimeAnalysis.vpvr.professional ? t("market.vpvrProfessional") : t("market.vpvrMethod")}</span>
                     <h2>{t("market.vpvrTitle")}</h2>
                   </div>
-                  <small>{t("market.vpvrLookback", { count: runtimeAnalysis.vpvr.lookback_bars || 0 })}</small>
+                  <small>{runtimeAnalysis.vpvr.professional ? t("market.vpvrCoverage", { count: Math.round((runtimeAnalysis.vpvr.coverage_seconds || 0) / 60) }) : t("market.vpvrCollecting", { count: Math.round((runtimeAnalysis.vpvr.collection?.coverage_seconds || 0) / 60) })}</small>
                 </div>
                 <div className="flow-grid">
                   <article><div className="flow-head"><span>{t("market.vpvrPoc")}</span><b>${runtimeAnalysis.vpvr.poc?.toFixed(2)}</b></div><small>{t("market.vpvrPocHelp")}</small></article>

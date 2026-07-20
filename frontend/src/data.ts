@@ -297,11 +297,16 @@ export type RuntimeAnalysis = {
   vpvr?: {
     available: boolean;
     method?: string;
+    source?: string;
+    professional?: boolean;
     lookback_bars?: number;
+    coverage_seconds?: number;
+    trade_count?: number;
     poc?: number;
     vah?: number;
     val?: number;
     value_area_pct?: number;
+    collection?: { coverage_seconds?: number; trade_count?: number; reason?: string };
   };
   updated_at?: string;
 };

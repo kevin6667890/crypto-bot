@@ -15,6 +15,7 @@ from datetime import datetime, timedelta, timezone
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from collections import deque
 from collections.abc import Iterator
 from typing import Any
 from urllib.parse import parse_qs, urlparse
@@ -32,7 +33,7 @@ try:
     from validation_service import ValidationService
     from shadow_service import ShadowService
     from lifecycle_service import LifecycleService
-    from volume_profile import calculate_volume_profile
+    from volume_profile import calculate_trade_volume_profile, calculate_volume_profile
 except ImportError:
     from .research_service import ResearchService
     from .strategy_rules import StrategyParameters, calculate_indicators, validate_parameters
@@ -43,7 +44,7 @@ except ImportError:
     from .validation_service import ValidationService
     from .shadow_service import ShadowService
     from .lifecycle_service import LifecycleService
-    from .volume_profile import calculate_volume_profile
+    from .volume_profile import calculate_trade_volume_profile, calculate_volume_profile
 
 try:
     from dotenv import load_dotenv
@@ -65,6 +66,9 @@ AI_RETRY_BASE_SECONDS = 60
 AI_RETRY_MAX_SECONDS = 3600
 FLOW_RETENTION_SECONDS = 7 * 86400
 FLOW_DISPLAY_WINDOW_SECONDS = 6 * 3600
+VPVR_WINDOW_SECONDS = 24 * 3600
+VPVR_MIN_COVERAGE_SECONDS = 15 * 60
+OI_SAMPLE_SECONDS = 15
 
 load_dotenv(ROOT / ".env")
 
@@ -89,6 +93,9 @@ class PaperService:
         self._ai_workers_started = False
         self._flow_lock = threading.Lock()
         self._flow_buckets: dict[tuple[str, int], list[float]] = {}
+        self._flow_price_buckets: dict[tuple[str, int, float], list[float]] = {}
+        self._seen_trade_ids: set[tuple[str, str]] = set()
+        self._seen_trade_order: deque[tuple[str, str]] = deque(maxlen=100_000)
         self._flow_workers_started = False
         self._started_at = time.time()
         self.ai_state = self._load_ai_state()
@@ -135,6 +142,13 @@ class PaperService:
                 instrument TEXT NOT NULL, ts INTEGER NOT NULL, buy_notional REAL NOT NULL DEFAULT 0,
                 sell_notional REAL NOT NULL DEFAULT 0, trade_count INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY(instrument, ts))""")
+            conn.execute("""CREATE TABLE IF NOT EXISTS flow_price_buckets (
+                instrument TEXT NOT NULL, ts INTEGER NOT NULL, price REAL NOT NULL,
+                buy_notional REAL NOT NULL DEFAULT 0, sell_notional REAL NOT NULL DEFAULT 0,
+                trade_count INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(instrument, ts, price))""")
+            conn.execute("""CREATE TABLE IF NOT EXISTS oi_snapshots (
+                instrument TEXT NOT NULL, ts INTEGER NOT NULL, oi REAL NOT NULL,
+                source TEXT NOT NULL, PRIMARY KEY(instrument, ts))""")
             self._ensure_column(conn, "analysis_snapshots", "instrument", "TEXT")
             self._ensure_column(conn, "ai_briefs", "instrument", "TEXT")
             self._ensure_column(conn, "flow_snapshots", "instrument", "TEXT")
@@ -155,6 +169,8 @@ class PaperService:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_flow_instrument_created ON flow_snapshots(instrument, created_at DESC)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_ai_health_updated ON ai_health(updated_at DESC)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_flow_trade_buckets_time ON flow_trade_buckets(instrument, ts DESC)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_flow_price_buckets_time ON flow_price_buckets(instrument, ts DESC)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_oi_snapshots_time ON oi_snapshots(instrument, ts DESC)")
 
     def _load_ai_state(self) -> dict[str, dict[str, Any]]:
         states = {instrument: {"failure_count": 0, "last_error": None, "last_success_at": None, "next_retry_at": 0.0, "queued": False} for instrument in INSTRUMENTS}
@@ -232,37 +248,70 @@ class PaperService:
         since = int(time.time()) - FLOW_DISPLAY_WINDOW_SECONDS
         with self._connect() as conn:
             rows = conn.execute("SELECT (ts / 60) * 60 AS minute, SUM(buy_notional-sell_notional) AS delta, SUM(trade_count) AS trades FROM flow_trade_buckets WHERE instrument=? AND ts>=? GROUP BY minute ORDER BY minute", (instrument, since)).fetchall()
-            oi_rows = conn.execute("SELECT created_at,oi FROM flow_snapshots WHERE instrument=? AND created_at>=? ORDER BY id", (instrument, datetime.fromtimestamp(since, timezone.utc).replace(microsecond=0).isoformat())).fetchall()
+            oi_rows = conn.execute("SELECT ts,oi FROM oi_snapshots WHERE instrument=? AND ts>=? ORDER BY ts", (instrument, since)).fetchall()
         cumulative = 0.0
         cvd_series = []
         for row in rows:
             cumulative += float(row["delta"] or 0)
             cvd_series.append({"time": int(row["minute"]), "value": round(cumulative, 2), "delta": round(float(row["delta"] or 0), 2), "trades": int(row["trades"] or 0)})
-        oi_series = [{"time": int(datetime.fromisoformat(row["created_at"]).timestamp()), "value": float(row["oi"] or 0)} for row in oi_rows]
+        oi_series = [{"time": int(row["ts"]), "value": float(row["oi"] or 0)} for row in oi_rows]
         coverage = (cvd_series[-1]["time"] - cvd_series[0]["time"] + 60) if len(cvd_series) > 1 else 0
         return {"available": bool(cvd_series), "window_seconds": FLOW_DISPLAY_WINDOW_SECONDS, "coverage_seconds": coverage, "cvd": round(cumulative, 2), "cvd_series": cvd_series, "oi_series": oi_series, "source": "OKX public WebSocket trades + periodic SWAP OI", "scoring_mode": "unchanged"}
+
+    def _professional_vpvr(self, instrument: str) -> dict[str, Any]:
+        since = int(time.time()) - VPVR_WINDOW_SECONDS
+        with self._connect() as conn:
+            rows = [dict(row) for row in conn.execute("SELECT price,SUM(buy_notional) AS buy_notional,SUM(sell_notional) AS sell_notional,SUM(trade_count) AS trade_count FROM flow_price_buckets WHERE instrument=? AND ts>=? GROUP BY price ORDER BY price", (instrument, since))]
+            bounds = conn.execute("SELECT MIN(ts) AS first_ts,MAX(ts) AS last_ts,SUM(trade_count) AS trade_count FROM flow_price_buckets WHERE instrument=? AND ts>=?", (instrument, since)).fetchone()
+        coverage = max(0, int(bounds["last_ts"] or 0) - int(bounds["first_ts"] or 0)) if bounds else 0
+        profile = calculate_trade_volume_profile(rows)
+        profile.update({"source": "OKX trades-all WebSocket", "window_seconds": VPVR_WINDOW_SECONDS, "coverage_seconds": coverage, "trade_count": int(bounds["trade_count"] or 0) if bounds else 0, "ready": bool(profile.get("available")) and coverage >= VPVR_MIN_COVERAGE_SECONDS})
+        if not profile["ready"]:
+            profile["reason"] = "collecting_trade_coverage" if profile.get("available") else profile.get("reason")
+        return profile
 
     def _ingest_flow_trade(self, instrument: str, payload: dict[str, Any]) -> None:
         try:
             timestamp = int(payload["ts"]) // 1000
-            notional = float(payload["px"]) * float(payload["sz"])
+            price = float(payload["px"])
+            notional = price * float(payload["sz"])
             side = str(payload.get("side", "")).lower()
         except (KeyError, TypeError, ValueError):
             return
+        if side not in {"buy", "sell"}:
+            return
         with self._flow_lock:
+            trade_id = str(payload.get("tradeId") or "")
+            identity = (instrument, trade_id)
+            if trade_id and identity in self._seen_trade_ids:
+                return
+            if trade_id:
+                if len(self._seen_trade_order) == self._seen_trade_order.maxlen:
+                    self._seen_trade_ids.discard(self._seen_trade_order.popleft())
+                self._seen_trade_order.append(identity)
+                self._seen_trade_ids.add(identity)
             bucket = self._flow_buckets.setdefault((instrument, timestamp), [0.0, 0.0, 0.0])
             bucket[0 if side == "buy" else 1] += notional
             bucket[2] += 1
+            price_bucket = self._flow_price_buckets.setdefault((instrument, timestamp, price), [0.0, 0.0, 0.0])
+            price_bucket[0 if side == "buy" else 1] += notional
+            price_bucket[2] += 1
 
     def _flush_flow_buckets(self) -> None:
         with self._flow_lock:
             buckets, self._flow_buckets = self._flow_buckets, {}
-        if not buckets:
+            price_buckets, self._flow_price_buckets = self._flow_price_buckets, {}
+        if not buckets and not price_buckets:
             return
         values = [(instrument, ts, value[0], value[1], int(value[2])) for (instrument, ts), value in buckets.items()]
+        price_values = [(instrument, ts, price, value[0], value[1], int(value[2])) for (instrument, ts, price), value in price_buckets.items()]
         with self._connect() as conn:
-            conn.executemany("""INSERT INTO flow_trade_buckets(instrument,ts,buy_notional,sell_notional,trade_count) VALUES(?,?,?,?,?)
-                ON CONFLICT(instrument,ts) DO UPDATE SET buy_notional=buy_notional+excluded.buy_notional,sell_notional=sell_notional+excluded.sell_notional,trade_count=trade_count+excluded.trade_count""", values)
+            if values:
+                conn.executemany("""INSERT INTO flow_trade_buckets(instrument,ts,buy_notional,sell_notional,trade_count) VALUES(?,?,?,?,?)
+                    ON CONFLICT(instrument,ts) DO UPDATE SET buy_notional=buy_notional+excluded.buy_notional,sell_notional=sell_notional+excluded.sell_notional,trade_count=trade_count+excluded.trade_count""", values)
+            if price_values:
+                conn.executemany("""INSERT INTO flow_price_buckets(instrument,ts,price,buy_notional,sell_notional,trade_count) VALUES(?,?,?,?,?,?)
+                    ON CONFLICT(instrument,ts,price) DO UPDATE SET buy_notional=buy_notional+excluded.buy_notional,sell_notional=sell_notional+excluded.sell_notional,trade_count=trade_count+excluded.trade_count""", price_values)
 
     def start_flow_collector(self) -> None:
         if self._flow_workers_started:
@@ -270,6 +319,7 @@ class PaperService:
         self._flow_workers_started = True
         threading.Thread(target=self._flow_flush_loop, daemon=True, name="flow-bucket-writer").start()
         threading.Thread(target=self._flow_ws_worker, daemon=True, name="okx-flow-websocket").start()
+        threading.Thread(target=self._oi_sample_loop, daemon=True, name="okx-oi-sampler").start()
 
     def _flow_flush_loop(self) -> None:
         last_prune = 0.0
@@ -279,7 +329,22 @@ class PaperService:
             if time.time() - last_prune > 86400:
                 with self._connect() as conn:
                     conn.execute("DELETE FROM flow_trade_buckets WHERE ts<?", (int(time.time()) - FLOW_RETENTION_SECONDS,))
+                    conn.execute("DELETE FROM flow_price_buckets WHERE ts<?", (int(time.time()) - FLOW_RETENTION_SECONDS,))
+                    conn.execute("DELETE FROM oi_snapshots WHERE ts<?", (int(time.time()) - FLOW_RETENTION_SECONDS,))
                 last_prune = time.time()
+
+    def _oi_sample_loop(self) -> None:
+        while True:
+            for instrument in INSTRUMENTS:
+                try:
+                    swap = instrument.replace("-USDT", "-USDT-SWAP")
+                    row = self._json(f"https://www.okx.com/api/v5/public/open-interest?instType=SWAP&instId={swap}").get("data", [{}])[0]
+                    oi = float(row.get("oiUsd") or row.get("oi") or 0)
+                    with self._connect() as conn:
+                        conn.execute("INSERT OR REPLACE INTO oi_snapshots(instrument,ts,oi,source) VALUES(?,?,?,?)", (instrument, int(time.time()), oi, "OKX REST public/open-interest"))
+                except Exception:
+                    pass
+            time.sleep(OI_SAMPLE_SECONDS)
 
     def _flow_ws_worker(self) -> None:
         asyncio.run(self._flow_ws_loop())
@@ -287,8 +352,8 @@ class PaperService:
     async def _flow_ws_loop(self) -> None:
         while True:
             try:
-                async with websockets.connect("wss://ws.okx.com:8443/ws/v5/public", ping_interval=20, ping_timeout=20) as socket:
-                    await socket.send(json.dumps({"op": "subscribe", "args": [{"channel": "trades", "instId": instrument} for instrument in INSTRUMENTS]}))
+                async with websockets.connect("wss://ws.okx.com:8443/ws/v5/business", ping_interval=20, ping_timeout=20) as socket:
+                    await socket.send(json.dumps({"op": "subscribe", "args": [{"channel": "trades-all", "instId": instrument} for instrument in INSTRUMENTS]}))
                     alerts = globals().get("ALERTS")
                     if alerts:
                         alerts.resolve("flow-websocket")
@@ -296,7 +361,7 @@ class PaperService:
                         message = json.loads(raw)
                         argument = message.get("arg", {})
                         instrument = argument.get("instId")
-                        if argument.get("channel") != "trades" or instrument not in INSTRUMENTS:
+                        if argument.get("channel") != "trades-all" or instrument not in INSTRUMENTS:
                             continue
                         for trade in message.get("data", []):
                             self._ingest_flow_trade(instrument, trade)
@@ -316,7 +381,11 @@ class PaperService:
         c15=datasets["15m"]
         if not c15: raise RuntimeError("No confirmed 15m candle is available")
         self._store_candles(instrument,c15)
-        vpvr = calculate_volume_profile(c15[-96:])
+        streamed_vpvr = self._professional_vpvr(instrument)
+        if streamed_vpvr.get("ready"):
+            vpvr = {**streamed_vpvr, "professional": True}
+        else:
+            vpvr = {**calculate_volume_profile(c15[-96:]), "source": "confirmed_ohlcv_fallback", "professional": False, "collection": {"coverage_seconds": streamed_vpvr.get("coverage_seconds", 0), "trade_count": streamed_vpvr.get("trade_count", 0), "reason": streamed_vpvr.get("reason")}}
         params,active_version=self._active_strategy(); ind15=calculate_indicators(c15,params)[-1]; execution=c15[-1]; close_ts=int(execution["candle_close_ts"])
         frames={}
         for frame in ("1H","4H","1D"):

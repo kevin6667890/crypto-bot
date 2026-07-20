@@ -15,7 +15,7 @@ import {
   Zap,
 } from "lucide-react";
 import { motion } from "framer-motion";
-import { CSSProperties, useEffect, useState } from "react";
+import { CSSProperties, useEffect, useMemo, useState } from "react";
 import { EquityChart, FlowChart, MarketChart, ReplayChart } from "./charts";
 import StrategyResearch from "./StrategyResearch";
 import Operations from "./Operations";
@@ -743,6 +743,7 @@ function Workspace() {
   const runtimeAnalysis =
     paper?.instrument === instrument ? paper.analysis : null;
   const legacyVpvr = runtimeAnalysis?.vpvr;
+  const chartFlow = useMemo(() => paper?.flow?.professional?.available ? { cvd_series: paper.flow.professional.cvd_series, oi_series: paper.flow.professional.oi_series } : undefined, [paper?.flow?.professional]);
   const action =
     runtimeAnalysis?.action || (signal.score >= 70 ? "WATCH" : "WAIT");
   const decisionScore = runtimeAnalysis?.score ?? signal.score;
@@ -978,7 +979,7 @@ function Workspace() {
                 </div>
               </div>
               <div className="workspace-chart">
-                <MarketChart instrument={instrument} interval={interval} flow={paper?.flow?.professional?.available ? { cvd_series: paper.flow.professional.cvd_series, oi_series: paper.flow.professional.oi_series } : undefined} />
+                <MarketChart instrument={instrument} interval={interval} flow={chartFlow} />
                 {paper?.flow?.professional?.available && <div className="flow-pane-labels"><span>CVD · 逐笔主动成交差</span><span>OI · 永续未平仓量</span></div>}
               </div>
               <div className="chart-legend">

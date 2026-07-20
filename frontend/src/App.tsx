@@ -1117,11 +1117,13 @@ function Workspace() {
                     <h2>{t("market.decisionLog")}</h2>
                   </div>
                   <small>
-                    {t("market.recentEvents", { count: paper.events.length })}
+                    {t("market.recentEvents", {
+                      count: Math.min(paper.events.length, 3),
+                    })}
                   </small>
                 </div>
                 <div className="event-list">
-                  {paper.events.slice(0, 12).map((event) => (
+                  {paper.events.slice(0, 3).map((event) => (
                     <div key={event.id}>
                       <time>{new Date(event.created_at).toLocaleString()}</time>
                       <b>{localValue(event.event_type)}</b>

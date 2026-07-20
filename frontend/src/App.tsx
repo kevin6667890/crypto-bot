@@ -710,6 +710,28 @@ function Workspace() {
   }, [instrument]);
 
   useEffect(() => {
+    let socket: WebSocket | null = null;
+    let retry: number | undefined;
+    let closed = false;
+    const connect = () => {
+      socket = new WebSocket("wss://ws.okx.com:8443/ws/v5/public");
+      socket.onopen = () => socket?.send(JSON.stringify({ op: "subscribe", args: [{ channel: "tickers", instId: instrument }] }));
+      socket.onmessage = (event) => {
+        try {
+          const row = JSON.parse(event.data)?.data?.[0];
+          const price = Number(row?.last), open = Number(row?.open24h);
+          if (!Number.isFinite(price)) return;
+          setSnapshot((current) => ({ ...current, price, changePct: open > 0 ? (price - open) / open * 100 : current.changePct, high24: Number(row.high24h) || current.high24, low24: Number(row.low24h) || current.low24, volume: Number(row.vol24h) || current.volume, updatedAt: new Date(Number(row.ts) || Date.now()).toLocaleTimeString(), source: "OKX" }));
+        } catch { /* Preserve the last confirmed HTTP snapshot on malformed frames. */ }
+      };
+      socket.onclose = () => { if (!closed) retry = window.setTimeout(connect, 3000); };
+      socket.onerror = () => socket?.close();
+    };
+    connect();
+    return () => { closed = true; window.clearTimeout(retry); socket?.close(); };
+  }, [instrument]);
+
+  useEffect(() => {
     let cancelled = false;
     if (!engineInstruments.includes(instrument)) { setVpvr(null); return; }
     const load = () => fetchVpvrProfile(instrument, interval).then((profile) => { if (!cancelled) setVpvr(profile); }).catch(() => { if (!cancelled) setVpvr(null); });

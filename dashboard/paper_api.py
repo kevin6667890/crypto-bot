@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import hmac
 import os
@@ -18,6 +19,8 @@ from collections.abc import Iterator
 from typing import Any
 from urllib.parse import parse_qs, urlparse
 from urllib.request import Request, urlopen
+
+import websockets
 
 try:
     from research_service import ResearchService
@@ -58,6 +61,8 @@ AI_BRIEF_INTERVAL_SECONDS = 3600
 AI_STALE_AFTER_SECONDS = 7200
 AI_RETRY_BASE_SECONDS = 60
 AI_RETRY_MAX_SECONDS = 3600
+FLOW_RETENTION_SECONDS = 7 * 86400
+FLOW_DISPLAY_WINDOW_SECONDS = 6 * 3600
 
 load_dotenv(ROOT / ".env")
 
@@ -80,6 +85,9 @@ class PaperService:
         self._ai_lock = threading.Lock()
         self._ai_queue: queue.Queue[dict[str, Any]] = queue.Queue()
         self._ai_workers_started = False
+        self._flow_lock = threading.Lock()
+        self._flow_buckets: dict[tuple[str, int], list[float]] = {}
+        self._flow_workers_started = False
         self._started_at = time.time()
         self.ai_state = self._load_ai_state()
 
@@ -121,6 +129,10 @@ class PaperService:
             conn.execute("""CREATE TABLE IF NOT EXISTS ai_health (
                 instrument TEXT PRIMARY KEY, last_success_at TEXT, last_attempt_at TEXT, last_error TEXT,
                 failure_count INTEGER NOT NULL DEFAULT 0, next_retry_at TEXT, updated_at TEXT NOT NULL)""")
+            conn.execute("""CREATE TABLE IF NOT EXISTS flow_trade_buckets (
+                instrument TEXT NOT NULL, ts INTEGER NOT NULL, buy_notional REAL NOT NULL DEFAULT 0,
+                sell_notional REAL NOT NULL DEFAULT 0, trade_count INTEGER NOT NULL DEFAULT 0,
+                PRIMARY KEY(instrument, ts))""")
             self._ensure_column(conn, "analysis_snapshots", "instrument", "TEXT")
             self._ensure_column(conn, "ai_briefs", "instrument", "TEXT")
             self._ensure_column(conn, "flow_snapshots", "instrument", "TEXT")
@@ -140,6 +152,7 @@ class PaperService:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_events_instrument ON event_logs(instrument, id DESC)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_flow_instrument_created ON flow_snapshots(instrument, created_at DESC)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_ai_health_updated ON ai_health(updated_at DESC)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_flow_trade_buckets_time ON flow_trade_buckets(instrument, ts DESC)")
 
     def _load_ai_state(self) -> dict[str, dict[str, Any]]:
         states = {instrument: {"failure_count": 0, "last_error": None, "last_success_at": None, "next_retry_at": 0.0, "queued": False} for instrument in INSTRUMENTS}
@@ -210,7 +223,86 @@ class PaperService:
             "oi": oi, "oi_change_pct": round((oi - previous_oi) / previous_oi * 100, 4) if previous_oi else 0,
             "oi_history": list(reversed(history)), "source": "OKX public trades + SWAP OI",
             "quality": {"trade_count": len(trade_timestamps), "window_seconds": max(trade_timestamps) - min(trade_timestamps) if trade_timestamps else 0, "last_trade_ts": max(trade_timestamps) if trade_timestamps else None, "sampled_at": now_iso()},
+            "professional": self._professional_flow(instrument),
         }
+
+    def _professional_flow(self, instrument: str) -> dict[str, Any]:
+        since = int(time.time()) - FLOW_DISPLAY_WINDOW_SECONDS
+        with self._connect() as conn:
+            rows = conn.execute("SELECT (ts / 60) * 60 AS minute, SUM(buy_notional-sell_notional) AS delta, SUM(trade_count) AS trades FROM flow_trade_buckets WHERE instrument=? AND ts>=? GROUP BY minute ORDER BY minute", (instrument, since)).fetchall()
+            oi_rows = conn.execute("SELECT created_at,oi FROM flow_snapshots WHERE instrument=? AND created_at>=? ORDER BY id", (instrument, datetime.fromtimestamp(since, timezone.utc).replace(microsecond=0).isoformat())).fetchall()
+        cumulative = 0.0
+        cvd_series = []
+        for row in rows:
+            cumulative += float(row["delta"] or 0)
+            cvd_series.append({"time": int(row["minute"]), "value": round(cumulative, 2), "delta": round(float(row["delta"] or 0), 2), "trades": int(row["trades"] or 0)})
+        oi_series = [{"time": int(datetime.fromisoformat(row["created_at"]).timestamp()), "value": float(row["oi"] or 0)} for row in oi_rows]
+        coverage = (cvd_series[-1]["time"] - cvd_series[0]["time"] + 60) if len(cvd_series) > 1 else 0
+        return {"available": bool(cvd_series), "window_seconds": FLOW_DISPLAY_WINDOW_SECONDS, "coverage_seconds": coverage, "cvd": round(cumulative, 2), "cvd_series": cvd_series, "oi_series": oi_series, "source": "OKX public WebSocket trades + periodic SWAP OI", "scoring_mode": "unchanged"}
+
+    def _ingest_flow_trade(self, instrument: str, payload: dict[str, Any]) -> None:
+        try:
+            timestamp = int(payload["ts"]) // 1000
+            notional = float(payload["px"]) * float(payload["sz"])
+            side = str(payload.get("side", "")).lower()
+        except (KeyError, TypeError, ValueError):
+            return
+        with self._flow_lock:
+            bucket = self._flow_buckets.setdefault((instrument, timestamp), [0.0, 0.0, 0.0])
+            bucket[0 if side == "buy" else 1] += notional
+            bucket[2] += 1
+
+    def _flush_flow_buckets(self) -> None:
+        with self._flow_lock:
+            buckets, self._flow_buckets = self._flow_buckets, {}
+        if not buckets:
+            return
+        values = [(instrument, ts, value[0], value[1], int(value[2])) for (instrument, ts), value in buckets.items()]
+        with self._connect() as conn:
+            conn.executemany("""INSERT INTO flow_trade_buckets(instrument,ts,buy_notional,sell_notional,trade_count) VALUES(?,?,?,?,?)
+                ON CONFLICT(instrument,ts) DO UPDATE SET buy_notional=buy_notional+excluded.buy_notional,sell_notional=sell_notional+excluded.sell_notional,trade_count=trade_count+excluded.trade_count""", values)
+
+    def start_flow_collector(self) -> None:
+        if self._flow_workers_started:
+            return
+        self._flow_workers_started = True
+        threading.Thread(target=self._flow_flush_loop, daemon=True, name="flow-bucket-writer").start()
+        threading.Thread(target=self._flow_ws_worker, daemon=True, name="okx-flow-websocket").start()
+
+    def _flow_flush_loop(self) -> None:
+        last_prune = 0.0
+        while True:
+            time.sleep(5)
+            self._flush_flow_buckets()
+            if time.time() - last_prune > 86400:
+                with self._connect() as conn:
+                    conn.execute("DELETE FROM flow_trade_buckets WHERE ts<?", (int(time.time()) - FLOW_RETENTION_SECONDS,))
+                last_prune = time.time()
+
+    def _flow_ws_worker(self) -> None:
+        asyncio.run(self._flow_ws_loop())
+
+    async def _flow_ws_loop(self) -> None:
+        while True:
+            try:
+                async with websockets.connect("wss://ws.okx.com:8443/ws/v5/public", ping_interval=20, ping_timeout=20) as socket:
+                    await socket.send(json.dumps({"op": "subscribe", "args": [{"channel": "trades", "instId": instrument} for instrument in INSTRUMENTS]}))
+                    alerts = globals().get("ALERTS")
+                    if alerts:
+                        alerts.resolve("flow-websocket")
+                    async for raw in socket:
+                        message = json.loads(raw)
+                        argument = message.get("arg", {})
+                        instrument = argument.get("instId")
+                        if argument.get("channel") != "trades" or instrument not in INSTRUMENTS:
+                            continue
+                        for trade in message.get("data", []):
+                            self._ingest_flow_trade(instrument, trade)
+            except Exception as error:
+                alerts = globals().get("ALERTS")
+                if alerts:
+                    alerts.raise_alert("Flow WebSocket Error", "warning", "collector", f"OKX flow stream disconnected ({type(error).__name__}); retrying", key="flow-websocket")
+                await asyncio.sleep(5)
 
     def _store_candles(self, instrument: str, candles: list[dict[str, float]]) -> None:
         with self._connect() as conn:
@@ -717,6 +809,7 @@ def run() -> None:
         while True:
             SERVICE.cycle(); log_event(LOGGER,"INFO","paper_scheduler","cycle_completed",duration_ms=SERVICE.last_cycle_duration_ms); time.sleep(60)
     SERVICE.start_ai_workers()
+    SERVICE.start_flow_collector()
     threading.Thread(target=scheduler, daemon=True).start()
     host = os.getenv("PAPER_API_HOST", "127.0.0.1")
     ThreadingHTTPServer((host, int(os.getenv("PAPER_API_PORT", "8765"))), Handler).serve_forever()

@@ -304,6 +304,16 @@ export type FlowStatus = {
   oi_change_pct: number;
   oi_history: Array<{ created_at: string; oi: number; cvd: number }>;
   source: string;
+  professional?: {
+    available: boolean;
+    window_seconds: number;
+    coverage_seconds: number;
+    cvd: number;
+    cvd_series: Array<{ time: number; value: number; delta: number; trades: number }>;
+    oi_series: Array<{ time: number; value: number }>;
+    source: string;
+    scoring_mode: string;
+  };
 };
 export type RiskStatus = {
   allowed: boolean;

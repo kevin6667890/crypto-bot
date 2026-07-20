@@ -955,20 +955,20 @@ function Workspace() {
                 <div className="flow-grid">
                   <article>
                     <div className="flow-head">
-                      <span>{t("market.cvdRecent")}</span>
+                      <span>{paper.flow.professional?.available ? "专业 CVD · 最近 6 小时" : t("market.cvdRecent")}</span>
                       <b
                         className={
                           paper.flow.cvd_delta >= 0 ? "positive" : "negative"
                         }
                       >
-                        {paper.flow.cvd_delta >= 0 ? "+" : ""}
-                        {paper.flow.cvd_delta.toLocaleString(undefined, {
+                        {(paper.flow.professional?.available ? paper.flow.professional.cvd : paper.flow.cvd_delta) >= 0 ? "+" : ""}
+                        {(paper.flow.professional?.available ? paper.flow.professional.cvd : paper.flow.cvd_delta).toLocaleString(undefined, {
                           maximumFractionDigits: 0,
                         })}
                       </b>
                     </div>
-                    <FlowChart points={paper.flow.cvd_series} zeroLine />
-                    <small>{t("market.cvdHelp")}</small>
+                    <FlowChart points={paper.flow.professional?.available ? paper.flow.professional.cvd_series : paper.flow.cvd_series} zeroLine />
+                    <small>{paper.flow.professional?.available ? `WebSocket 逐笔成交聚合 · 已覆盖 ${Math.round(paper.flow.professional.coverage_seconds / 60)} 分钟 · 当前不参与评分` : t("market.cvdHelp")}</small>
                   </article>
                   <article>
                     <div className="flow-head">
@@ -982,13 +982,13 @@ function Workspace() {
                     </div>
                     <FlowChart
                       color="#0ea5e9"
-                      points={paper.flow.oi_history.map((point, index) => ({
+                      points={(paper.flow.professional?.available ? paper.flow.professional.oi_series : paper.flow.oi_history.map((point, index) => ({
                         time:
                           Math.floor(
                             new Date(point.created_at).getTime() / 1000
                           ) || index,
                         value: point.oi,
-                      }))}
+                      }))) }
                     />
                     <small>
                       {t("market.oiChange", {

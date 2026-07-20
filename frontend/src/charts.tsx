@@ -70,6 +70,19 @@ function useResponsiveChart(factory: (container: HTMLDivElement) => IChartApi, d
 
 type FlowPaneData = { cvd_series: Array<{ time: number; value: number }>; oi_series: Array<{ time: number; value: number }> };
 
+function alignFlowToCandles(candles: Candle[], points: Array<{ time: number; value: number }>, interval: string) {
+  const seconds = interval === "1m" ? 60 : interval === "5m" ? 300 : interval === "15m" ? 900 : interval === "1h" ? 3600 : interval === "4h" ? 14400 : 86400;
+  const ordered = [...points].sort((a, b) => a.time - b.time);
+  const aligned: Array<{ time: UTCTimestamp; value: number }> = [];
+  let cursor = 0, latest: number | undefined;
+  for (const candle of candles) {
+    const closeTime = Number(candle.time) + seconds;
+    while (cursor < ordered.length && ordered[cursor].time <= closeTime) latest = ordered[cursor++].value;
+    if (latest !== undefined) aligned.push({ time: candle.time, value: latest });
+  }
+  return aligned;
+}
+
 export function MarketChart({ instrument = "ETH-USDT", interval = "15m", flow }: { instrument?: string; interval?: string; flow?: FlowPaneData }) {
   const [candles, setCandles] = useState<Candle[]>(() => generateCandles());
 
@@ -122,13 +135,13 @@ export function MarketChart({ instrument = "ETH-USDT", interval = "15m", flow }:
       ma200.setData(movingAverage(200).slice(-260));
       if (flow?.cvd_series.length) {
         const cvd = chart.addSeries(AreaSeries, { lineColor: "#7c3aed", topColor: "rgba(124,58,237,.22)", bottomColor: "rgba(124,58,237,.02)", lineWidth: 2, priceLineVisible: false, lastValueVisible: true }, 1);
-        cvd.setData(flow.cvd_series.map((point) => ({ time: point.time as UTCTimestamp, value: point.value })));
+        cvd.setData(alignFlowToCandles(candles, flow.cvd_series, interval));
         cvd.createPriceLine({ price: 0, color: "rgba(71,84,103,.45)", lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: "0" });
         chart.panes()[1]?.setHeight(105);
       }
       if (flow?.oi_series.length) {
         const oi = chart.addSeries(AreaSeries, { lineColor: "#0ea5e9", topColor: "rgba(14,165,233,.20)", bottomColor: "rgba(14,165,233,.02)", lineWidth: 2, priceLineVisible: false, lastValueVisible: true }, 2);
-        oi.setData(flow.oi_series.map((point) => ({ time: point.time as UTCTimestamp, value: point.value })));
+        oi.setData(alignFlowToCandles(candles, flow.oi_series, interval));
         chart.panes()[2]?.setHeight(105);
       }
     } catch {

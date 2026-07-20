@@ -15,7 +15,7 @@ import {
   Zap,
 } from "lucide-react";
 import { motion } from "framer-motion";
-import { CSSProperties, useEffect, useState } from "react";
+import { CSSProperties, useCallback, useEffect, useRef, useState } from "react";
 import { EquityChart, FlowChart, MarketChart, ReplayChart } from "./charts";
 import StrategyResearch from "./StrategyResearch";
 import Operations from "./Operations";
@@ -49,10 +49,10 @@ function formatSigned(value: number, suffix = "") {
   return `${value >= 0 ? "+" : ""}${value.toFixed(2)}${suffix}`;
 }
 
-function VpvrHistogram({ profile, poc, vah, val, professional }: { profile: Array<{ price_low: number; price_high: number; volume: number; delta: number; trades: number }>; poc?: number; vah?: number; val?: number; professional?: boolean }) {
+function VpvrHistogram({ profile, poc, vah, val, professional, viewport }: { profile: Array<{ price_low: number; price_high: number; volume: number; delta: number; trades: number }>; poc?: number; vah?: number; val?: number; professional?: boolean; viewport?: { top: number; bottom: number } }) {
   const rows = [...profile].sort((a, b) => b.price_low - a.price_low).slice(0, 36);
   const maxVolume = Math.max(...rows.map((row) => row.volume), 1);
-  return <div className="vpvr-histogram">
+  return <div className="vpvr-histogram" style={viewport ? { top: viewport.top, bottom: `calc(100% - ${viewport.bottom}px)` } : undefined}>
     <div className="vpvr-histogram-head"><span>成交价档位分布</span><small>{professional ? "绿色：主动买盘 Delta；红色：主动卖盘 Delta" : "逐笔流就绪前显示 K 线成交量近似"}</small></div>
     <div className="vpvr-rows">{rows.map((row) => {
       const midpoint = (row.price_low + row.price_high) / 2;
@@ -642,7 +642,7 @@ function Workspace() {
     value: localValue,
     message,
   } = useLanguage();
-  const engineInstruments = ["BTC-USDT", "ETH-USDT", "SOL-USDT"];
+  const engineInstruments = ["BTC-USDT", "ETH-USDT"];
   const [snapshot, setSnapshot] = useState<MarketSnapshot>(() =>
     demoSnapshot()
   );
@@ -654,6 +654,8 @@ function Workspace() {
   const [loading, setLoading] = useState(false);
   const [paper, setPaper] = useState<PaperStatus | null>(null);
   const [vpvr, setVpvr] = useState<VpvrProfile | null>(null);
+  const [vpvrViewport, setVpvrViewport] = useState<{ low: number; high: number; bins: number; top: number; bottom: number } | undefined>();
+  const vpvrViewportTimer = useRef<number | undefined>();
   const [activePage, setActivePage] = useState<
     "market" | "research" | "operations"
   >("market");
@@ -712,11 +714,16 @@ function Workspace() {
   useEffect(() => {
     let cancelled = false;
     if (!engineInstruments.includes(instrument)) { setVpvr(null); return; }
-    const load = () => fetchVpvrProfile(instrument, interval).then((profile) => { if (!cancelled) setVpvr(profile); }).catch(() => { if (!cancelled) setVpvr(null); });
+    const load = () => fetchVpvrProfile(instrument, interval, vpvrViewport).then((profile) => { if (!cancelled) setVpvr(profile); }).catch(() => { if (!cancelled) setVpvr(null); });
     load();
     const timer = window.setInterval(load, 60_000);
     return () => { cancelled = true; window.clearInterval(timer); };
-  }, [instrument, interval]);
+  }, [instrument, interval, vpvrViewport]);
+
+  const handleVpvrViewport = useCallback((viewport: { low: number; high: number; bins: number; top: number; bottom: number }) => {
+    window.clearTimeout(vpvrViewportTimer.current);
+    vpvrViewportTimer.current = window.setTimeout(() => setVpvrViewport((current) => !current || Math.abs(current.low - viewport.low) > 0.000001 || Math.abs(current.high - viewport.high) > 0.000001 || current.bins !== viewport.bins ? viewport : current), 180);
+  }, []);
 
   const runtimeAnalysis =
     paper?.instrument === instrument ? paper.analysis : null;
@@ -795,9 +802,6 @@ function Workspace() {
           >
             <option>BTC-USDT</option>
             <option>ETH-USDT</option>
-            <option>SOL-USDT</option>
-            <option>XRP-USDT</option>
-            <option>DOGE-USDT</option>
           </select>
           <select
             value={interval}
@@ -857,7 +861,7 @@ function Workspace() {
                 <span className="eyebrow">{t("market.okxSpot")}</span>
                 <h2>{t("market.scanner")}</h2>
               </div>
-              <span className="count-badge">{watchlist.length || 5}</span>
+              <span className="count-badge">{watchlist.length || 2}</span>
             </div>
             <p className="scanner-note">{t("market.scannerNote")}</p>
             <div className="scanner-head">
@@ -959,8 +963,8 @@ function Workspace() {
                 </div>
               </div>
               <div className="workspace-chart">
-                <MarketChart instrument={instrument} interval={interval} />
-                {!!vpvr?.available && !!vpvr.profile?.length && <VpvrHistogram profile={vpvr.profile} poc={vpvr.poc} vah={vpvr.vah} val={vpvr.val} professional={vpvr.professional} />}
+                <MarketChart instrument={instrument} interval={interval} onViewportChange={handleVpvrViewport} />
+                {!!vpvr?.available && !!vpvr.profile?.length && <VpvrHistogram profile={vpvr.profile} poc={vpvr.poc} vah={vpvr.vah} val={vpvr.val} professional={vpvr.professional} viewport={vpvrViewport} />}
               </div>
               <div className="chart-legend">
                 <span>

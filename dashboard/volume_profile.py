@@ -4,18 +4,21 @@ from __future__ import annotations
 from typing import Any
 
 
-def calculate_volume_profile(candles: list[dict[str, Any]], bins: int = 48, value_area: float = 0.70) -> dict[str, Any]:
+def calculate_volume_profile(candles: list[dict[str, Any]], bins: int = 48, value_area: float = 0.70, price_low: float | None = None, price_high: float | None = None) -> dict[str, Any]:
     """Approximate VPVR by distributing each completed candle's volume over its range."""
     rows = [row for row in candles if all(row.get(key) is not None for key in ("low", "high", "volume"))]
     if len(rows) < 20 or bins < 2:
         return {"available": False, "reason": "insufficient_confirmed_candles"}
-    low, high = min(float(row["low"]) for row in rows), max(float(row["high"]) for row in rows)
+    natural_low, natural_high = min(float(row["low"]) for row in rows), max(float(row["high"]) for row in rows)
+    low, high = max(natural_low, float(price_low)) if price_low is not None else natural_low, min(natural_high, float(price_high)) if price_high is not None else natural_high
     if high <= low:
         return {"available": False, "reason": "flat_price_range"}
     width = (high - low) / bins
     volumes = [0.0] * bins
     for row in rows:
-        candle_low, candle_high, volume = float(row["low"]), float(row["high"]), max(0.0, float(row["volume"]))
+        candle_low, candle_high, volume = max(low, float(row["low"])), min(high, float(row["high"])), max(0.0, float(row["volume"]))
+        if candle_high < low or candle_low > high or candle_high < candle_low:
+            continue
         start = max(0, min(bins - 1, int((candle_low - low) / width)))
         end = max(0, min(bins - 1, int((candle_high - low) / width)))
         if end < start:
@@ -53,9 +56,9 @@ def calculate_volume_profile(candles: list[dict[str, Any]], bins: int = 48, valu
     }
 
 
-def calculate_trade_volume_profile(rows: list[dict[str, Any]], bins: int = 80, value_area: float = 0.70) -> dict[str, Any]:
+def calculate_trade_volume_profile(rows: list[dict[str, Any]], bins: int = 80, value_area: float = 0.70, price_low: float | None = None, price_high: float | None = None) -> dict[str, Any]:
     """Build VPVR from actual trade-price notional, never candle-range allocation."""
-    trades = [row for row in rows if float(row.get("buy_notional") or 0) + float(row.get("sell_notional") or 0) > 0]
+    trades = [row for row in rows if float(row.get("buy_notional") or 0) + float(row.get("sell_notional") or 0) > 0 and (price_low is None or float(row["price"]) >= price_low) and (price_high is None or float(row["price"]) <= price_high)]
     if not trades or bins < 2:
         return {"available": False, "reason": "insufficient_trade_coverage"}
     low, high = min(float(row["price"]) for row in trades), max(float(row["price"]) for row in trades)

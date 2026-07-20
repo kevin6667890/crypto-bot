@@ -55,7 +55,7 @@ except ImportError:
 
 ROOT = Path(__file__).resolve().parents[1]
 DB_PATH = ROOT / "data_cache" / "paper_trades.db"
-INSTRUMENTS = ("BTC-USDT", "ETH-USDT", "SOL-USDT")
+INSTRUMENTS = ("BTC-USDT", "ETH-USDT")
 MAX_OPEN_POSITIONS = 3
 MAX_DAILY_LOSS_R = -2.0
 MAX_CONSECUTIVE_LOSSES = 3
@@ -259,31 +259,34 @@ class PaperService:
         coverage = (cvd_series[-1]["time"] - cvd_series[0]["time"] + 60) if len(cvd_series) > 1 else 0
         return {"available": bool(cvd_series), "window_seconds": FLOW_DISPLAY_WINDOW_SECONDS, "coverage_seconds": coverage, "cvd": round(cumulative, 2), "cvd_series": cvd_series, "oi_series": oi_series, "source": "OKX public WebSocket trades + periodic SWAP OI", "scoring_mode": "unchanged"}
 
-    def _professional_vpvr(self, instrument: str) -> dict[str, Any]:
+    def _professional_vpvr(self, instrument: str, bins: int = 32, price_low: float | None = None, price_high: float | None = None) -> dict[str, Any]:
         since = int(time.time()) - VPVR_WINDOW_SECONDS
+        range_sql, range_args = "", []
+        if price_low is not None: range_sql += " AND price>=?"; range_args.append(price_low)
+        if price_high is not None: range_sql += " AND price<=?"; range_args.append(price_high)
         with self._connect() as conn:
-            rows = [dict(row) for row in conn.execute("SELECT price,SUM(buy_notional) AS buy_notional,SUM(sell_notional) AS sell_notional,SUM(trade_count) AS trade_count FROM flow_price_buckets WHERE instrument=? AND ts>=? GROUP BY price ORDER BY price", (instrument, since))]
-            bounds = conn.execute("SELECT MIN(ts) AS first_ts,MAX(ts) AS last_ts,SUM(trade_count) AS trade_count FROM flow_price_buckets WHERE instrument=? AND ts>=?", (instrument, since)).fetchone()
+            rows = [dict(row) for row in conn.execute(f"SELECT price,SUM(buy_notional) AS buy_notional,SUM(sell_notional) AS sell_notional,SUM(trade_count) AS trade_count FROM flow_price_buckets WHERE instrument=? AND ts>=?{range_sql} GROUP BY price ORDER BY price", (instrument, since, *range_args))]
+            bounds = conn.execute(f"SELECT MIN(ts) AS first_ts,MAX(ts) AS last_ts,SUM(trade_count) AS trade_count FROM flow_price_buckets WHERE instrument=? AND ts>=?{range_sql}", (instrument, since, *range_args)).fetchone()
         coverage = max(0, int(bounds["last_ts"] or 0) - int(bounds["first_ts"] or 0)) if bounds else 0
-        profile = calculate_trade_volume_profile(rows)
+        profile = calculate_trade_volume_profile(rows, bins=bins, price_low=price_low, price_high=price_high)
         profile.update({"source": "OKX trades-all WebSocket", "window_seconds": VPVR_WINDOW_SECONDS, "coverage_seconds": coverage, "trade_count": int(bounds["trade_count"] or 0) if bounds else 0, "ready": bool(profile.get("available")) and coverage >= VPVR_MIN_COVERAGE_SECONDS})
         if not profile["ready"]:
             profile["reason"] = "collecting_trade_coverage" if profile.get("available") else profile.get("reason")
         return profile
 
-    def vpvr_profile(self, instrument: str, interval: str = "15m") -> dict[str, Any]:
+    def vpvr_profile(self, instrument: str, interval: str = "15m", bins: int = 32, price_low: float | None = None, price_high: float | None = None) -> dict[str, Any]:
         """Return a display-only VPVR matched to the selected chart timeframe."""
         interval = {"1h": "1H", "4h": "4H", "1d": "1D"}.get(interval, interval)
         bar, lookback = VPVR_TIMEFRAME_CONFIG.get(interval, VPVR_TIMEFRAME_CONFIG["15m"])
         if bar == "15m":
-            streamed = self._professional_vpvr(instrument)
+            streamed = self._professional_vpvr(instrument, bins=bins, price_low=price_low, price_high=price_high)
             if streamed.get("ready"):
                 return {**streamed, "professional": True, "interval": bar}
         candles = [row for row in self._candles(instrument, bar, lookback) if row.get("confirmed", True)]
-        profile = calculate_volume_profile(candles[-lookback:])
+        profile = calculate_volume_profile(candles[-lookback:], bins=bins, price_low=price_low, price_high=price_high)
         profile.update({"source": "confirmed_ohlcv_fallback", "professional": False, "interval": bar, "lookback_bars": min(len(candles), lookback)})
         if bar == "15m":
-            streamed = self._professional_vpvr(instrument)
+            streamed = self._professional_vpvr(instrument, bins=bins, price_low=price_low, price_high=price_high)
             profile["collection"] = {"coverage_seconds": streamed.get("coverage_seconds", 0), "trade_count": streamed.get("trade_count", 0), "reason": streamed.get("reason")}
         return profile
 
@@ -716,7 +719,12 @@ class Handler(BaseHTTPRequestHandler):
         parsed, query = urlparse(self.path), parse_qs(urlparse(self.path).query)
         instrument = query.get("instrument", ["ETH-USDT"])[0]
         if parsed.path == "/api/status": self._send(SERVICE.status(instrument))
-        elif parsed.path == "/api/vpvr": self._send(SERVICE.vpvr_profile(instrument, query.get("interval", ["15m"])[0]))
+        elif parsed.path == "/api/vpvr":
+            def query_float(name: str) -> float | None:
+                try: return float(query[name][0]) if name in query else None
+                except (TypeError, ValueError): return None
+            bins = max(18, min(42, int(query_float("bins") or 32)))
+            self._send(SERVICE.vpvr_profile(instrument, query.get("interval", ["15m"])[0], bins, query_float("price_low"), query_float("price_high")))
         elif parsed.path == "/api/health": self._send(HEALTH.payload(False))
         elif parsed.path == "/api/health/details":
             details=HEALTH.payload(True); shadows=SHADOW.list(); counts=VALIDATION.repository.table_counts(); details.update({"shadow_scheduler_status":"running","active_shadow_strategies":sum(x["status"]=="RUNNING" for x in shadows),"validation_job_types":["GATE_ANALYSIS","SENSITIVITY","BENCHMARK","ROBUSTNESS"],"phase4_database_rows":sum(counts.get(name,0) for name in counts if name.startswith(("gate_","near_","sensitivity_","benchmark_","robustness_","shadow_","strategy_lifecycle","promotion_","strategy_audit"))),"promotion_audit_alerts":sum(str(x.get("severity","")).lower()=="critical" and str(x.get("status","")).lower()=="open" for x in ALERTS.list())});self._send(details)

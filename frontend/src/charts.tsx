@@ -68,7 +68,7 @@ function useResponsiveChart(factory: (container: HTMLDivElement) => IChartApi, d
   return ref;
 }
 
-export function MarketChart({ instrument = "ETH-USDT", interval = "15m" }: { instrument?: string; interval?: string }) {
+export function MarketChart({ instrument = "ETH-USDT", interval = "15m", onViewportChange }: { instrument?: string; interval?: string; onViewportChange?: (viewport: { low: number; high: number; bins: number; top: number; bottom: number }) => void }) {
   const [candles, setCandles] = useState<Candle[]>(() => generateCandles());
 
   useEffect(() => {
@@ -118,12 +118,24 @@ export function MarketChart({ instrument = "ETH-USDT", interval = "15m" }: { ins
       const ma200 = chart.addSeries(LineSeries, { color: "#7c3aed", lineWidth: 2, priceLineVisible: false });
       ma60.setData(movingAverage(60).slice(-260));
       ma200.setData(movingAverage(200).slice(-260));
+      const reportViewport = () => {
+        const range = chart.timeScale().getVisibleLogicalRange();
+        if (!range || !onViewportChange) return;
+        const from = Math.max(0, Math.floor(range.from));
+        const to = Math.min(candles.length - 1, Math.ceil(range.to));
+        const visible = candles.slice(from, to + 1);
+        if (!visible.length) return;
+        const low = Math.min(...visible.map((item) => item.low)), high = Math.max(...visible.map((item) => item.high));
+        onViewportChange({ low, high, bins: Math.max(18, Math.min(42, Math.round(container.clientHeight / 15))), top: series.priceToCoordinate(high) ?? 12, bottom: series.priceToCoordinate(low) ?? container.clientHeight - 28 });
+      };
+      chart.timeScale().subscribeVisibleLogicalRangeChange(reportViewport);
+      window.setTimeout(reportViewport, 0);
     } catch {
       series.setData(generateCandles());
     }
     chart.timeScale().fitContent();
     return chart;
-  }, [candles]);
+  }, [candles, onViewportChange]);
 
   return <div className="chart-canvas" ref={ref} />;
 }

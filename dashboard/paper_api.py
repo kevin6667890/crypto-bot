@@ -537,6 +537,34 @@ class PaperService:
             finally:
                 self._ai_queue.task_done()
 
+    def _ai_context(self, instrument: str, analysis: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Return a small, explicit context contract for every DeepSeek call.
+
+        Never pass API/display payloads directly: those include multi-day CVD/OI
+        series and can turn a simple question into a very large token request.
+        """
+        status = self.status(instrument)
+        analysis = analysis or status["analysis"]
+        flow = analysis.get("flow") or {}
+        professional = flow.get("professional") or {}
+        frames = analysis.get("timeframes") or {}
+        frame_summary = {
+            frame: {key: item.get(key) for key in ("trend", "close", "ma60", "ma200", "ema20_slope_pct")}
+            for frame, item in frames.items()
+            if frame in {"15m", "1H", "4H", "1D"}
+        }
+        trade_fields = ("id", "side", "status", "entry", "exit_price", "pnl_r", "pnl_usdt", "reason", "created_at", "closed_at")
+        return {
+            "instrument": instrument,
+            "as_of": analysis.get("updated_at"),
+            "decision": {key: analysis.get(key) for key in ("action", "bias", "score", "entry_allowed", "rejection_reason", "price", "ema20", "rsi14", "atr14", "volume_ratio")},
+            "timeframes": frame_summary,
+            "flow": {"cvd_delta": flow.get("cvd_delta"), "oi_change_pct": flow.get("oi_change_pct"), "price_oi_state": (professional.get("price_oi_state") or {}).get("label")},
+            "risk": {key: status["risk"].get(key) for key in ("allowed", "blockers", "open_positions", "daily_pnl_r", "consecutive_losses", "cooldown_until")},
+            "ledger": {"summary": status["summary"], "recent_closed": [{key: trade.get(key) for key in trade_fields} for trade in status["closed_trades"][:3]]},
+            "recent_events": [{key: event.get(key) for key in ("created_at", "event_type", "message")} for event in status["events"][:3]],
+        }
+
     def _create_ai_brief(self, instrument: str, analysis: dict[str, Any]) -> None:
         attempted_at = now_iso()
         key = os.getenv("DEEPSEEK_API_KEY", "")
@@ -544,8 +572,8 @@ class PaperService:
             self._record_ai_failure(instrument, "DeepSeek API key is not configured", attempted_at)
             return
         else:
-            prompt = f"用中文在120字内总结 {instrument}。必须引用多周期MA60/MA200、EMA20斜率、CVD/OI和风险状态，解释规则为何给出{analysis['action']}，不要承诺收益。数据：{json.dumps(analysis, ensure_ascii=False)}"
-            request = Request("https://api.deepseek.com/chat/completions", data=json.dumps({"model": "deepseek-chat", "messages": [{"role": "user", "content": prompt}], "temperature": 0.2, "max_tokens": 300}).encode(), headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"})
+            prompt = f"用中文在120字内总结 {instrument}。必须引用多周期趋势、EMA20、CVD/OI和风险状态，解释规则为何给出{analysis['action']}，不要承诺收益。数据：{json.dumps(self._ai_context(instrument, analysis), ensure_ascii=False)}"
+            request = Request("https://api.deepseek.com/chat/completions", data=json.dumps({"model": "deepseek-chat", "messages": [{"role": "user", "content": prompt}], "temperature": 0.2, "max_tokens": 180}).encode(), headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"})
             try:
                 with urlopen(request, timeout=25) as response:  # noqa: S310
                     content = json.loads(response.read().decode())["choices"][0]["message"]["content"].strip()
@@ -674,15 +702,14 @@ class PaperService:
         return {"id": row["id"], "created_at": row["created_at"], "analysis": json.loads(row["payload"]), "candles": list(reversed(candles)), "outcome": dict(event) if event else None}
 
     def chat(self, question: str, instrument: str) -> dict[str, str]:
-        question = question.strip()[:1200]
+        question = question.strip()[:500]
         if not question: return {"error": "Please enter a question."}
         if instrument not in INSTRUMENTS: instrument = "ETH-USDT"
         key = os.getenv("DEEPSEEK_API_KEY", "")
         if not key: return {"error": "DeepSeek is not configured on the server."}
-        context = self.status(instrument)
-        context["events"], context["closed_trades"] = context["events"][:8], context["closed_trades"][:5]
-        system = "你是Crypto-Bot Market Copilot。只使用所给OKX多周期、MA60/MA200、EMA20斜率、CVD/OI、风险与模拟交易数据回答中文。先给结论，再列事实和不确定性；不得声称确定获利或发出真实订单。"
-        request = Request("https://api.deepseek.com/chat/completions", data=json.dumps({"model": "deepseek-chat", "temperature": 0.2, "max_tokens": 650, "messages": [{"role": "system", "content": system}, {"role": "user", "content": f"Context:\n{json.dumps(context, ensure_ascii=False)}\n\nQuestion: {question}"}]}).encode(), headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"})
+        context = self._ai_context(instrument)
+        system = "你是Crypto-Bot 市场助手。只基于给定摘要用中文直接、简洁回答；先给结论，再列最多3条事实和不确定性。不要展示推理过程，不承诺收益，不发送真实订单。"
+        request = Request("https://api.deepseek.com/chat/completions", data=json.dumps({"model": "deepseek-chat", "temperature": 0.2, "max_tokens": 280, "messages": [{"role": "system", "content": system}, {"role": "user", "content": f"摘要：\n{json.dumps(context, ensure_ascii=False)}\n\n问题：{question}"}]}).encode(), headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"})
         try:
             with urlopen(request, timeout=30) as response:  # noqa: S310
                 return {"answer": json.loads(response.read().decode())["choices"][0]["message"]["content"].strip()}

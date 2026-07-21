@@ -72,6 +72,11 @@ VPVR_WINDOW_SECONDS = 24 * 3600
 VPVR_MIN_COVERAGE_SECONDS = 15 * 60
 VPVR_TIMEFRAME_CONFIG = {"1m": ("1m", 300), "5m": ("5m", 288), "15m": ("15m", 96), "1H": ("1H", 168), "4H": ("4H", 180), "1D": ("1D", 180)}
 OI_SAMPLE_SECONDS = 15
+FLOW_DECISION_WINDOW_SECONDS = 15 * 60
+FLOW_MIN_COVERAGE_SECONDS = 10 * 60
+FLOW_MAX_STALENESS_SECONDS = 45
+FLOW_MIN_TRADES = 100
+FLOW_MIN_OI_SAMPLES = 10
 
 load_dotenv(ROOT / ".env")
 
@@ -239,13 +244,29 @@ class PaperService:
             conn.execute("INSERT INTO flow_snapshots(created_at,instrument,oi,cvd,trade_count,window_seconds,last_trade_ts) VALUES(?,?,?,?,?,?,?)", (now_iso(), instrument, oi, cumulative, len(trade_timestamps), max(trade_timestamps) - min(trade_timestamps) if trade_timestamps else 0, max(trade_timestamps) if trade_timestamps else None))
             history = [dict(row) for row in conn.execute("SELECT created_at,oi,cvd FROM flow_snapshots WHERE instrument=? ORDER BY id DESC LIMIT 60", (instrument,))]
         previous_oi = float(previous["oi"]) if previous and previous["oi"] else oi
+        decision_flow = self._decision_flow(instrument)
         return {
-            "cvd": round(cumulative, 2), "cvd_delta": round(cumulative, 2), "cvd_series": series,
-            "oi": oi, "oi_change_pct": round((oi - previous_oi) / previous_oi * 100, 4) if previous_oi else 0,
-            "oi_history": list(reversed(history)), "source": "OKX public trades + SWAP OI",
+            "cvd": round(cumulative, 2), "cvd_delta": decision_flow["cvd_delta"], "cvd_series": series,
+            "oi": oi, "oi_change_pct": decision_flow["oi_change_pct"] if decision_flow["oi_change_pct"] is not None else 0.0, "decision_oi_change_pct": decision_flow["oi_change_pct"], "oi_history": list(reversed(history)), "source": decision_flow["source"],
             "quality": {"trade_count": len(trade_timestamps), "window_seconds": max(trade_timestamps) - min(trade_timestamps) if trade_timestamps else 0, "last_trade_ts": max(trade_timestamps) if trade_timestamps else None, "sampled_at": now_iso()},
-            "professional": self._professional_flow(instrument),
+            "decision_quality": decision_flow["quality"], "professional": self._professional_flow(instrument),
         }
+
+    def _decision_flow(self, instrument: str) -> dict[str, Any]:
+        """Use one confirmed 15-minute WebSocket/REST window for live gates."""
+        now = int(time.time())
+        since = now - FLOW_DECISION_WINDOW_SECONDS
+        with self._connect() as conn:
+            trades = conn.execute("SELECT MIN(ts) AS first_ts,MAX(ts) AS last_ts,SUM(buy_notional-sell_notional) AS delta,SUM(trade_count) AS trade_count FROM flow_trade_buckets WHERE instrument=? AND ts>=?", (instrument, since)).fetchone()
+            oi_rows = conn.execute("SELECT ts,oi FROM oi_snapshots WHERE instrument=? AND ts>=? ORDER BY ts", (instrument, since)).fetchall()
+        first_ts, last_ts = int(trades["first_ts"] or 0), int(trades["last_ts"] or 0)
+        trade_count = int(trades["trade_count"] or 0)
+        coverage = max(0, last_ts - first_ts)
+        last_trade_age = now - last_ts if last_ts else None
+        last_oi_age = now - int(oi_rows[-1]["ts"]) if oi_rows else None
+        ready = coverage >= FLOW_MIN_COVERAGE_SECONDS and trade_count >= FLOW_MIN_TRADES and last_trade_age is not None and last_trade_age <= FLOW_MAX_STALENESS_SECONDS and len(oi_rows) >= FLOW_MIN_OI_SAMPLES and last_oi_age is not None and last_oi_age <= FLOW_MAX_STALENESS_SECONDS
+        oi_change = (float(oi_rows[-1]["oi"]) / float(oi_rows[0]["oi"]) - 1) * 100 if len(oi_rows) >= 2 and oi_rows[0]["oi"] else None
+        return {"cvd_delta": round(float(trades["delta"] or 0), 2) if ready else 0.0, "oi_change_pct": round(oi_change, 4) if ready and oi_change is not None else None, "source": "OKX trades-all WebSocket + 15s SWAP OI (15m decision window)", "quality": {"ready": ready, "window_seconds": FLOW_DECISION_WINDOW_SECONDS, "coverage_seconds": coverage, "trade_count": trade_count, "last_trade_age_seconds": last_trade_age, "oi_samples": len(oi_rows), "last_oi_age_seconds": last_oi_age}}
 
     def _professional_flow(self, instrument: str) -> dict[str, Any]:
         since = int(time.time()) - FLOW_DISPLAY_WINDOW_SECONDS
@@ -424,7 +445,7 @@ class PaperService:
             values=calculate_indicators(eligible,params)[-1]; row=eligible[-1]
             frames[frame]={"candle_close_ts":int(row["candle_close_ts"]),"close":row["close"],"fast_ma":values["fast_ma"],"slow_ma":values["slow_ma"],"trend":"Bullish" if values["fast_ma"] and values["slow_ma"] and row["close"]>values["fast_ma"]>values["slow_ma"] else "Bearish" if values["fast_ma"] and values["slow_ma"] and row["close"]<values["fast_ma"]<values["slow_ma"] else "Mixed","ema20_slope_pct":0.0,"ma60":values["fast_ma"],"ma200":values["slow_ma"]}
         risk=self.risk_state(instrument)
-        decision=evaluate_decision(params,MarketContext(instrument,"15m",close_ts,float(execution["close"]),ind15,"OKX","public-confirmed-live-v1"),TimeframeContext(frames,("1H","4H"),False,"multi-timeframe"),FlowContext(True,float(flow.get("cvd_delta",0)),float(flow.get("oi_change_pct",0)),flow.get("source")),RiskContext(bool(risk["allowed"]),tuple(risk["blockers"]),int(risk["open_positions"]),0,bool(risk.get("cooldown_clear",True)),bool(risk.get("existing_position_clear",True))),active_version).to_dict()
+        decision=evaluate_decision(params,MarketContext(instrument,"15m",close_ts,float(execution["close"]),ind15,"OKX","public-confirmed-live-v1"),TimeframeContext(frames,("1H","4H"),False,"multi-timeframe"),FlowContext(True,float(flow.get("cvd_delta",0)),flow.get("decision_oi_change_pct"),flow.get("source")),RiskContext(bool(risk["allowed"]),tuple(risk["blockers"]),int(risk.get("open_positions",0)),0,bool(risk.get("cooldown_clear",True)),bool(risk.get("existing_position_clear",True))),active_version).to_dict()
         for item in decision["contributions"]:
             item["detail"]={"trend":"1H + 4H confirmed trend alignment","structure":"MA60 / MA200 structure","pullback":f"{decision.get('decision_input_summary',{}).get('close',0):.2f} close vs EMA20","momentum":f"Volume {ind15.get('volume_ratio') or 0:.2f}x · RSI {ind15.get('rsi') or 0:.1f}","flow":f"CVD {flow.get('cvd_delta',0):+.0f} · OI {flow.get('oi_change_pct',0):+.3f}%"}.get(item["key"],item["label"])
             item["detail_code"]=f"decision.contribution_detail.{item['key']}"
@@ -487,8 +508,10 @@ class PaperService:
             if conn.execute("SELECT 1 FROM paper_trades WHERE instrument=? AND status='OPEN'", (instrument,)).fetchone():
                 self._event(instrument, "DUPLICATE_BLOCKED", "Existing instrument position is still open")
                 return
+            params, _ = self._active_strategy()
             entry, atr, side = analysis["price"], analysis["atr14"], analysis["action"]
-            stop, target = (entry - atr, entry + 2 * atr) if side == "LONG" else (entry + atr, entry - 2 * atr)
+            risk_distance = atr * params.stop_loss_atr_multiplier
+            stop, target = (entry - risk_distance, entry + risk_distance * params.risk_reward_ratio) if side == "LONG" else (entry + risk_distance, entry - risk_distance * params.risk_reward_ratio)
             observed_at=now_iso(); delay=max(0,int((datetime.now(timezone.utc).timestamp()-int(analysis["candle_close_ts"]))*1000))
             cursor = conn.execute("""INSERT INTO paper_trades(instrument,side,entry,stop_loss,take_profit,created_at,signal_id,strategy_version,config_hash,expected_entry_price,observed_entry_price,execution_delay_ms,observed_slippage_pct,candle_close_ts,signal_score)
                 VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", (instrument, side, entry, stop, target, observed_at,analysis["signal_id"],analysis["strategy_version"],analysis["config_hash"],entry,entry,delay,0.0,analysis["candle_close_ts"],analysis["score"]))

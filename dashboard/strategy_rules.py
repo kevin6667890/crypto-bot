@@ -93,6 +93,7 @@ def calculate_indicators(candles: Iterable[dict[str, Any]], parameters: Strategy
     closes = [float(row["close"]) for row in rows]
     volumes = [float(row["volume"]) for row in rows]
     ema_value: float | None = None
+    atr_value: float | None = None
     alpha = 2.0 / (parameters.ema_pullback_period + 1)
     output: list[dict[str, float | None]] = []
     for index, row in enumerate(rows):
@@ -107,12 +108,15 @@ def calculate_indicators(candles: Iterable[dict[str, Any]], parameters: Strategy
             avg_loss = sum(max(-change, 0.0) for change in changes) / parameters.rsi_period
             rsi = 100.0 if avg_loss == 0 else 100 - 100 / (1 + avg_gain / avg_loss)
         atr = None
-        if index >= parameters.atr_period:
-            true_ranges = []
-            for pos in range(index - parameters.atr_period + 1, index + 1):
-                previous_close = closes[pos - 1]
-                true_ranges.append(max(float(rows[pos]["high"]) - float(rows[pos]["low"]), abs(float(rows[pos]["high"]) - previous_close), abs(float(rows[pos]["low"]) - previous_close)))
-            atr = sum(true_ranges) / parameters.atr_period
+        if index:
+            previous_close = closes[index - 1]
+            true_range = max(float(rows[index]["high"]) - float(rows[index]["low"]), abs(float(rows[index]["high"]) - previous_close), abs(float(rows[index]["low"]) - previous_close))
+            if index == parameters.atr_period:
+                true_ranges = [max(float(rows[pos]["high"]) - float(rows[pos]["low"]), abs(float(rows[pos]["high"]) - closes[pos - 1]), abs(float(rows[pos]["low"]) - closes[pos - 1])) for pos in range(1, parameters.atr_period + 1)]
+                atr_value = sum(true_ranges) / parameters.atr_period
+            elif index > parameters.atr_period and atr_value is not None:
+                atr_value = (atr_value * (parameters.atr_period - 1) + true_range) / parameters.atr_period
+            atr = atr_value
         volume_ratio = None
         if index >= 20:
             baseline = sum(volumes[index - 20:index]) / 20

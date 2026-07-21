@@ -260,6 +260,8 @@ export type PaperTrade = {
   reason?: string;
   created_at: string;
   closed_at?: string;
+  pnl_usdt?: number;
+  initial_capital_usdt?: number;
 };
 export type ScoreContribution = {
   key: string;
@@ -385,6 +387,10 @@ export type PaperStatus = {
     wins: number;
     win_rate: number;
     total_r: number;
+    initial_capital_usdt: number;
+    risk_per_trade: number;
+    total_pnl_usdt: number;
+    equity_usdt: number;
   };
 };
 

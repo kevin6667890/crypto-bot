@@ -1277,6 +1277,12 @@ function Workspace() {
                     <span>
                       {t("paper.capital")} <b>{paper.summary.initial_capital_usdt.toLocaleString()} USDT</b>
                     </span>
+                    <span>
+                      {t("paper.equity")} <b>{paper.summary.equity_usdt.toLocaleString(undefined, { maximumFractionDigits: 2 })} USDT</b>
+                    </span>
+                    <span>
+                      {t("paper.cash")} <b>{paper.summary.available_cash_usdt.toLocaleString(undefined, { maximumFractionDigits: 2 })} USDT</b>
+                    </span>
                   </div>
                 ) : (
                   <span className="api-offline">{t("paper.startApi")}</span>

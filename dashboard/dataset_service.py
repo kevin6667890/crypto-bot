@@ -10,16 +10,19 @@ def fingerprint(rows:list[dict[str,Any]])->str:
     canonical=[(int(x['ts']),float(x['open']),float(x['high']),float(x['low']),float(x['close']),float(x['volume'])) for x in sorted(rows,key=lambda x:int(x['ts']))]
     return hashlib.sha256(json.dumps(canonical,separators=(',',':')).encode()).hexdigest()
 def quality(rows:list[dict[str,Any]], timeframe:str,start_ts:int,end_ts:int)->dict[str,Any]:
-    step=TIMEFRAME_SECONDS[timeframe]; seen=set(); duplicates=0; malformed=[]; misaligned=[]; valid=[]
+    step=TIMEFRAME_SECONDS[timeframe]; seen=set(); duplicates=0; malformed=[]; misaligned=[]; unconfirmed=[]; valid=[]
     for row in rows:
         ts=int(row['ts']); o,h,l,c,v=map(float,(row['open'],row['high'],row['low'],row['close'],row['volume']))
+        if not bool(row.get('confirmed', 1)):
+            unconfirmed.append(ts); continue
         if ts in seen: duplicates+=1; continue
         seen.add(ts)
         if ts%step: misaligned.append(ts)
         if min(o,h,l,c)<=0 or v<0 or h<max(o,c,l) or l>min(o,c,h): malformed.append(ts)
         else: valid.append(row)
     expected=(end_ts-start_ts)//step; actual=len([x for x in valid if start_ts<=int(x['ts'])<end_ts]); missing=max(0,expected-actual)
-    return {'expected_rows':expected,'actual_rows':actual,'missing_rows':missing,'duplicate_rows':duplicates,'confirmed_rows':actual,'malformed_rows':malformed[:100],'misaligned_rows':misaligned[:100],'status':'COMPLETE' if not(missing or duplicates or malformed or misaligned) else 'INCOMPLETE','fingerprint':fingerprint(valid),'warnings':(['Missing bars are never forward-filled.'] if missing else [])}
+    warnings=(['Missing bars are never forward-filled.'] if missing else []) + (['Unconfirmed candles were rejected.'] if unconfirmed else [])
+    return {'expected_rows':expected,'actual_rows':actual,'missing_rows':missing,'duplicate_rows':duplicates,'confirmed_rows':actual,'unconfirmed_rows':len(unconfirmed),'malformed_rows':malformed[:100],'misaligned_rows':misaligned[:100],'status':'COMPLETE' if not(missing or duplicates or malformed or misaligned or unconfirmed) else 'INCOMPLETE','fingerprint':fingerprint(valid),'warnings':warnings}
 
 class DiscoveryDatasetService:
     def __init__(self,repository): self.repository=repository; self.history=OkxHistoryClient(repository)

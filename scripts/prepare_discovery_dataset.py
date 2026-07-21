@@ -1,6 +1,12 @@
 from __future__ import annotations
 import argparse
 from pathlib import Path
+import sys
+
+# Allow ``python scripts/prepare_discovery_dataset.py`` from the repository root.
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 from dashboard.research_repository import ResearchRepository
 from dashboard.dataset_service import DiscoveryDatasetService
 p=argparse.ArgumentParser();p.add_argument('--start',default='2024-01-01');p.add_argument('--end',default='2026-01-01');p.add_argument('--instruments',nargs='+',default=['BTC-USDT','ETH-USDT','SOL-USDT']);p.add_argument('--timeframes',nargs='+',default=['15m','1H','4H','1D']);p.add_argument('--database',default='data/research.db');a=p.parse_args()

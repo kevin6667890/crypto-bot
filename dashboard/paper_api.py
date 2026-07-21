@@ -137,6 +137,11 @@ class PaperService:
                 entry REAL NOT NULL, stop_loss REAL NOT NULL, take_profit REAL NOT NULL,
                 status TEXT NOT NULL DEFAULT 'OPEN', exit_price REAL, pnl_r REAL, reason TEXT,
                 created_at TEXT NOT NULL, closed_at TEXT)""")
+            conn.execute("""CREATE TABLE IF NOT EXISTS paper_account (
+                account_id INTEGER PRIMARY KEY CHECK(account_id=1), initial_capital REAL NOT NULL,
+                cash REAL NOT NULL, realized_pnl REAL NOT NULL DEFAULT 0, created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL)""")
+            conn.execute("INSERT OR IGNORE INTO paper_account(account_id,initial_capital,cash,realized_pnl,created_at,updated_at) VALUES(1,?,?,0,?,?)", (INITIAL_CAPITAL_USDT, INITIAL_CAPITAL_USDT, now_iso(), now_iso()))
             conn.execute("""CREATE TABLE IF NOT EXISTS analysis_snapshots (
                 id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT NOT NULL, payload TEXT NOT NULL)""")
             conn.execute("""CREATE TABLE IF NOT EXISTS ai_briefs (
@@ -164,6 +169,8 @@ class PaperService:
                 self._ensure_column(conn, "flow_snapshots", column, declaration)
             for column,declaration in (("signal_id","TEXT"),("strategy_version","TEXT"),("config_hash","TEXT"),("expected_entry_price","REAL"),("observed_entry_price","REAL"),("execution_delay_ms","INTEGER"),("observed_slippage_pct","REAL"),("candle_close_ts","INTEGER"),("signal_score","REAL")):
                 self._ensure_column(conn,"paper_trades",column,declaration)
+            for column, declaration in (("position_size", "REAL"), ("entry_notional", "REAL"), ("risk_amount", "REAL"), ("mark_price", "REAL"), ("pnl_usdt", "REAL")):
+                self._ensure_column(conn, "paper_trades", column, declaration)
             conn.execute("""CREATE TABLE IF NOT EXISTS decision_signals(id INTEGER PRIMARY KEY AUTOINCREMENT,signal_id TEXT NOT NULL UNIQUE,source TEXT NOT NULL,run_id INTEGER,instrument TEXT NOT NULL,execution_timeframe TEXT NOT NULL,candle_close_ts INTEGER NOT NULL,strategy_version TEXT NOT NULL,config_hash TEXT NOT NULL,action TEXT NOT NULL,bias TEXT NOT NULL,score REAL NOT NULL,decision_payload TEXT NOT NULL,created_at TEXT NOT NULL)""")
             conn.execute("""CREATE TABLE IF NOT EXISTS event_logs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT NOT NULL, instrument TEXT NOT NULL,
@@ -494,6 +501,14 @@ class PaperService:
                 else:alerts.resolve(key)
         return {"allowed": not blockers, "blockers": blockers, "open_positions": open_total, "max_open_positions": MAX_OPEN_POSITIONS, "daily_pnl_r": round(today_r, 2), "daily_loss_limit_r": MAX_DAILY_LOSS_R, "consecutive_losses": consecutive, "max_consecutive_losses": MAX_CONSECUTIVE_LOSSES, "cooldown_until": cooldown_until.isoformat() if cooldown_until else None, "cooldown_clear": not (cooldown_until and cooldown_until > datetime.now(timezone.utc)), "existing_position_clear": not instrument_open}
 
+    @staticmethod
+    def _account_state(conn: sqlite3.Connection) -> dict[str, float]:
+        account = conn.execute("SELECT initial_capital,cash,realized_pnl FROM paper_account WHERE account_id=1").fetchone()
+        if not account:
+            raise RuntimeError("Paper account is not initialized")
+        open_value = float(conn.execute("SELECT COALESCE(SUM(COALESCE(mark_price,entry)*COALESCE(position_size,0)),0) FROM paper_trades WHERE status='OPEN'").fetchone()[0])
+        return {"initial_capital": float(account["initial_capital"]), "cash": float(account["cash"]), "realized_pnl": float(account["realized_pnl"]), "open_value": open_value, "equity": float(account["cash"]) + open_value}
+
     def _open_trade(self, analysis: dict[str, Any]) -> None:
         instrument = analysis["instrument"]
         if analysis["action"] == "WAIT":
@@ -511,18 +526,27 @@ class PaperService:
             params, _ = self._active_strategy()
             entry, atr, side = analysis["price"], analysis["atr14"], analysis["action"]
             risk_distance = atr * params.stop_loss_atr_multiplier
+            account = self._account_state(conn)
+            risk_budget = account["equity"] * params.risk_per_trade
+            size = min(risk_budget / risk_distance if risk_distance else 0.0, account["cash"] / entry if entry else 0.0)
+            entry_notional = entry * size
+            if size <= 0 or entry_notional <= 0:
+                self._event(instrument, "ACCOUNT_BLOCKED", "Unified account has no available cash for a new paper position", account)
+                return
             stop, target = (entry - risk_distance, entry + risk_distance * params.risk_reward_ratio) if side == "LONG" else (entry + risk_distance, entry - risk_distance * params.risk_reward_ratio)
             observed_at=now_iso(); delay=max(0,int((datetime.now(timezone.utc).timestamp()-int(analysis["candle_close_ts"]))*1000))
-            cursor = conn.execute("""INSERT INTO paper_trades(instrument,side,entry,stop_loss,take_profit,created_at,signal_id,strategy_version,config_hash,expected_entry_price,observed_entry_price,execution_delay_ms,observed_slippage_pct,candle_close_ts,signal_score)
-                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", (instrument, side, entry, stop, target, observed_at,analysis["signal_id"],analysis["strategy_version"],analysis["config_hash"],entry,entry,delay,0.0,analysis["candle_close_ts"],analysis["score"]))
+            cursor = conn.execute("""INSERT INTO paper_trades(instrument,side,entry,stop_loss,take_profit,created_at,signal_id,strategy_version,config_hash,expected_entry_price,observed_entry_price,execution_delay_ms,observed_slippage_pct,candle_close_ts,signal_score,position_size,entry_notional,risk_amount,mark_price)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", (instrument, side, entry, stop, target, observed_at,analysis["signal_id"],analysis["strategy_version"],analysis["config_hash"],entry,entry,delay,0.0,analysis["candle_close_ts"],analysis["score"],size,entry_notional,risk_distance * size,entry))
+            conn.execute("UPDATE paper_account SET cash=cash-?,updated_at=? WHERE account_id=1", (entry_notional, observed_at))
             trade_id = cursor.lastrowid
-        self._event(instrument, "TRADE_OPENED", f"Paper {side} opened", {"trade_id": trade_id, "entry": entry, "stop": stop, "target": target, "score": analysis["score"]})
+        self._event(instrument, "TRADE_OPENED", f"Paper {side} opened", {"trade_id": trade_id, "entry": entry, "stop": stop, "target": target, "size": size, "account_equity": account["equity"], "score": analysis["score"]})
 
     def monitor_positions(self, instrument: str, price: float) -> None:
         closed_events: list[dict[str, Any]] = []
         with self._connect() as conn:
             positions = conn.execute("SELECT * FROM paper_trades WHERE instrument=? AND status='OPEN'", (instrument,)).fetchall()
             for row in positions:
+                conn.execute("UPDATE paper_trades SET mark_price=? WHERE id=?", (price, row["id"]))
                 hit_stop = price <= row["stop_loss"] if row["side"] == "LONG" else price >= row["stop_loss"]
                 hit_target = price >= row["take_profit"] if row["side"] == "LONG" else price <= row["take_profit"]
                 if not (hit_stop or hit_target): continue
@@ -530,8 +554,13 @@ class PaperService:
                 risk = abs(row["entry"] - row["stop_loss"]) or 1
                 pnl_r = (exit_price - row["entry"]) / risk if row["side"] == "LONG" else (row["entry"] - exit_price) / risk
                 status = "WIN" if pnl_r > 0 else "LOSS"
-                conn.execute("UPDATE paper_trades SET status=?,exit_price=?,pnl_r=?,reason=?,closed_at=? WHERE id=?", (status, exit_price, pnl_r, reason, now_iso(), row["id"]))
-                closed_events.append({"trade_id": row["id"], "pnl_r": pnl_r, "exit": exit_price, "reason": reason})
+                size = float(row["position_size"] or 0)
+                pnl_usdt = ((exit_price - row["entry"]) if row["side"] == "LONG" else (row["entry"] - exit_price)) * size
+                closed_at = now_iso()
+                conn.execute("UPDATE paper_trades SET status=?,exit_price=?,pnl_r=?,pnl_usdt=?,reason=?,closed_at=?,mark_price=? WHERE id=?", (status, exit_price, pnl_r, pnl_usdt if size else None, reason, closed_at, exit_price, row["id"]))
+                if size:
+                    conn.execute("UPDATE paper_account SET cash=cash+?,realized_pnl=realized_pnl+?,updated_at=? WHERE account_id=1", (exit_price * size, pnl_usdt, closed_at))
+                closed_events.append({"trade_id": row["id"], "pnl_r": pnl_r, "pnl_usdt": pnl_usdt if size else None, "exit": exit_price, "reason": reason})
         for event in closed_events:
             self._event(instrument, "TRADE_CLOSED", f"Paper trade closed by {event['reason']}", event)
 
@@ -694,22 +723,24 @@ class PaperService:
         with self._connect() as conn:
             open_trades = [dict(row) for row in conn.execute("SELECT * FROM paper_trades WHERE instrument=? AND status='OPEN' ORDER BY created_at DESC", (instrument,))]
             closed = [dict(row) for row in conn.execute("SELECT * FROM paper_trades WHERE instrument=? AND status!='OPEN' ORDER BY closed_at DESC LIMIT 20", (instrument,))]
+            account = self._account_state(conn)
+            account_open = int(conn.execute("SELECT COUNT(*) FROM paper_trades WHERE status='OPEN'").fetchone()[0])
             brief = conn.execute("SELECT created_at,content,source FROM ai_briefs WHERE instrument=? ORDER BY id DESC LIMIT 1", (instrument,)).fetchone()
             events = [dict(row) for row in conn.execute("SELECT id,created_at,event_type,message,payload FROM event_logs WHERE instrument=? ORDER BY id DESC LIMIT 30", (instrument,))]
             for event in events:
                 event["message_code"] = f"event.{event['event_type'].lower()}"
                 event["message_params"] = json.loads(event.get("payload") or "{}")
-        # Paper outcomes are stored in R. One R is the configured risk on the
-        # fixed 10,000 USDT virtual account, so expose a transparent USDT view.
+        # Legacy records predate the shared account and have no position size.
+        # Retain their display-only R conversion, while new records use booked P&L.
         risk_amount = INITIAL_CAPITAL_USDT * RISK_PER_TRADE
         for trade in [*open_trades, *closed]:
-            trade["pnl_usdt"] = round(float(trade.get("pnl_r") or 0) * risk_amount, 2)
+            if trade.get("pnl_usdt") is None:
+                trade["pnl_usdt"] = round(float(trade.get("pnl_r") or 0) * risk_amount, 2)
             trade["initial_capital_usdt"] = INITIAL_CAPITAL_USDT
         wins = sum(1 for row in closed if row["status"] == "WIN")
         total_r = round(sum(float(row["pnl_r"] or 0) for row in closed), 2)
         analysis = self.last_analysis[instrument]
-        total_pnl_usdt = round(total_r * risk_amount, 2)
-        return {"instrument": instrument, "analysis": analysis, "flow": analysis.get("flow"), "risk": self.risk_state(instrument), "events": events, "open_trades": open_trades, "closed_trades": closed, "ai_brief": dict(brief) if brief else None, "summary": {"open": len(open_trades), "closed": len(closed), "wins": wins, "win_rate": round(wins / len(closed) * 100, 1) if closed else 0, "total_r": total_r, "initial_capital_usdt": INITIAL_CAPITAL_USDT, "risk_per_trade": RISK_PER_TRADE, "total_pnl_usdt": total_pnl_usdt, "equity_usdt": round(INITIAL_CAPITAL_USDT + total_pnl_usdt, 2)}}
+        return {"instrument": instrument, "analysis": analysis, "flow": analysis.get("flow"), "risk": self.risk_state(instrument), "events": events, "open_trades": open_trades, "closed_trades": closed, "ai_brief": dict(brief) if brief else None, "summary": {"open": account_open, "closed": len(closed), "wins": wins, "win_rate": round(wins / len(closed) * 100, 1) if closed else 0, "total_r": total_r, "initial_capital_usdt": account["initial_capital"], "risk_per_trade": RISK_PER_TRADE, "total_pnl_usdt": round(account["realized_pnl"], 2), "equity_usdt": round(account["equity"], 2), "available_cash_usdt": round(account["cash"], 2), "open_position_value_usdt": round(account["open_value"], 2), "account_mode": "shared_portfolio"}}
 
     def replay(self, instrument: str, at: str | None = None) -> dict[str, Any]:
         if instrument not in INSTRUMENTS: instrument = "ETH-USDT"

@@ -391,6 +391,9 @@ export type PaperStatus = {
     risk_per_trade: number;
     total_pnl_usdt: number;
     equity_usdt: number;
+    available_cash_usdt: number;
+    open_position_value_usdt: number;
+    account_mode: "shared_portfolio";
   };
 };
 

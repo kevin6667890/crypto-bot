@@ -19,3 +19,4 @@ def test_cvd_series_aggregates_same_second_for_chart(tmp_path, monkeypatch):
     assert [point["time"] for point in flow["cvd_series"]] == [1000, 2000]
     assert len({point["time"] for point in flow["cvd_series"]}) == len(flow["cvd_series"])
     assert flow["cvd_series"][-1]["value"] == flow["cvd_delta"] == 20
+    assert flow["decision_cvd_delta"] == 0.0

@@ -153,6 +153,14 @@ class ResearchRepository:
                 );
                 CREATE INDEX IF NOT EXISTS idx_optimization_runs_created ON optimization_runs(created_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_optimization_trials_run ON optimization_trials(optimization_run_id, score DESC);
+                CREATE TABLE IF NOT EXISTS discovery_datasets (id INTEGER PRIMARY KEY AUTOINCREMENT,name TEXT NOT NULL UNIQUE,start_ts INTEGER NOT NULL,end_ts INTEGER NOT NULL,instruments TEXT NOT NULL,timeframes TEXT NOT NULL,source TEXT NOT NULL,status TEXT NOT NULL,manifest TEXT NOT NULL,dataset_fingerprint TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,completed_at TEXT,error TEXT);
+                CREATE TABLE IF NOT EXISTS discovery_dataset_partitions (dataset_id INTEGER NOT NULL,instrument TEXT NOT NULL,timeframe TEXT NOT NULL,first_ts INTEGER,last_ts INTEGER,expected_rows INTEGER NOT NULL,actual_rows INTEGER NOT NULL,missing_rows INTEGER NOT NULL,duplicate_rows INTEGER NOT NULL,fingerprint TEXT,status TEXT NOT NULL,warnings TEXT,PRIMARY KEY(dataset_id,instrument,timeframe),FOREIGN KEY(dataset_id) REFERENCES discovery_datasets(id));
+                CREATE TABLE IF NOT EXISTS discovery_flow_coverage (id INTEGER PRIMARY KEY AUTOINCREMENT,dataset_id INTEGER NOT NULL,instrument TEXT NOT NULL,feature TEXT NOT NULL,requested_start INTEGER NOT NULL,requested_end INTEGER NOT NULL,actual_coverage TEXT,missing_intervals TEXT NOT NULL,source TEXT NOT NULL,status TEXT NOT NULL,limitations TEXT NOT NULL,FOREIGN KEY(dataset_id) REFERENCES discovery_datasets(id));
+                CREATE TABLE IF NOT EXISTS strategy_discovery_runs (id INTEGER PRIMARY KEY AUTOINCREMENT,dataset_id INTEGER NOT NULL,experiment_family_id INTEGER,status TEXT NOT NULL,request TEXT NOT NULL,search_policy TEXT NOT NULL,sampler TEXT NOT NULL,seed INTEGER NOT NULL,maximum_trials INTEGER NOT NULL,templates TEXT NOT NULL,feature_version TEXT NOT NULL,engine_version TEXT NOT NULL,scoring_version TEXT NOT NULL,progress TEXT,result TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,completed_at TEXT,error TEXT,retry_of_run_id INTEGER);
+                CREATE TABLE IF NOT EXISTS strategy_discovery_candidates (id INTEGER PRIMARY KEY AUTOINCREMENT,discovery_run_id INTEGER NOT NULL,candidate_number INTEGER NOT NULL,template TEXT NOT NULL,template_version TEXT NOT NULL,parameters TEXT NOT NULL,parameter_hash TEXT NOT NULL,feature_flags TEXT NOT NULL,complexity INTEGER NOT NULL,status TEXT NOT NULL,aggregate_metrics TEXT,score_components TEXT,pareto_rank INTEGER,elimination_reasons TEXT,created_at TEXT NOT NULL,completed_at TEXT,error TEXT,UNIQUE(discovery_run_id,candidate_number));
+                CREATE TABLE IF NOT EXISTS strategy_discovery_folds (id INTEGER PRIMARY KEY AUTOINCREMENT,candidate_id INTEGER NOT NULL,fold_number INTEGER NOT NULL,train_start_ts INTEGER NOT NULL,train_end_ts INTEGER NOT NULL,validation_start_ts INTEGER NOT NULL,validation_end_ts INTEGER NOT NULL,metrics TEXT,buy_hold_metrics TEXT,status TEXT NOT NULL,error TEXT);
+                CREATE TABLE IF NOT EXISTS strategy_discovery_ablations (id INTEGER PRIMARY KEY AUTOINCREMENT,candidate_id INTEGER NOT NULL,removed_component TEXT NOT NULL,metrics TEXT,score_difference REAL,status TEXT NOT NULL,error TEXT);
+                CREATE TABLE IF NOT EXISTS strategy_discovery_stress_tests (id INTEGER PRIMARY KEY AUTOINCREMENT,candidate_id INTEGER NOT NULL,scenario TEXT NOT NULL,assumptions TEXT NOT NULL,metrics TEXT,status TEXT NOT NULL,error TEXT);
             """)
             self._ensure_column(connection, "paper_trades", "signal_id", "TEXT")
             self._ensure_column(connection, "optimization_runs", "experiment_family_id", "INTEGER")
@@ -207,6 +215,32 @@ class ResearchRepository:
     @staticmethod
     def fingerprint(payload: dict[str, Any]) -> str:
         return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+    # Discovery persistence is deliberately separate from Optimization Lab evidence.
+    def create_or_get_discovery_dataset(self,name:str,start:int,end:int,instruments:list[str],timeframes:list[str],smoke_test:bool=False)->dict[str,Any]:
+        now=utc_now()
+        with self.connect() as c:
+            c.execute("INSERT OR IGNORE INTO discovery_datasets(name,start_ts,end_ts,instruments,timeframes,source,status,manifest,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)",(name,start,end,json.dumps(instruments),json.dumps(timeframes),'OKX public history-candles','PREPARING',json.dumps({'is_smoke_test':smoke_test}),now,now))
+            return dict(c.execute("SELECT * FROM discovery_datasets WHERE name=?",(name,)).fetchone())
+    def discovery_partition(self,dataset_id:int,instrument:str,timeframe:str)->dict[str,Any]|None:
+        with self.connect() as c:
+            r=c.execute("SELECT * FROM discovery_dataset_partitions WHERE dataset_id=? AND instrument=? AND timeframe=?",(dataset_id,instrument,timeframe)).fetchone(); return dict(r) if r else None
+    def upsert_discovery_partition(self,dataset_id:int,instrument:str,timeframe:str,rows:list[dict[str,Any]],q:dict[str,Any])->None:
+        in_range=[r for r in rows if q.get('expected_rows') and True]; first=min((int(r['ts']) for r in in_range),default=None);last=max((int(r['ts']) for r in in_range),default=None)
+        with self.connect() as c:c.execute("INSERT INTO discovery_dataset_partitions VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(dataset_id,instrument,timeframe) DO UPDATE SET first_ts=excluded.first_ts,last_ts=excluded.last_ts,expected_rows=excluded.expected_rows,actual_rows=excluded.actual_rows,missing_rows=excluded.missing_rows,duplicate_rows=excluded.duplicate_rows,fingerprint=excluded.fingerprint,status=excluded.status,warnings=excluded.warnings",(dataset_id,instrument,timeframe,first,last,q['expected_rows'],q['actual_rows'],q['missing_rows'],q['duplicate_rows'],q['fingerprint'],q['status'],json.dumps(q.get('warnings',[]))))
+    def finish_discovery_dataset(self,dataset_id:int)->dict[str,Any]:
+        with self.connect() as c:
+            row=c.execute("SELECT manifest FROM discovery_datasets WHERE id=?",(dataset_id,)).fetchone(); prior=json.loads(row['manifest'] or '{}') if row else {}; parts=[dict(x) for x in c.execute("SELECT * FROM discovery_dataset_partitions WHERE dataset_id=? ORDER BY instrument,timeframe",(dataset_id,))]; manifest={**prior,'partitions':parts}; fp=self.fingerprint({'is_smoke_test':bool(manifest.get('is_smoke_test')),'partitions':[{k:x.get(k) for k in ('instrument','timeframe','fingerprint','status')} for x in parts]}); status='COMPLETE' if parts and all(x['status']=='COMPLETE' for x in parts) else 'INCOMPLETE'; now=utc_now();c.execute("UPDATE discovery_datasets SET status=?,manifest=?,dataset_fingerprint=?,updated_at=?,completed_at=? WHERE id=?",(status,json.dumps(manifest),fp,now,now if status=='COMPLETE' else None,dataset_id));r=c.execute("SELECT * FROM discovery_datasets WHERE id=?",(dataset_id,)).fetchone();return dict(r)
+    def discovery_datasets(self)->list[dict[str,Any]]:
+        with self.connect() as c:return [dict(x) for x in c.execute("SELECT * FROM discovery_datasets ORDER BY id DESC")]
+    def discovery_dataset(self,dataset_id:int)->dict[str,Any]|None:
+        with self.connect() as c:
+            r=c.execute("SELECT * FROM discovery_datasets WHERE id=?",(dataset_id,)).fetchone()
+            if not r:return None
+            x=dict(r);x['partitions']=[dict(p) for p in c.execute("SELECT * FROM discovery_dataset_partitions WHERE dataset_id=? ORDER BY instrument,timeframe",(dataset_id,))];x['flow_coverage']=[dict(p) for p in c.execute("SELECT * FROM discovery_flow_coverage WHERE dataset_id=?",(dataset_id,))];return x
+    def replace_flow_coverage(self,dataset_id:int,items:list[dict[str,Any]])->None:
+        with self.connect() as c:
+            c.execute('DELETE FROM discovery_flow_coverage WHERE dataset_id=?',(dataset_id,));c.executemany("INSERT INTO discovery_flow_coverage(dataset_id,instrument,feature,requested_start,requested_end,actual_coverage,missing_intervals,source,status,limitations) VALUES(?,?,?,?,?,?,?,?,?,?)",[(dataset_id,x['instrument'],x['feature'],x['requested_start'],x['requested_end'],json.dumps(x['actual_coverage']),json.dumps(x['missing_intervals']),x['source'],x['status'],x['limitations']) for x in items])
 
     def create_optimization_family(self, request: dict[str, Any]) -> dict[str, Any]:
         locked = {key: request.get(key) for key in ("instrument", "timeframe", "start_ts", "development_end_ts", "holdout_start_ts", "holdout_end_ts", "final_oot_start_ts", "final_oot_end_ts")}

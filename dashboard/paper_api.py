@@ -253,7 +253,10 @@ class PaperService:
         previous_oi = float(previous["oi"]) if previous and previous["oi"] else oi
         decision_flow = self._decision_flow(instrument)
         return {
-            "cvd": round(cumulative, 2), "cvd_delta": decision_flow["cvd_delta"], "cvd_series": series,
+            # ``cvd_delta`` is the public/chart aggregate represented by
+            # ``cvd_series``.  The readiness-gated decision value is exposed
+            # separately so an incomplete live window cannot erase the chart.
+            "cvd": round(cumulative, 2), "cvd_delta": round(cumulative, 2), "decision_cvd_delta": decision_flow["cvd_delta"], "cvd_series": series,
             "oi": oi, "oi_change_pct": decision_flow["oi_change_pct"] if decision_flow["oi_change_pct"] is not None else 0.0, "decision_oi_change_pct": decision_flow["oi_change_pct"], "oi_history": list(reversed(history)), "source": decision_flow["source"],
             "quality": {"trade_count": len(trade_timestamps), "window_seconds": max(trade_timestamps) - min(trade_timestamps) if trade_timestamps else 0, "last_trade_ts": max(trade_timestamps) if trade_timestamps else None, "sampled_at": now_iso()},
             "decision_quality": decision_flow["quality"], "professional": self._professional_flow(instrument),
@@ -452,7 +455,7 @@ class PaperService:
             values=calculate_indicators(eligible,params)[-1]; row=eligible[-1]
             frames[frame]={"candle_close_ts":int(row["candle_close_ts"]),"close":row["close"],"fast_ma":values["fast_ma"],"slow_ma":values["slow_ma"],"trend":"Bullish" if values["fast_ma"] and values["slow_ma"] and row["close"]>values["fast_ma"]>values["slow_ma"] else "Bearish" if values["fast_ma"] and values["slow_ma"] and row["close"]<values["fast_ma"]<values["slow_ma"] else "Mixed","ema20_slope_pct":0.0,"ma60":values["fast_ma"],"ma200":values["slow_ma"]}
         risk=self.risk_state(instrument)
-        decision=evaluate_decision(params,MarketContext(instrument,"15m",close_ts,float(execution["close"]),ind15,"OKX","public-confirmed-live-v1"),TimeframeContext(frames,("1H","4H"),False,"multi-timeframe"),FlowContext(True,float(flow.get("cvd_delta",0)),flow.get("decision_oi_change_pct"),flow.get("source")),RiskContext(bool(risk["allowed"]),tuple(risk["blockers"]),int(risk.get("open_positions",0)),0,bool(risk.get("cooldown_clear",True)),bool(risk.get("existing_position_clear",True))),active_version).to_dict()
+        decision=evaluate_decision(params,MarketContext(instrument,"15m",close_ts,float(execution["close"]),ind15,"OKX","public-confirmed-live-v1"),TimeframeContext(frames,("1H","4H"),False,"multi-timeframe"),FlowContext(True,float(flow.get("decision_cvd_delta",0)),flow.get("decision_oi_change_pct"),flow.get("source")),RiskContext(bool(risk["allowed"]),tuple(risk["blockers"]),int(risk.get("open_positions",0)),0,bool(risk.get("cooldown_clear",True)),bool(risk.get("existing_position_clear",True))),active_version).to_dict()
         for item in decision["contributions"]:
             item["detail"]={"trend":"1H + 4H confirmed trend alignment","structure":"MA60 / MA200 structure","pullback":f"{decision.get('decision_input_summary',{}).get('close',0):.2f} close vs EMA20","momentum":f"Volume {ind15.get('volume_ratio') or 0:.2f}x · RSI {ind15.get('rsi') or 0:.1f}","flow":f"CVD {flow.get('cvd_delta',0):+.0f} · OI {flow.get('oi_change_pct',0):+.3f}%"}.get(item["key"],item["label"])
             item["detail_code"]=f"decision.contribution_detail.{item['key']}"
@@ -834,6 +837,24 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError:self._send({"error":"Invalid job id"},HTTPStatus.BAD_REQUEST)
         elif parsed.path == "/api/alerts": self._send({"items":ALERTS.list()})
         elif parsed.path == "/api/data-coverage": self._send({"items":RESEARCH.repository.data_coverage()})
+        elif parsed.path == "/api/discovery/datasets": self._send({"items":RESEARCH.repository.discovery_datasets()})
+        elif parsed.path.startswith("/api/discovery/datasets/"):
+            try:
+                dataset=RESEARCH.repository.discovery_dataset(int(parsed.path.rsplit('/',1)[1])); self._send(dataset or {'error':'Dataset not found'}, HTTPStatus.OK if dataset else HTTPStatus.NOT_FOUND)
+            except ValueError:self._send({'error':'Invalid dataset id'},HTTPStatus.BAD_REQUEST)
+        elif parsed.path == "/api/discovery/runs":
+            with RESEARCH.repository.connect() as c:self._send({'items':[dict(x) for x in c.execute('SELECT * FROM strategy_discovery_runs ORDER BY id DESC')]})
+        elif parsed.path.startswith("/api/discovery/runs/") and parsed.path.endswith('/candidates'):
+            try:
+                rid=int(parsed.path.split('/')[4]);
+                with RESEARCH.repository.connect() as c:self._send({'items':[dict(x) for x in c.execute('SELECT * FROM strategy_discovery_candidates WHERE discovery_run_id=? ORDER BY candidate_number',(rid,))]})
+            except ValueError:self._send({'error':'Invalid discovery run id'},HTTPStatus.BAD_REQUEST)
+        elif parsed.path.startswith("/api/discovery/candidates/"):
+            try:
+                cid=int(parsed.path.split('/')[4]);table='strategy_discovery_candidates';
+                with RESEARCH.repository.connect() as c:
+                    row=c.execute('SELECT * FROM strategy_discovery_candidates WHERE id=?',(cid,)).fetchone(); self._send(dict(row) if row else {'error':'Candidate not found'},HTTPStatus.OK if row else HTTPStatus.NOT_FOUND)
+            except ValueError:self._send({'error':'Invalid candidate id'},HTTPStatus.BAD_REQUEST)
         elif parsed.path == "/api/validation/gates":
             try:self._send(VALIDATION.gates(int(query["run_id"][0]) if query.get("run_id") else None,{key:value[0] for key,value in query.items() if key!="run_id"}))
             except ValueError as error:self._send({"error":str(error)},HTTPStatus.NOT_FOUND)
@@ -902,6 +923,21 @@ class Handler(BaseHTTPRequestHandler):
         payload=self._body()
         if payload is None:return
         if parsed.path == "/api/cycle": self._send(SERVICE.cycle())
+        elif parsed.path == "/api/discovery/datasets/prepare":
+            if not self._admin(): return
+            try:self._send(RESEARCH.discovery.prepare_dataset(payload,self._client()),HTTPStatus.ACCEPTED)
+            except (ValueError,OverflowError) as error:self._send({'error':str(error)},HTTPStatus.BAD_REQUEST)
+        elif parsed.path == "/api/discovery/runs":
+            if not self._admin(): return
+            try:self._send(RESEARCH.discovery.start(payload,self._client()),HTTPStatus.ACCEPTED)
+            except (ValueError,OverflowError) as error:self._send({'error':str(error)},HTTPStatus.BAD_REQUEST)
+        elif parsed.path.startswith('/api/discovery/runs/') and parsed.path.endswith('/cancel'):
+            if not self._admin(): return
+            try:
+                rid=int(parsed.path.split('/')[4]);
+                with RESEARCH.repository.connect() as c: row=c.execute("SELECT id FROM research_jobs WHERE job_type='STRATEGY_DISCOVERY' AND request_payload LIKE ? ORDER BY id DESC LIMIT 1",(f'%"discovery_run_id": {rid}%',)).fetchone()
+                self._send(RESEARCH.jobs.cancel(int(row['id'])) if row else {'error':'Active job not found'})
+            except ValueError:self._send({'error':'Invalid discovery run id'},HTTPStatus.BAD_REQUEST)
         elif parsed.path == "/api/validation/gates/run":
             if not self._admin():return
             try:self._send(VALIDATION.start_gates(payload,self._client()),HTTPStatus.ACCEPTED)

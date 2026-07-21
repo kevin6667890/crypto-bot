@@ -60,6 +60,8 @@ MAX_OPEN_POSITIONS = 3
 MAX_DAILY_LOSS_R = -2.0
 MAX_CONSECUTIVE_LOSSES = 3
 COOLDOWN_HOURS = 4
+INITIAL_CAPITAL_USDT = 10_000.0
+RISK_PER_TRADE = 0.01
 AI_BRIEF_INTERVAL_SECONDS = 3600
 AI_STALE_AFTER_SECONDS = 7200
 AI_RETRY_BASE_SECONDS = 60
@@ -646,9 +648,17 @@ class PaperService:
             for event in events:
                 event["message_code"] = f"event.{event['event_type'].lower()}"
                 event["message_params"] = json.loads(event.get("payload") or "{}")
+        # Paper outcomes are stored in R. One R is the configured risk on the
+        # fixed 10,000 USDT virtual account, so expose a transparent USDT view.
+        risk_amount = INITIAL_CAPITAL_USDT * RISK_PER_TRADE
+        for trade in [*open_trades, *closed]:
+            trade["pnl_usdt"] = round(float(trade.get("pnl_r") or 0) * risk_amount, 2)
+            trade["initial_capital_usdt"] = INITIAL_CAPITAL_USDT
         wins = sum(1 for row in closed if row["status"] == "WIN")
+        total_r = round(sum(float(row["pnl_r"] or 0) for row in closed), 2)
         analysis = self.last_analysis[instrument]
-        return {"instrument": instrument, "analysis": analysis, "flow": analysis.get("flow"), "risk": self.risk_state(instrument), "events": events, "open_trades": open_trades, "closed_trades": closed, "ai_brief": dict(brief) if brief else None, "summary": {"open": len(open_trades), "closed": len(closed), "wins": wins, "win_rate": round(wins / len(closed) * 100, 1) if closed else 0, "total_r": round(sum(row["pnl_r"] or 0 for row in closed), 2)}}
+        total_pnl_usdt = round(total_r * risk_amount, 2)
+        return {"instrument": instrument, "analysis": analysis, "flow": analysis.get("flow"), "risk": self.risk_state(instrument), "events": events, "open_trades": open_trades, "closed_trades": closed, "ai_brief": dict(brief) if brief else None, "summary": {"open": len(open_trades), "closed": len(closed), "wins": wins, "win_rate": round(wins / len(closed) * 100, 1) if closed else 0, "total_r": total_r, "initial_capital_usdt": INITIAL_CAPITAL_USDT, "risk_per_trade": RISK_PER_TRADE, "total_pnl_usdt": total_pnl_usdt, "equity_usdt": round(INITIAL_CAPITAL_USDT + total_pnl_usdt, 2)}}
 
     def replay(self, instrument: str, at: str | None = None) -> dict[str, Any]:
         if instrument not in INSTRUMENTS: instrument = "ETH-USDT"

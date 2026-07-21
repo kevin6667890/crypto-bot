@@ -654,6 +654,7 @@ function Workspace() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [paper, setPaper] = useState<PaperStatus | null>(null);
+  const [selectedTrade, setSelectedTrade] = useState<PaperStatus["closed_trades"][number] | null>(null);
   const [vpvr, setVpvr] = useState<VpvrProfile | null>(null);
   const [activePage, setActivePage] = useState<
     "market" | "research" | "operations"
@@ -1273,6 +1274,9 @@ function Workspace() {
                         {formatSigned(paper.summary.total_r, "R")}
                       </b>
                     </span>
+                    <span>
+                      {t("paper.capital")} <b>{paper.summary.initial_capital_usdt.toLocaleString()} USDT</b>
+                    </span>
                   </div>
                 ) : (
                   <span className="api-offline">{t("paper.startApi")}</span>
@@ -1313,7 +1317,7 @@ function Workspace() {
               {paper?.closed_trades?.length ? (
                 <div className="closed-trades">
                   {paper.closed_trades.slice(0, 5).map((trade) => (
-                    <div key={trade.id}>
+                    <button className="closed-trade-row" key={trade.id} onClick={() => setSelectedTrade(trade)}>
                       <span>
                         #{trade.id} · {localValue(trade.side)}
                       </span>
@@ -1325,7 +1329,7 @@ function Workspace() {
                       >
                         {formatSigned(trade.pnl_r || 0, "R")}
                       </b>
-                    </div>
+                    </button>
                   ))}
                 </div>
               ) : null}
@@ -1560,6 +1564,21 @@ function Workspace() {
               </select>
             </label>
             <p className="settings-note">{t("settings.noApiKeys")}</p>
+          </section>
+        </div>
+      )}
+      {selectedTrade && (
+        <div className="trade-detail-backdrop" role="presentation" onClick={() => setSelectedTrade(null)}>
+          <section className="trade-detail" role="dialog" aria-modal="true" aria-label={t("paper.tradeDetails")} onClick={(event) => event.stopPropagation()}>
+            <div className="section-title"><div><span className="eyebrow">{t("paper.ledger")}</span><h2>{t("paper.tradeDetails")}</h2></div><button className="icon-button" aria-label={t("common.close")} onClick={() => setSelectedTrade(null)}>×</button></div>
+            <div className="trade-detail-grid">
+              <span>{t("paper.instrument")}<b>{selectedTrade.instrument}</b></span><span>{t("paper.direction")}<b>{localValue(selectedTrade.side)}</b></span>
+              <span>{t("paper.openTime")}<b>{new Date(selectedTrade.created_at).toLocaleString()}</b></span><span>{t("paper.closeTime")}<b>{selectedTrade.closed_at ? new Date(selectedTrade.closed_at).toLocaleString() : "--"}</b></span>
+              <span>{t("paper.entryPrice")}<b>{selectedTrade.entry.toFixed(2)}</b></span><span>{t("paper.exitPrice")}<b>{selectedTrade.exit_price?.toFixed(2) || "--"}</b></span>
+              <span>SL<b>{selectedTrade.stop_loss.toFixed(2)}</b></span><span>TP<b>{selectedTrade.take_profit.toFixed(2)}</b></span>
+              <span>{t("paper.pnl")}<b className={(selectedTrade.pnl_usdt || 0) >= 0 ? "positive" : "negative"}>{formatSigned(selectedTrade.pnl_usdt || 0, " USDT")}</b></span><span>{t("paper.result")}<b className={(selectedTrade.pnl_r || 0) >= 0 ? "positive" : "negative"}>{formatSigned(selectedTrade.pnl_r || 0, "R")}</b></span>
+              <span>{t("paper.closeReason")}<b>{localValue(selectedTrade.reason || "--")}</b></span><span>{t("paper.initialCapital")}<b>{(selectedTrade.initial_capital_usdt || 10000).toLocaleString()} USDT</b></span>
+            </div>
           </section>
         </div>
       )}

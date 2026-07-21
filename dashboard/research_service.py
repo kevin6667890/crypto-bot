@@ -19,6 +19,7 @@ try:
     from portfolio_backtest import PortfolioParameters, run_portfolio_backtest
     from reconciliation import reconcile
     from alert_service import AlertService
+    from discovery_service import DiscoveryService
 except ImportError:
     from .backtest_engine import run_backtest
     from .okx_history import INSTRUMENTS, TIMEFRAME_SECONDS, OkxHistoryClient
@@ -28,6 +29,7 @@ except ImportError:
     from .portfolio_backtest import PortfolioParameters, run_portfolio_backtest
     from .reconciliation import reconcile
     from .alert_service import AlertService
+    from .discovery_service import DiscoveryService
 
 
 def _date_ts(value: str, end: bool = False) -> int:
@@ -51,6 +53,7 @@ class ResearchService:
         self.jobs.register_terminal_handler("OPTIMIZATION", self._optimization_job_terminal)
         self.jobs.register_terminal_handler("VALIDATION_SUITE", self._validation_suite_terminal)
         self.repository.reconcile_optimization_jobs()
+        self.discovery = DiscoveryService(self.repository, self.jobs)
 
     OPTIMIZATION_ENGINE_VERSION = "optimization-lab-v1/canonical-v4"
     OPTIMIZATION_POLICY = {

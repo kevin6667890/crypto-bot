@@ -5,6 +5,8 @@ import dashboard.dataset_service as dataset_module
 from dashboard.dataset_service import END_TS, START_TS, DiscoveryDatasetService, quality
 from dashboard.discovery_features import build_features
 from dashboard.discovery_templates import parameter_hash, signal, validate
+from dashboard.discovery_service import FOLDS, DiscoveryService, ts
+import random
 from dashboard.research_repository import ResearchRepository
 
 
@@ -23,6 +25,16 @@ def test_discovery_quality_is_end_exclusive_and_reports_bad_rows() -> None:
     assert result["duplicate_rows"] == 1
     assert result["missing_rows"] == 0
     assert result["status"] == "INCOMPLETE"
+
+
+def test_unconfirmed_and_misaligned_candles_are_rejected() -> None:
+    rows = _rows(2)
+    rows[0]["confirmed"] = 0
+    rows[1]["ts"] += 1
+    result = quality(rows, "15m", START_TS, START_TS + 2 * 900)
+    assert result["unconfirmed_rows"] == 1
+    assert result["misaligned_rows"] == [START_TS + 901]
+    assert result["confirmed_rows"] == 1
 
 
 def test_future_mutation_does_not_change_prior_causal_features() -> None:
@@ -48,6 +60,18 @@ def test_templates_are_bounded_and_cannot_enable_unavailable_flow() -> None:
         pass
     else:
         raise AssertionError("PRICE_ONLY accepted CVD")
+
+
+def test_feature_library_exposes_required_causal_values() -> None:
+    features = build_features(_rows())[-1]
+    for key in ("sma_6", "sma_20", "sma_60", "sma_200", "ema_6", "ema_20", "ema_200", "atr", "bb_mid", "bb_upper", "bb_lower", "bb_width", "rsi", "volume_ratio"):
+        assert features[key] is not None
+
+
+def test_seeded_sampling_and_folds_are_deterministic_and_pre_holdout() -> None:
+    service = DiscoveryService.__new__(DiscoveryService)
+    assert [service._sample(random.Random(8), "TREND_PULLBACK") for _ in range(1)] == [service._sample(random.Random(8), "TREND_PULLBACK") for _ in range(1)]
+    assert all(train_start < train_end <= validation_start < validation_end <= ts(2025, 5, 1) for train_start, train_end, validation_start, validation_end in FOLDS)
 
 
 def test_discovery_manifest_and_partition_fingerprint_are_durable(tmp_path) -> None:

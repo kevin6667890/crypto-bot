@@ -37,6 +37,13 @@ def test_unconfirmed_and_misaligned_candles_are_rejected() -> None:
     assert result["confirmed_rows"] == 1
 
 
+def test_okx_daily_exchange_boundary_is_accepted() -> None:
+    row = _rows(1)[0]
+    row["ts"] = START_TS + 16 * 3600
+    result = quality([row], "1D", row["ts"], row["ts"] + 86400)
+    assert result["misaligned_rows"] == []
+
+
 def test_future_mutation_does_not_change_prior_causal_features() -> None:
     original = _rows()
     changed = [dict(row) for row in original]
@@ -105,3 +112,44 @@ def test_dataset_preparation_fixture_smoke_is_resumable_without_network(tmp_path
     assert result["status"] == "COMPLETE"
     # A complete partition is reused; a second prepare does not fetch it again.
     assert service.prepare({"instruments": ["BTC-USDT"], "timeframes": ["15m"]})["dataset_fingerprint"] == result["dataset_fingerprint"]
+
+
+def test_smoke_dataset_is_bounded_distinct_and_not_eligible_for_discovery(tmp_path, monkeypatch) -> None:
+    repository = ResearchRepository(tmp_path / "smoke.db")
+    service = DiscoveryDatasetService(repository)
+    start, end = ts(2025, 1, 1), ts(2025, 1, 3)
+
+    def fixture_download(instrument, timeframe, requested_start, requested_end, warmup_bars, **_kwargs):
+        step = 900 if timeframe == "15m" else {"1H": 3600, "4H": 14400, "1D": 86400}[timeframe]
+        rows = [{"ts": value, "open": 100.0, "high": 101.0, "low": 99.0, "close": 100.5, "volume": 1.0, "confirmed": 1} for value in range(requested_start, requested_end, step)]
+        repository.upsert_candles(instrument, timeframe, rows)
+        return rows, {"source": "fixture"}
+
+    monkeypatch.setattr(service.history, "get_candles", fixture_download)
+    result = service.prepare({"start_ts": start, "end_ts": end, "smoke_test": True, "instruments": ["BTC-USDT"], "timeframes": ["15m"]})
+    assert result["name"] == "discovery-smoke-BTC-USDT-20250101-20250103"
+    assert __import__("json").loads(result["manifest"])["is_smoke_test"] is True
+    assert service.prepare({"start_ts": start, "end_ts": end, "smoke_test": True, "instruments": ["BTC-USDT"], "timeframes": ["15m"]})["dataset_fingerprint"] == result["dataset_fingerprint"]
+    formal = DiscoveryService.__new__(DiscoveryService); formal.repository = repository
+    try:
+        formal.start({"dataset_id": result["id"]})
+    except ValueError as error:
+        assert "not eligible" in str(error)
+    else:
+        raise AssertionError("smoke dataset was accepted for formal discovery")
+
+
+def test_official_dataset_rejects_custom_or_oversized_smoke_ranges(tmp_path) -> None:
+    service = DiscoveryDatasetService(ResearchRepository(tmp_path / "range.db"))
+    try:
+        service.prepare({"start_ts": ts(2025, 1, 1), "end_ts": ts(2025, 1, 2)})
+    except ValueError as error:
+        assert "Official discovery dataset" in str(error)
+    else:
+        raise AssertionError("custom official range was accepted")
+    try:
+        service.prepare({"start_ts": ts(2025, 1, 1), "end_ts": ts(2025, 2, 2), "smoke_test": True})
+    except ValueError as error:
+        assert "31 days" in str(error)
+    else:
+        raise AssertionError("oversized smoke range was accepted")

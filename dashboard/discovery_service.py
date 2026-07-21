@@ -16,6 +16,7 @@ class DiscoveryService:
  def start(self,p,client='public'):
   did=int(p['dataset_id']); ds=self.repository.discovery_dataset(did)
   if not ds or ds['status']!='COMPLETE':raise ValueError('A complete fixed dataset is required.')
+  if json.loads(ds.get('manifest') or '{}').get('is_smoke_test'):raise ValueError('Smoke-test datasets are not eligible for formal Discovery runs.')
   budget=int(p.get('trial_budget',100));
   if not 1<=budget<=500:raise ValueError('Trial budget must be 1..500.')
   mode=p.get('mode','PRICE_ONLY'); templates=p.get('templates',list(TEMPLATES));

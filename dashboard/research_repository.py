@@ -217,10 +217,10 @@ class ResearchRepository:
         return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
     # Discovery persistence is deliberately separate from Optimization Lab evidence.
-    def create_or_get_discovery_dataset(self,name:str,start:int,end:int,instruments:list[str],timeframes:list[str])->dict[str,Any]:
+    def create_or_get_discovery_dataset(self,name:str,start:int,end:int,instruments:list[str],timeframes:list[str],smoke_test:bool=False)->dict[str,Any]:
         now=utc_now()
         with self.connect() as c:
-            c.execute("INSERT OR IGNORE INTO discovery_datasets(name,start_ts,end_ts,instruments,timeframes,source,status,manifest,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)",(name,start,end,json.dumps(instruments),json.dumps(timeframes),'OKX public history-candles','PREPARING','{}',now,now))
+            c.execute("INSERT OR IGNORE INTO discovery_datasets(name,start_ts,end_ts,instruments,timeframes,source,status,manifest,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)",(name,start,end,json.dumps(instruments),json.dumps(timeframes),'OKX public history-candles','PREPARING',json.dumps({'is_smoke_test':smoke_test}),now,now))
             return dict(c.execute("SELECT * FROM discovery_datasets WHERE name=?",(name,)).fetchone())
     def discovery_partition(self,dataset_id:int,instrument:str,timeframe:str)->dict[str,Any]|None:
         with self.connect() as c:
@@ -230,7 +230,7 @@ class ResearchRepository:
         with self.connect() as c:c.execute("INSERT INTO discovery_dataset_partitions VALUES(?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(dataset_id,instrument,timeframe) DO UPDATE SET first_ts=excluded.first_ts,last_ts=excluded.last_ts,expected_rows=excluded.expected_rows,actual_rows=excluded.actual_rows,missing_rows=excluded.missing_rows,duplicate_rows=excluded.duplicate_rows,fingerprint=excluded.fingerprint,status=excluded.status,warnings=excluded.warnings",(dataset_id,instrument,timeframe,first,last,q['expected_rows'],q['actual_rows'],q['missing_rows'],q['duplicate_rows'],q['fingerprint'],q['status'],json.dumps(q.get('warnings',[]))))
     def finish_discovery_dataset(self,dataset_id:int)->dict[str,Any]:
         with self.connect() as c:
-            parts=[dict(x) for x in c.execute("SELECT * FROM discovery_dataset_partitions WHERE dataset_id=? ORDER BY instrument,timeframe",(dataset_id,))]; manifest={'partitions':parts}; fp=self.fingerprint({'partitions':[{k:x.get(k) for k in ('instrument','timeframe','fingerprint','status')} for x in parts]}); status='COMPLETE' if parts and all(x['status']=='COMPLETE' for x in parts) else 'INCOMPLETE'; now=utc_now();c.execute("UPDATE discovery_datasets SET status=?,manifest=?,dataset_fingerprint=?,updated_at=?,completed_at=? WHERE id=?",(status,json.dumps(manifest),fp,now,now if status=='COMPLETE' else None,dataset_id));r=c.execute("SELECT * FROM discovery_datasets WHERE id=?",(dataset_id,)).fetchone();return dict(r)
+            row=c.execute("SELECT manifest FROM discovery_datasets WHERE id=?",(dataset_id,)).fetchone(); prior=json.loads(row['manifest'] or '{}') if row else {}; parts=[dict(x) for x in c.execute("SELECT * FROM discovery_dataset_partitions WHERE dataset_id=? ORDER BY instrument,timeframe",(dataset_id,))]; manifest={**prior,'partitions':parts}; fp=self.fingerprint({'is_smoke_test':bool(manifest.get('is_smoke_test')),'partitions':[{k:x.get(k) for k in ('instrument','timeframe','fingerprint','status')} for x in parts]}); status='COMPLETE' if parts and all(x['status']=='COMPLETE' for x in parts) else 'INCOMPLETE'; now=utc_now();c.execute("UPDATE discovery_datasets SET status=?,manifest=?,dataset_fingerprint=?,updated_at=?,completed_at=? WHERE id=?",(status,json.dumps(manifest),fp,now,now if status=='COMPLETE' else None,dataset_id));r=c.execute("SELECT * FROM discovery_datasets WHERE id=?",(dataset_id,)).fetchone();return dict(r)
     def discovery_datasets(self)->list[dict[str,Any]]:
         with self.connect() as c:return [dict(x) for x in c.execute("SELECT * FROM discovery_datasets ORDER BY id DESC")]
     def discovery_dataset(self,dataset_id:int)->dict[str,Any]|None:

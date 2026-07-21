@@ -253,7 +253,10 @@ class PaperService:
         previous_oi = float(previous["oi"]) if previous and previous["oi"] else oi
         decision_flow = self._decision_flow(instrument)
         return {
-            "cvd": round(cumulative, 2), "cvd_delta": decision_flow["cvd_delta"], "cvd_series": series,
+            # ``cvd_delta`` is the public/chart aggregate represented by
+            # ``cvd_series``.  The readiness-gated decision value is exposed
+            # separately so an incomplete live window cannot erase the chart.
+            "cvd": round(cumulative, 2), "cvd_delta": round(cumulative, 2), "decision_cvd_delta": decision_flow["cvd_delta"], "cvd_series": series,
             "oi": oi, "oi_change_pct": decision_flow["oi_change_pct"] if decision_flow["oi_change_pct"] is not None else 0.0, "decision_oi_change_pct": decision_flow["oi_change_pct"], "oi_history": list(reversed(history)), "source": decision_flow["source"],
             "quality": {"trade_count": len(trade_timestamps), "window_seconds": max(trade_timestamps) - min(trade_timestamps) if trade_timestamps else 0, "last_trade_ts": max(trade_timestamps) if trade_timestamps else None, "sampled_at": now_iso()},
             "decision_quality": decision_flow["quality"], "professional": self._professional_flow(instrument),
@@ -452,7 +455,7 @@ class PaperService:
             values=calculate_indicators(eligible,params)[-1]; row=eligible[-1]
             frames[frame]={"candle_close_ts":int(row["candle_close_ts"]),"close":row["close"],"fast_ma":values["fast_ma"],"slow_ma":values["slow_ma"],"trend":"Bullish" if values["fast_ma"] and values["slow_ma"] and row["close"]>values["fast_ma"]>values["slow_ma"] else "Bearish" if values["fast_ma"] and values["slow_ma"] and row["close"]<values["fast_ma"]<values["slow_ma"] else "Mixed","ema20_slope_pct":0.0,"ma60":values["fast_ma"],"ma200":values["slow_ma"]}
         risk=self.risk_state(instrument)
-        decision=evaluate_decision(params,MarketContext(instrument,"15m",close_ts,float(execution["close"]),ind15,"OKX","public-confirmed-live-v1"),TimeframeContext(frames,("1H","4H"),False,"multi-timeframe"),FlowContext(True,float(flow.get("cvd_delta",0)),flow.get("decision_oi_change_pct"),flow.get("source")),RiskContext(bool(risk["allowed"]),tuple(risk["blockers"]),int(risk.get("open_positions",0)),0,bool(risk.get("cooldown_clear",True)),bool(risk.get("existing_position_clear",True))),active_version).to_dict()
+        decision=evaluate_decision(params,MarketContext(instrument,"15m",close_ts,float(execution["close"]),ind15,"OKX","public-confirmed-live-v1"),TimeframeContext(frames,("1H","4H"),False,"multi-timeframe"),FlowContext(True,float(flow.get("decision_cvd_delta",0)),flow.get("decision_oi_change_pct"),flow.get("source")),RiskContext(bool(risk["allowed"]),tuple(risk["blockers"]),int(risk.get("open_positions",0)),0,bool(risk.get("cooldown_clear",True)),bool(risk.get("existing_position_clear",True))),active_version).to_dict()
         for item in decision["contributions"]:
             item["detail"]={"trend":"1H + 4H confirmed trend alignment","structure":"MA60 / MA200 structure","pullback":f"{decision.get('decision_input_summary',{}).get('close',0):.2f} close vs EMA20","momentum":f"Volume {ind15.get('volume_ratio') or 0:.2f}x · RSI {ind15.get('rsi') or 0:.1f}","flow":f"CVD {flow.get('cvd_delta',0):+.0f} · OI {flow.get('oi_change_pct',0):+.3f}%"}.get(item["key"],item["label"])
             item["detail_code"]=f"decision.contribution_detail.{item['key']}"

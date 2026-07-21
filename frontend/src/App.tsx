@@ -18,6 +18,7 @@ import { motion } from "framer-motion";
 import { CSSProperties, useEffect, useMemo, useState } from "react";
 import { EquityChart, FlowChart, MarketChart, ReplayChart } from "./charts";
 import StrategyResearch from "./StrategyResearch";
+import DiscoveryLab from "./DiscoveryLab";
 import Operations from "./Operations";
 import { useLanguage } from "./i18n";
 import {
@@ -1518,7 +1519,7 @@ function Workspace() {
           </aside>
         </div>
       ) : activePage === "research" ? (
-        <StrategyResearch />
+        <><StrategyResearch /><DiscoveryLab /></>
       ) : (
         <Operations />
       )}

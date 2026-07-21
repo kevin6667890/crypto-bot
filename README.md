@@ -198,3 +198,16 @@ Primary holdout metrics remain hidden until **Reveal Primary Holdout** is explic
 Public Markdown/JSON reports use a safe allowlist and exclude hidden holdout results, queue internals, secrets, and local paths. This project is paper/research only: it sends no live exchange orders, automatically activates no parameters, and does not use AI parameter search.
 
 CI checks: `pytest -q`, `python -m compileall dashboard tests scripts`, and `cd frontend && npm ci && npm run build`.
+# Strategy Discovery Lab
+
+The lab is paper/research only: it places no live orders, never automatically
+activates a strategy, and has no online self-learning.  Prepare the fixed cache
+with `python scripts/prepare_discovery_dataset.py --start 2024-01-01 --end
+2026-01-01 --instruments BTC-USDT ETH-USDT SOL-USDT --timeframes 15m 1H 4H 1D`.
+Its range is start-inclusive/end-exclusive (`[2024-01-01, 2026-01-01)`), and
+uses confirmed OKX public candles.  The primary engine is causal next-bar-open.
+Price-only templates are Trend Pullback, Volatility Breakout, Mean Reversion and
+Trend Breakout, searched with a bounded seeded sampler and development-only
+walk-forward folds. CVD/OI are never fabricated; flow overlays require verified
+coverage. Historical discovery does not prove future profitability and final
+selection remains manual. See `docs/strategy_discovery_architecture.md`.

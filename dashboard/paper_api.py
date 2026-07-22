@@ -982,6 +982,14 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError:self._send({'error':'Invalid dataset id'},HTTPStatus.BAD_REQUEST)
         elif parsed.path == "/api/discovery/runs":
             with RESEARCH.repository.connect() as c:self._send({'items':[dict(x) for x in c.execute('SELECT * FROM strategy_discovery_runs ORDER BY id DESC')]})
+        elif parsed.path == "/api/discovery/robustness/runs":
+            self._send({'items':RESEARCH.discovery_robustness.list_runs()})
+        elif parsed.path.startswith('/api/discovery/robustness/runs/'):
+            try:
+                rid=int(parsed.path.rsplit('/',1)[1])
+                row=RESEARCH.discovery_robustness.run_detail(rid)
+                self._send(row or {'error':'Robustness run not found'},HTTPStatus.OK if row else HTTPStatus.NOT_FOUND)
+            except ValueError:self._send({'error':'Invalid robustness run id'},HTTPStatus.BAD_REQUEST)
         elif parsed.path.startswith("/api/discovery/runs/") and parsed.path.endswith('/candidates'):
             try:
                 rid=int(parsed.path.split('/')[4]);
@@ -1069,6 +1077,18 @@ class Handler(BaseHTTPRequestHandler):
             if not self._admin(): return
             try:self._send(RESEARCH.discovery.start(payload,self._client()),HTTPStatus.ACCEPTED)
             except (ValueError,OverflowError) as error:self._send({'error':str(error)},HTTPStatus.BAD_REQUEST if isinstance(error,ValueError) else HTTPStatus.TOO_MANY_REQUESTS)
+        elif parsed.path == '/api/discovery/robustness/runs':
+            if not self._admin(): return
+            try:self._send(RESEARCH.discovery_robustness.start(payload,self._client()),HTTPStatus.ACCEPTED)
+            except (ValueError,OverflowError) as error:self._send({'error':str(error)},HTTPStatus.BAD_REQUEST if isinstance(error,ValueError) else HTTPStatus.TOO_MANY_REQUESTS)
+        elif parsed.path.startswith('/api/discovery/robustness/runs/') and parsed.path.endswith('/cancel'):
+            if not self._admin(): return
+            try:
+                rid=int(parsed.path.split('/')[5])
+            except (ValueError,IndexError):self._send({'error':'Invalid robustness run id'},HTTPStatus.BAD_REQUEST)
+            else:
+                try:self._send(RESEARCH.discovery_robustness.cancel(rid))
+                except ValueError as error:self._send({'error':str(error)},HTTPStatus.NOT_FOUND if str(error)=='Robustness run not found.' else HTTPStatus.BAD_REQUEST)
         elif parsed.path.startswith('/api/discovery/runs/') and parsed.path.endswith('/cancel'):
             if not self._admin(): return
             try:

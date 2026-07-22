@@ -326,6 +326,11 @@ export type FlowStatus = {
     available: boolean;
     window_seconds: number;
     coverage_seconds: number;
+    coverage_ratio?: number;
+    latest_trade_ts?: number | null;
+    collector_status?: "STARTING" | "CONNECTING" | "LIVE" | "PARTIAL" | "STALE" | "OFFLINE" | "ERROR" | "UNAVAILABLE";
+    flow_ready?: boolean;
+    stale?: boolean;
     cvd: number;
     cvd_series: Array<{ time: number; value: number; delta: number; trades: number }>;
     oi_series: Array<{ time: number; value: number }>;

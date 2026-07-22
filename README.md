@@ -93,6 +93,22 @@ python -m pip install -r requirements.txt
 python dashboard/paper_api.py
 ```
 
+### Paper Flow collector
+
+The supported local command is `python -m dashboard.paper_api`. It listens on
+port `8765` by default and starts the public OKX `trades-all` WebSocket and the
+public SWAP OI poller with the Paper API. Check it with:
+
+```bash
+curl http://127.0.0.1:8765/api/paper/flow/health
+```
+
+Stop it with `Ctrl+C`; the collectors close, flush pending buckets, and release
+their database connections. Runtime flow data is stored in
+`data_cache/paper_trades.db`. Tick CVD is collected only while this service is
+running: an empty restart starts with partial coverage and needs six hours for a
+complete display window. No historical tick CVD or OI is synthesized.
+
 In another terminal:
 
 ```bash
@@ -149,6 +165,7 @@ Factor and empty-trade results.
 - `GET /api/strategy-lifecycle`
 - `GET /api/health`
 - `GET /api/health/details`
+- `GET /api/paper/flow/health`
 - `GET /api/jobs`
 - `POST /api/jobs/{id}/cancel`
 - `POST /api/jobs/{id}/retry`

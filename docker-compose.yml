@@ -30,6 +30,12 @@ services:
       GIT_COMMIT: ${GIT_COMMIT:-unknown}
     volumes:
       - ./data_cache:/app/data_cache
+    healthcheck:
+      test: ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://127.0.0.1:8765/api/paper/flow/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
     restart: unless-stopped
 
   frontend:

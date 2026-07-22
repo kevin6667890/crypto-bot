@@ -747,6 +747,9 @@ function Workspace() {
     paper?.instrument === instrument ? paper.analysis : null;
   const legacyVpvr = runtimeAnalysis?.vpvr;
   const chartFlow = useMemo(() => paper?.flow?.professional?.available ? { cvd_series: paper.flow.professional.cvd_series, oi_series: paper.flow.professional.oi_series } : undefined, [paper?.flow?.professional]);
+  const flowState = paper?.flow?.professional;
+  const flowStatus = flowState?.collector_status || "OFFLINE";
+  const flowCoverage = flowState ? `${Math.round(flowState.coverage_seconds / 60)} / ${Math.round(flowState.window_seconds / 3600)}h` : "--";
   const action =
     runtimeAnalysis?.action || (signal.score >= 70 ? "WATCH" : "WAIT");
   const decisionScore = runtimeAnalysis?.score ?? signal.score;
@@ -984,6 +987,13 @@ function Workspace() {
               <div className="workspace-chart">
                 <MarketChart instrument={perpetualInstrument(instrument)} interval={interval} flow={chartFlow} />
                 {paper?.flow?.professional?.available && <div className="flow-pane-labels"><span className="cvd-pane-label">CVD · 逐笔主动成交差</span><span className="oi-pane-label">OI · 永续未平仓量</span></div>}
+              </div>
+              <div className={`flow-status ${flowStatus.toLowerCase()}`}>
+                <b>{t(`flow.status.${flowStatus}` as any)}</b>
+                {flowStatus === "PARTIAL" && <span>{t("flow.coverage", {coverage: flowCoverage})}</span>}
+                {flowStatus === "STALE" && <span>{t("flow.stale")}</span>}
+                {flowStatus === "OFFLINE" && <span>{t("flow.apiOffline")}</span>}
+                {flowStatus === "CONNECTING" && <span>{t("flow.connecting")}</span>}
               </div>
               <div className="chart-legend">
                 <span>

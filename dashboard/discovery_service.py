@@ -124,9 +124,18 @@ class DiscoveryService:
  def _job_terminal(self, job):
   rid=job.get('request_payload',{}).get('discovery_run_id')
   if not rid or job['status'] not in {'CANCELLED','FAILED'}: return
+  code=self._error_code(job.get('error')) if job['status']=='FAILED' else 'DISCOVERY_CANCELLED'
   with self.repository.connect() as c:
    if job['status']=='CANCELLED': c.execute("UPDATE strategy_discovery_candidates SET status='CANCELLED',completed_at=? WHERE discovery_run_id=? AND status='EVALUATING'",(datetime.now(timezone.utc).isoformat(),rid))
-   c.execute("UPDATE strategy_discovery_runs SET status=?,error=?,completed_at=? WHERE id=? AND status='RUNNING'",(job['status'],job.get('error'),datetime.now(timezone.utc).isoformat(),rid))
+   # A queue can be cancelled before its worker claims it, while failures can
+   # occur before Discovery has completed validation.  Never overwrite evidence
+   # from a completed run.
+   c.execute("UPDATE strategy_discovery_runs SET status=?,error=?,completed_at=? WHERE id=? AND status IN ('QUEUED','RUNNING')",(job['status'],code,datetime.now(timezone.utc).isoformat(),rid))
+ def _error_code(self, error):
+  text=str(error or '')
+  for code in ('DISCOVERY_IDENTITY_VERSION_MISMATCH','DISCOVERY_SEARCH_SPACE_EXHAUSTED','VALIDATION_CANDLES_MISSING','DISCOVERY_PARTITION_MISSING','ALL_CANDIDATES_FAILED'):
+   if code in text: return code
+  return 'DISCOVERY_WORKER_ERROR'
  def _fold_rows(self, inst, timeframe, train_start, validation_end):
   # End exclusive query: never load holdout/OOT or the validation end candle.
   rows=self.repository.candles(inst,timeframe,train_start,validation_end-1)
@@ -135,12 +144,19 @@ class DiscoveryService:
  def _evaluation_hash(self, template, params, execution, inst, timeframe, start, end, fingerprint):
   return build_evaluation_identity(build_candidate_identity(template,params,execution.execution_hash()),inst,timeframe,start,end,fingerprint)
  def _run_job(self,jid,p,checkpoint):
-  rid=int(p['discovery_run_id']); inst,timeframe,budget,templates,execution=self._request(p); step=TIMEFRAME_SECONDS[timeframe]; rng=random.Random(int(p['seed'])); part=self.repository.discovery_partition(int(p['dataset_id']),inst,timeframe); fingerprint=part['fingerprint']; fold_cache={}
-  with self.repository.connect() as c: run=dict(c.execute('SELECT sampler,search_policy FROM strategy_discovery_runs WHERE id=?',(rid,)).fetchone())
-  policy=json.loads(run['search_policy'] or '{}')
-  if run['sampler'] != DISCOVERY_SAMPLER_VERSION or any(policy.get(k)!=v for k,v in {'parameter_identity_version':DISCOVERY_PARAMETER_IDENTITY_VERSION,'candidate_identity_version':DISCOVERY_CANDIDATE_IDENTITY_VERSION,'evaluation_identity_version':DISCOVERY_EVALUATION_IDENTITY_VERSION}.items()): raise ValueError('DISCOVERY_IDENTITY_VERSION_MISMATCH')
-  with self.repository.connect() as c:c.execute("UPDATE strategy_discovery_runs SET status='RUNNING' WHERE id=?",(rid,))
+  rid=int(p['discovery_run_id'])
+  # This must precede all worker validation so every terminal worker outcome
+  # projects to a terminal Discovery run state.
+  with self.repository.connect() as c:c.execute("UPDATE strategy_discovery_runs SET status='RUNNING',error=NULL WHERE id=? AND status!='COMPLETED'",(rid,))
   try:
+   inst,timeframe,budget,templates,execution=self._request(p); step=TIMEFRAME_SECONDS[timeframe]; rng=random.Random(int(p['seed'])); part=self.repository.discovery_partition(int(p['dataset_id']),inst,timeframe)
+   if not part or not part.get('fingerprint'): raise ValueError('DISCOVERY_PARTITION_MISSING')
+   fingerprint=part['fingerprint']; fold_cache={}
+   with self.repository.connect() as c:
+    stored=c.execute('SELECT sampler,search_policy FROM strategy_discovery_runs WHERE id=?',(rid,)).fetchone()
+   if not stored: raise ValueError('DISCOVERY_PARTITION_MISSING')
+   run=dict(stored); policy=json.loads(run['search_policy'] or '{}')
+   if run['sampler'] != DISCOVERY_SAMPLER_VERSION or any(policy.get(k)!=v for k,v in {'parameter_identity_version':DISCOVERY_PARAMETER_IDENTITY_VERSION,'candidate_identity_version':DISCOVERY_CANDIDATE_IDENTITY_VERSION,'evaluation_identity_version':DISCOVERY_EVALUATION_IDENTITY_VERSION}.items()): raise ValueError('DISCOVERY_IDENTITY_VERSION_MISMATCH')
    checkpoint(jid,5,'discovery.validating_dataset',{}); checkpoint(jid,10,'discovery.loading_folds',{})
    for no,(a,b,vs,ve) in enumerate(FOLDS,1):
     rows=self._fold_rows(inst,timeframe,a,ve)
@@ -149,15 +165,23 @@ class DiscoveryService:
    checkpoint(jid,15,'discovery.generating_candidates',{'total_candidates':budget})
    completed=failed=fold_done=fold_failed=0
    with self.repository.connect() as c: existing=[dict(x) for x in c.execute('SELECT * FROM strategy_discovery_candidates WHERE discovery_run_id=? ORDER BY candidate_number',(rid,))]
-   if existing:
-    definitions=[]
-    for old in existing:
-     params=normalize_template_parameters(old['template'],json.loads(old['parameters'])); ph=build_parameter_identity(old['template'],params)
-     if ph != old['parameter_hash']: raise ValueError('DISCOVERY_IDENTITY_VERSION_MISMATCH')
-     definitions.append((old['template'],params,ph))
-    if len(definitions)!=budget: raise ValueError('DISCOVERY_IDENTITY_VERSION_MISMATCH')
-    sampling={'sampler_version':DISCOVERY_SAMPLER_VERSION,'sampling_attempts':0,'duplicate_samples_rejected':0,'unique_candidates_generated':len(definitions),'sampling_attempt_limit':0,'reused_persisted_candidates':True}
-   else: definitions,sampling=self._candidate_definitions(rng,templates,budget)
+   # Rebuild the complete sequence from the original seed.  Persisted rows are
+   # valid only when they are its exact contiguous prefix; this supports retry
+   # without changing candidate IDs or semantic identities.
+   definitions,sampling=self._candidate_definitions(rng,templates,budget)
+   if len(existing)>budget: raise ValueError('DISCOVERY_IDENTITY_VERSION_MISMATCH')
+   seen=set()
+   for expected_number,old in enumerate(existing,1):
+    if old['candidate_number'] != expected_number or old['template'] not in templates or old['template'] not in TEMPLATE_VERSION: raise ValueError('DISCOVERY_IDENTITY_VERSION_MISMATCH')
+    try: persisted=json.loads(old['parameters'])
+    except (TypeError,json.JSONDecodeError): raise ValueError('DISCOVERY_IDENTITY_VERSION_MISMATCH')
+    try: params=normalize_template_parameters(old['template'],persisted)
+    except ValueError: raise ValueError('DISCOVERY_IDENTITY_VERSION_MISMATCH')
+    ph=build_parameter_identity(old['template'],params); semantic=(old['template'],ph)
+    if persisted != params or ph != old['parameter_hash'] or semantic in seen: raise ValueError('DISCOVERY_IDENTITY_VERSION_MISMATCH')
+    seen.add(semantic)
+    if (old['template'],params,ph) != definitions[expected_number-1]: raise ValueError('DISCOVERY_IDENTITY_VERSION_MISMATCH')
+   sampling={**sampling,'reused_persisted_candidates':bool(existing),'persisted_candidate_count':len(existing)}
    for n,(template,params,ph) in enumerate(definitions,1):
     checkpoint(jid,15+int((n-1)*75/budget),'discovery.evaluating_folds',{'current_candidate':n,'total_candidates':budget,'candidates_completed':completed,'candidates_failed':failed,'folds_completed':fold_done,'folds_failed':fold_failed})
     now=datetime.now(timezone.utc).isoformat()
@@ -204,5 +228,10 @@ class DiscoveryService:
    now=datetime.now(timezone.utc).isoformat()
    with self.repository.connect() as c:
     c.execute("UPDATE strategy_discovery_candidates SET status='CANCELLED',completed_at=? WHERE discovery_run_id=? AND status='EVALUATING'",(now,rid))
-    c.execute("UPDATE strategy_discovery_runs SET status='CANCELLED',completed_at=? WHERE id=?",(now,rid))
+    c.execute("UPDATE strategy_discovery_runs SET status='CANCELLED',error='DISCOVERY_CANCELLED',completed_at=? WHERE id=? AND status!='COMPLETED'",(now,rid))
+   raise
+  except Exception as error:
+   now=datetime.now(timezone.utc).isoformat()
+   with self.repository.connect() as c:
+    c.execute("UPDATE strategy_discovery_runs SET status='FAILED',error=?,completed_at=? WHERE id=? AND status!='COMPLETED'",(self._error_code(error),now,rid))
    raise

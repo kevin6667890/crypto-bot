@@ -716,18 +716,25 @@ function Workspace() {
     setReplayDetail(null);
     setChatAnswer("");
     let refreshing = false;
+    let returnFrame: number | undefined;
     const run = () => {
       if (refreshing) return;
       refreshing = true;
       void refresh().finally(() => { refreshing = false; });
     };
-    const refreshOnReturn = () => { if (!document.hidden) run(); };
+    // Firefox commonly emits visibilitychange and focus together. Collapse
+    // them into one frame so neither response can race the same tab return.
+    const refreshOnReturn = () => {
+      if (document.hidden || returnFrame !== undefined) return;
+      returnFrame = requestAnimationFrame(() => { returnFrame = undefined; run(); });
+    };
     run();
     const timer = window.setInterval(run, 60_000);
     document.addEventListener("visibilitychange", refreshOnReturn);
     window.addEventListener("focus", refreshOnReturn);
     return () => {
       window.clearInterval(timer);
+      if (returnFrame !== undefined) cancelAnimationFrame(returnFrame);
       document.removeEventListener("visibilitychange", refreshOnReturn);
       window.removeEventListener("focus", refreshOnReturn);
     };
@@ -767,7 +774,8 @@ function Workspace() {
   const runtimeAnalysis =
     paper?.instrument === instrument ? paper.analysis : null;
   const legacyVpvr = runtimeAnalysis?.vpvr;
-  const chartFlow = useMemo(() => paper?.instrument === instrument && paper.flow?.professional?.available ? { cvd_series: paper.flow.professional.cvd_series, oi_series: paper.flow.professional.oi_series } : undefined, [paper?.instrument, paper?.flow?.professional, instrument]);
+  const activeFlow = paper?.instrument === instrument ? paper.flow : undefined;
+  const chartFlow = useMemo(() => activeFlow?.professional?.available ? { cvd_series: activeFlow.professional.cvd_series, oi_series: activeFlow.professional.oi_series } : undefined, [activeFlow?.professional]);
   const flowState = paper?.flow?.professional;
   const flowStatus = flowState?.collector_status || "OFFLINE";
   const flowCoverage = flowState ? `${Math.round(flowState.coverage_seconds / 60)} / ${Math.round(flowState.window_seconds / 3600)}h` : "--";
@@ -1006,7 +1014,7 @@ function Workspace() {
                 </div>
               </div>
               <div className="workspace-chart">
-                <MarketChart instrument={perpetualInstrument(instrument)} interval={interval} flow={chartFlow} />
+                <MarketChart key={`${perpetualInstrument(instrument)}:${interval}`} instrument={perpetualInstrument(instrument)} interval={interval} flow={chartFlow} />
                 {paper?.flow?.professional?.available && <div className="flow-pane-labels"><span className="cvd-pane-label">CVD · 逐笔主动成交差</span><span className="oi-pane-label">OI · 永续未平仓量</span></div>}
               </div>
               <div className={`flow-status ${flowStatus.toLowerCase()}`}>

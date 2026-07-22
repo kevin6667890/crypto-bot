@@ -12,6 +12,8 @@ from .discovery_features import FEATURE_VERSION, build_features
 from .discovery_templates import TEMPLATE_VERSION, signal, validate
 from .discovery_identity import canonical_json_hash, normalize_template_parameters, build_parameter_identity, build_candidate_identity, build_evaluation_identity, DISCOVERY_PARAMETER_IDENTITY_VERSION, DISCOVERY_CANDIDATE_IDENTITY_VERSION, DISCOVERY_EVALUATION_IDENTITY_VERSION
 from .strategy_rules import StrategyParameters
+from .discovery_ablation import (DISCOVERY_ABLATION_VERSION,
+    DISCOVERY_ABLATION_IDENTITY_VERSION, build_ablation_identity, normalize_ablation_flags)
 
 DISCOVERY_EXECUTION_POLICY_VERSION = "discovery-execution-v1"
 
@@ -50,7 +52,8 @@ class DiscoveryExecutionConfig:
 def run_discovery_candidate_backtest(candles: list[dict[str, Any]], instrument: str, timeframe: str,
                                      template: str, template_parameters: dict[str, Any], start_ts: int,
                                      end_ts: int, execution: DiscoveryExecutionConfig | None = None,
-                                     dataset_fingerprint: str | None = None) -> dict[str, Any]:
+                                     dataset_fingerprint: str | None = None,
+                                     ablation_flags: dict[str, Any] | None = None) -> dict[str, Any]:
     """Evaluate one causal Discovery template over an inclusive execution interval.
 
     For end-exclusive folds callers must pass ``validation_end_ts - timeframe_seconds``.
@@ -58,15 +61,18 @@ def run_discovery_candidate_backtest(candles: list[dict[str, Any]], instrument: 
     execution = (execution or DiscoveryExecutionConfig()).validate()
     normalized_parameters = normalize_template_parameters(template, template_parameters)
     config = validate({"template": template, "parameters": normalized_parameters})
+    normalized_ablation_flags = normalize_ablation_flags(template, normalized_parameters, ablation_flags)
+    ablation_identity = build_ablation_identity(template=template, parameters=normalized_parameters, flags=normalized_ablation_flags)
     features = build_features(candles, {"ma_periods": sorted({6, 20, 60, 200, int(normalized_parameters["fast_period"]), int(normalized_parameters["slow_period"])}), "atr_period": int(normalized_parameters["atr_period"])})
     signal_parameter_hash = build_parameter_identity(template, normalized_parameters)
     execution_hash = execution.execution_hash()
-    candidate_config_hash = build_candidate_identity(template, normalized_parameters, execution_hash)
+    base_candidate_config_hash = build_candidate_identity(template, normalized_parameters, execution_hash)
+    candidate_config_hash = base_candidate_config_hash if ablation_identity is None else canonical_json_hash({"ablation_candidate_identity_version": DISCOVERY_ABLATION_IDENTITY_VERSION, "base_candidate_config_hash": base_candidate_config_hash, "execution_hash": execution_hash, "ablation_identity": ablation_identity})
     evaluation_hash = build_evaluation_identity(candidate_config_hash, instrument, timeframe, start_ts, end_ts, dataset_fingerprint)
 
     def provider(candle: dict[str, Any], index: int) -> dict[str, Any]:
         feature = features[index]
-        action = signal(template, config["parameters"], candle, feature)
+        action = signal(template, config["parameters"], candle, feature, normalized_ablation_flags)
         timestamp = int(candle["ts"])
         return {"action": action, "atr": feature.get("atr"), "score": 0.0,
                 "signal_ts": timestamp, "signal_id": f"discovery:{candidate_config_hash[:16]}:{timestamp}",
@@ -84,5 +90,8 @@ def run_discovery_candidate_backtest(candles: list[dict[str, Any]], instrument: 
         "parameter_identity_version": DISCOVERY_PARAMETER_IDENTITY_VERSION, "candidate_identity_version": DISCOVERY_CANDIDATE_IDENTITY_VERSION, "evaluation_identity_version": DISCOVERY_EVALUATION_IDENTITY_VERSION,
         "execution_policy_version": DISCOVERY_EXECUTION_POLICY_VERSION,
         "execution_engine_version": SHARED_EXECUTION_ENGINE_VERSION, "instrument": instrument,
-        "timeframe": timeframe, "start_ts": start_ts, "end_ts": end_ts, "execution": execution.__dict__}
+        "timeframe": timeframe, "start_ts": start_ts, "end_ts": end_ts, "execution": execution.__dict__,
+        "ablation_version": DISCOVERY_ABLATION_VERSION, "ablation_identity": ablation_identity,
+        "ablation_candidate_identity_version": DISCOVERY_ABLATION_IDENTITY_VERSION if ablation_identity else None,
+        "removed_component": normalized_ablation_flags["removed_component"], "normalized_ablation_flags": normalized_ablation_flags}
     return result

@@ -6,16 +6,19 @@ from datetime import datetime, timezone
 from typing import Any
 
 from .dataset_service import DiscoveryDatasetService
-from .discovery_execution import DiscoveryExecutionConfig, _hash, run_discovery_candidate_backtest
-from .backtest_engine import SHARED_EXECUTION_ENGINE_VERSION
+from .discovery_execution import DiscoveryExecutionConfig, run_discovery_candidate_backtest
 from .discovery_features import FEATURE_VERSION
-from .discovery_templates import TEMPLATES, TEMPLATE_VERSION, parameter_hash, validate
+from .discovery_templates import TEMPLATES, TEMPLATE_VERSION
+from .discovery_identity import (normalize_template_parameters, build_parameter_identity, build_candidate_identity, build_evaluation_identity,
+    DISCOVERY_PARAMETER_IDENTITY_VERSION, DISCOVERY_CANDIDATE_IDENTITY_VERSION, DISCOVERY_EVALUATION_IDENTITY_VERSION)
 from .job_queue import JobCancelled
 from .okx_history import INSTRUMENTS, TIMEFRAME_SECONDS
 
 ENGINE_VERSION = "canonical-next-bar-open/discovery-adapter-v1"
 POLICY_VERSION = "discovery-policy-v1"
 DISCOVERY_AGGREGATION_VERSION = "discovery-development-aggregation-v1"
+DISCOVERY_SAMPLER_VERSION = "discovery-template-semantic-sampler-v1"
+SAMPLING_ATTEMPT_MULTIPLIER = 100
 
 def ts(y, m, d): return int(datetime(y, m, d, tzinfo=timezone.utc).timestamp())
 FOLDS = [(ts(2024,1,1),ts(2024,7,1),ts(2024,7,1),ts(2024,9,1)),(ts(2024,3,1),ts(2024,9,1),ts(2024,9,1),ts(2024,11,1)),(ts(2024,5,1),ts(2024,11,1),ts(2024,11,1),ts(2025,1,1)),(ts(2024,7,1),ts(2025,1,1),ts(2025,1,1),ts(2025,3,1)),(ts(2024,9,1),ts(2025,3,1),ts(2025,3,1),ts(2025,5,1))]
@@ -95,13 +98,29 @@ class DiscoveryService:
   if int(part.get('first_ts') or 0)>FOLDS[0][0] or int(part.get('last_ts') or 0)<FOLDS[-1][3]-TIMEFRAME_SECONDS[timeframe]: raise ValueError('Selected partition does not cover development folds.')
   normalized={**p,'instrument':inst,'timeframe':timeframe,'trial_budget':budget,'templates':templates,'execution_assumptions':execution.__dict__,'mode':'PRICE_ONLY'}; now=datetime.now(timezone.utc).isoformat(); seed=int(p.get('seed',20260721))
   with self.repository.connect() as c:
-   cur=c.execute("INSERT INTO strategy_discovery_runs(dataset_id,status,request,search_policy,sampler,seed,maximum_trials,templates,feature_version,engine_version,scoring_version,progress,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",(did,'QUEUED',json.dumps(normalized),json.dumps({'execution_assumptions':execution.__dict__}),'DETERMINISTIC_RANDOM',seed,budget,json.dumps(templates),FEATURE_VERSION,ENGINE_VERSION,POLICY_VERSION,'{}',now,now)); rid=cur.lastrowid
+   policy={'execution_assumptions':execution.__dict__,'parameter_identity_version':DISCOVERY_PARAMETER_IDENTITY_VERSION,'candidate_identity_version':DISCOVERY_CANDIDATE_IDENTITY_VERSION,'evaluation_identity_version':DISCOVERY_EVALUATION_IDENTITY_VERSION}
+   cur=c.execute("INSERT INTO strategy_discovery_runs(dataset_id,status,request,search_policy,sampler,seed,maximum_trials,templates,feature_version,engine_version,scoring_version,progress,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",(did,'QUEUED',json.dumps(normalized),json.dumps(policy),DISCOVERY_SAMPLER_VERSION,seed,budget,json.dumps(templates),FEATURE_VERSION,ENGINE_VERSION,POLICY_VERSION,'{}',now,now)); rid=cur.lastrowid
   try: j=self.jobs.enqueue('STRATEGY_DISCOVERY',{**normalized,'discovery_run_id':rid},client,priority=115)
   except Exception:
    with self.repository.connect() as c:c.execute("UPDATE strategy_discovery_runs SET status='FAILED',error=? WHERE id=?",('Queue enqueue failed',rid))
    raise
   return {'id':rid,'job_id':j['id'],'status':'QUEUED'}
- def _sample(self,rng,t): return {'fast_period':rng.choice([6,10,20,30,60]),'slow_period':rng.choice([60,100,150,200]),'fast_ma_type':rng.choice(['SMA','EMA']),'atr_period':rng.choice([7,10,14,20,28]),'stop_atr':round(rng.uniform(.6,2.5),2),'risk_reward':round(rng.uniform(1,4),2),'cooldown_bars':rng.randint(4,48),'volume_enabled':rng.choice([True,False]),'minimum_volume_ratio':round(rng.uniform(.7,2),2),'rsi_lower':rng.randint(20,49),'rsi_upper':rng.randint(51,80)}
+ def _sample(self,rng,t):
+  fast=rng.choice([6,10,20,30,60]); slow=rng.choice([60,100,150,200])
+  while fast>=slow: fast=rng.choice([6,10,20,30,60])
+  p={'fast_period':fast,'slow_period':slow,'fast_ma_type':rng.choice(['SMA','EMA']),'atr_period':rng.choice([7,10,14,20,28]),'volume_enabled':rng.choice([True,False])}
+  if p['volume_enabled']: p['minimum_volume_ratio']=rng.randint(70,200)/100
+  if t=='TREND_PULLBACK': p['maximum_distance']=rng.choice([.002,.003,.004,.005,.006,.008])
+  if t=='MEAN_REVERSION': p.update(rsi_lower=rng.randint(20,49),rsi_upper=rng.randint(51,80))
+  return normalize_template_parameters(t,p)
+ def _candidate_definitions(self, rng, templates, budget):
+  result=[]; seen=set(); attempts=duplicates=0; limit=max(100,budget*SAMPLING_ATTEMPT_MULTIPLIER)
+  while len(result)<budget and attempts<limit:
+   template=templates[len(result)%len(templates)]; attempts+=1; params=self._sample(rng,template); ph=build_parameter_identity(template,params); key=(template,ph)
+   if key in seen: duplicates+=1; continue
+   seen.add(key); result.append((template,params,ph))
+  if len(result)!=budget: raise ValueError('DISCOVERY_SEARCH_SPACE_EXHAUSTED')
+  return result,{'sampler_version':DISCOVERY_SAMPLER_VERSION,'sampling_attempts':attempts,'duplicate_samples_rejected':duplicates,'unique_candidates_generated':len(result),'sampling_attempt_limit':limit}
  def _job_terminal(self, job):
   rid=job.get('request_payload',{}).get('discovery_run_id')
   if not rid or job['status'] not in {'CANCELLED','FAILED'}: return
@@ -114,12 +133,12 @@ class DiscoveryService:
   rows=sorted({int(x['ts']):x for x in rows if x.get('confirmed',1)}.values(),key=lambda x:int(x['ts']))
   return rows
  def _evaluation_hash(self, template, params, execution, inst, timeframe, start, end, fingerprint):
-  config=validate({'template':template,'parameters':params})
-  signal_hash=_hash({'template':config['template'],'template_version':config['template_version'],'parameters':config['parameters'],'feature_version':FEATURE_VERSION})
-  candidate_hash=_hash({'parameter_hash':signal_hash,'execution_hash':execution.execution_hash(),'template_version':config['template_version'],'feature_version':FEATURE_VERSION,'execution_engine_version':SHARED_EXECUTION_ENGINE_VERSION})
-  return _hash({'candidate_config_hash':candidate_hash,'instrument':inst,'timeframe':timeframe,'start_ts':start,'end_ts':end,'dataset_fingerprint':fingerprint})
+  return build_evaluation_identity(build_candidate_identity(template,params,execution.execution_hash()),inst,timeframe,start,end,fingerprint)
  def _run_job(self,jid,p,checkpoint):
   rid=int(p['discovery_run_id']); inst,timeframe,budget,templates,execution=self._request(p); step=TIMEFRAME_SECONDS[timeframe]; rng=random.Random(int(p['seed'])); part=self.repository.discovery_partition(int(p['dataset_id']),inst,timeframe); fingerprint=part['fingerprint']; fold_cache={}
+  with self.repository.connect() as c: run=dict(c.execute('SELECT sampler,search_policy FROM strategy_discovery_runs WHERE id=?',(rid,)).fetchone())
+  policy=json.loads(run['search_policy'] or '{}')
+  if run['sampler'] != DISCOVERY_SAMPLER_VERSION or any(policy.get(k)!=v for k,v in {'parameter_identity_version':DISCOVERY_PARAMETER_IDENTITY_VERSION,'candidate_identity_version':DISCOVERY_CANDIDATE_IDENTITY_VERSION,'evaluation_identity_version':DISCOVERY_EVALUATION_IDENTITY_VERSION}.items()): raise ValueError('DISCOVERY_IDENTITY_VERSION_MISMATCH')
   with self.repository.connect() as c:c.execute("UPDATE strategy_discovery_runs SET status='RUNNING' WHERE id=?",(rid,))
   try:
    checkpoint(jid,5,'discovery.validating_dataset',{}); checkpoint(jid,10,'discovery.loading_folds',{})
@@ -129,9 +148,19 @@ class DiscoveryService:
     fold_cache[no]=rows
    checkpoint(jid,15,'discovery.generating_candidates',{'total_candidates':budget})
    completed=failed=fold_done=fold_failed=0
-   for n in range(1,budget+1):
+   with self.repository.connect() as c: existing=[dict(x) for x in c.execute('SELECT * FROM strategy_discovery_candidates WHERE discovery_run_id=? ORDER BY candidate_number',(rid,))]
+   if existing:
+    definitions=[]
+    for old in existing:
+     params=normalize_template_parameters(old['template'],json.loads(old['parameters'])); ph=build_parameter_identity(old['template'],params)
+     if ph != old['parameter_hash']: raise ValueError('DISCOVERY_IDENTITY_VERSION_MISMATCH')
+     definitions.append((old['template'],params,ph))
+    if len(definitions)!=budget: raise ValueError('DISCOVERY_IDENTITY_VERSION_MISMATCH')
+    sampling={'sampler_version':DISCOVERY_SAMPLER_VERSION,'sampling_attempts':0,'duplicate_samples_rejected':0,'unique_candidates_generated':len(definitions),'sampling_attempt_limit':0,'reused_persisted_candidates':True}
+   else: definitions,sampling=self._candidate_definitions(rng,templates,budget)
+   for n,(template,params,ph) in enumerate(definitions,1):
     checkpoint(jid,15+int((n-1)*75/budget),'discovery.evaluating_folds',{'current_candidate':n,'total_candidates':budget,'candidates_completed':completed,'candidates_failed':failed,'folds_completed':fold_done,'folds_failed':fold_failed})
-    template=templates[(n-1)%len(templates)]; params=self._sample(rng,template); params['fast_period']=6 if params['fast_period']>=params['slow_period'] else params['fast_period']; cfg=validate({'template':template,'parameters':params}); ph=parameter_hash(cfg); now=datetime.now(timezone.utc).isoformat()
+    now=datetime.now(timezone.utc).isoformat()
     with self.repository.connect() as c:
      old=c.execute('SELECT * FROM strategy_discovery_candidates WHERE discovery_run_id=? AND candidate_number=?',(rid,n)).fetchone()
      if old: cid=old['id']; c.execute("UPDATE strategy_discovery_candidates SET status='EVALUATING',error=NULL WHERE id=?",(cid,))
@@ -146,6 +175,7 @@ class DiscoveryService:
       if prior and prior['status']=='COMPLETED' and prior['metrics'] and json.loads(prior['metrics']).get('fold_evidence',{}).get('evaluation_hash')==expected_hash:
        fold_done+=1; continue
       outcome=run_discovery_candidate_backtest(rows,inst,timeframe,template,params,vs,effective,execution,fingerprint); evidence=outcome['discovery_evidence']; metrics=outcome['metrics']; benchmark=buy_and_hold(rows,vs,effective,execution)
+      if evidence['parameter_hash'] != ph or evidence['evaluation_hash'] != expected_hash: raise ValueError('DISCOVERY_IDENTITY_MISMATCH')
       fold_metrics={**metrics,'fold_evidence':{'effective_engine_end_ts':effective,'instrument':inst,'timeframe':timeframe,'candle_count':len(rows),'warmup_candle_count':sum(int(x['ts'])<vs for x in rows),'validation_candle_count':sum(vs<=int(x['ts'])<=effective for x in rows),'first_validation_candle_ts':vs,'last_validation_candle_ts':effective,'dataset_fingerprint':fingerprint,'parameter_hash':evidence['parameter_hash'],'execution_hash':evidence['execution_hash'],'candidate_config_hash':evidence['candidate_config_hash'],'evaluation_hash':evidence['evaluation_hash'],'template_version':evidence['template_version'],'feature_version':evidence['feature_version'],'execution_policy_version':evidence['execution_policy_version'],'execution_engine_version':evidence['execution_engine_version'],'execution_assumptions':evidence['execution'],'signal_count':outcome['signal_count']}}
       benchmark.update({'strategy_minus_benchmark_return':metrics['total_return']-benchmark['total_return'],'strategy_drawdown_minus_benchmark_drawdown':None if metrics.get('maximum_drawdown') is None or benchmark.get('maximum_drawdown') is None else metrics['maximum_drawdown']-benchmark['maximum_drawdown']})
       with self.repository.connect() as c:c.execute("INSERT INTO strategy_discovery_folds(candidate_id,fold_number,train_start_ts,train_end_ts,validation_start_ts,validation_end_ts,metrics,buy_hold_metrics,status,error) VALUES(?,?,?,?,?,?,?,?,?,NULL) ON CONFLICT(candidate_id,fold_number) DO UPDATE SET metrics=excluded.metrics,buy_hold_metrics=excluded.buy_hold_metrics,status=excluded.status,error=NULL",(cid,no,a,b,vs,ve,json.dumps(fold_metrics),json.dumps(benchmark),'COMPLETED'))
@@ -161,12 +191,13 @@ class DiscoveryService:
     for x in records:
      normalized.append({**x,'metrics':json.loads(x['metrics']) if x['metrics'] else {},'buy_hold_metrics':json.loads(x['buy_hold_metrics']) if x['buy_hold_metrics'] else {}})
     data=aggregate(normalized); data.update({'parameter_hash':ph,'execution_hash':execution.execution_hash(),'candidate_config_hash':next((x['metrics'].get('fold_evidence',{}).get('candidate_config_hash') for x in normalized if x['status']=='COMPLETED'),None),'dataset_fingerprint':fingerprint})
+    if any(x['metrics'].get('fold_evidence',{}).get('parameter_hash') != ph for x in normalized if x['status']=='COMPLETED'): raise ValueError('DISCOVERY_IDENTITY_MISMATCH')
     status='FAILED' if candidate_failed else 'DEVELOPMENT_CANDIDATE'
     with self.repository.connect() as c:c.execute("UPDATE strategy_discovery_candidates SET status=?,aggregate_metrics=?,score_components=NULL,pareto_rank=NULL,elimination_reasons=NULL,completed_at=?,error=? WHERE id=?",(status,json.dumps(data),datetime.now(timezone.utc).isoformat(), 'FOLD_EVALUATION_FAILED' if candidate_failed else None,cid))
     if candidate_failed: failed+=1
     else: completed+=1
    if not completed: raise RuntimeError('ALL_CANDIDATES_FAILED')
-   result={'requested_candidates':budget,'generated_candidates':budget,'evaluated_candidates':completed,'failed_candidates':failed,'completed_folds':fold_done,'failed_folds':fold_failed,'instrument':inst,'timeframe':timeframe,'dataset_fingerprint':fingerprint,'execution_assumptions':execution.__dict__,'aggregation_version':DISCOVERY_AGGREGATION_VERSION}
+   result={'requested_candidates':budget,'generated_candidates':budget,'evaluated_candidates':completed,'failed_candidates':failed,'completed_folds':fold_done,'failed_folds':fold_failed,'instrument':inst,'timeframe':timeframe,'dataset_fingerprint':fingerprint,'execution_assumptions':execution.__dict__,'aggregation_version':DISCOVERY_AGGREGATION_VERSION,**sampling}
    with self.repository.connect() as c:c.execute("UPDATE strategy_discovery_runs SET status='COMPLETED',progress=?,result=?,completed_at=? WHERE id=?",(json.dumps(result),json.dumps(result),datetime.now(timezone.utc).isoformat(),rid))
    checkpoint(jid,99,'discovery.completed',result); return {'discovery_run_id':rid}
   except JobCancelled:

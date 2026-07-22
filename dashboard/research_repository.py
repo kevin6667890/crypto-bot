@@ -161,6 +161,7 @@ class ResearchRepository:
                 CREATE TABLE IF NOT EXISTS strategy_discovery_folds (id INTEGER PRIMARY KEY AUTOINCREMENT,candidate_id INTEGER NOT NULL,fold_number INTEGER NOT NULL,train_start_ts INTEGER NOT NULL,train_end_ts INTEGER NOT NULL,validation_start_ts INTEGER NOT NULL,validation_end_ts INTEGER NOT NULL,metrics TEXT,buy_hold_metrics TEXT,status TEXT NOT NULL,error TEXT);
                 CREATE TABLE IF NOT EXISTS strategy_discovery_ablations (id INTEGER PRIMARY KEY AUTOINCREMENT,candidate_id INTEGER NOT NULL,removed_component TEXT NOT NULL,metrics TEXT,score_difference REAL,status TEXT NOT NULL,error TEXT);
                 CREATE TABLE IF NOT EXISTS strategy_discovery_stress_tests (id INTEGER PRIMARY KEY AUTOINCREMENT,candidate_id INTEGER NOT NULL,scenario TEXT NOT NULL,assumptions TEXT NOT NULL,metrics TEXT,status TEXT NOT NULL,error TEXT);
+                CREATE TABLE IF NOT EXISTS strategy_discovery_robustness_runs (id INTEGER PRIMARY KEY AUTOINCREMENT,discovery_run_id INTEGER NOT NULL,status TEXT NOT NULL,request TEXT NOT NULL,robustness_version TEXT NOT NULL,neighbor_version TEXT NOT NULL,cost_stress_version TEXT NOT NULL,selected_candidates TEXT NOT NULL DEFAULT '[]',progress TEXT NOT NULL DEFAULT '{}',result TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,completed_at TEXT,error TEXT);
             """)
             # Fold identity is durable: retries update the same candidate/fold evidence.
             connection.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_discovery_fold_identity ON strategy_discovery_folds(candidate_id,fold_number)")
@@ -169,6 +170,28 @@ class ResearchRepository:
             self._ensure_column(connection, "strategy_discovery_candidates", "development_score", "REAL")
             self._ensure_column(connection, "strategy_discovery_candidates", "eligible_rank", "INTEGER")
             self._ensure_column(connection, "strategy_discovery_candidates", "scoring_policy_version", "TEXT")
+            self._ensure_column(connection, "strategy_discovery_stress_tests", "robustness_run_id", "INTEGER")
+            self._ensure_column(connection, "strategy_discovery_stress_tests", "scenario_order", "INTEGER")
+            self._ensure_column(connection, "strategy_discovery_stress_tests", "scenario_category", "TEXT")
+            self._ensure_column(connection, "strategy_discovery_stress_tests", "scenario_name", "TEXT")
+            self._ensure_column(connection, "strategy_discovery_stress_tests", "scenario_hash", "TEXT")
+            self._ensure_column(connection, "strategy_discovery_stress_tests", "robustness_version", "TEXT")
+            self._ensure_column(connection, "strategy_discovery_stress_tests", "scenario_policy_version", "TEXT")
+            self._ensure_column(connection, "strategy_discovery_stress_tests", "source_parameter_hash", "TEXT")
+            self._ensure_column(connection, "strategy_discovery_stress_tests", "scenario_parameter_hash", "TEXT")
+            self._ensure_column(connection, "strategy_discovery_stress_tests", "source_execution_hash", "TEXT")
+            self._ensure_column(connection, "strategy_discovery_stress_tests", "scenario_execution_hash", "TEXT")
+            self._ensure_column(connection, "strategy_discovery_stress_tests", "source_candidate_config_hash", "TEXT")
+            self._ensure_column(connection, "strategy_discovery_stress_tests", "scenario_candidate_config_hash", "TEXT")
+            self._ensure_column(connection, "strategy_discovery_stress_tests", "dataset_fingerprint", "TEXT")
+            self._ensure_column(connection, "strategy_discovery_stress_tests", "fold_count", "INTEGER")
+            self._ensure_column(connection, "strategy_discovery_stress_tests", "completed_fold_count", "INTEGER")
+            self._ensure_column(connection, "strategy_discovery_stress_tests", "failed_fold_count", "INTEGER")
+            self._ensure_column(connection, "strategy_discovery_stress_tests", "aggregate_metrics", "TEXT")
+            self._ensure_column(connection, "strategy_discovery_stress_tests", "comparison_to_base", "TEXT")
+            self._ensure_column(connection, "strategy_discovery_stress_tests", "created_at", "TEXT")
+            self._ensure_column(connection, "strategy_discovery_stress_tests", "completed_at", "TEXT")
+            connection.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_discovery_robustness_scenario ON strategy_discovery_stress_tests(robustness_run_id,candidate_id,scenario_hash)")
             self._ensure_column(connection, "optimization_runs", "experiment_family_id", "INTEGER")
             self._ensure_column(connection, "optimization_runs", "parent_run_id", "INTEGER")
             self._ensure_column(connection, "optimization_runs", "post_holdout_adjustment", "INTEGER NOT NULL DEFAULT 0")

@@ -990,6 +990,18 @@ class Handler(BaseHTTPRequestHandler):
                 row=RESEARCH.discovery_robustness.run_detail(rid)
                 self._send(row or {'error':'Robustness run not found'},HTTPStatus.OK if row else HTTPStatus.NOT_FOUND)
             except ValueError:self._send({'error':'Invalid robustness run id'},HTTPStatus.BAD_REQUEST)
+        elif parsed.path == '/api/discovery/ablation/runs':
+            try:self._send({'items':RESEARCH.discovery_ablation.list_runs()})
+            except Exception:self._send({'error':'Internal server error'},HTTPStatus.INTERNAL_SERVER_ERROR)
+        elif parsed.path.startswith('/api/discovery/ablation/runs/'):
+            value=parsed.path.removeprefix('/api/discovery/ablation/runs/')
+            if not value.isascii() or not value.isdecimal() or int(value)<1:
+                self._send({'error':'Invalid ablation run id'},HTTPStatus.BAD_REQUEST)
+            else:
+                try:
+                    row=RESEARCH.discovery_ablation.run_detail(int(value))
+                    self._send(row or {'error':'Ablation run not found'},HTTPStatus.OK if row else HTTPStatus.NOT_FOUND)
+                except Exception:self._send({'error':'Internal server error'},HTTPStatus.INTERNAL_SERVER_ERROR)
         elif parsed.path.startswith("/api/discovery/runs/") and parsed.path.endswith('/candidates'):
             try:
                 rid=int(parsed.path.split('/')[4]);
@@ -1081,6 +1093,11 @@ class Handler(BaseHTTPRequestHandler):
             if not self._admin(): return
             try:self._send(RESEARCH.discovery_robustness.start(payload,self._client()),HTTPStatus.ACCEPTED)
             except (ValueError,OverflowError) as error:self._send({'error':str(error)},HTTPStatus.BAD_REQUEST if isinstance(error,ValueError) else HTTPStatus.TOO_MANY_REQUESTS)
+        elif parsed.path == '/api/discovery/ablation/runs':
+            if not self._admin(): return
+            try:self._send(RESEARCH.discovery_ablation.start(payload,self._client()),HTTPStatus.ACCEPTED)
+            except (ValueError,OverflowError) as error:self._send({'error':str(error)},HTTPStatus.BAD_REQUEST if isinstance(error,ValueError) else HTTPStatus.TOO_MANY_REQUESTS)
+            except Exception:self._send({'error':'Internal server error'},HTTPStatus.INTERNAL_SERVER_ERROR)
         elif parsed.path.startswith('/api/discovery/robustness/runs/') and parsed.path.endswith('/cancel'):
             if not self._admin(): return
             try:
@@ -1089,6 +1106,15 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 try:self._send(RESEARCH.discovery_robustness.cancel(rid))
                 except ValueError as error:self._send({'error':str(error)},HTTPStatus.NOT_FOUND if str(error)=='Robustness run not found.' else HTTPStatus.BAD_REQUEST)
+        elif parsed.path.startswith('/api/discovery/ablation/runs/') and parsed.path.endswith('/cancel'):
+            if not self._admin(): return
+            value=parsed.path.removeprefix('/api/discovery/ablation/runs/').removesuffix('/cancel')
+            if not value.isascii() or not value.isdecimal() or int(value)<1:
+                self._send({'error':'Invalid ablation run id'},HTTPStatus.BAD_REQUEST)
+            else:
+                try:self._send(RESEARCH.discovery_ablation.cancel(int(value)))
+                except ValueError as error:self._send({'error':str(error)},HTTPStatus.NOT_FOUND if str(error)=='Ablation run not found.' else HTTPStatus.BAD_REQUEST)
+                except Exception:self._send({'error':'Internal server error'},HTTPStatus.INTERNAL_SERVER_ERROR)
         elif parsed.path.startswith('/api/discovery/runs/') and parsed.path.endswith('/cancel'):
             if not self._admin(): return
             try:

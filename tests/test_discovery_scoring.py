@@ -20,7 +20,40 @@ def test_score_is_bounded_exact_and_monotonic():
     assert calculate_score(evidence(worst_maximum_drawdown=20),6)[1]['components']['worst_maximum_drawdown']['normalized_component_score']<=parts['components']['worst_maximum_drawdown']['normalized_component_score']
 def test_complexity_and_pareto_and_rank_are_deterministic():
     assert candidate_complexity('TREND_BREAKOUT',{'volume_enabled':False})==5 and candidate_complexity('MEAN_REVERSION',{'volume_enabled':True})==8
-    a={'median_excess_return':4,'worst_excess_return':1,'worst_maximum_drawdown':8,'validation_return_standard_deviation':3,'development_score':70,'complexity':5,'parameter_hash':'a','candidate_number':2,'aggregate':evidence()}
-    b={'median_excess_return':3,'worst_excess_return':0,'worst_maximum_drawdown':9,'validation_return_standard_deviation':4,'development_score':70,'complexity':5,'parameter_hash':'b','candidate_number':1,'aggregate':evidence(median_excess_return=3,worst_excess_return=0,worst_maximum_drawdown=9,validation_return_standard_deviation=4)}
-    assign_pareto_fronts([b,a]); assert a['pareto_rank']==1 and b['pareto_rank']==2
-    assert rank_eligible_candidates([b,a])[0] is a
+    a={'development_score':70,'complexity':5,'parameter_hash':'a','candidate_number':2,'aggregate':evidence(median_excess_return=4,worst_excess_return=1,worst_maximum_drawdown=8,validation_return_standard_deviation=3)}
+    b={'development_score':70,'complexity':5,'parameter_hash':'b','candidate_number':1,'aggregate':evidence(median_excess_return=3,worst_excess_return=0,worst_maximum_drawdown=9,validation_return_standard_deviation=4)}
+    before=(dict(a),dict(b))
+    fronts=assign_pareto_fronts([b,a]); assert fronts[('a',2)]==1 and fronts[('b',1)]==2
+    ranks=rank_eligible_candidates([b,a],fronts); assert ranks[('a',2)]==1
+    assert (dict(a),dict(b))==before
+
+def test_eligibility_rejects_all_malformed_evidence_without_crashing():
+    for malformed in ('1', True, [], {}, math.nan, math.inf, -math.inf):
+        result=evaluate_eligibility(evidence(median_excess_return=malformed),'1H')
+        assert 'REQUIRED_METRIC_NONFINITE' in result['reasons']
+    assert evaluate_eligibility(evidence(median_excess_return=None),'1H')['reasons'][-1]=='REQUIRED_METRIC_UNDEFINED'
+
+def test_eligibility_boundaries_and_reason_order():
+    assert evaluate_eligibility(evidence(profitable_fold_ratio=.6,benchmark_beating_fold_ratio=.6,worst_validation_return=-10,worst_excess_return=-10,worst_maximum_drawdown=20),'1D')['eligible']
+    assert 'NONPOSITIVE_MEDIAN_EXCESS_RETURN' in evaluate_eligibility(evidence(median_excess_return=0),'1D')['reasons']
+    result=evaluate_eligibility(evidence(total_trades=0,median_trades_per_fold=0,median_excess_return=0),'15m')
+    assert result['reasons']==['INSUFFICIENT_TOTAL_TRADES','INSUFFICIENT_MEDIAN_TRADES','NONPOSITIVE_MEDIAN_EXCESS_RETURN']
+
+def test_score_validation_and_persistence_contract():
+    for malformed in (None, True, '4', math.nan, math.inf):
+        try: calculate_score(evidence(median_excess_return=malformed),6)
+        except ValueError as error: assert str(error)=='Invalid Discovery score metric: median_excess_return'
+        else: assert False
+    for complexity in (True, 4, 9, 6.0):
+        try: calculate_score(evidence(),complexity)
+        except ValueError as error: assert str(error)=='Discovery structural complexity must be an integer from 5 to 8'
+        else: assert False
+    score, payload=calculate_score(evidence(),6)
+    assert payload['final_score']==score and 'Score is not proof of future profitability.' in payload['warnings']
+    assert all(round(x['normalized_component_score'],6)==x['normalized_component_score'] and round(x['weighted_contribution'],6)==x['weighted_contribution'] for x in payload['components'].values())
+
+def test_pareto_and_ranking_are_order_independent_and_ignore_score_for_fronts():
+    a={'aggregate':evidence(median_excess_return=4,worst_excess_return=1,worst_maximum_drawdown=8,validation_return_standard_deviation=3),'development_score':1,'complexity':5,'parameter_hash':'a','candidate_number':1}
+    b={'aggregate':evidence(median_excess_return=3,worst_excess_return=0,worst_maximum_drawdown=9,validation_return_standard_deviation=4),'development_score':99,'complexity':5,'parameter_hash':'b','candidate_number':2}
+    assert assign_pareto_fronts([a,b])==assign_pareto_fronts([b,a])=={('a',1):1,('b',2):2}
+    fronts=assign_pareto_fronts([a,b]); assert rank_eligible_candidates([a,b],fronts)==rank_eligible_candidates([b,a],fronts)

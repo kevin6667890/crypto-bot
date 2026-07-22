@@ -234,7 +234,14 @@ class DiscoveryService:
    for item in eligible:
     item['development_score'],item['score_components']=calculate_score(item['aggregate'],item['complexity'],timeframe)
    checkpoint(jid,95,'discovery.assigning_pareto_fronts',{})
-   assign_pareto_fronts(eligible); checkpoint(jid,97,'discovery.ranking_candidates',{}); ranked=rank_eligible_candidates(eligible)
+   pareto_ranks=assign_pareto_fronts(eligible); checkpoint(jid,97,'discovery.ranking_candidates',{}); eligible_ranks=rank_eligible_candidates(eligible,pareto_ranks)
+   for item in eligible:
+    identity=(item['parameter_hash'],item['candidate_number'])
+    item['pareto_rank']=pareto_ranks[identity]
+    item['eligible_rank']=eligible_ranks[identity]
+   ranked=sorted(eligible,key=lambda item:item['eligible_rank'])
+   # This checkpoint is deliberately outside the one persistence transaction.
+   checkpoint(jid,98,'discovery.persisting_development_ranking',{})
    # One transaction clears stale values and replaces every interpretation only
    # after cancellation checkpoints have completed.
    with self.repository.connect() as c:

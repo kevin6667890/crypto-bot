@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import math
 from typing import Any, Callable
 
 try:
@@ -19,6 +20,34 @@ except ImportError:
 
 def _iso(ts: int) -> str:
     return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
+
+
+SHARED_EXECUTION_ENGINE_VERSION = "canonical-execution-v1"
+
+
+def _provider_signal(provider: Callable[[dict[str, Any], int], dict[str, Any]], candle: dict[str, Any], index: int) -> dict[str, Any]:
+    """Validate the narrow custom-provider boundary before execution sees it."""
+    value = provider(candle, index)
+    if not isinstance(value, dict):
+        raise ValueError("Signal provider must return a mapping.")
+    action = value.get("action")
+    if action not in {"LONG", "SHORT", "WAIT"}:
+        raise ValueError("Signal provider action must be LONG, SHORT, or WAIT.")
+    if not isinstance(value.get("warmed"), (bool, int)):
+        raise ValueError("Signal provider warmed must be boolean-compatible.")
+    if action != "WAIT":
+        atr = value.get("atr")
+        if not isinstance(atr, (int, float)) or not math.isfinite(float(atr)) or float(atr) <= 0:
+            raise ValueError("Non-WAIT signal provider results require a finite positive ATR.")
+        for key in ("signal_id", "strategy_version", "config_hash"):
+            if not isinstance(value.get(key), str) or not value[key]:
+                raise ValueError(f"Signal provider {key} must be non-empty.")
+        if not isinstance(value.get("signal_ts"), int):
+            raise ValueError("Signal provider signal_ts must be an integer.")
+    score = value.get("score", 0.0)
+    if not isinstance(score, (int, float)) or not math.isfinite(float(score)):
+        value = {**value, "score": 0.0}
+    return value
 
 
 def run_execution_backtest(
@@ -121,7 +150,7 @@ def run_execution_backtest(
             required=("1H","4H")+(("1D",) if parameters.enable_daily_context else ())
             tf_context=TimeframeContext(frames,required,parameters.enable_daily_context,"multi-timeframe")
         execution_risk = RiskContext(True, (), 1 if position else 0, 0.0, index > cooldown_until_index, position is None and pending is None)
-        signal = signal_provider(candle, index) if signal_provider else evaluate_signal(signal_candle, indicators[index], parameters, instrument=instrument, timeframe=timeframe,timeframe_context=tf_context,strategy_version=HISTORICAL_STRATEGY_VERSION if tf_context else None,risk_context=execution_risk)
+        signal = _provider_signal(signal_provider, candle, index) if signal_provider else evaluate_signal(signal_candle, indicators[index], parameters, instrument=instrument, timeframe=timeframe,timeframe_context=tf_context,strategy_version=HISTORICAL_STRATEGY_VERSION if tf_context else None,risk_context=execution_risk)
         # A provider is deliberately unable to bypass execution direction gates.
         if signal.get("action") == "LONG" and not parameters.enable_long:
             signal = {**signal, "action": "WAIT"}

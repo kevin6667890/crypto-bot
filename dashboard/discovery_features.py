@@ -36,6 +36,11 @@ def build_features(candles: list[dict[str, Any]], config: dict[str, Any] | None 
         else: result["rsi"]=None
         result["volume_ratio"]=volumes[i]/_mean(volumes[i-volume_period:i]) if i>=volume_period and _mean(volumes[i-volume_period:i]) else None
         result["body_range_ratio"]=abs(float(row["close"])-float(row["open"]))/max(float(row["high"])-float(row["low"]),1e-12)
-        result["recent_high"]=max(float(x["high"]) for x in candles[max(0,i-20):i+1]); result["recent_low"]=min(float(x["low"]) for x in candles[max(0,i-20):i+1])
+        # Breakout levels are formed from completed *previous* candles.  Including
+        # the current bar would let it redefine the threshold it is tested against.
+        # The empty early-history window deliberately remains unavailable.
+        prior = candles[max(0, i - 20):i]
+        result["recent_high"] = max((float(x["high"]) for x in prior), default=None)
+        result["recent_low"] = min((float(x["low"]) for x in prior), default=None)
         result["warm"] = i+1 >= max(max(ma_periods), atr_period+1, bb_period, rsi_period+1, volume_period+1); out.append(result)
     return out

@@ -51,6 +51,25 @@ def test_future_mutation_does_not_change_prior_causal_features() -> None:
     assert build_features(original)[:-1] == build_features(changed)[:-1]
 
 
+def test_breakout_level_excludes_its_own_signal_bar() -> None:
+    rows = _rows(30)
+    rows[-1]["high"] = 10_000.0
+    rows[-1]["low"] = 1.0
+    features = build_features(rows)
+    assert features[-1]["recent_high"] == max(float(row["high"]) for row in rows[-21:-1])
+    assert features[-1]["recent_low"] == min(float(row["low"]) for row in rows[-21:-1])
+
+
+def test_trend_breakout_requires_a_completed_prior_threshold() -> None:
+    parameters = {"fast_period": 20, "slow_period": 200, "fast_ma_type": "EMA"}
+    candle = {"close": 110.0}
+    feature = {"warm": True, "ema_20": 105.0, "sma_200": 100.0,
+               "recent_high": None, "recent_low": None}
+    assert signal("TREND_BREAKOUT", parameters, candle, feature) == "WAIT"
+    feature.update({"recent_high": 109.0, "recent_low": 90.0})
+    assert signal("TREND_BREAKOUT", parameters, candle, feature) == "LONG"
+
+
 def test_templates_are_bounded_and_cannot_enable_unavailable_flow() -> None:
     config = validate({"template": "TREND_PULLBACK", "parameters": {"fast_period": 20, "slow_period": 200}})
     assert config["template_version"] == "trend-pullback-v1"

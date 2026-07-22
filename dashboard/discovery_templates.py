@@ -24,4 +24,7 @@ def signal(template:str,p:dict[str,Any],c:dict[str,Any],f:dict[str,Any])->str:
     if template=="VOLATILITY_BREAKOUT": return "LONG" if long and f.get("bb_upper") is not None and close>float(f["bb_upper"]) else "SHORT" if short and f.get("bb_lower") is not None and close<float(f["bb_lower"]) else "WAIT"
     if template=="MEAN_REVERSION":
         r=f.get("rsi"); return "LONG" if f.get("bb_lower") and close<=float(f["bb_lower"]) and r is not None and r<=float(p.get("rsi_lower",35)) else "SHORT" if f.get("bb_upper") and close>=float(f["bb_upper"]) and r is not None and r>=float(p.get("rsi_upper",65)) else "WAIT"
-    return "LONG" if long and close>=float(f["recent_high"]) else "SHORT" if short and close<=float(f["recent_low"]) else "WAIT"
+    recent_high, recent_low = f.get("recent_high"), f.get("recent_low")
+    if recent_high is None or recent_low is None:
+        return "WAIT"
+    return "LONG" if long and close>=float(recent_high) else "SHORT" if short and close<=float(recent_low) else "WAIT"

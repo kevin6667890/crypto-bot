@@ -9,6 +9,7 @@ from dashboard.discovery_identity import build_candidate_identity, build_evaluat
 from dashboard.discovery_service import DISCOVERY_SAMPLER_VERSION, DiscoveryService, FOLDS
 from dashboard.job_queue import JobCancelled, JobQueue
 from dashboard.research_repository import ResearchRepository
+from dashboard.discovery_scoring import candidate_complexity
 
 STEP=4*3600
 
@@ -43,7 +44,7 @@ def test_partial_prefix_resumes_without_replacing_candidates_or_folds(tmp_path,m
     repo,service,rid,request=setup(tmp_path); definitions,_=service._candidate_definitions(random.Random(17),request['templates'],10)
     with repo.connect() as c:
         for number,(template,parameters,ph) in enumerate(definitions[:3],1):
-            cid=c.execute("INSERT INTO strategy_discovery_candidates(discovery_run_id,candidate_number,template,template_version,parameters,parameter_hash,feature_flags,complexity,status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",(rid,number,template,'v',json.dumps(parameters),ph,'{}',7,'CANCELLED','now')).lastrowid
+            cid=c.execute("INSERT INTO strategy_discovery_candidates(discovery_run_id,candidate_number,template,template_version,parameters,parameter_hash,feature_flags,complexity,status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",(rid,number,template,'v',json.dumps(parameters),ph,'{}',candidate_complexity(template,parameters),'CANCELLED','now')).lastrowid
             if number==1:
                 execution=discovery.DiscoveryExecutionConfig(); a,b,vs,ve=FOLDS[0]; end=ve-STEP; evaluation=service._evaluation_hash(template,parameters,execution,'BTC-USDT','4H',vs,end,'retry-fingerprint')
                 outcome=fake_engine([])([],'BTC-USDT','4H',template,parameters,vs,end,execution,'retry-fingerprint'); saved=outcome['metrics']; saved['fold_evidence']=outcome['discovery_evidence']

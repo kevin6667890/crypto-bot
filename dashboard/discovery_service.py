@@ -13,10 +13,11 @@ from .discovery_identity import (normalize_template_parameters, build_parameter_
     DISCOVERY_PARAMETER_IDENTITY_VERSION, DISCOVERY_CANDIDATE_IDENTITY_VERSION, DISCOVERY_EVALUATION_IDENTITY_VERSION)
 from .job_queue import JobCancelled
 from .okx_history import INSTRUMENTS, TIMEFRAME_SECONDS
+from .discovery_scoring import (DISCOVERY_ELIGIBILITY_VERSION,DISCOVERY_SCORING_VERSION,DISCOVERY_PARETO_VERSION,candidate_complexity,evaluate_eligibility,calculate_score,assign_pareto_fronts,rank_eligible_candidates)
 
 ENGINE_VERSION = "canonical-next-bar-open/discovery-adapter-v1"
 POLICY_VERSION = "discovery-policy-v1"
-DISCOVERY_AGGREGATION_VERSION = "discovery-development-aggregation-v1"
+DISCOVERY_AGGREGATION_VERSION = "discovery-development-aggregation-v2"
 DISCOVERY_SAMPLER_VERSION = "discovery-template-semantic-sampler-v1"
 SAMPLING_ATTEMPT_MULTIPLIER = 100
 
@@ -63,7 +64,8 @@ def aggregate(folds: list[dict[str, Any]]) -> dict[str, Any]:
       "median_trades_per_fold": _median(trades), "minimum_trades_in_one_fold": min(trades) if trades else None, "maximum_trades_in_one_fold": max(trades) if trades else None,
       "mean_validation_return": statistics.mean(returns) if returns else None, "median_validation_return": _median(returns), "worst_validation_return": min(returns) if returns else None, "best_validation_return": max(returns) if returns else None,
       "validation_return_standard_deviation": statistics.stdev(returns) if len(returns) > 1 else None, "profitable_fold_count": sum(x > 0 for x in returns), "profitable_fold_ratio": sum(x > 0 for x in returns)/len(returns) if returns else None,
-      "median_maximum_drawdown": _median(dd), "worst_maximum_drawdown": max(dd) if dd else None, "median_sharpe_ratio": _median(sharpe), "median_sortino_ratio": _median(sortino), "median_profit_factor": _median(pf), "folds_with_undefined_profit_factor": sum(x.get("profit_factor") is None or not math.isfinite(float(x["profit_factor"])) for x in metrics),
+      "benchmark_beating_fold_count":sum(a>b for a,b in zip(returns,benchmark_returns)),"benchmark_beating_fold_ratio":sum(a>b for a,b in zip(returns,benchmark_returns))/len(returns) if returns else None,
+      "median_maximum_drawdown": _median(dd), "worst_maximum_drawdown": max(dd) if dd else None, "median_sharpe_ratio": _median(sharpe), "median_sortino_ratio": _median(sortino), "median_profit_factor": _median(pf), "finite_sharpe_fold_count":len(sharpe),"finite_sortino_fold_count":len(sortino),"finite_profit_factor_fold_count":len(pf),"folds_with_undefined_profit_factor": sum(x.get("profit_factor") is None or not math.isfinite(float(x["profit_factor"])) for x in metrics),
       "total_fees_paid": sum(float(x["fees_paid"]) for x in metrics), "mean_benchmark_return": statistics.mean(benchmark_returns) if benchmark_returns else None, "median_benchmark_return": _median(benchmark_returns), "mean_excess_return": statistics.mean(excess) if excess else None, "median_excess_return": _median(excess), "worst_excess_return": min(excess) if excess else None,
       "aggregate_policy_version": DISCOVERY_AGGREGATION_VERSION}
 
@@ -98,7 +100,7 @@ class DiscoveryService:
   if int(part.get('first_ts') or 0)>FOLDS[0][0] or int(part.get('last_ts') or 0)<FOLDS[-1][3]-TIMEFRAME_SECONDS[timeframe]: raise ValueError('Selected partition does not cover development folds.')
   normalized={**p,'instrument':inst,'timeframe':timeframe,'trial_budget':budget,'templates':templates,'execution_assumptions':execution.__dict__,'mode':'PRICE_ONLY'}; now=datetime.now(timezone.utc).isoformat(); seed=int(p.get('seed',20260721))
   with self.repository.connect() as c:
-   policy={'execution_assumptions':execution.__dict__,'parameter_identity_version':DISCOVERY_PARAMETER_IDENTITY_VERSION,'candidate_identity_version':DISCOVERY_CANDIDATE_IDENTITY_VERSION,'evaluation_identity_version':DISCOVERY_EVALUATION_IDENTITY_VERSION}
+   policy={'execution_assumptions':execution.__dict__,'parameter_identity_version':DISCOVERY_PARAMETER_IDENTITY_VERSION,'candidate_identity_version':DISCOVERY_CANDIDATE_IDENTITY_VERSION,'evaluation_identity_version':DISCOVERY_EVALUATION_IDENTITY_VERSION,'aggregation_version':DISCOVERY_AGGREGATION_VERSION,'eligibility_version':DISCOVERY_ELIGIBILITY_VERSION,'scoring_version':DISCOVERY_SCORING_VERSION,'pareto_version':DISCOVERY_PARETO_VERSION}
    cur=c.execute("INSERT INTO strategy_discovery_runs(dataset_id,status,request,search_policy,sampler,seed,maximum_trials,templates,feature_version,engine_version,scoring_version,progress,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",(did,'QUEUED',json.dumps(normalized),json.dumps(policy),DISCOVERY_SAMPLER_VERSION,seed,budget,json.dumps(templates),FEATURE_VERSION,ENGINE_VERSION,POLICY_VERSION,'{}',now,now)); rid=cur.lastrowid
   try: j=self.jobs.enqueue('STRATEGY_DISCOVERY',{**normalized,'discovery_run_id':rid},client,priority=115)
   except Exception:
@@ -156,7 +158,7 @@ class DiscoveryService:
     stored=c.execute('SELECT sampler,search_policy FROM strategy_discovery_runs WHERE id=?',(rid,)).fetchone()
    if not stored: raise ValueError('DISCOVERY_PARTITION_MISSING')
    run=dict(stored); policy=json.loads(run['search_policy'] or '{}')
-   if run['sampler'] != DISCOVERY_SAMPLER_VERSION or any(policy.get(k)!=v for k,v in {'parameter_identity_version':DISCOVERY_PARAMETER_IDENTITY_VERSION,'candidate_identity_version':DISCOVERY_CANDIDATE_IDENTITY_VERSION,'evaluation_identity_version':DISCOVERY_EVALUATION_IDENTITY_VERSION}.items()): raise ValueError('DISCOVERY_IDENTITY_VERSION_MISMATCH')
+   if run['sampler'] != DISCOVERY_SAMPLER_VERSION or any(policy.get(k)!=v for k,v in {'parameter_identity_version':DISCOVERY_PARAMETER_IDENTITY_VERSION,'candidate_identity_version':DISCOVERY_CANDIDATE_IDENTITY_VERSION,'evaluation_identity_version':DISCOVERY_EVALUATION_IDENTITY_VERSION,'aggregation_version':DISCOVERY_AGGREGATION_VERSION,'eligibility_version':DISCOVERY_ELIGIBILITY_VERSION,'scoring_version':DISCOVERY_SCORING_VERSION,'pareto_version':DISCOVERY_PARETO_VERSION}.items()): raise ValueError('DISCOVERY_IDENTITY_VERSION_MISMATCH')
    checkpoint(jid,5,'discovery.validating_dataset',{}); checkpoint(jid,10,'discovery.loading_folds',{})
    for no,(a,b,vs,ve) in enumerate(FOLDS,1):
     rows=self._fold_rows(inst,timeframe,a,ve)
@@ -178,7 +180,7 @@ class DiscoveryService:
     try: params=normalize_template_parameters(old['template'],persisted)
     except ValueError: raise ValueError('DISCOVERY_IDENTITY_VERSION_MISMATCH')
     ph=build_parameter_identity(old['template'],params); semantic=(old['template'],ph)
-    if persisted != params or ph != old['parameter_hash'] or semantic in seen: raise ValueError('DISCOVERY_IDENTITY_VERSION_MISMATCH')
+    if persisted != params or ph != old['parameter_hash'] or int(old['complexity']) != candidate_complexity(old['template'],params) or semantic in seen: raise ValueError('DISCOVERY_IDENTITY_VERSION_MISMATCH')
     seen.add(semantic)
     if (old['template'],params,ph) != definitions[expected_number-1]: raise ValueError('DISCOVERY_IDENTITY_VERSION_MISMATCH')
    sampling={**sampling,'reused_persisted_candidates':bool(existing),'persisted_candidate_count':len(existing)}
@@ -188,7 +190,7 @@ class DiscoveryService:
     with self.repository.connect() as c:
      old=c.execute('SELECT * FROM strategy_discovery_candidates WHERE discovery_run_id=? AND candidate_number=?',(rid,n)).fetchone()
      if old: cid=old['id']; c.execute("UPDATE strategy_discovery_candidates SET status='EVALUATING',error=NULL WHERE id=?",(cid,))
-     else: cid=c.execute("INSERT INTO strategy_discovery_candidates(discovery_run_id,candidate_number,template,template_version,parameters,parameter_hash,feature_flags,complexity,status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",(rid,n,template,TEMPLATE_VERSION[template],json.dumps(params),ph,'{}',7,'EVALUATING',now)).lastrowid
+     else: cid=c.execute("INSERT INTO strategy_discovery_candidates(discovery_run_id,candidate_number,template,template_version,parameters,parameter_hash,feature_flags,complexity,status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",(rid,n,template,TEMPLATE_VERSION[template],json.dumps(params),ph,'{}',candidate_complexity(template,params),'EVALUATING',now)).lastrowid
     candidate_failed=False
     for no,(a,b,vs,ve) in enumerate(FOLDS,1):
      checkpoint(jid,None,'discovery.evaluating_folds',{'current_candidate':n,'total_candidates':budget,'current_fold':no,'total_folds':len(FOLDS),'candidates_completed':completed,'candidates_failed':failed,'folds_completed':fold_done,'folds_failed':fold_failed})
@@ -217,11 +219,34 @@ class DiscoveryService:
     data=aggregate(normalized); data.update({'parameter_hash':ph,'execution_hash':execution.execution_hash(),'candidate_config_hash':next((x['metrics'].get('fold_evidence',{}).get('candidate_config_hash') for x in normalized if x['status']=='COMPLETED'),None),'dataset_fingerprint':fingerprint})
     if any(x['metrics'].get('fold_evidence',{}).get('parameter_hash') != ph for x in normalized if x['status']=='COMPLETED'): raise ValueError('DISCOVERY_IDENTITY_MISMATCH')
     status='FAILED' if candidate_failed else 'DEVELOPMENT_CANDIDATE'
-    with self.repository.connect() as c:c.execute("UPDATE strategy_discovery_candidates SET status=?,aggregate_metrics=?,score_components=NULL,pareto_rank=NULL,elimination_reasons=NULL,completed_at=?,error=? WHERE id=?",(status,json.dumps(data),datetime.now(timezone.utc).isoformat(), 'FOLD_EVALUATION_FAILED' if candidate_failed else None,cid))
+    with self.repository.connect() as c:c.execute("UPDATE strategy_discovery_candidates SET status=?,aggregate_metrics=?,score_components=NULL,pareto_rank=NULL,elimination_reasons=NULL,eligibility_status='NOT_SCORED',development_score=NULL,eligible_rank=NULL,scoring_policy_version=NULL,completed_at=?,error=? WHERE id=?",(status,json.dumps(data),datetime.now(timezone.utc).isoformat(), 'FOLD_EVALUATION_FAILED' if candidate_failed else None,cid))
     if candidate_failed: failed+=1
     else: completed+=1
    if not completed: raise RuntimeError('ALL_CANDIDATES_FAILED')
-   result={'requested_candidates':budget,'generated_candidates':budget,'evaluated_candidates':completed,'failed_candidates':failed,'completed_folds':fold_done,'failed_folds':fold_failed,'instrument':inst,'timeframe':timeframe,'dataset_fingerprint':fingerprint,'execution_assumptions':execution.__dict__,'aggregation_version':DISCOVERY_AGGREGATION_VERSION,**sampling}
+   checkpoint(jid,91,'discovery.evaluating_eligibility',{})
+   with self.repository.connect() as c: candidates=[dict(x) for x in c.execute('SELECT * FROM strategy_discovery_candidates WHERE discovery_run_id=? ORDER BY candidate_number',(rid,))]
+   eligible=[]
+   for item in candidates:
+    item['aggregate']=json.loads(item['aggregate_metrics']) if item['aggregate_metrics'] else {}
+    verdict=evaluate_eligibility(item['aggregate'],timeframe,item['status']); item['reasons']=verdict['reasons']; item['eligibility_status']='ELIGIBLE' if verdict['eligible'] else ('NOT_SCORED' if item['status']!='DEVELOPMENT_CANDIDATE' else 'REJECTED')
+    if verdict['eligible']: eligible.append(item)
+   checkpoint(jid,93,'discovery.scoring_candidates',{})
+   for item in eligible:
+    item['development_score'],item['score_components']=calculate_score(item['aggregate'],item['complexity'],timeframe)
+   checkpoint(jid,95,'discovery.assigning_pareto_fronts',{})
+   assign_pareto_fronts(eligible); checkpoint(jid,97,'discovery.ranking_candidates',{}); ranked=rank_eligible_candidates(eligible)
+   # One transaction clears stale values and replaces every interpretation only
+   # after cancellation checkpoints have completed.
+   with self.repository.connect() as c:
+    for item in candidates:
+     if item['eligibility_status']=='ELIGIBLE':
+      components={**item['score_components'],'pareto':{'version':DISCOVERY_PARETO_VERSION,'objectives':{k:item['aggregate'][k] for k in ('median_excess_return','worst_excess_return','worst_maximum_drawdown','validation_return_standard_deviation')}}}
+      c.execute("UPDATE strategy_discovery_candidates SET eligibility_status='ELIGIBLE',development_score=?,eligible_rank=?,pareto_rank=?,score_components=?,elimination_reasons='[]',scoring_policy_version=? WHERE id=?",(item['development_score'],item['eligible_rank'],item['pareto_rank'],json.dumps(components),DISCOVERY_SCORING_VERSION,item['id']))
+     else:
+      c.execute("UPDATE strategy_discovery_candidates SET eligibility_status=?,development_score=NULL,eligible_rank=NULL,pareto_rank=NULL,score_components=NULL,elimination_reasons=?,scoring_policy_version=? WHERE id=?",(item['eligibility_status'],json.dumps(item['reasons']),DISCOVERY_SCORING_VERSION,item['id']))
+   top=ranked[0] if ranked else None; warnings=['Ranking uses development folds only.','Primary holdout was not accessed.','Final OOT was not accessed.','A high score is not proof of future profitability.','No strategy was activated.']
+   if not top:warnings.append('NO_DEVELOPMENT_CANDIDATE_PASSED_ELIGIBILITY')
+   result={'requested_candidates':budget,'generated_candidates':budget,'evaluated_candidates':completed,'failed_candidates':failed,'completed_folds':fold_done,'failed_folds':fold_failed,'instrument':inst,'timeframe':timeframe,'dataset_fingerprint':fingerprint,'execution_assumptions':execution.__dict__,'aggregation_version':DISCOVERY_AGGREGATION_VERSION,'eligibility_version':DISCOVERY_ELIGIBILITY_VERSION,'scoring_version':DISCOVERY_SCORING_VERSION,'pareto_version':DISCOVERY_PARETO_VERSION,'development_candidate_count':completed,'eligible_candidate_count':len(eligible),'rejected_candidate_count':sum(x['eligibility_status']=='REJECTED' for x in candidates),'failed_candidate_count':sum(x['status']=='FAILED' for x in candidates),'pareto_front_one_count':sum(x.get('pareto_rank')==1 for x in eligible),'top_development_candidate_id':top['id'] if top else None,'top_development_candidate_number':top['candidate_number'] if top else None,'top_development_score':top['development_score'] if top else None,'top_development_parameter_hash':top['parameter_hash'] if top else None,'warnings':warnings,**sampling}
    with self.repository.connect() as c:c.execute("UPDATE strategy_discovery_runs SET status='COMPLETED',progress=?,result=?,completed_at=? WHERE id=?",(json.dumps(result),json.dumps(result),datetime.now(timezone.utc).isoformat(),rid))
    checkpoint(jid,99,'discovery.completed',result); return {'discovery_run_id':rid}
   except JobCancelled:

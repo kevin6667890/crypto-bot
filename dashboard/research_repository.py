@@ -165,6 +165,10 @@ class ResearchRepository:
             # Fold identity is durable: retries update the same candidate/fold evidence.
             connection.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_discovery_fold_identity ON strategy_discovery_folds(candidate_id,fold_number)")
             self._ensure_column(connection, "paper_trades", "signal_id", "TEXT")
+            self._ensure_column(connection, "strategy_discovery_candidates", "eligibility_status", "TEXT")
+            self._ensure_column(connection, "strategy_discovery_candidates", "development_score", "REAL")
+            self._ensure_column(connection, "strategy_discovery_candidates", "eligible_rank", "INTEGER")
+            self._ensure_column(connection, "strategy_discovery_candidates", "scoring_policy_version", "TEXT")
             self._ensure_column(connection, "optimization_runs", "experiment_family_id", "INTEGER")
             self._ensure_column(connection, "optimization_runs", "parent_run_id", "INTEGER")
             self._ensure_column(connection, "optimization_runs", "post_holdout_adjustment", "INTEGER NOT NULL DEFAULT 0")

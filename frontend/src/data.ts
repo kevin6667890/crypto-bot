@@ -988,9 +988,10 @@ export function generateEquityCurve() {
 export async function fetchEthCandles(
   interval = "15m",
   limit = 160,
-  instrument = "ETH-USDT"
+  instrument = "ETH-USDT",
+  signal?: AbortSignal,
 ): Promise<Candle[]> {
-  return fetchOkxCandles(interval, limit, instrument);
+  return fetchOkxCandles(interval, limit, instrument, signal);
 }
 
 export async function fetchSignalAnalysis(
@@ -1120,7 +1121,8 @@ async function fetchOkxSnapshot(
 async function fetchOkxCandles(
   interval = "15m",
   limit = 160,
-  instrument = "ETH-USDT"
+  instrument = "ETH-USDT",
+  signal?: AbortSignal,
 ): Promise<Candle[]> {
   const bar = normalizeOkxBar(interval);
   const rows = new Map<number, string[]>();
@@ -1130,7 +1132,8 @@ async function fetchOkxCandles(
     const endpoint = after ? "history-candles" : "candles";
     const cursor = after ? `&after=${after}` : "";
     const response = await fetch(
-      `https://www.okx.com/api/v5/market/${endpoint}?instId=${instrument}&bar=${bar}&limit=${pageSize}${cursor}`
+      `https://www.okx.com/api/v5/market/${endpoint}?instId=${instrument}&bar=${bar}&limit=${pageSize}${cursor}`,
+      { signal }
     );
     if (!response.ok)
       throw new Error(`OKX candles request failed: ${response.status}`);

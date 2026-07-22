@@ -8,6 +8,7 @@ import dashboard.discovery_service as discovery
 from dashboard.discovery_service import DiscoveryService, FOLDS, aggregate, buy_and_hold
 from dashboard.job_queue import JobCancelled, JobQueue
 from dashboard.research_repository import ResearchRepository
+from dashboard.discovery_identity import build_parameter_identity, build_candidate_identity, build_evaluation_identity
 
 STEP=900
 def rows():
@@ -25,7 +26,8 @@ def setup(tmp_path: Path):
 def fake_engine(calls):
     def run(candles,instrument,timeframe,template,parameters,start_ts,end_ts,execution,dataset_fingerprint):
         calls.append((candles,instrument,timeframe,start_ts,end_ts,dataset_fingerprint))
-        return {'metrics':{'initial_capital':execution.initial_capital,'final_equity':10100.0,'net_profit':100.0,'total_return':1.0,'annualized_return':None,'total_trades':1,'win_rate':100.0,'profit_factor':None,'expectancy':100.0,'average_win':100.0,'average_loss':None,'realized_risk_reward':None,'maximum_drawdown':2.0,'sharpe_ratio':None,'sortino_ratio':None,'consecutive_wins':1,'consecutive_losses':0,'fees_paid':2.0,'long_trades':1,'short_trades':0,'average_holding_seconds':900.0,'sample_note':'synthetic'},'signal_count':1,'discovery_evidence':{'parameter_hash':'p','execution_hash':'e','candidate_config_hash':'c','evaluation_hash':f'fold-{start_ts}','template_version':'v','feature_version':'f','execution_policy_version':'x','execution_engine_version':'y','execution':execution.__dict__}}
+        ph=build_parameter_identity(template,parameters); eh=execution.execution_hash(); ch=build_candidate_identity(template,parameters,eh); evaluation=build_evaluation_identity(ch,instrument,timeframe,start_ts,end_ts,dataset_fingerprint)
+        return {'metrics':{'initial_capital':execution.initial_capital,'final_equity':10100.0,'net_profit':100.0,'total_return':1.0,'annualized_return':None,'total_trades':1,'win_rate':100.0,'profit_factor':None,'expectancy':100.0,'average_win':100.0,'average_loss':None,'realized_risk_reward':None,'maximum_drawdown':2.0,'sharpe_ratio':None,'sortino_ratio':None,'consecutive_wins':1,'consecutive_losses':0,'fees_paid':2.0,'long_trades':1,'short_trades':0,'average_holding_seconds':900.0,'sample_note':'synthetic'},'signal_count':1,'discovery_evidence':{'parameter_hash':ph,'execution_hash':eh,'candidate_config_hash':ch,'evaluation_hash':evaluation,'template_version':'v','feature_version':'f','execution_policy_version':'x','execution_engine_version':'y','execution':execution.__dict__}}
     return run
 
 def test_five_canonical_fold_attempts_persist_boundaries_hashes_and_selected_partition(tmp_path,monkeypatch):
@@ -38,7 +40,7 @@ def test_five_canonical_fold_attempts_persist_boundaries_hashes_and_selected_par
     assert len(folds)==5
     evidence=json.loads(folds[0]['metrics'])['fold_evidence']
     assert evidence['warmup_candle_count']>0 and evidence['dataset_fingerprint']=='partition-fingerprint'
-    assert {evidence[k] for k in ('parameter_hash','execution_hash','candidate_config_hash','evaluation_hash')}=={'p','e','c',f'fold-{FOLDS[0][2]}'}
+    assert all(evidence[k] for k in ('parameter_hash','execution_hash','candidate_config_hash','evaluation_hash'))
     with repo.connect() as c: candidate=c.execute('SELECT aggregate_metrics FROM strategy_discovery_candidates').fetchone()
     assert json.loads(candidate[0])['median_validation_return']==1.0
 

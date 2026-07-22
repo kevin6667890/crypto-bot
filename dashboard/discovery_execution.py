@@ -5,19 +5,15 @@ This module deliberately contains no fill or position-management logic.
 from __future__ import annotations
 
 from dataclasses import dataclass
-import hashlib
-import json
 from typing import Any
 
 from .backtest_engine import SHARED_EXECUTION_ENGINE_VERSION, run_execution_backtest
 from .discovery_features import FEATURE_VERSION, build_features
-from .discovery_templates import TEMPLATE_VERSION, parameter_hash, signal, validate
+from .discovery_templates import TEMPLATE_VERSION, signal, validate
+from .discovery_identity import canonical_json_hash, normalize_template_parameters, build_parameter_identity, build_candidate_identity, build_evaluation_identity, DISCOVERY_PARAMETER_IDENTITY_VERSION, DISCOVERY_CANDIDATE_IDENTITY_VERSION, DISCOVERY_EVALUATION_IDENTITY_VERSION
 from .strategy_rules import StrategyParameters
 
 DISCOVERY_EXECUTION_POLICY_VERSION = "discovery-execution-v1"
-
-def _hash(value: dict[str, Any]) -> str:
-    return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode()).hexdigest()
 
 
 @dataclass(frozen=True)
@@ -43,7 +39,7 @@ class DiscoveryExecutionConfig:
 
     def execution_hash(self) -> str:
         self.validate()
-        return _hash({"execution_policy_version": DISCOVERY_EXECUTION_POLICY_VERSION,
+        return canonical_json_hash({"execution_policy_version": DISCOVERY_EXECUTION_POLICY_VERSION,
                       "initial_capital": self.initial_capital, "risk_per_trade": self.risk_per_trade,
                       "trading_fee": self.trading_fee, "slippage": self.slippage,
                       "stop_loss_atr_multiplier": self.stop_loss_atr_multiplier,
@@ -60,17 +56,13 @@ def run_discovery_candidate_backtest(candles: list[dict[str, Any]], instrument: 
     For end-exclusive folds callers must pass ``validation_end_ts - timeframe_seconds``.
     """
     execution = (execution or DiscoveryExecutionConfig()).validate()
-    config = validate({"template": template, "parameters": template_parameters})
-    features = build_features(candles, {"ma_periods": sorted({6, 20, 60, 200, int(template_parameters.get("fast_period", 20)), int(template_parameters.get("slow_period", 200))}), "atr_period": int(template_parameters.get("atr_period", 14))})
-    signal_parameter_hash = _hash({"template": config["template"], "template_version": config["template_version"],
-                                   "parameters": config["parameters"], "feature_version": FEATURE_VERSION})
+    normalized_parameters = normalize_template_parameters(template, template_parameters)
+    config = validate({"template": template, "parameters": normalized_parameters})
+    features = build_features(candles, {"ma_periods": sorted({6, 20, 60, 200, int(normalized_parameters["fast_period"]), int(normalized_parameters["slow_period"])}), "atr_period": int(normalized_parameters["atr_period"])})
+    signal_parameter_hash = build_parameter_identity(template, normalized_parameters)
     execution_hash = execution.execution_hash()
-    candidate_config_hash = _hash({"parameter_hash": signal_parameter_hash, "execution_hash": execution_hash,
-                                   "template_version": config["template_version"], "feature_version": FEATURE_VERSION,
-                                   "execution_engine_version": SHARED_EXECUTION_ENGINE_VERSION})
-    evaluation_hash = _hash({"candidate_config_hash": candidate_config_hash, "instrument": instrument,
-                             "timeframe": timeframe, "start_ts": start_ts, "end_ts": end_ts,
-                             "dataset_fingerprint": dataset_fingerprint})
+    candidate_config_hash = build_candidate_identity(template, normalized_parameters, execution_hash)
+    evaluation_hash = build_evaluation_identity(candidate_config_hash, instrument, timeframe, start_ts, end_ts, dataset_fingerprint)
 
     def provider(candle: dict[str, Any], index: int) -> dict[str, Any]:
         feature = features[index]
@@ -88,7 +80,8 @@ def run_discovery_candidate_backtest(candles: list[dict[str, Any]], instrument: 
     result = run_execution_backtest(candles, instrument, timeframe, parameters, start_ts, end_ts, signal_provider=provider)
     result["discovery_evidence"] = {"parameter_hash": signal_parameter_hash, "execution_hash": execution_hash,
         "candidate_config_hash": candidate_config_hash, "evaluation_hash": evaluation_hash, "template": template,
-        "template_version": TEMPLATE_VERSION[template], "feature_version": FEATURE_VERSION,
+        "template_version": TEMPLATE_VERSION[template], "feature_version": FEATURE_VERSION, "parameters": normalized_parameters,
+        "parameter_identity_version": DISCOVERY_PARAMETER_IDENTITY_VERSION, "candidate_identity_version": DISCOVERY_CANDIDATE_IDENTITY_VERSION, "evaluation_identity_version": DISCOVERY_EVALUATION_IDENTITY_VERSION,
         "execution_policy_version": DISCOVERY_EXECUTION_POLICY_VERSION,
         "execution_engine_version": SHARED_EXECUTION_ENGINE_VERSION, "instrument": instrument,
         "timeframe": timeframe, "start_ts": start_ts, "end_ts": end_ts, "execution": execution.__dict__}

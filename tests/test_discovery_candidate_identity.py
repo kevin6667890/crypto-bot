@@ -6,6 +6,9 @@ from dashboard.discovery_execution import DiscoveryExecutionConfig, run_discover
 from dashboard.discovery_identity import (build_parameter_identity, build_candidate_identity, build_evaluation_identity,
     normalize_template_parameters, DISCOVERY_PARAMETER_IDENTITY_VERSION, DISCOVERY_CANDIDATE_IDENTITY_VERSION, DISCOVERY_EVALUATION_IDENTITY_VERSION)
 from dashboard.discovery_service import DiscoveryService, DISCOVERY_SAMPLER_VERSION
+from dashboard.discovery_service import FOLDS
+from dashboard.job_queue import JobQueue
+from dashboard.research_repository import ResearchRepository
 
 P={"fast_period":20,"slow_period":200,"fast_ma_type":"EMA","atr_period":14,"volume_enabled":False}
 
@@ -44,3 +47,27 @@ def test_adapter_returns_persistable_versions_and_normalized_parameters():
     evidence=run_discovery_candidate_backtest(rows,"BTC-USDT","15m","TREND_BREAKOUT",P,rows[200]["ts"],rows[-1]["ts"],dataset_fingerprint="fixture")["discovery_evidence"]
     assert evidence["parameter_hash"]==build_parameter_identity("TREND_BREAKOUT",evidence["parameters"])
     assert (evidence["parameter_identity_version"],evidence["candidate_identity_version"],evidence["evaluation_identity_version"]) == (DISCOVERY_PARAMETER_IDENTITY_VERSION,DISCOVERY_CANDIDATE_IDENTITY_VERSION,DISCOVERY_EVALUATION_IDENTITY_VERSION)
+
+def test_real_worker_adapter_engine_runs_all_five_folds_without_holdout(tmp_path):
+    """A real 4H candidate crosses worker, adapter, features and shared execution."""
+    step=4*3600; start=FOLDS[0][0]; end=FOLDS[-1][3]
+    candles=[{"ts":t,"open":100+i*.2,"high":100.6+i*.2,"low":99.0+i*.2,"close":100.5+i*.2,"volume":100+i,"confirmed":1} for i,t in enumerate(range(start,end,step))]
+    repo=ResearchRepository(tmp_path/"research.db"); repo.upsert_candles("BTC-USDT","4H",candles)
+    dataset=repo.create_or_get_discovery_dataset("five-fold-real",start,end,["BTC-USDT"],["4H"])
+    repo.upsert_discovery_partition(dataset["id"],"BTC-USDT","4H",candles,{"expected_rows":len(candles),"actual_rows":len(candles),"missing_rows":0,"duplicate_rows":0,"fingerprint":"real-five-fold","status":"COMPLETE"})
+    dataset=repo.finish_discovery_dataset(dataset["id"]); service=DiscoveryService(repo,JobQueue(tmp_path/"jobs.db",autostart=False))
+    started=service.start({"dataset_id":dataset["id"],"instrument":"BTC-USDT","timeframe":"4H","templates":["TREND_BREAKOUT"],"trial_budget":1,"seed":7,"execution_assumptions":{}})
+    fixed=normalize_template_parameters("TREND_BREAKOUT",P); ph=build_parameter_identity("TREND_BREAKOUT",fixed)
+    service._candidate_definitions=lambda *_: ([("TREND_BREAKOUT",fixed,ph)],{"sampler_version":DISCOVERY_SAMPLER_VERSION,"sampling_attempts":1,"duplicate_samples_rejected":0,"unique_candidates_generated":1,"sampling_attempt_limit":1})
+    payload={"discovery_run_id":started["id"],"dataset_id":dataset["id"],"instrument":"BTC-USDT","timeframe":"4H","templates":["TREND_BREAKOUT"],"trial_budget":1,"seed":7,"execution_assumptions":{}}
+    service._run_job(1,payload,lambda *_:None)
+    with repo.connect() as c:
+        candidate=dict(c.execute("SELECT * FROM strategy_discovery_candidates").fetchone()); folds=[dict(x) for x in c.execute("SELECT * FROM strategy_discovery_folds ORDER BY fold_number")]
+    evidence=[__import__("json").loads(x["metrics"])["fold_evidence"] for x in folds]
+    assert len(folds)==5 and all(x["status"]=="COMPLETED" for x in folds)
+    assert sum(__import__("json").loads(x["metrics"])["total_trades"] for x in folds)>0
+    assert all(x["validation_end_ts"]==FOLDS[i][3] for i,x in enumerate(folds))
+    assert all(x["effective_engine_end_ts"]==FOLDS[i][3]-step for i,x in enumerate(evidence))
+    assert all(x["parameter_hash"]==candidate["parameter_hash"] for x in evidence)
+    aggregate=__import__("json").loads(candidate["aggregate_metrics"])
+    assert aggregate["parameter_hash"]==candidate["parameter_hash"] and aggregate["total_trades"]>0

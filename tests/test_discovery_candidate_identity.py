@@ -2,6 +2,8 @@
 from __future__ import annotations
 import random
 import pytest
+import dashboard.discovery_features as discovery_features
+import dashboard.discovery_identity as discovery_identity
 from dashboard.discovery_execution import DiscoveryExecutionConfig, run_discovery_candidate_backtest
 from dashboard.discovery_identity import (build_parameter_identity, build_candidate_identity, build_evaluation_identity,
     normalize_template_parameters, DISCOVERY_PARAMETER_IDENTITY_VERSION, DISCOVERY_CANDIDATE_IDENTITY_VERSION, DISCOVERY_EVALUATION_IDENTITY_VERSION)
@@ -16,6 +18,30 @@ def test_canonical_parameter_identity_ignores_key_order_and_rejects_dead_fields(
     assert build_parameter_identity("TREND_BREAKOUT",P) == build_parameter_identity("TREND_BREAKOUT",dict(reversed(list(P.items()))))
     with pytest.raises(ValueError, match="Unknown or inactive"):
         normalize_template_parameters("TREND_BREAKOUT",{**P,"stop_atr":1})
+    with pytest.raises(ValueError, match="Unknown or inactive"):
+        normalize_template_parameters("TREND_BREAKOUT",{**P,"minimum_volume_ratio":1.0})
+
+@pytest.mark.parametrize("value",["false",0,1,None])
+def test_volume_enabled_requires_a_json_boolean(value):
+    with pytest.raises(ValueError,match="volume_enabled"):
+        normalize_template_parameters("TREND_BREAKOUT",{**P,"volume_enabled":value})
+
+@pytest.mark.parametrize("key,value",[("fast_period",True),("slow_period","200"),("atr_period",14.0),("rsi_lower","35"),("rsi_upper",False)])
+def test_integer_parameters_reject_coercible_non_integers(key,value):
+    template="MEAN_REVERSION" if key.startswith("rsi_") else "TREND_BREAKOUT"
+    with pytest.raises(ValueError,match=key): normalize_template_parameters(template,{**P,key:value})
+
+@pytest.mark.parametrize("key,value",[("minimum_volume_ratio","1.0"),("minimum_volume_ratio",float("nan")),("maximum_distance",True),("maximum_distance",float("inf"))])
+def test_float_parameters_require_finite_json_numbers(key,value):
+    template="TREND_PULLBACK" if key=="maximum_distance" else "TREND_BREAKOUT"
+    parameters={**P,"volume_enabled":True,key:value}
+    with pytest.raises(ValueError,match=key): normalize_template_parameters(template,parameters)
+
+def test_identity_uses_exported_feature_version_source(monkeypatch):
+    before=build_parameter_identity("TREND_BREAKOUT",P)
+    assert discovery_identity.FEATURE_VERSION == discovery_features.FEATURE_VERSION
+    monkeypatch.setattr(discovery_identity,"FEATURE_VERSION","test-feature-version")
+    assert build_parameter_identity("TREND_BREAKOUT",P) != before
 
 def test_execution_only_changes_candidate_not_parameter_identity():
     one,two=DiscoveryExecutionConfig(),DiscoveryExecutionConfig(trading_fee=.001)

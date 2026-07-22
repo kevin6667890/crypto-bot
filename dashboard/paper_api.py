@@ -1068,7 +1068,7 @@ class Handler(BaseHTTPRequestHandler):
         elif parsed.path == "/api/discovery/runs":
             if not self._admin(): return
             try:self._send(RESEARCH.discovery.start(payload,self._client()),HTTPStatus.ACCEPTED)
-            except (ValueError,OverflowError) as error:self._send({'error':str(error)},HTTPStatus.BAD_REQUEST)
+            except (ValueError,OverflowError) as error:self._send({'error':str(error)},HTTPStatus.BAD_REQUEST if isinstance(error,ValueError) else HTTPStatus.TOO_MANY_REQUESTS)
         elif parsed.path.startswith('/api/discovery/runs/') and parsed.path.endswith('/cancel'):
             if not self._admin(): return
             try:

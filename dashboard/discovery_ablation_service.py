@@ -59,7 +59,7 @@ class DiscoveryAblationService:
   except Exception:
    self._fail(rid,'DISCOVERY_ABLATION_QUEUE_ERROR'); raise
   with self.repository.connect() as c:c.execute('UPDATE strategy_discovery_ablation_runs SET job_id=? WHERE id=?',(job['id'],rid))
-  return {'id':rid,'job_id':job['id'],'status':'QUEUED'}
+  return self.run_detail(rid)
  def retry(self,rid,client='public'):
   with self.repository.connect() as c: row=c.execute('SELECT * FROM strategy_discovery_ablation_runs WHERE id=?',(rid,)).fetchone()
   if not row or row['status'] not in ('FAILED','CANCELLED'): raise ValueError('Only failed or cancelled ablation runs can be retried.')
@@ -87,7 +87,10 @@ class DiscoveryAblationService:
  def cancel(self,rid):
   with self.repository.connect() as c: row=c.execute('SELECT job_id,status FROM strategy_discovery_ablation_runs WHERE id=?',(rid,)).fetchone()
   if not row:raise ValueError('Ablation run not found.')
-  if row['job_id']:return self.jobs.cancel(row['job_id'])
+  if row['status'] in ('COMPLETED','CANCELLED','FAILED'):return self.run_detail(rid)
+  if row['job_id']:
+   self.jobs.cancel(row['job_id'])
+   return self.run_detail(rid)
   raise ValueError('Active job not found.')
  def _terminal(self,job):
   rid=job.get('request_payload',{}).get('ablation_run_id')

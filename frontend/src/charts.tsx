@@ -2,6 +2,7 @@ import { DependencyList, useEffect, useRef, useState } from "react";
 import { AreaSeries, CandlestickSeries, ColorType, createChart, IChartApi, LineSeries, UTCTimestamp } from "lightweight-charts";
 import { Candle, fetchEthCandles, generateCandles, generateEquityCurve } from "./data";
 import {useLanguage} from "./i18n";
+import { ChartCacheKey, formatMillions, loadChartSnapshot, normalizePoints, saveChartSnapshot } from "./chartState";
 
 const chartTheme = {
   layout: {
@@ -27,17 +28,15 @@ function useResponsiveChart(factory: (container: HTMLDivElement) => IChartApi, d
   useEffect(() => {
     if (!ref.current) return;
     let chart: IChartApi | null = null;
-    try {
-      chart = factory(ref.current);
-    } catch {
-      return;
-    }
     let lastWidth = 0;
     let lastHeight = 0;
     let delayedResize: number | undefined;
     const resizeChart = () => {
       const bounds = ref.current?.getBoundingClientRect();
       if (!bounds || bounds.width < 20 || bounds.height < 20) return;
+      if (!chart) {
+        try { chart = factory(ref.current!); } catch { return; }
+      }
       const width = Math.floor(bounds.width);
       const height = Math.floor(bounds.height);
       if (width === lastWidth && height === lastHeight) return;
@@ -50,10 +49,14 @@ function useResponsiveChart(factory: (container: HTMLDivElement) => IChartApi, d
       window.clearTimeout(delayedResize);
       delayedResize = window.setTimeout(resizeChart, 160);
     };
+    // A hidden tab can report a zero-sized container.  Defer construction until
+    // ResizeObserver reports a usable box instead of abandoning this chart.
     const resize = new ResizeObserver(queueResize);
     resize.observe(ref.current);
     window.addEventListener("resize", queueResize);
     window.visualViewport?.addEventListener("resize", queueResize);
+    document.addEventListener("visibilitychange", queueResize);
+    window.addEventListener("focus", queueResize);
     queueResize();
 
     return () => {
@@ -61,6 +64,8 @@ function useResponsiveChart(factory: (container: HTMLDivElement) => IChartApi, d
       window.clearTimeout(delayedResize);
       window.removeEventListener("resize", queueResize);
       window.visualViewport?.removeEventListener("resize", queueResize);
+      document.removeEventListener("visibilitychange", queueResize);
+      window.removeEventListener("focus", queueResize);
       chart?.remove();
     };
   }, deps);
@@ -69,6 +74,33 @@ function useResponsiveChart(factory: (container: HTMLDivElement) => IChartApi, d
 }
 
 type FlowPaneData = { cvd_series: Array<{ time: number; value: number }>; oi_series: Array<{ time: number; value: number }> };
+
+const isCandle = (point: unknown): point is Candle => {
+  const row = point as Candle;
+  return !!row && [row.time, row.open, row.high, row.low, row.close, row.volume].every(Number.isFinite);
+};
+const isFlowPoint = (point: unknown): point is { time: number; value: number } => {
+  const row = point as { time?: number; value?: number };
+  return !!row && Number.isFinite(row.time) && Number.isFinite(row.value);
+};
+
+function useLastKnownGood<T extends { time: number }>(key: ChartCacheKey, incoming: unknown, valid: (point: unknown) => point is T) {
+  const serializedKey = `${key.series}:${key.instrument}:${key.timeframe}`;
+  const [points, setPoints] = useState<T[]>(() => loadChartSnapshot(key, valid));
+  const activeKey = useRef(serializedKey);
+  // Do not render the outgoing instrument/timeframe during the first render
+  // after a selection change; hydrate that exact key synchronously instead.
+  const changedKey = activeKey.current !== serializedKey;
+  if (changedKey) activeKey.current = serializedKey;
+  useEffect(() => { setPoints(loadChartSnapshot(key, valid)); }, [serializedKey, valid]);
+  useEffect(() => {
+    const normalized = normalizePoints(incoming, valid);
+    if (!normalized.length) return;
+    saveChartSnapshot(key, normalized, valid);
+    setPoints(normalized);
+  }, [incoming, serializedKey, valid]);
+  return changedKey ? loadChartSnapshot(key, valid) : points;
+}
 
 function alignFlowToCandles(candles: Candle[], points: Array<{ time: number; value: number }>, interval: string) {
   const seconds = interval === "1m" ? 60 : interval === "5m" ? 300 : interval === "15m" ? 900 : interval === "1h" ? 3600 : interval === "4h" ? 14400 : 86400;
@@ -84,17 +116,25 @@ function alignFlowToCandles(candles: Candle[], points: Array<{ time: number; val
 }
 
 export function MarketChart({ instrument = "ETH-USDT", interval = "15m", flow }: { instrument?: string; interval?: string; flow?: FlowPaneData }) {
-  const [candles, setCandles] = useState<Candle[]>(() => generateCandles());
+  const candleKey = { instrument, timeframe: interval, series: "candles" as const };
+  const [receivedCandles, setReceivedCandles] = useState<Candle[]>([]);
+  const candles = useLastKnownGood(candleKey, receivedCandles, isCandle);
+  const cvd = useLastKnownGood({ instrument, timeframe: interval, series: "cvd" }, flow?.cvd_series, isFlowPoint);
+  const oi = useLastKnownGood({ instrument, timeframe: interval, series: "oi" }, flow?.oi_series, isFlowPoint);
+  const requestId = useRef(0);
 
   useEffect(() => {
-    let cancelled = false;
+    const controller = new AbortController();
+    const request = ++requestId.current;
 
     async function loadCandles() {
       try {
-        const liveCandles = await fetchEthCandles(interval, 500, instrument);
-        if (!cancelled) setCandles(liveCandles);
-      } catch {
-        if (!cancelled) setCandles(generateCandles());
+        const liveCandles = await fetchEthCandles(interval, 500, instrument, controller.signal);
+        // Ignore stale, malformed, and temporary-empty responses.  The last
+        // known good snapshot remains visible while the chart is stale.
+        if (request === requestId.current && normalizePoints(liveCandles, isCandle).length) setReceivedCandles(liveCandles);
+      } catch (error) {
+        if (error instanceof DOMException && error.name === "AbortError") return;
       }
     }
 
@@ -102,7 +142,7 @@ export function MarketChart({ instrument = "ETH-USDT", interval = "15m", flow }:
     const timer = window.setInterval(loadCandles, 30_000);
 
     return () => {
-      cancelled = true;
+      controller.abort();
       window.clearInterval(timer);
     };
   }, [instrument, interval]);
@@ -133,18 +173,18 @@ export function MarketChart({ instrument = "ETH-USDT", interval = "15m", flow }:
       const ma200 = chart.addSeries(LineSeries, { color: "#7c3aed", lineWidth: 2, priceLineVisible: false });
       ma60.setData(movingAverage(60).slice(-260));
       ma200.setData(movingAverage(200).slice(-260));
-      if (flow?.cvd_series.length) {
-        const cvd = chart.addSeries(AreaSeries, { lineColor: "#7c3aed", topColor: "rgba(124,58,237,.22)", bottomColor: "rgba(124,58,237,.02)", lineWidth: 2, priceLineVisible: false, lastValueVisible: true }, 1);
-        const alignedCvd = alignFlowToCandles(visibleCandles, flow.cvd_series, interval);
-        cvd.setData(alignedCvd);
-        cvd.createPriceLine({ price: 0, color: "rgba(71,84,103,.45)", lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: "0" });
+      if (cvd.length) {
+        const cvdSeries = chart.addSeries(AreaSeries, { lineColor: "#7c3aed", topColor: "rgba(124,58,237,.22)", bottomColor: "rgba(124,58,237,.02)", lineWidth: 2, priceLineVisible: false, lastValueVisible: true, priceFormat: { type: "custom", formatter: formatMillions } }, 1);
+        const alignedCvd = alignFlowToCandles(visibleCandles, cvd, interval);
+        cvdSeries.setData(alignedCvd);
+        cvdSeries.createPriceLine({ price: 0, color: "rgba(71,84,103,.45)", lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: "0.00M" });
       }
-      if (flow?.oi_series.length) {
-        const oi = chart.addSeries(AreaSeries, { lineColor: "#0ea5e9", topColor: "rgba(14,165,233,.20)", bottomColor: "rgba(14,165,233,.02)", lineWidth: 2, priceLineVisible: false, lastValueVisible: true }, 2);
-        oi.setData(alignFlowToCandles(visibleCandles, flow.oi_series, interval));
+      if (oi.length) {
+        const oiSeries = chart.addSeries(AreaSeries, { lineColor: "#0ea5e9", topColor: "rgba(14,165,233,.20)", bottomColor: "rgba(14,165,233,.02)", lineWidth: 2, priceLineVisible: false, lastValueVisible: true, priceFormat: { type: "custom", formatter: formatMillions } }, 2);
+        oiSeries.setData(alignFlowToCandles(visibleCandles, oi, interval));
       }
     } catch {
-      series.setData(generateCandles());
+      // Retain the existing data; malformed transient inputs must not blank it.
     }
     chart.timeScale().fitContent();
     // Keep the initial viewport tied to the candle history.  Flow data starts
@@ -161,7 +201,7 @@ export function MarketChart({ instrument = "ETH-USDT", interval = "15m", flow }:
     panes[1]?.setStretchFactor(1);
     panes[2]?.setStretchFactor(1);
     return chart;
-  }, [candles, flow, interval]);
+  }, [candles, cvd, oi, interval]);
 
   return <div className="chart-canvas" ref={ref} />;
 }
@@ -203,17 +243,18 @@ export function EquityChart() {
   return <div className="chart-canvas" ref={ref} />;
 }
 
-export function FlowChart({ points, color = "#7c3aed", zeroLine = false }: { points: Array<{ time: number; value: number }>; color?: string; zeroLine?: boolean }) {
+export function FlowChart({ points, color = "#7c3aed", zeroLine = false, instrument = "ETH-USDT", interval = "15m", seriesType = "cvd" }: { points: Array<{ time: number; value: number }>; color?: string; zeroLine?: boolean; instrument?: string; interval?: string; seriesType?: "cvd" | "oi" }) {
   const {t}=useLanguage();
-  const normalized = Array.from(new Map(points.filter((point) => Number.isFinite(point.time) && Number.isFinite(point.value)).map((point) => [point.time, point])).values()).sort((a, b) => a.time - b.time);
+  const retained = useLastKnownGood({ instrument, timeframe: interval, series: seriesType }, points, isFlowPoint);
+  const normalized = [...retained];
   if (normalized.length === 1) normalized.unshift({ time: normalized[0].time - 1, value: normalized[0].value });
   const ref = useResponsiveChart((container) => {
     const chart = createChart(container, { ...chartTheme, width: container.clientWidth, height: container.clientHeight, rightPriceScale: { visible: true, borderVisible: false, scaleMargins: { top: .15, bottom: .15 } }, timeScale: { visible: true, borderVisible: false, timeVisible: true, secondsVisible: true, fixLeftEdge: true, fixRightEdge: true } });
-    const series = chart.addSeries(AreaSeries, { lineColor: color, topColor: `${color}38`, bottomColor: `${color}05`, lineWidth: 2, priceLineVisible: false, lastValueVisible: true });
+    const series = chart.addSeries(AreaSeries, { lineColor: color, topColor: `${color}38`, bottomColor: `${color}05`, lineWidth: 2, priceLineVisible: true, lastValueVisible: true, priceFormat: { type: "custom", formatter: formatMillions } });
     series.setData(normalized.map((point) => ({ time: point.time as UTCTimestamp, value: point.value })));
     if (zeroLine) series.createPriceLine({ price: 0, color: "rgba(71,84,103,.45)", lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: "0" });
     chart.timeScale().fitContent();
     return chart;
-  }, [points, color, zeroLine]);
+  }, [normalized, color, zeroLine]);
   return <div className="flow-canvas">{normalized.length ? <div className="flow-canvas-inner" ref={ref} /> : <span className="flow-empty">{t("research.noSeries")}</span>}</div>;
 }

@@ -15,8 +15,9 @@ import {
   Zap,
 } from "lucide-react";
 import { motion } from "framer-motion";
-import { CSSProperties, useEffect, useMemo, useState } from "react";
+import { CSSProperties, useEffect, useMemo, useRef, useState } from "react";
 import { EquityChart, FlowChart, MarketChart, ReplayChart } from "./charts";
+import { formatMillions } from "./chartState";
 import StrategyResearch from "./StrategyResearch";
 import DiscoveryLab from "./DiscoveryLab";
 import Operations from "./Operations";
@@ -666,8 +667,10 @@ function Workspace() {
   const [replayItems, setReplayItems] = useState<ReplayItem[]>([]);
   const [replayDetail, setReplayDetail] = useState<ReplayDetail | null>(null);
   const [replayLoading, setReplayLoading] = useState(false);
+  const paperRequest = useRef(0);
 
   async function refresh() {
+    const request = ++paperRequest.current;
     setLoading(true);
     try {
       const [market, analysis] = await Promise.all([
@@ -692,24 +695,42 @@ function Workspace() {
           fetchPaperStatus(instrument),
           fetchReplayItems(instrument),
         ]);
-        setPaper(paperStatus);
-        setReplayItems(history);
+        if (request === paperRequest.current && paperStatus.instrument === instrument) {
+          setPaper(paperStatus);
+          setReplayItems(history);
+        }
       } catch {
-        setPaper(null);
-        setReplayItems([]);
+        // A sleeping browser can timeout one refresh.  Preserve the confirmed
+        // status so CVD/OI charts stay mounted and retain their snapshot.
+        if (request === paperRequest.current) {
+          setPaper((current) => current);
+          setReplayItems((current) => current);
+        }
       }
     } else {
-      setPaper(null);
-      setReplayItems([]);
+      if (request === paperRequest.current) { setPaper(null); setReplayItems([]); }
     }
   }
 
   useEffect(() => {
     setReplayDetail(null);
     setChatAnswer("");
-    refresh();
-    const timer = window.setInterval(refresh, 60_000);
-    return () => window.clearInterval(timer);
+    let refreshing = false;
+    const run = () => {
+      if (refreshing) return;
+      refreshing = true;
+      void refresh().finally(() => { refreshing = false; });
+    };
+    const refreshOnReturn = () => { if (!document.hidden) run(); };
+    run();
+    const timer = window.setInterval(run, 60_000);
+    document.addEventListener("visibilitychange", refreshOnReturn);
+    window.addEventListener("focus", refreshOnReturn);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", refreshOnReturn);
+      window.removeEventListener("focus", refreshOnReturn);
+    };
   }, [instrument]);
 
   useEffect(() => {
@@ -746,7 +767,7 @@ function Workspace() {
   const runtimeAnalysis =
     paper?.instrument === instrument ? paper.analysis : null;
   const legacyVpvr = runtimeAnalysis?.vpvr;
-  const chartFlow = useMemo(() => paper?.flow?.professional?.available ? { cvd_series: paper.flow.professional.cvd_series, oi_series: paper.flow.professional.oi_series } : undefined, [paper?.flow?.professional]);
+  const chartFlow = useMemo(() => paper?.instrument === instrument && paper.flow?.professional?.available ? { cvd_series: paper.flow.professional.cvd_series, oi_series: paper.flow.professional.oi_series } : undefined, [paper?.instrument, paper?.flow?.professional, instrument]);
   const flowState = paper?.flow?.professional;
   const flowStatus = flowState?.collector_status || "OFFLINE";
   const flowCoverage = flowState ? `${Math.round(flowState.coverage_seconds / 60)} / ${Math.round(flowState.window_seconds / 3600)}h` : "--";
@@ -1021,7 +1042,7 @@ function Workspace() {
                 {!!legacyVpvr.profile?.length && <VpvrHistogram profile={legacyVpvr.profile} poc={legacyVpvr.poc} vah={legacyVpvr.vah} val={legacyVpvr.val} professional={legacyVpvr.professional} />}
               </section>
             )}
-            {paper?.flow && (
+            {paper?.instrument === instrument && paper.flow && (
               <section className="flow-panel flow-legacy">
                 <div className="section-title">
                   <div>
@@ -1042,22 +1063,17 @@ function Workspace() {
                         }
                       >
                         {(paper.flow.professional?.available ? paper.flow.professional.cvd : paper.flow.cvd_delta) >= 0 ? "+" : ""}
-                        {(paper.flow.professional?.available ? paper.flow.professional.cvd : paper.flow.cvd_delta).toLocaleString(undefined, {
-                          maximumFractionDigits: 0,
-                        })}
+                        {formatMillions(paper.flow.professional?.available ? paper.flow.professional.cvd : paper.flow.cvd_delta)}
                       </b>
                     </div>
-                    <FlowChart points={paper.flow.professional?.available ? paper.flow.professional.cvd_series : paper.flow.cvd_series} zeroLine />
+                    <FlowChart points={paper.flow.professional?.available ? paper.flow.professional.cvd_series : paper.flow.cvd_series} zeroLine instrument={instrument} interval={interval} seriesType="cvd" />
                     <small>{paper.flow.professional?.available ? `WebSocket 逐笔成交聚合 · 已覆盖 ${Math.round(paper.flow.professional.coverage_seconds / 60)} 分钟 · 当前不参与评分` : t("market.cvdHelp")}</small>
                   </article>
                   <article>
                     <div className="flow-head">
                       <span>{t("market.swapOi")}</span>
                       <b>
-                        $
-                        {paper.flow.oi.toLocaleString(undefined, {
-                          maximumFractionDigits: 0,
-                        })}
+                        {formatMillions(paper.flow.oi)}
                       </b>
                     </div>
                     <FlowChart
@@ -1068,7 +1084,7 @@ function Workspace() {
                             new Date(point.created_at).getTime() / 1000
                           ) || index,
                         value: point.oi,
-                      }))) }
+                      }))) } instrument={instrument} interval={interval} seriesType="oi"
                     />
                     <small>
                       {t("market.oiChange", {

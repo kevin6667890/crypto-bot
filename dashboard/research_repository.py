@@ -162,6 +162,8 @@ class ResearchRepository:
                 CREATE TABLE IF NOT EXISTS strategy_discovery_ablations (id INTEGER PRIMARY KEY AUTOINCREMENT,candidate_id INTEGER NOT NULL,removed_component TEXT NOT NULL,metrics TEXT,score_difference REAL,status TEXT NOT NULL,error TEXT);
                 CREATE TABLE IF NOT EXISTS strategy_discovery_stress_tests (id INTEGER PRIMARY KEY AUTOINCREMENT,candidate_id INTEGER NOT NULL,scenario TEXT NOT NULL,assumptions TEXT NOT NULL,metrics TEXT,status TEXT NOT NULL,error TEXT);
             """)
+            # Fold identity is durable: retries update the same candidate/fold evidence.
+            connection.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_discovery_fold_identity ON strategy_discovery_folds(candidate_id,fold_number)")
             self._ensure_column(connection, "paper_trades", "signal_id", "TEXT")
             self._ensure_column(connection, "optimization_runs", "experiment_family_id", "INTEGER")
             self._ensure_column(connection, "optimization_runs", "parent_run_id", "INTEGER")

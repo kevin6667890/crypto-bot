@@ -1,52 +1,177 @@
-"""Bounded offline Strategy Discovery Lab; it never activates or trades a candidate."""
+"""Bounded development-only Strategy Discovery fold evaluation; it never activates or trades a candidate."""
 from __future__ import annotations
-import json, random
+
+import json, math, random, statistics
 from datetime import datetime, timezone
+from typing import Any
+
 from .dataset_service import DiscoveryDatasetService
-from .discovery_features import FEATURE_VERSION, build_features
-from .discovery_templates import TEMPLATES,TEMPLATE_VERSION,parameter_hash,signal,validate
-ENGINE_VERSION='canonical-next-bar-open/discovery-adapter-v1'; POLICY_VERSION='discovery-policy-v1'
-def ts(y,m,d): return int(datetime(y,m,d,tzinfo=timezone.utc).timestamp())
-FOLDS=[(ts(2024,1,1),ts(2024,7,1),ts(2024,7,1),ts(2024,9,1)),(ts(2024,3,1),ts(2024,9,1),ts(2024,9,1),ts(2024,11,1)),(ts(2024,5,1),ts(2024,11,1),ts(2024,11,1),ts(2025,1,1)),(ts(2024,7,1),ts(2025,1,1),ts(2025,1,1),ts(2025,3,1)),(ts(2024,9,1),ts(2025,3,1),ts(2025,3,1),ts(2025,5,1))]
+from .discovery_execution import DiscoveryExecutionConfig, _hash, run_discovery_candidate_backtest
+from .backtest_engine import SHARED_EXECUTION_ENGINE_VERSION
+from .discovery_features import FEATURE_VERSION
+from .discovery_templates import TEMPLATES, TEMPLATE_VERSION, parameter_hash, validate
+from .job_queue import JobCancelled
+from .okx_history import INSTRUMENTS, TIMEFRAME_SECONDS
+
+ENGINE_VERSION = "canonical-next-bar-open/discovery-adapter-v1"
+POLICY_VERSION = "discovery-policy-v1"
+DISCOVERY_AGGREGATION_VERSION = "discovery-development-aggregation-v1"
+
+def ts(y, m, d): return int(datetime(y, m, d, tzinfo=timezone.utc).timestamp())
+FOLDS = [(ts(2024,1,1),ts(2024,7,1),ts(2024,7,1),ts(2024,9,1)),(ts(2024,3,1),ts(2024,9,1),ts(2024,9,1),ts(2024,11,1)),(ts(2024,5,1),ts(2024,11,1),ts(2024,11,1),ts(2025,1,1)),(ts(2024,7,1),ts(2025,1,1),ts(2025,1,1),ts(2025,3,1)),(ts(2024,9,1),ts(2025,3,1),ts(2025,3,1),ts(2025,5,1))]
+
+def _median(values): return statistics.median(values) if values else None
+def _finite(values): return [float(x) for x in values if x is not None and math.isfinite(float(x))]
+
+def buy_and_hold(candles: list[dict[str, Any]], start_ts: int, end_ts: int, execution: DiscoveryExecutionConfig) -> dict[str, Any]:
+    """Long-only benchmark: adverse fills and both fees, sized so entry cost never exceeds capital."""
+    visible = [x for x in candles if start_ts <= int(x["ts"]) <= end_ts]
+    if not visible: raise ValueError("VALIDATION_CANDLES_MISSING")
+    first, last = visible[0], visible[-1]
+    raw_entry, raw_exit = float(first["open"]), float(last["close"])
+    entry = raw_entry * (1 + execution.slippage); exit = raw_exit * (1 - execution.slippage)
+    size = execution.initial_capital / (entry * (1 + execution.trading_fee))
+    entry_fee = entry * size * execution.trading_fee; exit_fee = exit * size * execution.trading_fee
+    final_equity = execution.initial_capital - entry * size - entry_fee + exit * size - exit_fee
+    # Mark the same no-leverage position at each validation close using an immediate
+    # adverse, fee-bearing liquidation value, so benchmark drawdown is cost-aware too.
+    marked = [size * float(row["close"]) * (1-execution.slippage) * (1-execution.trading_fee) for row in visible]
+    peak = execution.initial_capital; maximum_drawdown = 0.0
+    for value in marked:
+        peak=max(peak,value); maximum_drawdown=max(maximum_drawdown,(peak-value)/peak*100 if peak else 0.0)
+    result = {"initial_capital": execution.initial_capital, "entry_ts": int(first["ts"]), "exit_ts": int(last["ts"]),
+        "raw_entry_price": raw_entry, "effective_entry_price": entry, "raw_exit_price": raw_exit, "effective_exit_price": exit,
+        "position_size": size, "entry_fee": entry_fee, "exit_fee": exit_fee, "final_equity": final_equity,
+        "net_profit": final_equity-execution.initial_capital, "total_return": (final_equity/execution.initial_capital-1)*100,
+        "fees_paid": entry_fee+exit_fee, "maximum_drawdown": maximum_drawdown, "annualized_return": None,
+        "sample_note": "Cost-aware long-only buy-and-hold benchmark; drawdown uses close-marked liquidation equity."}
+    elapsed = int(last["ts"]) - int(first["ts"])
+    if elapsed >= 86400 and final_equity > 0:
+        result["annualized_return"] = ((final_equity/execution.initial_capital) ** (365.25*86400/elapsed)-1)*100
+    return result
+
+def aggregate(folds: list[dict[str, Any]]) -> dict[str, Any]:
+    done = [x for x in folds if x["status"] == "COMPLETED"]; metrics = [x["metrics"] for x in done]
+    returns = [float(x["total_return"]) for x in metrics]; trades = [int(x["total_trades"]) for x in metrics]
+    dd = _finite([x.get("maximum_drawdown") for x in metrics]); sharpe = _finite([x.get("sharpe_ratio") for x in metrics]); sortino = _finite([x.get("sortino_ratio") for x in metrics]); pf = _finite([x.get("profit_factor") for x in metrics])
+    benchmarks = [x["buy_hold_metrics"] for x in done]; benchmark_returns = [float(x["total_return"]) for x in benchmarks]
+    excess = [a-b for a,b in zip(returns, benchmark_returns)]
+    return {"completed_fold_count": len(done), "failed_fold_count": len(folds)-len(done), "folds_with_trades": sum(x > 0 for x in trades), "total_trades": sum(trades),
+      "median_trades_per_fold": _median(trades), "minimum_trades_in_one_fold": min(trades) if trades else None, "maximum_trades_in_one_fold": max(trades) if trades else None,
+      "mean_validation_return": statistics.mean(returns) if returns else None, "median_validation_return": _median(returns), "worst_validation_return": min(returns) if returns else None, "best_validation_return": max(returns) if returns else None,
+      "validation_return_standard_deviation": statistics.stdev(returns) if len(returns) > 1 else None, "profitable_fold_count": sum(x > 0 for x in returns), "profitable_fold_ratio": sum(x > 0 for x in returns)/len(returns) if returns else None,
+      "median_maximum_drawdown": _median(dd), "worst_maximum_drawdown": max(dd) if dd else None, "median_sharpe_ratio": _median(sharpe), "median_sortino_ratio": _median(sortino), "median_profit_factor": _median(pf), "folds_with_undefined_profit_factor": sum(x.get("profit_factor") is None or not math.isfinite(float(x["profit_factor"])) for x in metrics),
+      "total_fees_paid": sum(float(x["fees_paid"]) for x in metrics), "mean_benchmark_return": statistics.mean(benchmark_returns) if benchmark_returns else None, "median_benchmark_return": _median(benchmark_returns), "mean_excess_return": statistics.mean(excess) if excess else None, "median_excess_return": _median(excess), "worst_excess_return": min(excess) if excess else None,
+      "aggregate_policy_version": DISCOVERY_AGGREGATION_VERSION}
+
 class DiscoveryService:
- def __init__(self,repo,jobs): self.repository=repo;self.jobs=jobs;self.datasets=DiscoveryDatasetService(repo);jobs.register('DISCOVERY_DATASET',self._dataset_job);jobs.register('STRATEGY_DISCOVERY',self._run_job)
+ def __init__(self, repo, jobs):
+  self.repository=repo; self.jobs=jobs; self.datasets=DiscoveryDatasetService(repo)
+  jobs.register('DISCOVERY_DATASET',self._dataset_job); jobs.register('STRATEGY_DISCOVERY',self._run_job); jobs.register_terminal_handler('STRATEGY_DISCOVERY',self._job_terminal)
  def _dataset_job(self,jid,p,checkpoint): return self.datasets.prepare(p,lambda _,pct,msg,args:checkpoint(jid,pct,msg,args),lambda:self.jobs.checkpoint(jid))
  def prepare_dataset(self,p,client='public'):
-  job=self.jobs.enqueue('DISCOVERY_DATASET',p,client,priority=105);return {'job_id':job['id'],'status':job['status']}
+  job=self.jobs.enqueue('DISCOVERY_DATASET',p,client,priority=105); return {'job_id':job['id'],'status':job['status']}
+ def _request(self,p):
+  required=('instrument','timeframe','execution_assumptions','templates','trial_budget','seed')
+  if any(key not in p for key in required): raise ValueError('Discovery runs require instrument, timeframe, execution assumptions, templates, trial budget, and seed.')
+  inst=p.get('instrument'); timeframe=p.get('timeframe')
+  if inst not in INSTRUMENTS or timeframe not in TIMEFRAME_SECONDS: raise ValueError('Unsupported Discovery instrument or timeframe.')
+  budget=int(p['trial_budget']);
+  if not 1<=budget<=500: raise ValueError('Trial budget must be 1..500.')
+  templates=p['templates'];
+  if not templates or not set(templates) <= set(TEMPLATES): raise ValueError('Unsupported Discovery template.')
+  if p.get('mode','PRICE_ONLY')!='PRICE_ONLY': raise ValueError('FLOW_OVERLAY is unavailable until verified public coverage is persisted.')
+  execution=DiscoveryExecutionConfig(**p['execution_assumptions']).validate()
+  return inst,timeframe,budget,templates,execution
  def start(self,p,client='public'):
   did=int(p['dataset_id']); ds=self.repository.discovery_dataset(did)
-  if not ds or ds['status']!='COMPLETE':raise ValueError('A complete fixed dataset is required.')
-  if json.loads(ds.get('manifest') or '{}').get('is_smoke_test'):raise ValueError('Smoke-test datasets are not eligible for formal Discovery runs.')
-  budget=int(p.get('trial_budget',100));
-  if not 1<=budget<=500:raise ValueError('Trial budget must be 1..500.')
-  mode=p.get('mode','PRICE_ONLY'); templates=p.get('templates',list(TEMPLATES));
-  if mode!='PRICE_ONLY': raise ValueError('FLOW_OVERLAY is unavailable until verified public coverage is persisted.')
-  now=datetime.now(timezone.utc).isoformat(); seed=int(p.get('seed',20260721));
+  if not ds or ds['status']!='COMPLETE': raise ValueError('A complete fixed dataset is required.')
+  if json.loads(ds.get('manifest') or '{}').get('is_smoke_test'): raise ValueError('Smoke-test datasets are not eligible for formal Discovery runs.')
+  inst,timeframe,budget,templates,execution=self._request(p)
+  part=self.repository.discovery_partition(did,inst,timeframe)
+  if not part: raise ValueError('Selected dataset partition is missing.')
+  if part['status']!='COMPLETE': raise ValueError('Selected dataset partition must be COMPLETE.')
+  if not part.get('fingerprint'): raise ValueError('Selected dataset partition fingerprint is required.')
+  if int(part.get('first_ts') or 0)>FOLDS[0][0] or int(part.get('last_ts') or 0)<FOLDS[-1][3]-TIMEFRAME_SECONDS[timeframe]: raise ValueError('Selected partition does not cover development folds.')
+  normalized={**p,'instrument':inst,'timeframe':timeframe,'trial_budget':budget,'templates':templates,'execution_assumptions':execution.__dict__,'mode':'PRICE_ONLY'}; now=datetime.now(timezone.utc).isoformat(); seed=int(p.get('seed',20260721))
   with self.repository.connect() as c:
-   cur=c.execute("INSERT INTO strategy_discovery_runs(dataset_id,status,request,search_policy,sampler,seed,maximum_trials,templates,feature_version,engine_version,scoring_version,progress,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",(did,'QUEUED',json.dumps(p),'{}','DETERMINISTIC_RANDOM',seed,budget,json.dumps(templates),FEATURE_VERSION,ENGINE_VERSION,POLICY_VERSION,'{}',now,now));rid=cur.lastrowid
-  try:j=self.jobs.enqueue('STRATEGY_DISCOVERY',{**p,'discovery_run_id':rid},client,priority=115)
+   cur=c.execute("INSERT INTO strategy_discovery_runs(dataset_id,status,request,search_policy,sampler,seed,maximum_trials,templates,feature_version,engine_version,scoring_version,progress,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",(did,'QUEUED',json.dumps(normalized),json.dumps({'execution_assumptions':execution.__dict__}),'DETERMINISTIC_RANDOM',seed,budget,json.dumps(templates),FEATURE_VERSION,ENGINE_VERSION,POLICY_VERSION,'{}',now,now)); rid=cur.lastrowid
+  try: j=self.jobs.enqueue('STRATEGY_DISCOVERY',{**normalized,'discovery_run_id':rid},client,priority=115)
   except Exception:
-   with self.repository.connect() as c:c.execute("UPDATE strategy_discovery_runs SET status='FAILED',error=? WHERE id=?",('Queue enqueue failed',rid));raise
+   with self.repository.connect() as c:c.execute("UPDATE strategy_discovery_runs SET status='FAILED',error=? WHERE id=?",('Queue enqueue failed',rid))
+   raise
   return {'id':rid,'job_id':j['id'],'status':'QUEUED'}
- def _sample(self,rng,t):
-  return {'fast_period':rng.choice([6,10,20,30,60]),'slow_period':rng.choice([60,100,150,200]),'fast_ma_type':rng.choice(['SMA','EMA']),'atr_period':rng.choice([7,10,14,20,28]),'stop_atr':round(rng.uniform(.6,2.5),2),'risk_reward':round(rng.uniform(1,4),2),'cooldown_bars':rng.randint(4,48),'volume_enabled':rng.choice([True,False]),'minimum_volume_ratio':round(rng.uniform(.7,2),2),'rsi_lower':rng.randint(20,49),'rsi_upper':rng.randint(51,80)}
+ def _sample(self,rng,t): return {'fast_period':rng.choice([6,10,20,30,60]),'slow_period':rng.choice([60,100,150,200]),'fast_ma_type':rng.choice(['SMA','EMA']),'atr_period':rng.choice([7,10,14,20,28]),'stop_atr':round(rng.uniform(.6,2.5),2),'risk_reward':round(rng.uniform(1,4),2),'cooldown_bars':rng.randint(4,48),'volume_enabled':rng.choice([True,False]),'minimum_volume_ratio':round(rng.uniform(.7,2),2),'rsi_lower':rng.randint(20,49),'rsi_upper':rng.randint(51,80)}
+ def _job_terminal(self, job):
+  rid=job.get('request_payload',{}).get('discovery_run_id')
+  if not rid or job['status'] not in {'CANCELLED','FAILED'}: return
+  with self.repository.connect() as c:
+   if job['status']=='CANCELLED': c.execute("UPDATE strategy_discovery_candidates SET status='CANCELLED',completed_at=? WHERE discovery_run_id=? AND status='EVALUATING'",(datetime.now(timezone.utc).isoformat(),rid))
+   c.execute("UPDATE strategy_discovery_runs SET status=?,error=?,completed_at=? WHERE id=? AND status='RUNNING'",(job['status'],job.get('error'),datetime.now(timezone.utc).isoformat(),rid))
+ def _fold_rows(self, inst, timeframe, train_start, validation_end):
+  # End exclusive query: never load holdout/OOT or the validation end candle.
+  rows=self.repository.candles(inst,timeframe,train_start,validation_end-1)
+  rows=sorted({int(x['ts']):x for x in rows if x.get('confirmed',1)}.values(),key=lambda x:int(x['ts']))
+  return rows
+ def _evaluation_hash(self, template, params, execution, inst, timeframe, start, end, fingerprint):
+  config=validate({'template':template,'parameters':params})
+  signal_hash=_hash({'template':config['template'],'template_version':config['template_version'],'parameters':config['parameters'],'feature_version':FEATURE_VERSION})
+  candidate_hash=_hash({'parameter_hash':signal_hash,'execution_hash':execution.execution_hash(),'template_version':config['template_version'],'feature_version':FEATURE_VERSION,'execution_engine_version':SHARED_EXECUTION_ENGINE_VERSION})
+  return _hash({'candidate_config_hash':candidate_hash,'instrument':inst,'timeframe':timeframe,'start_ts':start,'end_ts':end,'dataset_fingerprint':fingerprint})
  def _run_job(self,jid,p,checkpoint):
-  rid=int(p['discovery_run_id']);rng=random.Random(int(p.get('seed',20260721)));budget=int(p.get('trial_budget',100)); inst=p.get('instrument','BTC-USDT');
+  rid=int(p['discovery_run_id']); inst,timeframe,budget,templates,execution=self._request(p); step=TIMEFRAME_SECONDS[timeframe]; rng=random.Random(int(p['seed'])); part=self.repository.discovery_partition(int(p['dataset_id']),inst,timeframe); fingerprint=part['fingerprint']; fold_cache={}
   with self.repository.connect() as c:c.execute("UPDATE strategy_discovery_runs SET status='RUNNING' WHERE id=?",(rid,))
-  rows=self.repository.candles(inst,'15m',ts(2024,1,1),ts(2025,5,1)-1); feats=build_features(rows); templates=p.get('templates',list(TEMPLATES))
-  for n in range(1,budget+1):
-   checkpoint(jid,5+int(n*85/budget),'discovery.running_candidate',{'processed':n-1,'total':budget});template=templates[(n-1)%len(templates)];params=self._sample(rng,template)
-   if params['fast_period']>=params['slow_period']:params['fast_period']=6
-   cfg=validate({'template':template,'parameters':params}); ph=parameter_hash(cfg); complexity=sum(bool(x) for x in (params['volume_enabled'],))+6; now=datetime.now(timezone.utc).isoformat()
-   with self.repository.connect() as c:cid=c.execute("INSERT INTO strategy_discovery_candidates(discovery_run_id,candidate_number,template,template_version,parameters,parameter_hash,feature_flags,complexity,status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",(rid,n,template,TEMPLATE_VERSION[template],json.dumps(params),ph,'{}',complexity,'DEVELOPMENT_CANDIDATE',now)).lastrowid
-   returns=[]
-   for no,(_,_,vs,ve) in enumerate(FOLDS,1):
-    pnl=0.; trades=0
-    for i in range(len(rows)-1):
-     if vs<=int(rows[i]['ts'])<ve and signal(template,params,rows[i],feats[i])!='WAIT': pnl+=(float(rows[i+1]['close'])-float(rows[i+1]['open']))/float(rows[i+1]['open']);trades+=1
-    metrics={'total_return':pnl,'total_trades':trades,'profit_factor':None,'sharpe_ratio':None,'maximum_drawdown':None};returns.append(pnl)
-    with self.repository.connect() as c:c.execute("INSERT INTO strategy_discovery_folds(candidate_id,fold_number,train_start_ts,train_end_ts,validation_start_ts,validation_end_ts,metrics,buy_hold_metrics,status) VALUES(?,?,?,?,?,?,?,?,?)",(cid,no,FOLDS[no-1][0],FOLDS[no-1][1],vs,ve,json.dumps(metrics),'{}','COMPLETED'))
-   reasons=[] if min(returns)>=-.2 else ['worst_fold_threshold'];score=sum(returns)/len(returns)-.001*complexity
-   with self.repository.connect() as c:c.execute("UPDATE strategy_discovery_candidates SET status=?,aggregate_metrics=?,score_components=?,elimination_reasons=?,completed_at=? WHERE id=?",('ELIMINATED' if reasons else 'DEVELOPMENT_CANDIDATE',json.dumps({'median_validation_return':sorted(returns)[len(returns)//2],'profitable_fold_ratio':sum(x>0 for x in returns)/len(returns)}),json.dumps({'score':score,'complexity_penalty':.001*complexity}),json.dumps(reasons),now,cid))
-  with self.repository.connect() as c:c.execute("UPDATE strategy_discovery_runs SET status='COMPLETED',progress=?,completed_at=? WHERE id=?",(json.dumps({'processed':budget}),datetime.now(timezone.utc).isoformat(),rid))
-  return {'discovery_run_id':rid}
+  try:
+   checkpoint(jid,5,'discovery.validating_dataset',{}); checkpoint(jid,10,'discovery.loading_folds',{})
+   for no,(a,b,vs,ve) in enumerate(FOLDS,1):
+    rows=self._fold_rows(inst,timeframe,a,ve)
+    if not rows or not any(int(x['ts'])==vs for x in rows) or not any(int(x['ts'])==ve-step for x in rows): raise ValueError('VALIDATION_CANDLES_MISSING')
+    fold_cache[no]=rows
+   checkpoint(jid,15,'discovery.generating_candidates',{'total_candidates':budget})
+   completed=failed=fold_done=fold_failed=0
+   for n in range(1,budget+1):
+    checkpoint(jid,15+int((n-1)*75/budget),'discovery.evaluating_folds',{'current_candidate':n,'total_candidates':budget,'candidates_completed':completed,'candidates_failed':failed,'folds_completed':fold_done,'folds_failed':fold_failed})
+    template=templates[(n-1)%len(templates)]; params=self._sample(rng,template); params['fast_period']=6 if params['fast_period']>=params['slow_period'] else params['fast_period']; cfg=validate({'template':template,'parameters':params}); ph=parameter_hash(cfg); now=datetime.now(timezone.utc).isoformat()
+    with self.repository.connect() as c:
+     old=c.execute('SELECT * FROM strategy_discovery_candidates WHERE discovery_run_id=? AND candidate_number=?',(rid,n)).fetchone()
+     if old: cid=old['id']; c.execute("UPDATE strategy_discovery_candidates SET status='EVALUATING',error=NULL WHERE id=?",(cid,))
+     else: cid=c.execute("INSERT INTO strategy_discovery_candidates(discovery_run_id,candidate_number,template,template_version,parameters,parameter_hash,feature_flags,complexity,status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",(rid,n,template,TEMPLATE_VERSION[template],json.dumps(params),ph,'{}',7,'EVALUATING',now)).lastrowid
+    candidate_failed=False
+    for no,(a,b,vs,ve) in enumerate(FOLDS,1):
+     checkpoint(jid,None,'discovery.evaluating_folds',{'current_candidate':n,'total_candidates':budget,'current_fold':no,'total_folds':len(FOLDS),'candidates_completed':completed,'candidates_failed':failed,'folds_completed':fold_done,'folds_failed':fold_failed})
+     effective=ve-step; rows=fold_cache[no]
+     try:
+      expected_hash=self._evaluation_hash(template,params,execution,inst,timeframe,vs,effective,fingerprint)
+      with self.repository.connect() as c: prior=c.execute('SELECT metrics,status FROM strategy_discovery_folds WHERE candidate_id=? AND fold_number=?',(cid,no)).fetchone()
+      if prior and prior['status']=='COMPLETED' and prior['metrics'] and json.loads(prior['metrics']).get('fold_evidence',{}).get('evaluation_hash')==expected_hash:
+       fold_done+=1; continue
+      outcome=run_discovery_candidate_backtest(rows,inst,timeframe,template,params,vs,effective,execution,fingerprint); evidence=outcome['discovery_evidence']; metrics=outcome['metrics']; benchmark=buy_and_hold(rows,vs,effective,execution)
+      fold_metrics={**metrics,'fold_evidence':{'effective_engine_end_ts':effective,'instrument':inst,'timeframe':timeframe,'candle_count':len(rows),'warmup_candle_count':sum(int(x['ts'])<vs for x in rows),'validation_candle_count':sum(vs<=int(x['ts'])<=effective for x in rows),'first_validation_candle_ts':vs,'last_validation_candle_ts':effective,'dataset_fingerprint':fingerprint,'parameter_hash':evidence['parameter_hash'],'execution_hash':evidence['execution_hash'],'candidate_config_hash':evidence['candidate_config_hash'],'evaluation_hash':evidence['evaluation_hash'],'template_version':evidence['template_version'],'feature_version':evidence['feature_version'],'execution_policy_version':evidence['execution_policy_version'],'execution_engine_version':evidence['execution_engine_version'],'execution_assumptions':evidence['execution'],'signal_count':outcome['signal_count']}}
+      benchmark.update({'strategy_minus_benchmark_return':metrics['total_return']-benchmark['total_return'],'strategy_drawdown_minus_benchmark_drawdown':None if metrics.get('maximum_drawdown') is None or benchmark.get('maximum_drawdown') is None else metrics['maximum_drawdown']-benchmark['maximum_drawdown']})
+      with self.repository.connect() as c:c.execute("INSERT INTO strategy_discovery_folds(candidate_id,fold_number,train_start_ts,train_end_ts,validation_start_ts,validation_end_ts,metrics,buy_hold_metrics,status,error) VALUES(?,?,?,?,?,?,?,?,?,NULL) ON CONFLICT(candidate_id,fold_number) DO UPDATE SET metrics=excluded.metrics,buy_hold_metrics=excluded.buy_hold_metrics,status=excluded.status,error=NULL",(cid,no,a,b,vs,ve,json.dumps(fold_metrics),json.dumps(benchmark),'COMPLETED'))
+      fold_done+=1
+     except JobCancelled: raise
+     except Exception as error:
+      candidate_failed=True; fold_failed+=1
+      with self.repository.connect() as c:c.execute("INSERT INTO strategy_discovery_folds(candidate_id,fold_number,train_start_ts,train_end_ts,validation_start_ts,validation_end_ts,metrics,buy_hold_metrics,status,error) VALUES(?,?,?,?,?,?,NULL,NULL,'FAILED',?) ON CONFLICT(candidate_id,fold_number) DO UPDATE SET status='FAILED',error=excluded.error",(cid,no,a,b,vs,ve,type(error).__name__[:80]))
+     checkpoint(jid,None,'discovery.evaluating_folds',{'current_candidate':n,'total_candidates':budget,'current_fold':no,'total_folds':len(FOLDS),'candidates_completed':completed,'candidates_failed':failed,'folds_completed':fold_done,'folds_failed':fold_failed})
+    checkpoint(jid,None,'discovery.aggregating',{'current_candidate':n,'total_candidates':budget})
+    with self.repository.connect() as c: records=[dict(x) for x in c.execute('SELECT * FROM strategy_discovery_folds WHERE candidate_id=? ORDER BY fold_number',(cid,))]
+    normalized=[]
+    for x in records:
+     normalized.append({**x,'metrics':json.loads(x['metrics']) if x['metrics'] else {},'buy_hold_metrics':json.loads(x['buy_hold_metrics']) if x['buy_hold_metrics'] else {}})
+    data=aggregate(normalized); data.update({'parameter_hash':ph,'execution_hash':execution.execution_hash(),'candidate_config_hash':next((x['metrics'].get('fold_evidence',{}).get('candidate_config_hash') for x in normalized if x['status']=='COMPLETED'),None),'dataset_fingerprint':fingerprint})
+    status='FAILED' if candidate_failed else 'DEVELOPMENT_CANDIDATE'
+    with self.repository.connect() as c:c.execute("UPDATE strategy_discovery_candidates SET status=?,aggregate_metrics=?,score_components=NULL,pareto_rank=NULL,elimination_reasons=NULL,completed_at=?,error=? WHERE id=?",(status,json.dumps(data),datetime.now(timezone.utc).isoformat(), 'FOLD_EVALUATION_FAILED' if candidate_failed else None,cid))
+    if candidate_failed: failed+=1
+    else: completed+=1
+   if not completed: raise RuntimeError('ALL_CANDIDATES_FAILED')
+   result={'requested_candidates':budget,'generated_candidates':budget,'evaluated_candidates':completed,'failed_candidates':failed,'completed_folds':fold_done,'failed_folds':fold_failed,'instrument':inst,'timeframe':timeframe,'dataset_fingerprint':fingerprint,'execution_assumptions':execution.__dict__,'aggregation_version':DISCOVERY_AGGREGATION_VERSION}
+   with self.repository.connect() as c:c.execute("UPDATE strategy_discovery_runs SET status='COMPLETED',progress=?,result=?,completed_at=? WHERE id=?",(json.dumps(result),json.dumps(result),datetime.now(timezone.utc).isoformat(),rid))
+   checkpoint(jid,99,'discovery.completed',result); return {'discovery_run_id':rid}
+  except JobCancelled:
+   now=datetime.now(timezone.utc).isoformat()
+   with self.repository.connect() as c:
+    c.execute("UPDATE strategy_discovery_candidates SET status='CANCELLED',completed_at=? WHERE discovery_run_id=? AND status='EVALUATING'",(now,rid))
+    c.execute("UPDATE strategy_discovery_runs SET status='CANCELLED',completed_at=? WHERE id=?",(now,rid))
+   raise

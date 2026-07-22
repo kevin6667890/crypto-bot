@@ -21,11 +21,18 @@ def _iso(ts: int) -> str:
     return datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
 
 
-def run_backtest(
+def run_execution_backtest(
     candles: list[dict[str, Any]], instrument: str, timeframe: str, parameters: StrategyParameters,
     start_ts: int, end_ts: int, progress: Callable[[int, str], None] | None = None,
     timeframe_datasets: dict[str, list[dict[str, Any]]] | None = None,
+    signal_provider: Callable[[dict[str, Any], int], dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
+    """Run the canonical execution model with an optional causal signal provider.
+
+    Providers decide only direction and metadata; fills, costs, sizing and exits
+    remain in this function.  The public ``run_backtest`` adapter below preserves
+    the normal strategy's indicator and decision semantics.
+    """
     if timeframe not in TIMEFRAME_SECONDS:
         raise ValueError("Unsupported timeframe.")
     candles = sorted({int(row["ts"]): row for row in candles}.values(), key=lambda row: int(row["ts"]))
@@ -114,10 +121,15 @@ def run_backtest(
             required=("1H","4H")+(("1D",) if parameters.enable_daily_context else ())
             tf_context=TimeframeContext(frames,required,parameters.enable_daily_context,"multi-timeframe")
         execution_risk = RiskContext(True, (), 1 if position else 0, 0.0, index > cooldown_until_index, position is None and pending is None)
-        signal = evaluate_signal(signal_candle, indicators[index], parameters, instrument=instrument, timeframe=timeframe,timeframe_context=tf_context,strategy_version=HISTORICAL_STRATEGY_VERSION if tf_context else None,risk_context=execution_risk)
+        signal = signal_provider(candle, index) if signal_provider else evaluate_signal(signal_candle, indicators[index], parameters, instrument=instrument, timeframe=timeframe,timeframe_context=tf_context,strategy_version=HISTORICAL_STRATEGY_VERSION if tf_context else None,risk_context=execution_risk)
+        # A provider is deliberately unable to bypass execution direction gates.
+        if signal.get("action") == "LONG" and not parameters.enable_long:
+            signal = {**signal, "action": "WAIT"}
+        if signal.get("action") == "SHORT" and not parameters.enable_short:
+            signal = {**signal, "action": "WAIT"}
         if signal["warmed"]:
             decisions.append(signal)
-        if signal["action"] != "WAIT" and index + 1 < len(candles) and int(candles[index + 1]["ts"]) <= end_ts:
+        if signal["action"] != "WAIT" and signal.get("atr") is not None and float(signal["atr"]) > 0 and index + 1 < len(candles) and int(candles[index + 1]["ts"]) <= end_ts:
             signal_count += 1
             if position is None and pending is None and index >= cooldown_until_index:
                 pending = {"side": signal["action"], "atr": signal["atr"], "score": signal["score"], "signal_ts": ts,
@@ -143,3 +155,12 @@ def run_backtest(
     return {"metrics": metrics, "trades": trades, "equity": equity, "decisions": decisions, "drawdown": drawdown, "monthly_returns": monthly_returns(equity), "candles": visible_candles[::stride], "signal_count": signal_count,
             "execution_model": "Signal confirmed at candle close; entry at next candle open with adverse slippage. Stop wins ties when stop and target are both touched in one OHLC bar.",
             "indicator_model": "Causal rolling indicators with full Slow MA warm-up. Historical CVD/OI is unavailable and is not fabricated."}
+
+
+def run_backtest(
+    candles: list[dict[str, Any]], instrument: str, timeframe: str, parameters: StrategyParameters,
+    start_ts: int, end_ts: int, progress: Callable[[int, str], None] | None = None,
+    timeframe_datasets: dict[str, list[dict[str, Any]]] | None = None,
+) -> dict[str, Any]:
+    """Backward-compatible normal-strategy adapter for the shared execution core."""
+    return run_execution_backtest(candles, instrument, timeframe, parameters, start_ts, end_ts, progress, timeframe_datasets)

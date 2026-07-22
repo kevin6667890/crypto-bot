@@ -21,6 +21,7 @@ try:
     from alert_service import AlertService
     from discovery_service import DiscoveryService
     from discovery_robustness_service import DiscoveryRobustnessService
+    from discovery_ablation_service import DiscoveryAblationService
 except ImportError:
     from .backtest_engine import run_backtest
     from .okx_history import INSTRUMENTS, TIMEFRAME_SECONDS, OkxHistoryClient
@@ -32,6 +33,7 @@ except ImportError:
     from .alert_service import AlertService
     from .discovery_service import DiscoveryService
     from .discovery_robustness_service import DiscoveryRobustnessService
+    from .discovery_ablation_service import DiscoveryAblationService
 
 
 def _date_ts(value: str, end: bool = False) -> int:
@@ -57,6 +59,7 @@ class ResearchService:
         self.repository.reconcile_optimization_jobs()
         self.discovery = DiscoveryService(self.repository, self.jobs)
         self.discovery_robustness = DiscoveryRobustnessService(self.repository, self.jobs)
+        self.discovery_ablation = DiscoveryAblationService(self.repository, self.jobs)
 
     OPTIMIZATION_ENGINE_VERSION = "optimization-lab-v1/canonical-v4"
     OPTIMIZATION_POLICY = {

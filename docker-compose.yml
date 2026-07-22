@@ -24,7 +24,7 @@ services:
   paper-api:
     build: .
     env_file: .env
-    command: python dashboard/paper_api.py
+    command: python -m dashboard.paper_api
     environment:
       PAPER_API_HOST: 0.0.0.0
       GIT_COMMIT: ${GIT_COMMIT:-unknown}

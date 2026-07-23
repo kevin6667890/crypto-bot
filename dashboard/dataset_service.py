@@ -1,30 +1,37 @@
 """Fixed, auditable discovery dataset preparation (public OKX candles only)."""
 from __future__ import annotations
-import hashlib, json
+import hashlib, json, math
 from datetime import datetime, timezone
 from typing import Any
 from .okx_history import INSTRUMENTS, TIMEFRAME_SECONDS, OkxHistoryClient
 
-DATASET_NAME="crypto-discovery-2024-2025-v1"; START_TS=1704067200; END_TS=1767225600
+DATASET_NAME="crypto-discovery-ohlcv-v2"; RAW_START_TS=1677628800; START_TS=1704067200; DEVELOPMENT_END_TS=1746057600; END_TS=1767225600
 SMOKE_MAX_SECONDS = 31 * 86400
 def fingerprint(rows:list[dict[str,Any]])->str:
     canonical=[(int(x['ts']),float(x['open']),float(x['high']),float(x['low']),float(x['close']),float(x['volume'])) for x in sorted(rows,key=lambda x:int(x['ts']))]
     return hashlib.sha256(json.dumps(canonical,separators=(',',':')).encode()).hexdigest()
 def quality(rows:list[dict[str,Any]], timeframe:str,start_ts:int,end_ts:int)->dict[str,Any]:
-    step=TIMEFRAME_SECONDS[timeframe]; alignment_offset=16*3600 if timeframe=='1D' else 0; seen=set(); duplicates=0; malformed=[]; misaligned=[]; unconfirmed=[]; valid=[]
+    step=TIMEFRAME_SECONDS[timeframe]; alignment_offset=(start_ts % step if timeframe=='1D' else 0); seen=set(); duplicates=0; malformed=[]; misaligned=[]; unconfirmed=[]; valid=[]
     for row in rows:
-        ts=int(row['ts']); o,h,l,c,v=map(float,(row['open'],row['high'],row['low'],row['close'],row['volume']))
+        try: ts=int(row['ts']); o,h,l,c,v=map(float,(row['open'],row['high'],row['low'],row['close'],row['volume']))
+        except (KeyError,TypeError,ValueError,OverflowError): malformed.append('invalid'); continue
         if not bool(row.get('confirmed', 1)):
             unconfirmed.append(ts); continue
         if ts in seen: duplicates+=1; continue
         seen.add(ts)
         # OKX daily bars are exchange-day (UTC+8) candles, timestamped at 16:00 UTC.
         if (ts-alignment_offset)%step: misaligned.append(ts)
-        if min(o,h,l,c)<=0 or v<0 or h<max(o,c,l) or l>min(o,c,h): malformed.append(ts)
+        if not all(math.isfinite(x) for x in (o,h,l,c,v)) or min(o,h,l,c)<=0 or v<0 or h<max(o,c,l) or l>min(o,c,h): malformed.append(ts)
         else: valid.append(row)
-    expected=(end_ts-start_ts)//step; actual=len([x for x in valid if start_ts<=int(x['ts'])<end_ts]); missing=max(0,expected-actual)
+    valid=sorted([x for x in valid if start_ts<=int(x['ts'])<end_ts],key=lambda x:int(x['ts'])); expected=(end_ts-start_ts)//step; actual=len(valid); missing=max(0,expected-actual)
+    gaps=[]; at=start_ts
+    for row in valid:
+        ts=int(row['ts'])
+        if ts>at:gaps.append({'start':at,'end':ts,'missing_bars':(ts-at)//step})
+        at=ts+step
+    if at<end_ts:gaps.append({'start':at,'end':end_ts,'missing_bars':(end_ts-at)//step})
     warnings=(['Missing bars are never forward-filled.'] if missing else []) + (['Unconfirmed candles were rejected.'] if unconfirmed else [])
-    return {'expected_rows':expected,'actual_rows':actual,'missing_rows':missing,'duplicate_rows':duplicates,'confirmed_rows':actual,'unconfirmed_rows':len(unconfirmed),'malformed_rows':malformed[:100],'misaligned_rows':misaligned[:100],'status':'COMPLETE' if not(missing or duplicates or malformed or misaligned or unconfirmed) else 'INCOMPLETE','fingerprint':fingerprint(valid),'warnings':warnings}
+    return {'requested_start':start_ts,'requested_end':end_ts,'actual_first_ts':int(valid[0]['ts']) if valid else None,'actual_last_ts':int(valid[-1]['ts']) if valid else None,'expected_rows':expected,'actual_rows':actual,'missing_rows':missing,'duplicate_rows':duplicates,'confirmed_rows':actual,'unconfirmed_rows':len(unconfirmed),'malformed_rows':malformed[:100],'malformed_nonfinite_rows':malformed[:100],'misaligned_rows':misaligned[:100],'alignment_errors':misaligned[:100],'gap_count':len(gaps),'gap_intervals':gaps,'status':'COMPLETE' if not(gaps or duplicates or malformed or misaligned or unconfirmed) else 'INCOMPLETE','fingerprint':fingerprint(valid),'warnings':warnings}
 
 class DiscoveryDatasetService:
     def __init__(self,repository): self.repository=repository; self.history=OkxHistoryClient(repository)

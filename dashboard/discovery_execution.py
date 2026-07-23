@@ -10,11 +10,12 @@ from typing import Any
 from .backtest_engine import SHARED_EXECUTION_ENGINE_VERSION, run_execution_backtest
 from .discovery_features import FEATURE_VERSION, build_features
 from .discovery_templates import TEMPLATE_VERSION, signal, validate
-from .discovery_identity import canonical_json_hash, normalize_template_parameters, build_parameter_identity, build_candidate_identity, build_evaluation_identity, build_v2_evaluation_identity, DISCOVERY_PARAMETER_IDENTITY_VERSION, DISCOVERY_CANDIDATE_IDENTITY_VERSION, DISCOVERY_EVALUATION_IDENTITY_VERSION, V2_PARAMETER_IDENTITY_VERSION, V2_CANDIDATE_IDENTITY_VERSION, V2_EVALUATION_IDENTITY_VERSION
+from .discovery_identity import canonical_json_hash, normalize_template_parameters, build_parameter_identity, build_candidate_identity, build_evaluation_identity, build_v2_evaluation_identity, build_v21_evaluation_identity, DISCOVERY_PARAMETER_IDENTITY_VERSION, DISCOVERY_CANDIDATE_IDENTITY_VERSION, DISCOVERY_EVALUATION_IDENTITY_VERSION, V2_PARAMETER_IDENTITY_VERSION, V2_CANDIDATE_IDENTITY_VERSION, V2_EVALUATION_IDENTITY_VERSION, V21_PARAMETER_IDENTITY_VERSION, V21_CANDIDATE_IDENTITY_VERSION, V21_EVALUATION_IDENTITY_VERSION
 from .strategy_rules import StrategyParameters
 from .discovery_ablation import (DISCOVERY_ABLATION_VERSION,
     DISCOVERY_ABLATION_IDENTITY_VERSION, build_ablation_identity, normalize_ablation_flags)
 from .strategy_v2 import TEMPLATES as V2_TEMPLATES, evaluate_v2, normalize_parameters as normalize_v2_parameters, TEMPLATE_VERSION as V2_TEMPLATE_VERSION, DISCOVERY_STRATEGY_VERSION
+from .strategy_v2_1 import TEMPLATES as V21_TEMPLATES, StrategyV21Evaluator, normalize_parameters as normalize_v21_parameters, TEMPLATE_VERSION as V21_TEMPLATE_VERSION, DISCOVERY_STRATEGY_VERSION as V21_STRATEGY_VERSION
 
 DISCOVERY_EXECUTION_POLICY_VERSION = "discovery-execution-v1"
 
@@ -61,25 +62,27 @@ def run_discovery_candidate_backtest(candles: list[dict[str, Any]], instrument: 
     For end-exclusive folds callers must pass ``validation_end_ts - timeframe_seconds``.
     """
     execution = (execution or DiscoveryExecutionConfig()).validate()
-    if template in V2_TEMPLATES:
+    if template in V2_TEMPLATES or template in V21_TEMPLATES:
         # This adapter is intentionally one-candidate-only.  It does not create a
         # population, folds, robustness scenarios, or read flow history.
-        normalized = normalize_v2_parameters(template, template_parameters)
+        is_v21=template in V21_TEMPLATES
+        normalized = normalize_v21_parameters(template, template_parameters) if is_v21 else normalize_v2_parameters(template, template_parameters)
         params = StrategyParameters(initial_capital=execution.initial_capital, risk_per_trade=normalized["risk_per_trade"], trading_fee=normalized["trading_fee"], slippage=normalized["slippage"], cooldown_bars=execution.cooldown_bars, max_notional_fraction=normalized["max_notional_fraction"], enable_long=execution.allow_long, enable_short=execution.allow_short)
         fold={"start_ts":int(start_ts),"end_ts":int(end_ts)}
         features=v2_features if v2_features is not None else build_features(candles,{"ma_periods":[20,60,200],"atr_period":14,"bb_period":20,"rsi_period":14,"volume_period":20})
         parameter_hash=build_parameter_identity(template, normalized)
         execution_hash=execution.execution_hash()
         candidate_hash=build_candidate_identity(template, normalized, execution_hash)
-        evaluation_hash=build_v2_evaluation_identity(candidate_hash,instrument,timeframe,start_ts,end_ts,dataset_fingerprint)
+        evaluation_hash=(build_v21_evaluation_identity if is_v21 else build_v2_evaluation_identity)(candidate_hash,instrument,timeframe,start_ts,end_ts,dataset_fingerprint)
         evidence_by_ts: dict[int,dict[str,Any]]={}
+        evaluator=StrategyV21Evaluator(template,normalized,instrument,timeframe,dataset_fingerprint,fold) if is_v21 else None
         def v2_provider(candle: dict[str,Any], index:int)->dict[str,Any]:
-            result=evaluate_v2(template, normalized, candles, index, instrument, timeframe, dataset_fingerprint, fold, features)
+            result=evaluator.evaluate(candles,features,index) if evaluator else evaluate_v2(template, normalized, candles, index, instrument, timeframe, dataset_fingerprint, fold, features)
             evidence_by_ts[int(candle["ts"])]=result["evidence"]
             return result
         result=run_execution_backtest(candles,instrument,timeframe,params,start_ts,end_ts,signal_provider=v2_provider)
         result["v2_evaluations"]=evidence_by_ts
-        result["discovery_evidence"]={"strategy_family":DISCOVERY_STRATEGY_VERSION,"template":template,"template_version":V2_TEMPLATE_VERSION[template],"feature_version":FEATURE_VERSION,"parameters":normalized,"parameter_hash":parameter_hash,"execution_hash":execution_hash,"candidate_config_hash":candidate_hash,"evaluation_hash":evaluation_hash,"parameter_identity_version":V2_PARAMETER_IDENTITY_VERSION,"candidate_identity_version":V2_CANDIDATE_IDENTITY_VERSION,"evaluation_identity_version":V2_EVALUATION_IDENTITY_VERSION,"execution_policy_version":DISCOVERY_EXECUTION_POLICY_VERSION,"execution_engine_version":SHARED_EXECUTION_ENGINE_VERSION,"execution":{**execution.__dict__,"risk_per_trade":normalized["risk_per_trade"],"max_notional_fraction":normalized["max_notional_fraction"],"trading_fee":normalized["trading_fee"],"slippage":normalized["slippage"]},"dataset_fingerprint":dataset_fingerprint,"fold_identity":fold,"historical_input_policy":"PRICE_ONLY_OHLCV","flow_history_requested":False}
+        result["discovery_evidence"]={"strategy_family":V21_STRATEGY_VERSION if is_v21 else DISCOVERY_STRATEGY_VERSION,"template":template,"template_version":(V21_TEMPLATE_VERSION if is_v21 else V2_TEMPLATE_VERSION)[template],"feature_version":FEATURE_VERSION,"parameters":normalized,"parameter_hash":parameter_hash,"execution_hash":execution_hash,"candidate_config_hash":candidate_hash,"evaluation_hash":evaluation_hash,"parameter_identity_version":V21_PARAMETER_IDENTITY_VERSION if is_v21 else V2_PARAMETER_IDENTITY_VERSION,"candidate_identity_version":V21_CANDIDATE_IDENTITY_VERSION if is_v21 else V2_CANDIDATE_IDENTITY_VERSION,"evaluation_identity_version":V21_EVALUATION_IDENTITY_VERSION if is_v21 else V2_EVALUATION_IDENTITY_VERSION,"execution_policy_version":DISCOVERY_EXECUTION_POLICY_VERSION,"execution_engine_version":SHARED_EXECUTION_ENGINE_VERSION,"execution":{**execution.__dict__,"risk_per_trade":normalized["risk_per_trade"],"max_notional_fraction":normalized["max_notional_fraction"],"trading_fee":normalized["trading_fee"],"slippage":normalized["slippage"]},"dataset_fingerprint":dataset_fingerprint,"fold_identity":fold,"historical_input_policy":"PRICE_ONLY_OHLCV","flow_history_requested":False}
         return result
     normalized_parameters = normalize_template_parameters(template, template_parameters)
     config = validate({"template": template, "parameters": normalized_parameters})

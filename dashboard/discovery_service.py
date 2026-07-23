@@ -12,11 +12,14 @@ from .discovery_features import build_features
 from .discovery_templates import TEMPLATES, TEMPLATE_VERSION
 from .strategy_v2 import TEMPLATES as V2_TEMPLATES, TEMPLATE_VERSION as V2_TEMPLATE_VERSION, DISCOVERY_STRATEGY_VERSION, STRATEGY_RULES_VERSION
 from .discovery_v2_registry import V2_DISCOVERY_REGISTRY_VERSION, V2_SAMPLING_POLICY_VERSION, plan as v2_plan
-from .discovery_identity import (normalize_template_parameters, build_parameter_identity, build_candidate_identity, build_evaluation_identity, build_v2_evaluation_identity,
-    DISCOVERY_PARAMETER_IDENTITY_VERSION, DISCOVERY_CANDIDATE_IDENTITY_VERSION, DISCOVERY_EVALUATION_IDENTITY_VERSION, V2_PARAMETER_IDENTITY_VERSION, V2_CANDIDATE_IDENTITY_VERSION, V2_EVALUATION_IDENTITY_VERSION)
+from .strategy_v2_1 import TEMPLATES as V21_TEMPLATES, TEMPLATE_VERSION as V21_TEMPLATE_VERSION, DISCOVERY_STRATEGY_VERSION as V21_STRATEGY_VERSION, STRATEGY_RULES_VERSION as V21_RULES_VERSION, normalize_parameters as normalize_v21_parameters
+from .discovery_v2_1_registry import REGISTRY_VERSION as V21_REGISTRY_VERSION, SAMPLING_POLICY_VERSION as V21_SAMPLING_POLICY_VERSION, plan as v21_plan
+from .discovery_identity import (normalize_template_parameters, build_parameter_identity, build_candidate_identity, build_evaluation_identity, build_v2_evaluation_identity, build_v21_evaluation_identity,
+    DISCOVERY_PARAMETER_IDENTITY_VERSION, DISCOVERY_CANDIDATE_IDENTITY_VERSION, DISCOVERY_EVALUATION_IDENTITY_VERSION, V2_PARAMETER_IDENTITY_VERSION, V2_CANDIDATE_IDENTITY_VERSION, V2_EVALUATION_IDENTITY_VERSION, V21_PARAMETER_IDENTITY_VERSION, V21_CANDIDATE_IDENTITY_VERSION, V21_EVALUATION_IDENTITY_VERSION)
 from .job_queue import JobCancelled
 from .okx_history import INSTRUMENTS, TIMEFRAME_SECONDS
 from .discovery_scoring import (DISCOVERY_ELIGIBILITY_VERSION,DISCOVERY_SCORING_VERSION,DISCOVERY_PARETO_VERSION,candidate_complexity,evaluate_eligibility,calculate_score,assign_pareto_fronts,rank_eligible_candidates)
+from .discovery_diagnostics import fixed_path_cost_attribution, lifecycle_summary
 
 ENGINE_VERSION = "canonical-next-bar-open/discovery-adapter-v1"
 POLICY_VERSION = "discovery-policy-v1"
@@ -87,9 +90,11 @@ class DiscoveryService:
   budget=int(p['trial_budget']);
   if not 1<=budget<=500: raise ValueError('Trial budget must be 1..500.')
   templates=p['templates'];
-  if not templates or not set(templates) <= (set(TEMPLATES)|set(V2_TEMPLATES)): raise ValueError('Unsupported Discovery template.')
-  if set(templates)&set(V2_TEMPLATES) and set(templates)-set(V2_TEMPLATES): raise ValueError('V1 and V2 templates must use separate Discovery runs.')
-  if set(templates)&set(V2_TEMPLATES) and budget>36: raise ValueError('V2 Discovery pilot budget must be at most 36.')
+  all_templates=set(TEMPLATES)|set(V2_TEMPLATES)|set(V21_TEMPLATES)
+  if not templates or not set(templates) <= all_templates: raise ValueError('Unsupported Discovery template.')
+  families=[set(TEMPLATES),set(V2_TEMPLATES),set(V21_TEMPLATES)]
+  if sum(bool(set(templates)&family) for family in families)!=1: raise ValueError('V1, V2, and V2.1 templates must use separate Discovery runs.')
+  if (set(templates)&(set(V2_TEMPLATES)|set(V21_TEMPLATES))) and budget>36: raise ValueError('V2 Discovery pilot budget must be at most 36.')
   if p.get('mode','PRICE_ONLY')!='PRICE_ONLY': raise ValueError('FLOW_OVERLAY is unavailable until verified public coverage is persisted.')
   execution=DiscoveryExecutionConfig(**p['execution_assumptions']).validate()
   return inst,timeframe,budget,templates,execution
@@ -105,8 +110,12 @@ class DiscoveryService:
   if int(part.get('first_ts') or 0)>FOLDS[0][0] or int(part.get('last_ts') or 0)<FOLDS[-1][3]-TIMEFRAME_SECONDS[timeframe]: raise ValueError('Selected partition does not cover development folds.')
   normalized={**p,'instrument':inst,'timeframe':timeframe,'trial_budget':budget,'templates':templates,'execution_assumptions':execution.__dict__,'mode':'PRICE_ONLY'}; now=datetime.now(timezone.utc).isoformat(); seed=int(p.get('seed',20260721))
   with self.repository.connect() as c:
-   is_v2=bool(set(templates)&set(V2_TEMPLATES)); policy={'execution_assumptions':execution.__dict__,'parameter_identity_version':V2_PARAMETER_IDENTITY_VERSION if is_v2 else DISCOVERY_PARAMETER_IDENTITY_VERSION,'candidate_identity_version':V2_CANDIDATE_IDENTITY_VERSION if is_v2 else DISCOVERY_CANDIDATE_IDENTITY_VERSION,'evaluation_identity_version':V2_EVALUATION_IDENTITY_VERSION if is_v2 else DISCOVERY_EVALUATION_IDENTITY_VERSION,'aggregation_version':DISCOVERY_AGGREGATION_VERSION,'eligibility_version':DISCOVERY_ELIGIBILITY_VERSION,'scoring_version':DISCOVERY_SCORING_VERSION,'pareto_version':DISCOVERY_PARETO_VERSION,**({'registry_version':V2_DISCOVERY_REGISTRY_VERSION,'strategy_rules_version':STRATEGY_RULES_VERSION,'strategy_version':DISCOVERY_STRATEGY_VERSION} if is_v2 else {})}
-   cur=c.execute("INSERT INTO strategy_discovery_runs(dataset_id,status,request,search_policy,sampler,seed,maximum_trials,templates,feature_version,engine_version,scoring_version,progress,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",(did,'QUEUED',json.dumps(normalized),json.dumps(policy),V2_SAMPLING_POLICY_VERSION if is_v2 else DISCOVERY_SAMPLER_VERSION,seed,budget,json.dumps(templates),FEATURE_VERSION,ENGINE_VERSION,POLICY_VERSION,'{}',now,now)); rid=cur.lastrowid
+   is_v2=bool(set(templates)&set(V2_TEMPLATES)); is_v21=bool(set(templates)&set(V21_TEMPLATES))
+   policy={'execution_assumptions':execution.__dict__,'parameter_identity_version':V21_PARAMETER_IDENTITY_VERSION if is_v21 else V2_PARAMETER_IDENTITY_VERSION if is_v2 else DISCOVERY_PARAMETER_IDENTITY_VERSION,'candidate_identity_version':V21_CANDIDATE_IDENTITY_VERSION if is_v21 else V2_CANDIDATE_IDENTITY_VERSION if is_v2 else DISCOVERY_CANDIDATE_IDENTITY_VERSION,'evaluation_identity_version':V21_EVALUATION_IDENTITY_VERSION if is_v21 else V2_EVALUATION_IDENTITY_VERSION if is_v2 else DISCOVERY_EVALUATION_IDENTITY_VERSION,'aggregation_version':DISCOVERY_AGGREGATION_VERSION,'eligibility_version':DISCOVERY_ELIGIBILITY_VERSION,'scoring_version':DISCOVERY_SCORING_VERSION,'pareto_version':DISCOVERY_PARETO_VERSION}
+   if is_v2: policy.update(registry_version=V2_DISCOVERY_REGISTRY_VERSION,strategy_rules_version=STRATEGY_RULES_VERSION,strategy_version=DISCOVERY_STRATEGY_VERSION)
+   if is_v21: policy.update(registry_version=V21_REGISTRY_VERSION,strategy_rules_version=V21_RULES_VERSION,strategy_version=V21_STRATEGY_VERSION)
+   sampler=V21_SAMPLING_POLICY_VERSION if is_v21 else V2_SAMPLING_POLICY_VERSION if is_v2 else DISCOVERY_SAMPLER_VERSION
+   cur=c.execute("INSERT INTO strategy_discovery_runs(dataset_id,status,request,search_policy,sampler,seed,maximum_trials,templates,feature_version,engine_version,scoring_version,progress,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",(did,'QUEUED',json.dumps(normalized),json.dumps(policy),sampler,seed,budget,json.dumps(templates),FEATURE_VERSION,ENGINE_VERSION,POLICY_VERSION,'{}',now,now)); rid=cur.lastrowid
   try: j=self.jobs.enqueue('STRATEGY_DISCOVERY',{**normalized,'discovery_run_id':rid},client,priority=115)
   except Exception:
    with self.repository.connect() as c:c.execute("UPDATE strategy_discovery_runs SET status='FAILED',error=? WHERE id=?",('Queue enqueue failed',rid))
@@ -121,6 +130,10 @@ class DiscoveryService:
   if t=='MEAN_REVERSION': p.update(rsi_lower=rng.randint(20,49),rsi_upper=rng.randint(51,80))
   return normalize_template_parameters(t,p)
  def _candidate_definitions(self, rng, templates, budget):
+  if set(templates) <= set(V21_TEMPLATES):
+   planned,rejected,sampling=v21_plan(32); selected=[(t,p) for t,p in planned if t in templates][:budget]; definitions=[(t,p,build_parameter_identity(t,p)) for t,p in selected]; sampling={**sampling,'sampled_candidate_count':len(definitions)}
+   if not definitions: raise ValueError('DISCOVERY_SEARCH_SPACE_EXHAUSTED')
+   return definitions,{**sampling,'structurally_rejected':[{"template":t,"parameters":p,"reason":r} for t,p,r in rejected]}
   if set(templates) <= set(V2_TEMPLATES):
    planned,rejected,sampling=v2_plan(budget); definitions=[(t,p,build_parameter_identity(t,p)) for t,p in planned if t in templates]
    if not definitions: raise ValueError('DISCOVERY_SEARCH_SPACE_EXHAUSTED')
@@ -153,7 +166,7 @@ class DiscoveryService:
   rows=sorted({int(x['ts']):x for x in rows if x.get('confirmed',1)}.values(),key=lambda x:int(x['ts']))
   return rows
  def _evaluation_hash(self, template, params, execution, inst, timeframe, start, end, fingerprint):
-  build=build_v2_evaluation_identity if template in V2_TEMPLATES else build_evaluation_identity
+  build=build_v21_evaluation_identity if template in V21_TEMPLATES else build_v2_evaluation_identity if template in V2_TEMPLATES else build_evaluation_identity
   return build(build_candidate_identity(template,params,execution.execution_hash()),inst,timeframe,start,end,fingerprint)
  def _run_job(self,jid,p,checkpoint):
   rid=int(p['discovery_run_id'])
@@ -164,21 +177,22 @@ class DiscoveryService:
    inst,timeframe,budget,templates,execution=self._request(p); step=TIMEFRAME_SECONDS[timeframe]; rng=random.Random(int(p['seed'])); part=self.repository.discovery_partition(int(p['dataset_id']),inst,timeframe)
    if not part or not part.get('fingerprint'): raise ValueError('DISCOVERY_PARTITION_MISSING')
    dataset=self.repository.discovery_dataset(int(p['dataset_id']))
-   fingerprint=(dataset or {}).get('dataset_fingerprint') if set(templates)<=set(V2_TEMPLATES) else part['fingerprint']
+   fingerprint=(dataset or {}).get('dataset_fingerprint') if set(templates)<=(set(V2_TEMPLATES)|set(V21_TEMPLATES)) else part['fingerprint']
    if not fingerprint: raise ValueError('DISCOVERY_PARTITION_MISSING')
    fold_cache={}
    with self.repository.connect() as c:
     stored=c.execute('SELECT sampler,search_policy FROM strategy_discovery_runs WHERE id=?',(rid,)).fetchone()
    if not stored: raise ValueError('DISCOVERY_PARTITION_MISSING')
    run=dict(stored); policy=json.loads(run['search_policy'] or '{}')
-   expected_sampler=V2_SAMPLING_POLICY_VERSION if set(templates)<=set(V2_TEMPLATES) else DISCOVERY_SAMPLER_VERSION
-   expected_versions={'parameter_identity_version':V2_PARAMETER_IDENTITY_VERSION if set(templates)<=set(V2_TEMPLATES) else DISCOVERY_PARAMETER_IDENTITY_VERSION,'candidate_identity_version':V2_CANDIDATE_IDENTITY_VERSION if set(templates)<=set(V2_TEMPLATES) else DISCOVERY_CANDIDATE_IDENTITY_VERSION,'evaluation_identity_version':V2_EVALUATION_IDENTITY_VERSION if set(templates)<=set(V2_TEMPLATES) else DISCOVERY_EVALUATION_IDENTITY_VERSION,'aggregation_version':DISCOVERY_AGGREGATION_VERSION,'eligibility_version':DISCOVERY_ELIGIBILITY_VERSION,'scoring_version':DISCOVERY_SCORING_VERSION,'pareto_version':DISCOVERY_PARETO_VERSION}
+   is_v21=set(templates)<=set(V21_TEMPLATES); is_v2=set(templates)<=set(V2_TEMPLATES)
+   expected_sampler=V21_SAMPLING_POLICY_VERSION if is_v21 else V2_SAMPLING_POLICY_VERSION if is_v2 else DISCOVERY_SAMPLER_VERSION
+   expected_versions={'parameter_identity_version':V21_PARAMETER_IDENTITY_VERSION if is_v21 else V2_PARAMETER_IDENTITY_VERSION if is_v2 else DISCOVERY_PARAMETER_IDENTITY_VERSION,'candidate_identity_version':V21_CANDIDATE_IDENTITY_VERSION if is_v21 else V2_CANDIDATE_IDENTITY_VERSION if is_v2 else DISCOVERY_CANDIDATE_IDENTITY_VERSION,'evaluation_identity_version':V21_EVALUATION_IDENTITY_VERSION if is_v21 else V2_EVALUATION_IDENTITY_VERSION if is_v2 else DISCOVERY_EVALUATION_IDENTITY_VERSION,'aggregation_version':DISCOVERY_AGGREGATION_VERSION,'eligibility_version':DISCOVERY_ELIGIBILITY_VERSION,'scoring_version':DISCOVERY_SCORING_VERSION,'pareto_version':DISCOVERY_PARETO_VERSION}
    if run['sampler'] != expected_sampler or any(policy.get(k)!=v for k,v in expected_versions.items()): raise ValueError('DISCOVERY_IDENTITY_VERSION_MISMATCH')
    checkpoint(jid,5,'discovery.validating_dataset',{}); checkpoint(jid,10,'discovery.loading_folds',{})
    for no,(a,b,vs,ve) in enumerate(FOLDS,1):
     rows=self._fold_rows(inst,timeframe,a,ve)
     if not rows or not any(int(x['ts'])==vs for x in rows) or not any(int(x['ts'])==ve-step for x in rows): raise ValueError('VALIDATION_CANDLES_MISSING')
-    fold_cache[no]=(rows, build_features(rows,{"ma_periods":[20,60,200],"atr_period":14,"bb_period":20,"rsi_period":14,"volume_period":20}) if set(templates)<=set(V2_TEMPLATES) else None)
+    fold_cache[no]=(rows, build_features(rows,{"ma_periods":[20,60,200],"atr_period":14,"bb_period":20,"rsi_period":14,"volume_period":20}) if set(templates)<=(set(V2_TEMPLATES)|set(V21_TEMPLATES)) else None)
    checkpoint(jid,15,'discovery.generating_candidates',{'total_candidates':budget})
    completed=failed=fold_done=fold_failed=0
    with self.repository.connect() as c: existing=[dict(x) for x in c.execute('SELECT * FROM strategy_discovery_candidates WHERE discovery_run_id=? ORDER BY candidate_number',(rid,))]
@@ -189,10 +203,10 @@ class DiscoveryService:
    if len(existing)>budget: raise ValueError('DISCOVERY_IDENTITY_VERSION_MISMATCH')
    seen=set()
    for expected_number,old in enumerate(existing,1):
-    if old['candidate_number'] != expected_number or old['template'] not in templates or old['template'] not in (set(TEMPLATE_VERSION)|set(V2_TEMPLATE_VERSION)): raise ValueError('DISCOVERY_IDENTITY_VERSION_MISMATCH')
+    if old['candidate_number'] != expected_number or old['template'] not in templates or old['template'] not in (set(TEMPLATE_VERSION)|set(V2_TEMPLATE_VERSION)|set(V21_TEMPLATE_VERSION)): raise ValueError('DISCOVERY_IDENTITY_VERSION_MISMATCH')
     try: persisted=json.loads(old['parameters'])
     except (TypeError,json.JSONDecodeError): raise ValueError('DISCOVERY_IDENTITY_VERSION_MISMATCH')
-    try: params=(__import__('dashboard.strategy_v2',fromlist=['normalize_parameters']).normalize_parameters(old['template'],persisted) if old['template'] in V2_TEMPLATES else normalize_template_parameters(old['template'],persisted))
+    try: params=(normalize_v21_parameters(old['template'],persisted) if old['template'] in V21_TEMPLATES else __import__('dashboard.strategy_v2',fromlist=['normalize_parameters']).normalize_parameters(old['template'],persisted) if old['template'] in V2_TEMPLATES else normalize_template_parameters(old['template'],persisted))
     except ValueError: raise ValueError('DISCOVERY_IDENTITY_VERSION_MISMATCH')
     ph=build_parameter_identity(old['template'],params); semantic=(old['template'],ph)
     if persisted != params or ph != old['parameter_hash'] or int(old['complexity']) != candidate_complexity(old['template'],params) or semantic in seen: raise ValueError('DISCOVERY_IDENTITY_VERSION_MISMATCH')
@@ -205,7 +219,7 @@ class DiscoveryService:
     with self.repository.connect() as c:
      old=c.execute('SELECT * FROM strategy_discovery_candidates WHERE discovery_run_id=? AND candidate_number=?',(rid,n)).fetchone()
      if old: cid=old['id']; c.execute("UPDATE strategy_discovery_candidates SET status='EVALUATING',error=NULL WHERE id=?",(cid,))
-     else: cid=c.execute("INSERT INTO strategy_discovery_candidates(discovery_run_id,candidate_number,template,template_version,parameters,parameter_hash,feature_flags,complexity,status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",(rid,n,(template), (V2_TEMPLATE_VERSION[template] if template in V2_TEMPLATES else TEMPLATE_VERSION[template]),json.dumps(params),ph,'{}',candidate_complexity(template,params),'EVALUATING',now)).lastrowid
+     else: cid=c.execute("INSERT INTO strategy_discovery_candidates(discovery_run_id,candidate_number,template,template_version,parameters,parameter_hash,feature_flags,complexity,status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",(rid,n,template,(V21_TEMPLATE_VERSION[template] if template in V21_TEMPLATES else V2_TEMPLATE_VERSION[template] if template in V2_TEMPLATES else TEMPLATE_VERSION[template]),json.dumps(params),ph,'{}',candidate_complexity(template,params),'EVALUATING',now)).lastrowid
     candidate_failed=False
     for no,(a,b,vs,ve) in enumerate(FOLDS,1):
      checkpoint(jid,None,'discovery.evaluating_folds',{'current_candidate':n,'total_candidates':budget,'current_fold':no,'total_folds':len(FOLDS),'candidates_completed':completed,'candidates_failed':failed,'folds_completed':fold_done,'folds_failed':fold_failed})
@@ -215,9 +229,9 @@ class DiscoveryService:
       with self.repository.connect() as c: prior=c.execute('SELECT metrics,status FROM strategy_discovery_folds WHERE candidate_id=? AND fold_number=?',(cid,no)).fetchone()
       if prior and prior['status']=='COMPLETED' and prior['metrics'] and json.loads(prior['metrics']).get('fold_evidence',{}).get('evaluation_hash')==expected_hash:
        fold_done+=1; continue
-      outcome=run_discovery_candidate_backtest(rows,inst,timeframe,template,params,vs,effective,execution,fingerprint, v2_features=shared_v2_features) if template in V2_TEMPLATES else run_discovery_candidate_backtest(rows,inst,timeframe,template,params,vs,effective,execution,fingerprint); evidence=outcome['discovery_evidence']; metrics=outcome['metrics']; benchmark=buy_and_hold(rows,vs,effective,execution)
+      outcome=run_discovery_candidate_backtest(rows,inst,timeframe,template,params,vs,effective,execution,fingerprint, v2_features=shared_v2_features) if template in (set(V2_TEMPLATES)|set(V21_TEMPLATES)) else run_discovery_candidate_backtest(rows,inst,timeframe,template,params,vs,effective,execution,fingerprint); evidence=outcome['discovery_evidence']; metrics=outcome['metrics']; benchmark=buy_and_hold(rows,vs,effective,execution)
       if evidence['parameter_hash'] != ph or evidence['evaluation_hash'] != expected_hash: raise ValueError('DISCOVERY_IDENTITY_MISMATCH')
-      fold_metrics={**metrics,'fold_evidence':{'effective_engine_end_ts':effective,'maximum_candle_timestamp_loaded':max(int(x['ts']) for x in rows),'instrument':inst,'timeframe':timeframe,'candle_count':len(rows),'warmup_candle_count':sum(int(x['ts'])<vs for x in rows),'validation_candle_count':sum(vs<=int(x['ts'])<=effective for x in rows),'first_validation_candle_ts':vs,'last_validation_candle_ts':effective,'dataset_fingerprint':fingerprint,'parameter_hash':evidence['parameter_hash'],'execution_hash':evidence['execution_hash'],'candidate_config_hash':evidence['candidate_config_hash'],'evaluation_hash':evidence['evaluation_hash'],'template_version':evidence['template_version'],'feature_version':evidence['feature_version'],'execution_policy_version':evidence['execution_policy_version'],'execution_engine_version':evidence['execution_engine_version'],'execution_assumptions':evidence['execution'],'signal_count':outcome['signal_count']}}
+      fold_metrics={**metrics,'cost_attribution':fixed_path_cost_attribution(outcome,execution.initial_capital),'lifecycle_diagnostics':lifecycle_summary(outcome,step),'fold_evidence':{'effective_engine_end_ts':effective,'maximum_candle_timestamp_loaded':max(int(x['ts']) for x in rows),'instrument':inst,'timeframe':timeframe,'candle_count':len(rows),'warmup_candle_count':sum(int(x['ts'])<vs for x in rows),'validation_candle_count':sum(vs<=int(x['ts'])<=effective for x in rows),'first_validation_candle_ts':vs,'last_validation_candle_ts':effective,'dataset_fingerprint':fingerprint,'parameter_hash':evidence['parameter_hash'],'execution_hash':evidence['execution_hash'],'candidate_config_hash':evidence['candidate_config_hash'],'evaluation_hash':evidence['evaluation_hash'],'template_version':evidence['template_version'],'feature_version':evidence['feature_version'],'execution_policy_version':evidence['execution_policy_version'],'execution_engine_version':evidence['execution_engine_version'],'execution_assumptions':evidence['execution'],'signal_count':outcome['signal_count']}}
       benchmark.update({'strategy_minus_benchmark_return':metrics['total_return']-benchmark['total_return'],'strategy_drawdown_minus_benchmark_drawdown':None if metrics.get('maximum_drawdown') is None or benchmark.get('maximum_drawdown') is None else metrics['maximum_drawdown']-benchmark['maximum_drawdown']})
       with self.repository.connect() as c:c.execute("INSERT INTO strategy_discovery_folds(candidate_id,fold_number,train_start_ts,train_end_ts,validation_start_ts,validation_end_ts,metrics,buy_hold_metrics,status,error) VALUES(?,?,?,?,?,?,?,?,?,NULL) ON CONFLICT(candidate_id,fold_number) DO UPDATE SET metrics=excluded.metrics,buy_hold_metrics=excluded.buy_hold_metrics,status=excluded.status,error=NULL",(cid,no,a,b,vs,ve,json.dumps(fold_metrics),json.dumps(benchmark),'COMPLETED'))
       fold_done+=1

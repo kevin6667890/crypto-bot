@@ -56,13 +56,13 @@ def test_flow_health_does_not_expose_absolute_database_path(tmp_path):
     assert health["oi_collector"]["status"] == "OFFLINE"
 
 
-def test_seven_day_retention_keeps_active_six_hour_buckets(tmp_path, monkeypatch):
+def test_ninety_day_retention_keeps_active_and_recent_history(tmp_path, monkeypatch):
     service = PaperService(tmp_path / "flow.db")
     now = 2_000_000
     monkeypatch.setattr("dashboard.paper_api.time.time", lambda: now)
     with service._connect() as conn:
         conn.execute("INSERT INTO flow_trade_buckets VALUES(?,?,?,?,?)", ("BTC-USDT", now - FLOW_DISPLAY_WINDOW_SECONDS, 1, 0, 1))
-        conn.execute("INSERT INTO flow_trade_buckets VALUES(?,?,?,?,?)", ("BTC-USDT", now - 8 * 86400, 1, 0, 1))
+        conn.execute("INSERT INTO flow_trade_buckets VALUES(?,?,?,?,?)", ("BTC-USDT", now - 91 * 86400, 1, 0, 1))
     service._prune_flow_retention()
     with service._connect() as conn:
         rows = conn.execute("SELECT ts FROM flow_trade_buckets ORDER BY ts").fetchall()

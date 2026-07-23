@@ -73,7 +73,9 @@ AI_BRIEF_INTERVAL_SECONDS = 3600
 AI_STALE_AFTER_SECONDS = 7200
 AI_RETRY_BASE_SECONDS = 60
 AI_RETRY_MAX_SECONDS = 3600
-FLOW_RETENTION_SECONDS = 7 * 86400
+# Keep observed records for 90 days. Pruning is bounded and never tied to a
+# collector outage; missing historical values are never fabricated.
+FLOW_RETENTION_SECONDS = 90 * 86400
 FLOW_DISPLAY_WINDOW_SECONDS = 6 * 3600
 VPVR_WINDOW_SECONDS = 24 * 3600
 VPVR_MIN_COVERAGE_SECONDS = 15 * 60
@@ -449,6 +451,12 @@ class PaperService:
         with self._connect() as conn:
             rows = conn.execute("SELECT (ts / 60) * 60 AS minute, SUM(buy_notional-sell_notional) AS delta, SUM(trade_count) AS trades FROM flow_trade_buckets WHERE instrument=? AND ts>=? GROUP BY minute ORDER BY minute", (instrument, since)).fetchall()
             oi_rows = conn.execute("SELECT ts,oi FROM oi_snapshots WHERE instrument=? AND ts>=? ORDER BY ts", (instrument, since)).fetchall()
+            # A quiet current window is not proof that no persistent history
+            # exists. Return the latest retained observations as stale history.
+            if not rows:
+                rows = list(reversed(conn.execute("SELECT (ts / 60) * 60 AS minute, SUM(buy_notional-sell_notional) AS delta, SUM(trade_count) AS trades FROM flow_trade_buckets WHERE instrument=? GROUP BY minute ORDER BY minute DESC LIMIT 500", (instrument,)).fetchall()))
+            if not oi_rows:
+                oi_rows = list(reversed(conn.execute("SELECT ts,oi FROM oi_snapshots WHERE instrument=? ORDER BY ts DESC LIMIT 500", (instrument,)).fetchall()))
         cumulative = 0.0
         cvd_series = []
         for row in rows:
@@ -463,7 +471,7 @@ class PaperService:
         flow_ready = bool(cvd_series) and not stale and coverage >= FLOW_DISPLAY_WINDOW_SECONDS
         if collector_status == "LIVE" and not flow_ready:
             collector_status = "PARTIAL"
-        return {"available": bool(cvd_series) and not stale, "window_seconds": FLOW_DISPLAY_WINDOW_SECONDS, "window_start_ts": since, "window_end_ts": window_end, "coverage_start_ts": cvd_series[0]["time"] if cvd_series else None, "coverage_end_ts": latest_trade_ts, "coverage_seconds": coverage, "coverage_ratio": round(min(1.0, coverage / FLOW_DISPLAY_WINDOW_SECONDS), 4), "latest_trade_ts": latest_trade_ts, "bucket_count": len(cvd_series), "collector_status": collector_status, "flow_ready": flow_ready, "stale": stale, "cvd": round(cumulative, 2), "cvd_series": cvd_series, "oi_series": oi_series, "source": "OKX public WebSocket trades + periodic SWAP OI", "scoring_mode": "unchanged", "quality": {"last_trade_age_seconds": max(0, window_end - latest_trade_ts) if latest_trade_ts else None, "gap_count": sum(gap > 120 for gap in gaps), "max_gap_seconds": max(gaps, default=0), "oi_samples": len(oi_series)}}
+        return {"available": bool(cvd_series) and not stale, "has_history": bool(cvd_series or oi_series), "latest_timestamp": max([p["time"] for p in cvd_series + oi_series], default=None), "window_seconds": FLOW_DISPLAY_WINDOW_SECONDS, "window_start_ts": since, "window_end_ts": window_end, "coverage_start_ts": cvd_series[0]["time"] if cvd_series else None, "coverage_end_ts": latest_trade_ts, "coverage_seconds": coverage, "coverage_ratio": round(min(1.0, coverage / FLOW_DISPLAY_WINDOW_SECONDS), 4), "latest_trade_ts": latest_trade_ts, "bucket_count": len(cvd_series), "collector_status": collector_status, "flow_ready": flow_ready, "stale": stale, "cvd": round(cumulative, 2), "cvd_series": cvd_series, "oi_series": oi_series, "source": "OKX public WebSocket trades + periodic SWAP OI", "scoring_mode": "unchanged", "quality": {"last_trade_age_seconds": max(0, window_end - latest_trade_ts) if latest_trade_ts else None, "gap_count": sum(gap > 120 for gap in gaps), "max_gap_seconds": max(gaps, default=0), "oi_samples": len(oi_series)}}
 
     def _professional_vpvr(self, instrument: str, bins: int = 32, price_low: float | None = None, price_high: float | None = None) -> dict[str, Any]:
         since = int(time.time()) - VPVR_WINDOW_SECONDS

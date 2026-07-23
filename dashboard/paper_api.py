@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 import json
 import hmac
+import hashlib
+import math
 import os
 import queue
 import random
@@ -27,6 +29,7 @@ import websockets
 try:
     from research_service import ResearchService
     from strategy_rules import StrategyParameters, calculate_indicators, validate_parameters
+    from signal_identity import canonical_json, config_hash
     from decision_engine import FlowContext, MarketContext, RiskContext, TimeframeContext, evaluate_decision, LIVE_STRATEGY_VERSION
     from alert_service import AlertService
     from health_service import HealthService, configure_logging, log_event
@@ -38,6 +41,7 @@ try:
 except ImportError:
     from .research_service import ResearchService
     from .strategy_rules import StrategyParameters, calculate_indicators, validate_parameters
+    from .signal_identity import canonical_json, config_hash
     from .decision_engine import FlowContext, MarketContext, RiskContext, TimeframeContext, evaluate_decision, LIVE_STRATEGY_VERSION
     from .alert_service import AlertService
     from .health_service import HealthService, configure_logging, log_event
@@ -63,6 +67,8 @@ MAX_CONSECUTIVE_LOSSES = 3
 COOLDOWN_HOURS = 4
 INITIAL_CAPITAL_USDT = 10_000.0
 RISK_PER_TRADE = 0.01
+RATIONALE_VERSION = "paper-trade-rationale-v1"
+ACCOUNTING_VERSION = "paper-accounting-v2"
 AI_BRIEF_INTERVAL_SECONDS = 3600
 AI_STALE_AFTER_SECONDS = 7200
 AI_RETRY_BASE_SECONDS = 60
@@ -321,7 +327,15 @@ class PaperService:
                 self._ensure_column(conn,"paper_trades",column,declaration)
             for column, declaration in (("position_size", "REAL"), ("entry_notional", "REAL"), ("risk_amount", "REAL"), ("mark_price", "REAL"), ("pnl_usdt", "REAL")):
                 self._ensure_column(conn, "paper_trades", column, declaration)
+            for column, declaration in (("signal_setup_id", "TEXT"), ("evaluation_id", "TEXT"), ("trade_rationale", "TEXT"), ("rationale_hash", "TEXT"), ("rationale_version", "TEXT"), ("accounting_version", "TEXT"), ("requested_risk_amount", "REAL"), ("actual_risk_amount", "REAL"), ("actual_risk_fraction", "REAL"), ("raw_risk_quantity", "REAL"), ("funds_cap_quantity", "REAL"), ("notional_cap_quantity", "REAL"), ("binding_cap", "TEXT"), ("theoretical_entry_price", "REAL"), ("simulated_entry_fill", "REAL"), ("entry_fee", "REAL"), ("theoretical_exit_price", "REAL"), ("simulated_exit_fill", "REAL"), ("exit_fee", "REAL"), ("gross_pnl", "REAL"), ("net_pnl", "REAL"), ("fee_rate", "REAL"), ("slippage_rate", "REAL")):
+                self._ensure_column(conn, "paper_trades", column, declaration)
             conn.execute("""CREATE TABLE IF NOT EXISTS decision_signals(id INTEGER PRIMARY KEY AUTOINCREMENT,signal_id TEXT NOT NULL UNIQUE,source TEXT NOT NULL,run_id INTEGER,instrument TEXT NOT NULL,execution_timeframe TEXT NOT NULL,candle_close_ts INTEGER NOT NULL,strategy_version TEXT NOT NULL,config_hash TEXT NOT NULL,action TEXT NOT NULL,bias TEXT NOT NULL,score REAL NOT NULL,decision_payload TEXT NOT NULL,created_at TEXT NOT NULL)""")
+            conn.execute("""CREATE TABLE IF NOT EXISTS decision_evaluations (
+                evaluation_id TEXT PRIMARY KEY, signal_setup_id TEXT NOT NULL, source TEXT NOT NULL,
+                instrument TEXT NOT NULL, execution_timeframe TEXT NOT NULL, candle_close_ts INTEGER NOT NULL,
+                strategy_version TEXT NOT NULL, decision_engine_version TEXT NOT NULL, action TEXT NOT NULL,
+                decision_payload TEXT NOT NULL, gate_payload TEXT NOT NULL, flow_payload TEXT NOT NULL,
+                evaluation_timestamp TEXT NOT NULL, market_snapshot_ts INTEGER, created_at TEXT NOT NULL)""")
             conn.execute("""CREATE TABLE IF NOT EXISTS event_logs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT NOT NULL, instrument TEXT NOT NULL,
                 event_type TEXT NOT NULL, message TEXT NOT NULL, payload TEXT NOT NULL DEFAULT '{}')""")
@@ -336,6 +350,7 @@ class PaperService:
             conn.execute("CREATE INDEX IF NOT EXISTS idx_flow_trade_buckets_time ON flow_trade_buckets(instrument, ts DESC)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_flow_price_buckets_time ON flow_price_buckets(instrument, ts DESC)")
             conn.execute("CREATE INDEX IF NOT EXISTS idx_oi_snapshots_time ON oi_snapshots(instrument, ts DESC)")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_decision_evaluations_setup ON decision_evaluations(signal_setup_id, created_at)")
 
     def _load_ai_state(self) -> dict[str, dict[str, Any]]:
         states = {instrument: {"failure_count": 0, "last_error": None, "last_success_at": None, "next_retry_at": 0.0, "queued": False} for instrument in INSTRUMENTS}
@@ -408,7 +423,7 @@ class PaperService:
             # separately so an incomplete live window cannot erase the chart.
             "cvd": round(cumulative, 2), "cvd_delta": round(cumulative, 2), "decision_cvd_delta": decision_flow["cvd_delta"], "cvd_series": series,
             "oi": oi, "oi_change_pct": decision_flow["oi_change_pct"] if decision_flow["oi_change_pct"] is not None else 0.0, "decision_oi_change_pct": decision_flow["oi_change_pct"], "oi_history": list(reversed(history)), "source": decision_flow["source"],
-            "quality": {"trade_count": len(trade_timestamps), "window_seconds": max(trade_timestamps) - min(trade_timestamps) if trade_timestamps else 0, "last_trade_ts": max(trade_timestamps) if trade_timestamps else None, "sampled_at": now_iso()},
+            "quality": {"trade_count": len(trade_timestamps), "window_seconds": max(trade_timestamps) - min(trade_timestamps) if trade_timestamps else 0, "last_trade_ts": max(trade_timestamps) if trade_timestamps else None, "sampled_at": now_iso(), "snapshot_ts": time.time_ns()},
             "decision_quality": decision_flow["quality"], "professional": self._professional_flow(instrument),
         }
 
@@ -426,7 +441,7 @@ class PaperService:
         last_oi_age = now - int(oi_rows[-1]["ts"]) if oi_rows else None
         ready = coverage >= FLOW_MIN_COVERAGE_SECONDS and trade_count >= FLOW_MIN_TRADES and last_trade_age is not None and last_trade_age <= FLOW_MAX_STALENESS_SECONDS and len(oi_rows) >= FLOW_MIN_OI_SAMPLES and last_oi_age is not None and last_oi_age <= FLOW_MAX_STALENESS_SECONDS
         oi_change = (float(oi_rows[-1]["oi"]) / float(oi_rows[0]["oi"]) - 1) * 100 if len(oi_rows) >= 2 and oi_rows[0]["oi"] else None
-        return {"cvd_delta": round(float(trades["delta"] or 0), 2) if ready else 0.0, "oi_change_pct": round(oi_change, 4) if ready and oi_change is not None else None, "source": "OKX trades-all WebSocket + 15s SWAP OI (15m decision window)", "quality": {"ready": ready, "window_seconds": FLOW_DECISION_WINDOW_SECONDS, "coverage_seconds": coverage, "trade_count": trade_count, "last_trade_age_seconds": last_trade_age, "oi_samples": len(oi_rows), "last_oi_age_seconds": last_oi_age}}
+        return {"cvd_delta": round(float(trades["delta"] or 0), 2) if ready else 0.0, "oi_change_pct": round(oi_change, 4) if ready and oi_change is not None else None, "source": "OKX trades-all WebSocket + 15s SWAP OI (15m decision window)", "quality": {"ready": ready, "window_seconds": FLOW_DECISION_WINDOW_SECONDS, "coverage_seconds": coverage, "trade_count": trade_count, "last_trade_age_seconds": last_trade_age, "oi_samples": len(oi_rows), "last_oi_age_seconds": last_oi_age, "cvd_timestamp": last_ts or None, "oi_timestamp": int(oi_rows[-1]["ts"]) if oi_rows else None, "snapshot_timestamp": time.time_ns()}}
 
     def _professional_flow(self, instrument: str) -> dict[str, Any]:
         window_end = int(time.time())
@@ -592,7 +607,8 @@ class PaperService:
             values=calculate_indicators(eligible,params)[-1]; row=eligible[-1]
             frames[frame]={"candle_close_ts":int(row["candle_close_ts"]),"close":row["close"],"fast_ma":values["fast_ma"],"slow_ma":values["slow_ma"],"trend":"Bullish" if values["fast_ma"] and values["slow_ma"] and row["close"]>values["fast_ma"]>values["slow_ma"] else "Bearish" if values["fast_ma"] and values["slow_ma"] and row["close"]<values["fast_ma"]<values["slow_ma"] else "Mixed","ema20_slope_pct":0.0,"ma60":values["fast_ma"],"ma200":values["slow_ma"]}
         risk=self.risk_state(instrument)
-        decision=evaluate_decision(params,MarketContext(instrument,"15m",close_ts,float(execution["close"]),ind15,"OKX","public-confirmed-live-v1"),TimeframeContext(frames,("1H","4H"),False,"multi-timeframe"),FlowContext(True,float(flow.get("decision_cvd_delta",0)),flow.get("decision_oi_change_pct"),flow.get("source")),RiskContext(bool(risk["allowed"]),tuple(risk["blockers"]),int(risk.get("open_positions",0)),0,bool(risk.get("cooldown_clear",True)),bool(risk.get("existing_position_clear",True))),active_version).to_dict()
+        quality = (flow.get("decision_quality") or {})
+        decision=evaluate_decision(params,MarketContext(instrument,"15m",close_ts,float(execution["close"]),ind15,"OKX","public-confirmed-live-v1"),TimeframeContext(frames,("1H","4H"),False,"multi-timeframe"),FlowContext(True,float(flow.get("decision_cvd_delta",0)),flow.get("decision_oi_change_pct"),flow.get("source"),quality.get("cvd_timestamp"),quality.get("oi_timestamp"),quality.get("snapshot_timestamp")),RiskContext(bool(risk["allowed"]),tuple(risk["blockers"]),int(risk.get("open_positions",0)),0,bool(risk.get("cooldown_clear",True)),bool(risk.get("existing_position_clear",True))),active_version).to_dict()
         for item in decision["contributions"]:
             item["detail"]={"trend":"1H + 4H confirmed trend alignment","structure":"MA60 / MA200 structure","pullback":f"{decision.get('decision_input_summary',{}).get('close',0):.2f} close vs EMA20","momentum":f"Volume {ind15.get('volume_ratio') or 0:.2f}x · RSI {ind15.get('rsi') or 0:.1f}","flow":f"CVD {flow.get('cvd_delta',0):+.0f} · OI {flow.get('oi_change_pct',0):+.3f}%"}.get(item["key"],item["label"])
             item["detail_code"]=f"decision.contribution_detail.{item['key']}"
@@ -601,7 +617,11 @@ class PaperService:
         analysis={**decision,"price":round(float(execution["close"]),4),"ema20":ind15["ema"],"rsi14":ind15["rsi"],"atr14":ind15["atr"],"volume_ratio":ind15["volume_ratio"],"distance_ema20_pct":distance_pct,"timeframes":{"15m":{"trend":decision["bias"],"ma60":ind15["fast_ma"],"ma200":ind15["slow_ma"],"ema20_slope_pct":0},**frames},"flow":flow,"vpvr":vpvr,"conditions":[{"label":x["label"],"value":x["detail"],"pass":x["status"]=="pass"} for x in decision["contributions"]],"updated_at":now_iso()}
         with self._connect() as conn:
             conn.execute("INSERT INTO analysis_snapshots(created_at,instrument,payload) VALUES(?,?,?)",(analysis["updated_at"],instrument,json.dumps(analysis)))
-            conn.execute("""INSERT OR IGNORE INTO decision_signals(signal_id,source,instrument,execution_timeframe,candle_close_ts,strategy_version,config_hash,action,bias,score,decision_payload,created_at,regime,regime_version,gate_payload) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",(decision["signal_id"],"PAPER",instrument,"15m",close_ts,decision["strategy_version"],decision["config_hash"],decision["action"],decision["bias"],decision["score"],json.dumps(decision),analysis["updated_at"],decision["regime"],decision["regime_version"],json.dumps(decision["gate_results"])))
+            # Setup records remain compatible with older consumers; every live
+            # evaluation is durably stored below and is never hidden by a setup
+            # identity collision.
+            conn.execute("""INSERT OR IGNORE INTO decision_signals(signal_id,source,instrument,execution_timeframe,candle_close_ts,strategy_version,config_hash,action,bias,score,decision_payload,created_at,regime,regime_version,gate_payload) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",(decision["signal_setup_id"],"PAPER",instrument,"15m",close_ts,decision["strategy_version"],decision["config_hash"],decision["action"],decision["bias"],decision["score"],canonical_json(decision),analysis["updated_at"],decision["regime"],decision["regime_version"],canonical_json(decision["gate_results"])))
+            conn.execute("""INSERT INTO decision_evaluations(evaluation_id,signal_setup_id,source,instrument,execution_timeframe,candle_close_ts,strategy_version,decision_engine_version,action,decision_payload,gate_payload,flow_payload,evaluation_timestamp,market_snapshot_ts,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", (decision["evaluation_id"],decision["signal_setup_id"],"PAPER",instrument,"15m",close_ts,decision["strategy_version"],decision["decision_engine_version"],decision["action"],canonical_json(decision),canonical_json(decision["gate_results"]),canonical_json(decision["flow_context"]),analysis["updated_at"],quality.get("snapshot_timestamp"),analysis["updated_at"]))
         shadow=globals().get("SHADOW")
         if shadow:shadow.process_market(instrument,datasets,flow)
         self.last_analysis[instrument]=analysis
@@ -614,6 +634,7 @@ class PaperService:
         return (validate_parameters(json.loads(row["parameters"])),str(row["strategy_version"])) if row else (StrategyParameters(),LIVE_STRATEGY_VERSION)
 
     def risk_state(self, instrument: str) -> dict[str, Any]:
+        params, _ = self._active_strategy()
         day_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
         with self._connect() as conn:
             open_total = conn.execute("SELECT COUNT(*) FROM paper_trades WHERE status='OPEN'").fetchone()[0]
@@ -626,9 +647,9 @@ class PaperService:
             consecutive += 1
         cooldown_until = None
         if recent and recent[0]["closed_at"]:
-            cooldown_until = datetime.fromisoformat(recent[0]["closed_at"]) + timedelta(hours=COOLDOWN_HOURS)
+            cooldown_until = datetime.fromisoformat(recent[0]["closed_at"]) + timedelta(minutes=15 * params.cooldown_bars)
         blockers = []
-        if open_total >= MAX_OPEN_POSITIONS: blockers.append("portfolio position limit")
+        if open_total >= params.max_open_positions: blockers.append("portfolio position limit")
         if today_r <= MAX_DAILY_LOSS_R: blockers.append("daily loss limit")
         if consecutive >= MAX_CONSECUTIVE_LOSSES: blockers.append("consecutive loss limit")
         if cooldown_until and cooldown_until > datetime.now(timezone.utc): blockers.append("instrument cooldown")
@@ -639,7 +660,7 @@ class PaperService:
             for condition,kind,key,message in ((today_r<=MAX_DAILY_LOSS_R,"Daily Loss Limit",f"daily-loss|{instrument}",f"{instrument} daily paper result reached {today_r:.2f}R"),(consecutive>=MAX_CONSECUTIVE_LOSSES,"Consecutive Loss Limit",f"consecutive-loss|{instrument}",f"{instrument} reached {consecutive} consecutive paper losses")):
                 if condition:alerts.raise_alert(kind,"critical","paper_risk",message,instrument,key=key)
                 else:alerts.resolve(key)
-        return {"allowed": not blockers, "blockers": blockers, "open_positions": open_total, "max_open_positions": MAX_OPEN_POSITIONS, "daily_pnl_r": round(today_r, 2), "daily_loss_limit_r": MAX_DAILY_LOSS_R, "consecutive_losses": consecutive, "max_consecutive_losses": MAX_CONSECUTIVE_LOSSES, "cooldown_until": cooldown_until.isoformat() if cooldown_until else None, "cooldown_clear": not (cooldown_until and cooldown_until > datetime.now(timezone.utc)), "existing_position_clear": not instrument_open}
+        return {"allowed": not blockers, "blockers": blockers, "open_positions": open_total, "max_open_positions": params.max_open_positions, "cooldown_bars": params.cooldown_bars, "daily_pnl_r": round(today_r, 2), "daily_loss_limit_r": MAX_DAILY_LOSS_R, "consecutive_losses": consecutive, "max_consecutive_losses": MAX_CONSECUTIVE_LOSSES, "cooldown_until": cooldown_until.isoformat() if cooldown_until else None, "cooldown_clear": not (cooldown_until and cooldown_until > datetime.now(timezone.utc)), "existing_position_clear": not instrument_open}
 
     @staticmethod
     def _account_state(conn: sqlite3.Connection) -> dict[str, float]:
@@ -649,37 +670,91 @@ class PaperService:
         open_value = float(conn.execute("SELECT COALESCE(SUM(COALESCE(mark_price,entry)*COALESCE(position_size,0)),0) FROM paper_trades WHERE status='OPEN'").fetchone()[0])
         return {"initial_capital": float(account["initial_capital"]), "cash": float(account["cash"]), "realized_pnl": float(account["realized_pnl"]), "open_value": open_value, "equity": float(account["cash"]) + open_value}
 
+    def _build_rationale(self, analysis: dict[str, Any], params: StrategyParameters, account: dict[str, float]) -> dict[str, Any]:
+        """Build the complete, immutable authorisation record before mutation."""
+        side, theoretical = str(analysis["action"]), float(analysis["price"])
+        slip, fee = float(params.slippage), float(params.trading_fee)
+        entry_fill = theoretical * (1 + slip if side == "LONG" else 1 - slip)
+        atr = float(analysis["atr14"]); distance = atr * float(params.stop_loss_atr_multiplier)
+        stop = entry_fill - distance if side == "LONG" else entry_fill + distance
+        target = entry_fill + distance * float(params.risk_reward_ratio) if side == "LONG" else entry_fill - distance * float(params.risk_reward_ratio)
+        risk_budget = account["equity"] * float(params.risk_per_trade)
+        exit_fee_unit, exit_slip_unit = abs(stop) * fee, abs(stop) * slip
+        stop_cost = abs(entry_fill - stop) + exit_fee_unit + exit_slip_unit
+        raw = risk_budget / stop_cost if stop_cost > 0 else float("nan")
+        funds = account["cash"] / (entry_fill * (1 + fee)) if entry_fill > 0 else float("nan")
+        max_notional = account["equity"] * float(params.max_notional_fraction)
+        notional_cap = max_notional / entry_fill if entry_fill > 0 else float("nan")
+        final = min(raw, funds, notional_cap)
+        caps = {"risk": raw, "funds": funds, "maximum_notional": notional_cap}
+        binding = min(caps, key=caps.get)
+        entry_fee = entry_fill * final * fee
+        expected_exit_fee, expected_exit_slippage = exit_fee_unit * final, exit_slip_unit * final
+        gross_stop = abs(entry_fill - stop) * final
+        expected_net = gross_stop + entry_fee + expected_exit_fee + expected_exit_slippage
+        return {"rationale_version": RATIONALE_VERSION, "accounting_version": ACCOUNTING_VERSION,
+            "strategy_code": "live-mtf-flow", "strategy_version": analysis["strategy_version"], "decision_engine_version": analysis["decision_engine_version"],
+            "signal_setup_id": analysis["signal_setup_id"], "evaluation_id": analysis["evaluation_id"], "candidate_identity": None,
+            "instrument": analysis["instrument"], "timeframe": "15m", "signal_candle_timestamp": analysis["candle_close_ts"], "decision_timestamp": analysis["updated_at"], "entry_request_timestamp": now_iso(),
+            "market_data_snapshot_timestamps": {"market": analysis["candle_close_ts"], "cvd": analysis["flow_context"].get("cvd_timestamp"), "oi": analysis["flow_context"].get("oi_timestamp"), "evaluation": analysis["flow_context"].get("snapshot_timestamp")},
+            "normalized_parameters": json.loads(canonical_json(params)), "parameter_hash": config_hash(params), "regime_classification": analysis["regime"], "gate_results": analysis["gate_results"],
+            "close": theoretical, "ema20": analysis.get("ema20"), "ma60": analysis.get("indicator_values", {}).get("fast_ma"), "ma200": analysis.get("indicator_values", {}).get("slow_ma"), "atr": atr, "bollinger": analysis.get("bollinger"), "rsi": analysis.get("rsi14"), "volume_ratio": analysis.get("volume_ratio"),
+            "cvd_value": analysis["flow_context"].get("cvd_delta"), "cvd_timestamp": analysis["flow_context"].get("cvd_timestamp"), "cvd_alignment": next((g["passed"] for g in analysis["gate_results"] if g["key"] == "cvd_alignment"), None),
+            "oi_value": analysis["flow_context"].get("oi_change_pct"), "oi_timestamp": analysis["flow_context"].get("oi_timestamp"), "oi_alignment": next((g["passed"] for g in analysis["gate_results"] if g["key"] == "oi_context"), None),
+            "side": side, "stop_basis": "ATR", "stop_anchor": entry_fill, "stop_distance": distance, "stop_price": stop, "target_basis": "2R", "target_price": target, "expected_reward_risk": float(params.risk_reward_ratio),
+            "account_equity": account["equity"], "requested_risk_fraction": float(params.risk_per_trade), "requested_risk_amount": risk_budget, "raw_risk_derived_quantity": raw, "funds_cap_quantity": funds, "explicit_maximum_notional": max_notional, "notional_cap_quantity": notional_cap, "final_quantity": final, "final_notional": entry_fill * final, "binding_cap": binding,
+            "expected_gross_loss_at_stop": gross_stop, "estimated_entry_fee": entry_fee, "estimated_exit_fee": expected_exit_fee, "estimated_entry_slippage": abs(entry_fill-theoretical)*final, "estimated_exit_slippage": expected_exit_slippage, "expected_net_loss_at_stop": expected_net, "actual_account_risk_fraction": expected_net / account["equity"] if account["equity"] else float("nan"),
+            "theoretical_entry_price": theoretical, "simulated_entry_fill": entry_fill, "configured_fee_rate": fee, "configured_slippage_rate": slip}
+
+    def _validate_rationale(self, conn: sqlite3.Connection, analysis: dict[str, Any], rationale: dict[str, Any]) -> str | None:
+        required = {"rationale_version", "accounting_version", "signal_setup_id", "evaluation_id", "normalized_parameters", "parameter_hash", "gate_results", "stop_price", "target_price", "final_quantity", "rationale_hash"}
+        missing = sorted(required - rationale.keys())
+        if missing: return "missing_fields:" + ",".join(missing)
+        if rationale["rationale_version"] != RATIONALE_VERSION or rationale["accounting_version"] != ACCOUNTING_VERSION: return "unsupported_version"
+        if rationale["evaluation_id"] != analysis.get("evaluation_id") or rationale["signal_setup_id"] != analysis.get("signal_setup_id"): return "evaluation_mismatch"
+        if rationale["parameter_hash"] != config_hash(rationale["normalized_parameters"]): return "parameter_hash_mismatch"
+        digest = hashlib.sha256(canonical_json({k:v for k,v in rationale.items() if k != "rationale_hash"}).encode()).hexdigest()
+        if digest != rationale["rationale_hash"]: return "rationale_hash_mismatch"
+        try:
+            age = datetime.now(timezone.utc) - datetime.fromisoformat(str(rationale["decision_timestamp"]))
+            if age.total_seconds() > FLOW_MAX_STALENESS_SECONDS: return "stale_rationale"
+        except (TypeError, ValueError): return "invalid_decision_timestamp"
+        if not analysis.get("entry_allowed") or analysis.get("action") not in {"LONG", "SHORT"} or not any(g.get("key") == "final_entry_allowed" and g.get("passed") for g in rationale["gate_results"]): return "gates_do_not_authorize"
+        values = (rationale["stop_price"], rationale["target_price"], rationale["final_quantity"], rationale.get("stop_distance"))
+        if not all(isinstance(v, (int,float)) and math.isfinite(v) and v > 0 for v in values): return "invalid_stop_target_or_quantity"
+        fill = rationale.get("simulated_entry_fill")
+        if not isinstance(fill, (int, float)) or not math.isfinite(fill) or (rationale.get("side") == "LONG" and not (rationale["stop_price"] < fill < rationale["target_price"])) or (rationale.get("side") == "SHORT" and not (rationale["target_price"] < fill < rationale["stop_price"])): return "invalid_stop_target_direction"
+        evidence = conn.execute("SELECT flow_payload FROM decision_evaluations WHERE evaluation_id=?", (rationale["evaluation_id"],)).fetchone()
+        if not evidence: return "authorizing_evaluation_missing"
+        if canonical_json(json.loads(evidence["flow_payload"])) != canonical_json(analysis.get("flow_context", {})): return "flow_evidence_mismatch"
+        return None
+
+    def create_order(self, analysis: dict[str, Any], rationale: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Atomically persist order/trade/account changes, or leave all untouched."""
+        instrument = analysis.get("instrument", "UNKNOWN")
+        try:
+            with self._connect() as conn:
+                params, _ = self._active_strategy(); account = self._account_state(conn)
+                if rationale is None:
+                    rationale = self._build_rationale(analysis, params, account)
+                    rationale["rationale_hash"] = hashlib.sha256(canonical_json(rationale).encode()).hexdigest()
+                error = self._validate_rationale(conn, analysis, rationale)
+                if error: raise ValueError(error)
+                if conn.execute("SELECT 1 FROM paper_trades WHERE instrument=? AND status='OPEN'", (instrument,)).fetchone(): raise ValueError("existing_position")
+                if rationale["final_notional"] + rationale["estimated_entry_fee"] > account["cash"] + 1e-9: raise ValueError("insufficient_funds")
+                created = now_iso(); delay=max(0,int((datetime.now(timezone.utc).timestamp()-int(analysis["candle_close_ts"]))*1000))
+                cursor = conn.execute("""INSERT INTO paper_trades(instrument,side,entry,stop_loss,take_profit,created_at,signal_id,signal_setup_id,evaluation_id,strategy_version,config_hash,expected_entry_price,observed_entry_price,theoretical_entry_price,simulated_entry_fill,execution_delay_ms,observed_slippage_pct,candle_close_ts,signal_score,position_size,entry_notional,risk_amount,actual_risk_amount,actual_risk_fraction,requested_risk_amount,raw_risk_quantity,funds_cap_quantity,notional_cap_quantity,binding_cap,mark_price,trade_rationale,rationale_hash,rationale_version,accounting_version,entry_fee,fee_rate,slippage_rate,gross_pnl,net_pnl)
+                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", (instrument,rationale["side"],rationale["simulated_entry_fill"],rationale["stop_price"],rationale["target_price"],created,analysis["signal_setup_id"],rationale["signal_setup_id"],rationale["evaluation_id"],rationale["strategy_version"],rationale["parameter_hash"],rationale["theoretical_entry_price"],rationale["simulated_entry_fill"],rationale["theoretical_entry_price"],rationale["simulated_entry_fill"],delay,float(params.slippage),analysis["candle_close_ts"],analysis["score"],rationale["final_quantity"],rationale["final_notional"],rationale["expected_gross_loss_at_stop"],rationale["expected_net_loss_at_stop"],rationale["actual_account_risk_fraction"],rationale["requested_risk_amount"],rationale["raw_risk_derived_quantity"],rationale["funds_cap_quantity"],rationale["notional_cap_quantity"],rationale["binding_cap"],rationale["simulated_entry_fill"],canonical_json(rationale),rationale["rationale_hash"],RATIONALE_VERSION,ACCOUNTING_VERSION,rationale["estimated_entry_fee"],params.trading_fee,params.slippage,0.0,0.0))
+                conn.execute("UPDATE paper_account SET cash=cash-?,updated_at=? WHERE account_id=1", (rationale["final_notional"] + rationale["estimated_entry_fee"], created))
+                trade_id = cursor.lastrowid
+            self._event(instrument, "TRADE_OPENED", "Paper trade opened", {"trade_id": trade_id, "evaluation_id": rationale["evaluation_id"], "binding_cap": rationale["binding_cap"]})
+            return {"ok": True, "trade_id": trade_id}
+        except (KeyError, TypeError, ValueError) as error:
+            self._event(instrument, "ORDER_REJECTED", "Paper order rejected", {"reason": str(error)})
+            return {"ok": False, "error": str(error)}
+
     def _open_trade(self, analysis: dict[str, Any]) -> None:
-        instrument = analysis["instrument"]
-        if analysis["action"] == "WAIT":
-            failed = [item["label"] for item in analysis["contributions"] if item["status"] != "pass"]
-            self._event(instrument, "SIGNAL_REJECTED", "Rule gates rejected entry", {"score": analysis["score"], "failed": failed})
-            return
-        risk = self.risk_state(instrument)
-        if not risk["allowed"]:
-            self._event(instrument, "RISK_BLOCKED", "Entry blocked by risk controls", risk)
-            return
-        with self._connect() as conn:
-            if conn.execute("SELECT 1 FROM paper_trades WHERE instrument=? AND status='OPEN'", (instrument,)).fetchone():
-                self._event(instrument, "DUPLICATE_BLOCKED", "Existing instrument position is still open")
-                return
-            params, _ = self._active_strategy()
-            entry, atr, side = analysis["price"], analysis["atr14"], analysis["action"]
-            risk_distance = atr * params.stop_loss_atr_multiplier
-            account = self._account_state(conn)
-            risk_budget = account["equity"] * params.risk_per_trade
-            size = min(risk_budget / risk_distance if risk_distance else 0.0, account["cash"] / entry if entry else 0.0)
-            entry_notional = entry * size
-            if size <= 0 or entry_notional <= 0:
-                self._event(instrument, "ACCOUNT_BLOCKED", "Unified account has no available cash for a new paper position", account)
-                return
-            stop, target = (entry - risk_distance, entry + risk_distance * params.risk_reward_ratio) if side == "LONG" else (entry + risk_distance, entry - risk_distance * params.risk_reward_ratio)
-            observed_at=now_iso(); delay=max(0,int((datetime.now(timezone.utc).timestamp()-int(analysis["candle_close_ts"]))*1000))
-            cursor = conn.execute("""INSERT INTO paper_trades(instrument,side,entry,stop_loss,take_profit,created_at,signal_id,strategy_version,config_hash,expected_entry_price,observed_entry_price,execution_delay_ms,observed_slippage_pct,candle_close_ts,signal_score,position_size,entry_notional,risk_amount,mark_price)
-                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", (instrument, side, entry, stop, target, observed_at,analysis["signal_id"],analysis["strategy_version"],analysis["config_hash"],entry,entry,delay,0.0,analysis["candle_close_ts"],analysis["score"],size,entry_notional,risk_distance * size,entry))
-            conn.execute("UPDATE paper_account SET cash=cash-?,updated_at=? WHERE account_id=1", (entry_notional, observed_at))
-            trade_id = cursor.lastrowid
-        self._event(instrument, "TRADE_OPENED", f"Paper {side} opened", {"trade_id": trade_id, "entry": entry, "stop": stop, "target": target, "size": size, "account_equity": account["equity"], "score": analysis["score"]})
+        self.create_order(analysis)
 
     def monitor_positions(self, instrument: str, price: float) -> None:
         closed_events: list[dict[str, Any]] = []
@@ -690,16 +765,25 @@ class PaperService:
                 hit_stop = price <= row["stop_loss"] if row["side"] == "LONG" else price >= row["stop_loss"]
                 hit_target = price >= row["take_profit"] if row["side"] == "LONG" else price <= row["take_profit"]
                 if not (hit_stop or hit_target): continue
-                exit_price, reason = (row["take_profit"], "TAKE_PROFIT") if hit_target else (row["stop_loss"], "STOP_LOSS")
-                risk = abs(row["entry"] - row["stop_loss"]) or 1
-                pnl_r = (exit_price - row["entry"]) / risk if row["side"] == "LONG" else (row["entry"] - exit_price) / risk
-                status = "WIN" if pnl_r > 0 else "LOSS"
+                theoretical_exit, reason = (float(row["take_profit"]), "TAKE_PROFIT") if hit_target else (float(row["stop_loss"]), "STOP_LOSS")
                 size = float(row["position_size"] or 0)
-                pnl_usdt = ((exit_price - row["entry"]) if row["side"] == "LONG" else (row["entry"] - exit_price)) * size
+                accounting_v2 = row["accounting_version"] == ACCOUNTING_VERSION
+                slip = float(row["slippage_rate"] or 0) if accounting_v2 else 0.0
+                fee_rate = float(row["fee_rate"] or 0) if accounting_v2 else 0.0
+                exit_price = theoretical_exit * (1-slip if row["side"] == "LONG" else 1+slip) if accounting_v2 else theoretical_exit
+                exit_fee = exit_price * size * fee_rate if accounting_v2 else 0.0
+                gross = ((exit_price - float(row["entry"])) if row["side"] == "LONG" else (float(row["entry"]) - exit_price)) * size
+                entry_fee = float(row["entry_fee"] or 0) if accounting_v2 else 0.0
+                pnl_usdt = gross - entry_fee - exit_fee
+                risk_amount = float(row["actual_risk_amount"] or row["risk_amount"] or 1)
+                pnl_r = pnl_usdt / risk_amount
+                status = "WIN" if pnl_usdt > 0 else "LOSS"
                 closed_at = now_iso()
-                conn.execute("UPDATE paper_trades SET status=?,exit_price=?,pnl_r=?,pnl_usdt=?,reason=?,closed_at=?,mark_price=? WHERE id=?", (status, exit_price, pnl_r, pnl_usdt if size else None, reason, closed_at, exit_price, row["id"]))
+                conn.execute("UPDATE paper_trades SET status=?,exit_price=?,pnl_r=?,pnl_usdt=?,reason=?,closed_at=?,mark_price=?,theoretical_exit_price=?,simulated_exit_fill=?,exit_fee=?,gross_pnl=?,net_pnl=? WHERE id=?", (status, exit_price, pnl_r, pnl_usdt if size else None, reason, closed_at, exit_price, theoretical_exit if accounting_v2 else None, exit_price if accounting_v2 else None, exit_fee if accounting_v2 else None, gross if accounting_v2 else None, pnl_usdt if accounting_v2 else None, row["id"]))
                 if size:
-                    conn.execute("UPDATE paper_account SET cash=cash+?,realized_pnl=realized_pnl+?,updated_at=? WHERE account_id=1", (exit_price * size, pnl_usdt, closed_at))
+                    # Entry notional and fee were reserved at entry.  Return exit
+                    # proceeds net of exit fee; realised P&L is net of both fees.
+                    conn.execute("UPDATE paper_account SET cash=cash+?,realized_pnl=realized_pnl+?,updated_at=? WHERE account_id=1", (exit_price * size - exit_fee, pnl_usdt, closed_at))
                 closed_events.append({"trade_id": row["id"], "pnl_r": pnl_r, "pnl_usdt": pnl_usdt if size else None, "exit": exit_price, "reason": reason})
         for event in closed_events:
             self._event(instrument, "TRADE_CLOSED", f"Paper trade closed by {event['reason']}", event)
@@ -872,15 +956,18 @@ class PaperService:
                 event["message_params"] = json.loads(event.get("payload") or "{}")
         # Legacy records predate the shared account and have no position size.
         # Retain their display-only R conversion, while new records use booked P&L.
-        risk_amount = INITIAL_CAPITAL_USDT * RISK_PER_TRADE
+        params, strategy_version = self._active_strategy()
+        risk_amount = account["initial_capital"] * params.risk_per_trade
         for trade in [*open_trades, *closed]:
             if trade.get("pnl_usdt") is None:
                 trade["pnl_usdt"] = round(float(trade.get("pnl_r") or 0) * risk_amount, 2)
             trade["initial_capital_usdt"] = INITIAL_CAPITAL_USDT
+            trade["legacy"] = not bool(trade.get("accounting_version"))
         wins = sum(1 for row in closed if row["status"] == "WIN")
         total_r = round(sum(float(row["pnl_r"] or 0) for row in closed), 2)
         analysis = self.last_analysis[instrument]
-        return {"instrument": instrument, "analysis": analysis, "flow": analysis.get("flow"), "risk": self.risk_state(instrument), "events": events, "open_trades": open_trades, "closed_trades": closed, "ai_brief": dict(brief) if brief else None, "summary": {"open": account_open, "closed": len(closed), "wins": wins, "win_rate": round(wins / len(closed) * 100, 1) if closed else 0, "total_r": total_r, "initial_capital_usdt": account["initial_capital"], "risk_per_trade": RISK_PER_TRADE, "total_pnl_usdt": round(account["realized_pnl"], 2), "equity_usdt": round(account["equity"], 2), "available_cash_usdt": round(account["cash"], 2), "open_position_value_usdt": round(account["open_value"], 2), "account_mode": "shared_portfolio"}}
+        effective = {"initial_capital": account["initial_capital"], "risk_per_trade": params.risk_per_trade, "trading_fee": params.trading_fee, "slippage": params.slippage, "cooldown_bars": params.cooldown_bars, "max_open_positions": params.max_open_positions, "max_notional_fraction": params.max_notional_fraction, "maximum_notional": account["equity"] * params.max_notional_fraction, "strategy_version": strategy_version}
+        return {"instrument": instrument, "analysis": analysis, "flow": analysis.get("flow"), "risk": self.risk_state(instrument), "effective_configuration": effective, "events": events, "open_trades": open_trades, "closed_trades": closed, "ai_brief": dict(brief) if brief else None, "summary": {"open": account_open, "closed": len(closed), "wins": wins, "win_rate": round(wins / len(closed) * 100, 1) if closed else 0, "total_r": total_r, "initial_capital_usdt": account["initial_capital"], "risk_per_trade": params.risk_per_trade, "total_pnl_usdt": round(account["realized_pnl"], 2), "equity_usdt": round(account["equity"], 2), "available_cash_usdt": round(account["cash"], 2), "open_position_value_usdt": round(account["open_value"], 2), "account_mode": "shared_portfolio"}}
 
     def replay(self, instrument: str, at: str | None = None) -> dict[str, Any]:
         if instrument not in INSTRUMENTS: instrument = "ETH-USDT"

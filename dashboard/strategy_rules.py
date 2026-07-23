@@ -33,6 +33,9 @@ class StrategyParameters:
     initial_capital: float = 10_000.0
     risk_per_trade: float = 0.01
     max_open_positions: int = 1
+    # Paper v2 makes the historical all-equity ceiling explicit.  A later
+    # policy phase may choose a lower production value.
+    max_notional_fraction: float = 1.0
     enable_daily_context: bool = False
 
 
@@ -47,7 +50,7 @@ STRATEGY_PRESETS: dict[str, dict[str, Any]] = {
 def validate_parameters(raw: dict[str, Any] | None) -> StrategyParameters:
     values = {**DEFAULT_PARAMETERS, **(raw or {})}
     integer_fields = ("fast_ma", "slow_ma", "ema_pullback_period", "rsi_period", "atr_period", "cooldown_bars", "max_open_positions")
-    float_fields = ("ema_pullback_distance", "rsi_min", "rsi_max", "minimum_volume_ratio", "minimum_score", "stop_loss_atr_multiplier", "risk_reward_ratio", "trading_fee", "slippage", "initial_capital", "risk_per_trade")
+    float_fields = ("ema_pullback_distance", "rsi_min", "rsi_max", "minimum_volume_ratio", "minimum_score", "stop_loss_atr_multiplier", "risk_reward_ratio", "trading_fee", "slippage", "initial_capital", "risk_per_trade", "max_notional_fraction")
     try:
         for key in integer_fields:
             values[key] = int(values[key])
@@ -68,6 +71,7 @@ def validate_parameters(raw: dict[str, Any] | None) -> StrategyParameters:
         "trading_fee": (0, 0.02), "slippage": (0, 0.02), "cooldown_bars": (0, 1000),
         "initial_capital": (100, 100_000_000), "risk_per_trade": (0.0001, 0.1),
         "max_open_positions": (1, 10),
+        "max_notional_fraction": (0.0001, 1.0),
     }
     for key, (minimum, maximum) in ranges.items():
         if not minimum <= values[key] <= maximum:

@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import json
 import time
+import math
 from datetime import datetime, timezone
 from typing import Any
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
@@ -38,6 +39,13 @@ class OkxHistoryClient:
                     raise
                 retry_after = error.headers.get("Retry-After")
                 delay = float(retry_after) if retry_after and retry_after.isdigit() else min(2 ** attempt, 12)
+                if on_retry: on_retry(attempt + 1, delay)
+                time.sleep(delay)
+                continue
+            except (TimeoutError, URLError, OSError):
+                if attempt == 6:
+                    raise
+                delay = min(2 ** attempt, 12)
                 if on_retry: on_retry(attempt + 1, delay)
                 time.sleep(delay)
                 continue
@@ -107,3 +115,65 @@ class OkxHistoryClient:
             "gaps": gaps[:20], "warmup_bars_requested": warmup_bars,
         }
         return candles, quality
+
+    def materialize_partition(self, instrument: str, timeframe: str, start_ts: int, end_ts: int, *, cancelled=None, on_retry=None, max_pages: int | None = None) -> dict[str, Any]:
+        """Materialize a canonical range page-atomically, with deterministic resume.
+
+        OKX history pages are reverse chronological.  We identify every missing
+        interval first, then walk each interval backwards from its latest missing
+        boundary.  Thus an interrupted cache continues at its missing edge rather
+        than starting at the requested end and re-downloading populated pages.
+        """
+        if instrument not in INSTRUMENTS or timeframe not in TIMEFRAME_SECONDS:
+            raise ValueError("Unsupported instrument or timeframe.")
+        step = TIMEFRAME_SECONDS[timeframe]
+        if start_ts >= end_ts or start_ts % step or end_ts % step:
+            raise ValueError("Canonical ranges must be aligned, non-empty [start, end).")
+        existing = self.repository.candles(instrument, timeframe, start_ts, end_ts - 1)
+        present = {int(row["ts"]) for row in existing}
+        missing: list[tuple[int, int]] = []
+        cursor = start_ts
+        for ts in sorted(present):
+            if ts > cursor: missing.append((cursor, ts))
+            cursor = max(cursor, ts + step)
+        if cursor < end_ts: missing.append((cursor, end_ts))
+        stats = {"rows_reused": len(existing), "rows_inserted": 0, "pages_requested": 0, "retries": 0, "duplicate_count": 0, "status": "COMPLETE", "missing_intervals": missing}
+        bar = "1Dutc" if timeframe == "1D" else timeframe
+        limit = max_pages if max_pages is not None else 6000
+        try:
+            for gap_start, gap_end in missing:
+                after = gap_end * 1000
+                prior_page: tuple[int, ...] | None = None
+                while after > gap_start * 1000:
+                    if stats["pages_requested"] >= limit:
+                        stats["status"] = "INCOMPLETE"; stats["reason"] = "max-pages"; return stats
+                    if cancelled: cancelled()
+                    retry_log: list[tuple[int, float]] = []
+                    raw = self._request({"instId": instrument, "bar": bar, "after": str(after), "limit": "100"}, lambda a, d: (retry_log.append((a,d)), on_retry and on_retry(a,d)), cancelled)
+                    stats["pages_requested"] += 1; stats["retries"] += len(retry_log)
+                    if not raw:
+                        # An empty page can be transient; it is never a completion proof.
+                        stats["status"] = "INCOMPLETE"; stats["reason"] = "empty-page"; return stats
+                    raw_ts = tuple(sorted({int(row[0]) // 1000 for row in raw if row and str(row[0]).isdigit()}))
+                    if not raw_ts or raw_ts == prior_page or min(raw_ts) * 1000 >= after:
+                        raise RuntimeError("OKX pagination stalled: repeated or non-advancing cursor")
+                    prior_page = raw_ts
+                    page: dict[int, dict[str, Any]] = {}
+                    for row in raw:
+                        try:
+                            ts = int(row[0]) // 1000; o,h,l,c,v = (float(row[i]) for i in range(1,6))
+                        except (IndexError, TypeError, ValueError, OverflowError): continue
+                        if len(row) < 9 or row[8] != "1" or not (gap_start <= ts < gap_end): continue
+                        if ts % step or not all(math.isfinite(x) for x in (o,h,l,c,v)) or min(o,h,l,c) <= 0 or v < 0 or h < max(o,c) or l > min(o,c): continue
+                        if ts in present: stats["duplicate_count"] += 1; continue
+                        page[ts] = {"ts":ts,"open":o,"high":h,"low":l,"close":c,"volume":v,"confirmed":1,"source_instrument":instrument,"normalized_instrument":instrument,"source_version":"okx-history-candles-v5"}
+                    if page:
+                        self.repository.upsert_candles(instrument, timeframe, list(page.values()), source="OKX public history-candles")
+                        present.update(page); stats["rows_inserted"] += len(page)
+                    oldest = min(raw_ts)
+                    if oldest <= gap_start: break
+                    after = oldest * 1000
+                    time.sleep(.04)
+        except (KeyboardInterrupt, SystemExit):
+            stats["status"] = "INCOMPLETE"; stats["reason"] = "interrupted"; return stats
+        return stats

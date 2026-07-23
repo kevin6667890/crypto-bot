@@ -224,6 +224,9 @@ class ResearchRepository:
             self._ensure_column(connection, "decision_signal_runs", "gate_payload", "TEXT")
             self._ensure_column(connection, "decision_signal_runs", "regime", "TEXT")
             self._ensure_column(connection, "decision_signal_runs", "regime_version", "TEXT")
+            self._ensure_column(connection, "historical_candles", "source_instrument", "TEXT")
+            self._ensure_column(connection, "historical_candles", "normalized_instrument", "TEXT")
+            self._ensure_column(connection, "historical_candles", "source_version", "TEXT")
             connection.execute("""INSERT OR IGNORE INTO decision_signal_runs(signal_id,run_id,source,decision_payload,gate_payload,regime,regime_version)
                 SELECT signal_id,run_id,source,decision_payload,gate_payload,regime,regime_version FROM decision_signals WHERE run_id IS NOT NULL""")
             connection.execute("UPDATE backtest_runs SET status='FAILED',progress=100,progress_message='Interrupted by service restart',message_code='job.interrupted.restart',message_params='{}',error='Backtest worker was interrupted by a service restart',updated_at=? WHERE status IN ('QUEUED','RUNNING')", (utc_now(),))
@@ -447,6 +450,11 @@ class ResearchRepository:
     def candles(self, instrument: str, timeframe: str, start_ts: int, end_ts: int) -> list[dict[str, Any]]:
         with self.connect() as connection:
             return [dict(row) for row in connection.execute("SELECT ts,open,high,low,close,volume,confirmed FROM historical_candles WHERE instrument=? AND timeframe=? AND ts BETWEEN ? AND ? AND confirmed=1 ORDER BY ts", (instrument, timeframe, start_ts, end_ts))]
+
+    def discovery_development_candles(self, instrument: str, timeframe: str, start_ts: int, end_ts: int) -> list[dict[str, Any]]:
+        if end_ts >= 1746057600:
+            raise ValueError("Discovery development loader cannot read primary holdout or final OOT candles.")
+        return self.candles(instrument, timeframe, start_ts, end_ts)
 
     def upsert_flow(self, instrument: str, timeframe: str, rows: list[dict[str, Any]], source: str) -> None:
         if not rows:

@@ -103,8 +103,8 @@ def _side_stop_target(template:str,p:dict[str,Any],c:dict[str,Any],f:dict[str,An
     else: target=entry+sign*distance*float(p["target_r"]); exit_mode="FIXED_R"; target_anchor="entry_close_and_stop_distance"
     return mode,stop,target,exit_mode,distance
 
-def evaluate_v2(template:str, parameters:dict[str,Any], candles:list[dict[str,Any]], index:int, instrument:str="UNKNOWN", timeframe:str="15m", dataset_fingerprint:str|None=None, fold_identity:dict[str,Any]|None=None) -> dict[str,Any]:
-    p=normalize_parameters(template,parameters); features=build_features(candles,{"ma_periods":[20,60,200],"atr_period":14,"bb_period":20,"rsi_period":14,"volume_period":20}); c=candles[index]; f=features[index]; regime=classify_regime_v2(c,f); close=float(c["close"]); prior=candles[index-1] if index else None
+def evaluate_v2(template:str, parameters:dict[str,Any], candles:list[dict[str,Any]], index:int, instrument:str="UNKNOWN", timeframe:str="15m", dataset_fingerprint:str|None=None, fold_identity:dict[str,Any]|None=None, features:list[dict[str,Any]]|None=None) -> dict[str,Any]:
+    p=normalize_parameters(template,parameters); features=features if features is not None else build_features(candles,{"ma_periods":[20,60,200],"atr_period":14,"bb_period":20,"rsi_period":14,"volume_period":20}); c=candles[index]; f=dict(features[index]); regime=classify_regime_v2(c,f); close=float(c["close"]); prior=candles[index-1] if index else None
     gates={"regime":False,"setup_ma":False,"setup_location":False,"setup_extreme":False,"setup_rsi":False,"trigger":False,"volume":True}
     side="WAIT"; trend_long=regime["code"]=="BULL_TREND"; trend_short=regime["code"]=="BEAR_TREND"; vr=f.get("volume_ratio"); gates["volume"]=(not p["volume_enabled"]) or (vr is not None and float(vr)>=p["minimum_volume_ratio"])
     if template=="TREND_PULLBACK_V2":

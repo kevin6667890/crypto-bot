@@ -11,6 +11,9 @@ DISCOVERY_CANDIDATE_IDENTITY_VERSION = "discovery-candidate-identity-v1"
 DISCOVERY_EVALUATION_IDENTITY_VERSION = "discovery-evaluation-identity-v1"
 TEMPLATE_VERSION = {"TREND_PULLBACK":"trend-pullback-v1", "VOLATILITY_BREAKOUT":"volatility-breakout-v1", "MEAN_REVERSION":"mean-reversion-v1", "TREND_BREAKOUT":"trend-breakout-v1"}
 TEMPLATES = tuple(TEMPLATE_VERSION)
+V2_PARAMETER_IDENTITY_VERSION = "discovery-v2-parameter-identity-v1"
+V2_CANDIDATE_IDENTITY_VERSION = "discovery-v2-candidate-identity-v1"
+V2_EVALUATION_IDENTITY_VERSION = "discovery-v2-evaluation-identity-v1"
 
 def _primitive(value: Any) -> Any:
     if value is None or isinstance(value, (str, bool, int)): return value
@@ -68,11 +71,26 @@ def normalize_template_parameters(template: str, parameters: dict[str, Any]) -> 
     return p
 
 def build_parameter_identity(template: str, parameters: dict[str, Any]) -> str:
+    if template.endswith("_V2"):
+        from .strategy_v2 import normalize_parameters, TEMPLATE_VERSION as v2_versions, DISCOVERY_STRATEGY_VERSION, V2_FEATURE_VERSION
+        normalized=normalize_parameters(template,parameters)
+        return canonical_json_hash({"parameter_identity_version":V2_PARAMETER_IDENTITY_VERSION,"strategy_version":DISCOVERY_STRATEGY_VERSION,"template":template,"template_version":v2_versions[template],"feature_version":V2_FEATURE_VERSION,"parameters":normalized})
     normalized=normalize_template_parameters(template,parameters)
     return canonical_json_hash({"parameter_identity_version":DISCOVERY_PARAMETER_IDENTITY_VERSION,"template":template,"template_version":TEMPLATE_VERSION[template],"feature_version":FEATURE_VERSION,"parameters":normalized})
 
 def build_candidate_identity(template: str, parameters: dict[str, Any], execution_hash: str) -> str:
+    if template.endswith("_V2"):
+        from .strategy_v2 import TEMPLATE_VERSION as v2_versions, DISCOVERY_STRATEGY_VERSION, V2_FEATURE_VERSION
+        return canonical_json_hash({"candidate_identity_version":V2_CANDIDATE_IDENTITY_VERSION,"strategy_version":DISCOVERY_STRATEGY_VERSION,"parameter_hash":build_parameter_identity(template,parameters),"execution_hash":execution_hash,"template_version":v2_versions[template],"feature_version":V2_FEATURE_VERSION,"execution_engine_version":SHARED_EXECUTION_ENGINE_VERSION})
     return canonical_json_hash({"candidate_identity_version":DISCOVERY_CANDIDATE_IDENTITY_VERSION,"parameter_hash":build_parameter_identity(template,parameters),"execution_hash":execution_hash,"template_version":TEMPLATE_VERSION[template],"feature_version":FEATURE_VERSION,"execution_engine_version":SHARED_EXECUTION_ENGINE_VERSION})
 
 def build_evaluation_identity(candidate_config_hash: str, instrument: str, timeframe: str, start_ts: int, end_ts: int, dataset_fingerprint: str | None) -> str:
-    return canonical_json_hash({"evaluation_identity_version":DISCOVERY_EVALUATION_IDENTITY_VERSION,"candidate_config_hash":candidate_config_hash,"instrument":instrument,"timeframe":timeframe,"start_ts":int(start_ts),"end_ts":int(end_ts),"dataset_fingerprint":dataset_fingerprint})
+    # Version derives from the candidate identity, avoiding a v1/v2 collision while
+    # retaining byte-for-byte v1 evaluation identities.
+    version=V2_EVALUATION_IDENTITY_VERSION if candidate_config_hash.startswith("v2:") else DISCOVERY_EVALUATION_IDENTITY_VERSION
+    # Candidate hashes are opaque SHA-256 values; callers needing v2 must pass the
+    # explicit marker through the dedicated helper below.
+    return canonical_json_hash({"evaluation_identity_version":version,"candidate_config_hash":candidate_config_hash,"instrument":instrument,"timeframe":timeframe,"start_ts":int(start_ts),"end_ts":int(end_ts),"dataset_fingerprint":dataset_fingerprint})
+
+def build_v2_evaluation_identity(candidate_config_hash: str, instrument: str, timeframe: str, start_ts: int, end_ts: int, dataset_fingerprint: str | None) -> str:
+    return canonical_json_hash({"evaluation_identity_version":V2_EVALUATION_IDENTITY_VERSION,"candidate_config_hash":candidate_config_hash,"instrument":instrument,"timeframe":timeframe,"start_ts":int(start_ts),"end_ts":int(end_ts),"dataset_fingerprint":dataset_fingerprint})

@@ -10,7 +10,7 @@ from typing import Any
 from .backtest_engine import SHARED_EXECUTION_ENGINE_VERSION, run_execution_backtest
 from .discovery_features import FEATURE_VERSION, build_features
 from .discovery_templates import TEMPLATE_VERSION, signal, validate
-from .discovery_identity import canonical_json_hash, normalize_template_parameters, build_parameter_identity, build_candidate_identity, build_evaluation_identity, DISCOVERY_PARAMETER_IDENTITY_VERSION, DISCOVERY_CANDIDATE_IDENTITY_VERSION, DISCOVERY_EVALUATION_IDENTITY_VERSION
+from .discovery_identity import canonical_json_hash, normalize_template_parameters, build_parameter_identity, build_candidate_identity, build_evaluation_identity, build_v2_evaluation_identity, DISCOVERY_PARAMETER_IDENTITY_VERSION, DISCOVERY_CANDIDATE_IDENTITY_VERSION, DISCOVERY_EVALUATION_IDENTITY_VERSION, V2_PARAMETER_IDENTITY_VERSION, V2_CANDIDATE_IDENTITY_VERSION, V2_EVALUATION_IDENTITY_VERSION
 from .strategy_rules import StrategyParameters
 from .discovery_ablation import (DISCOVERY_ABLATION_VERSION,
     DISCOVERY_ABLATION_IDENTITY_VERSION, build_ablation_identity, normalize_ablation_flags)
@@ -54,7 +54,8 @@ def run_discovery_candidate_backtest(candles: list[dict[str, Any]], instrument: 
                                      template: str, template_parameters: dict[str, Any], start_ts: int,
                                      end_ts: int, execution: DiscoveryExecutionConfig | None = None,
                                      dataset_fingerprint: str | None = None,
-                                     ablation_flags: dict[str, Any] | None = None) -> dict[str, Any]:
+                                     ablation_flags: dict[str, Any] | None = None,
+                                     v2_features: list[dict[str, Any]] | None = None) -> dict[str, Any]:
     """Evaluate one causal Discovery template over an inclusive execution interval.
 
     For end-exclusive folds callers must pass ``validation_end_ts - timeframe_seconds``.
@@ -66,14 +67,19 @@ def run_discovery_candidate_backtest(candles: list[dict[str, Any]], instrument: 
         normalized = normalize_v2_parameters(template, template_parameters)
         params = StrategyParameters(initial_capital=execution.initial_capital, risk_per_trade=normalized["risk_per_trade"], trading_fee=normalized["trading_fee"], slippage=normalized["slippage"], cooldown_bars=execution.cooldown_bars, max_notional_fraction=normalized["max_notional_fraction"], enable_long=execution.allow_long, enable_short=execution.allow_short)
         fold={"start_ts":int(start_ts),"end_ts":int(end_ts)}
+        features=v2_features if v2_features is not None else build_features(candles,{"ma_periods":[20,60,200],"atr_period":14,"bb_period":20,"rsi_period":14,"volume_period":20})
+        parameter_hash=build_parameter_identity(template, normalized)
+        execution_hash=execution.execution_hash()
+        candidate_hash=build_candidate_identity(template, normalized, execution_hash)
+        evaluation_hash=build_v2_evaluation_identity(candidate_hash,instrument,timeframe,start_ts,end_ts,dataset_fingerprint)
         evidence_by_ts: dict[int,dict[str,Any]]={}
         def v2_provider(candle: dict[str,Any], index:int)->dict[str,Any]:
-            result=evaluate_v2(template, normalized, candles, index, instrument, timeframe, dataset_fingerprint, fold)
+            result=evaluate_v2(template, normalized, candles, index, instrument, timeframe, dataset_fingerprint, fold, features)
             evidence_by_ts[int(candle["ts"])]=result["evidence"]
             return result
         result=run_execution_backtest(candles,instrument,timeframe,params,start_ts,end_ts,signal_provider=v2_provider)
         result["v2_evaluations"]=evidence_by_ts
-        result["discovery_evidence"]={"strategy_family":DISCOVERY_STRATEGY_VERSION,"template":template,"template_version":V2_TEMPLATE_VERSION[template],"feature_version":"discovery-features-v1","parameters":normalized,"execution":{**execution.__dict__,"risk_per_trade":normalized["risk_per_trade"],"max_notional_fraction":normalized["max_notional_fraction"],"trading_fee":normalized["trading_fee"],"slippage":normalized["slippage"]},"dataset_fingerprint":dataset_fingerprint,"fold_identity":fold,"historical_input_policy":"PRICE_ONLY_OHLCV","flow_history_requested":False}
+        result["discovery_evidence"]={"strategy_family":DISCOVERY_STRATEGY_VERSION,"template":template,"template_version":V2_TEMPLATE_VERSION[template],"feature_version":FEATURE_VERSION,"parameters":normalized,"parameter_hash":parameter_hash,"execution_hash":execution_hash,"candidate_config_hash":candidate_hash,"evaluation_hash":evaluation_hash,"parameter_identity_version":V2_PARAMETER_IDENTITY_VERSION,"candidate_identity_version":V2_CANDIDATE_IDENTITY_VERSION,"evaluation_identity_version":V2_EVALUATION_IDENTITY_VERSION,"execution_policy_version":DISCOVERY_EXECUTION_POLICY_VERSION,"execution_engine_version":SHARED_EXECUTION_ENGINE_VERSION,"execution":{**execution.__dict__,"risk_per_trade":normalized["risk_per_trade"],"max_notional_fraction":normalized["max_notional_fraction"],"trading_fee":normalized["trading_fee"],"slippage":normalized["slippage"]},"dataset_fingerprint":dataset_fingerprint,"fold_identity":fold,"historical_input_policy":"PRICE_ONLY_OHLCV","flow_history_requested":False}
         return result
     normalized_parameters = normalize_template_parameters(template, template_parameters)
     config = validate({"template": template, "parameters": normalized_parameters})

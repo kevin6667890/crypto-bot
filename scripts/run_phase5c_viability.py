@@ -110,7 +110,7 @@ def classification(candidates, timeframe):
 def failure_mode(candidates, timeframe):
     threshold={"15m":40,"1H":20,"4H":10}[timeframe]
     if all(x["trade_count"]<threshold for x in candidates): return "insufficient sample"
-    if any(x["median_gross_return"]>0>=x["median_net_return"] for x in candidates):
+    if any(x["median_gross_excess_return"]>0>=x["median_excess_return"] for x in candidates):
         return "positive gross edge destroyed by costs"
     if all(x["median_gross_excess_return"]<=0 for x in candidates): return "no gross edge"
     if all(x["gross_edge_fold_ratio"]<.6 for x in candidates): return "unstable across folds"

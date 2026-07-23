@@ -93,15 +93,19 @@ def run_execution_backtest(
             raw_entry = float(candle["open"])
             entry = raw_entry * (1 + parameters.slippage if side == "LONG" else 1 - parameters.slippage)
             atr = float(pending["atr"])
-            stop_distance = atr * parameters.stop_loss_atr_multiplier
+            # V2 providers may supply their already-audited causal stop distance
+            # and R target.  V1 retains the exact historical ATR calculation.
+            stop_distance = float(pending.get("stop_distance") or (atr * parameters.stop_loss_atr_multiplier))
             stop = entry - stop_distance if side == "LONG" else entry + stop_distance
-            target = entry + stop_distance * parameters.risk_reward_ratio if side == "LONG" else entry - stop_distance * parameters.risk_reward_ratio
+            target_r = float(pending.get("target_r") or parameters.risk_reward_ratio)
+            target = entry + stop_distance * target_r if side == "LONG" else entry - stop_distance * target_r
             risk_budget = max(equity_value, 0) * parameters.risk_per_trade
-            size = min(risk_budget / stop_distance if stop_distance else 0.0, max(equity_value, 0) / entry if entry else 0.0)
+            maximum_notional = max(equity_value, 0) * parameters.max_notional_fraction
+            size = min(risk_budget / stop_distance if stop_distance else 0.0, maximum_notional / entry if entry else 0.0)
             if size > 0:
                 entry_fee = entry * size * parameters.trading_fee
                 equity_value -= entry_fee
-                position = {"side": side, "entry": entry, "raw_entry": raw_entry, "entry_ts": ts, "stop": stop, "target": target, "size": size, "entry_fee": entry_fee, "risk_amount": stop_distance * size, "score": pending["score"], "signal_ts": pending["signal_ts"], "signal_id": pending["signal_id"], "strategy_version": pending["strategy_version"], "config_hash": pending["config_hash"], "expected_entry_ts": ts, "expected_entry_price": raw_entry}
+                position = {"side": side, "entry": entry, "raw_entry": raw_entry, "entry_ts": ts, "stop": stop, "target": target, "size": size, "entry_fee": entry_fee, "risk_amount": stop_distance * size, "score": pending["score"], "signal_ts": pending["signal_ts"], "signal_id": pending["signal_id"], "strategy_version": pending["strategy_version"], "config_hash": pending["config_hash"], "expected_entry_ts": ts, "expected_entry_price": raw_entry, "stop_distance": stop_distance, "risk_budget": risk_budget, "maximum_notional": maximum_notional}
             pending = None
 
         if position:
@@ -162,7 +166,8 @@ def run_execution_backtest(
             signal_count += 1
             if position is None and pending is None and index >= cooldown_until_index:
                 pending = {"side": signal["action"], "atr": signal["atr"], "score": signal["score"], "signal_ts": ts,
-                           "signal_id": signal["signal_id"], "strategy_version": signal["strategy_version"], "config_hash": signal["config_hash"]}
+                           "signal_id": signal["signal_id"], "strategy_version": signal["strategy_version"], "config_hash": signal["config_hash"],
+                           "stop_distance": signal.get("stop_distance"), "target_r": signal.get("target_r")}
 
     if position and equity:
         candle = next(row for row in reversed(candles) if start_ts <= int(row["ts"]) <= end_ts)

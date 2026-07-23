@@ -14,6 +14,7 @@ from .discovery_identity import canonical_json_hash, normalize_template_paramete
 from .strategy_rules import StrategyParameters
 from .discovery_ablation import (DISCOVERY_ABLATION_VERSION,
     DISCOVERY_ABLATION_IDENTITY_VERSION, build_ablation_identity, normalize_ablation_flags)
+from .strategy_v2 import TEMPLATES as V2_TEMPLATES, evaluate_v2, normalize_parameters as normalize_v2_parameters, TEMPLATE_VERSION as V2_TEMPLATE_VERSION, DISCOVERY_STRATEGY_VERSION
 
 DISCOVERY_EXECUTION_POLICY_VERSION = "discovery-execution-v1"
 
@@ -59,6 +60,21 @@ def run_discovery_candidate_backtest(candles: list[dict[str, Any]], instrument: 
     For end-exclusive folds callers must pass ``validation_end_ts - timeframe_seconds``.
     """
     execution = (execution or DiscoveryExecutionConfig()).validate()
+    if template in V2_TEMPLATES:
+        # This adapter is intentionally one-candidate-only.  It does not create a
+        # population, folds, robustness scenarios, or read flow history.
+        normalized = normalize_v2_parameters(template, template_parameters)
+        params = StrategyParameters(initial_capital=execution.initial_capital, risk_per_trade=normalized["risk_per_trade"], trading_fee=normalized["trading_fee"], slippage=normalized["slippage"], cooldown_bars=execution.cooldown_bars, max_notional_fraction=normalized["max_notional_fraction"], enable_long=execution.allow_long, enable_short=execution.allow_short)
+        fold={"start_ts":int(start_ts),"end_ts":int(end_ts)}
+        evidence_by_ts: dict[int,dict[str,Any]]={}
+        def v2_provider(candle: dict[str,Any], index:int)->dict[str,Any]:
+            result=evaluate_v2(template, normalized, candles, index, instrument, timeframe, dataset_fingerprint, fold)
+            evidence_by_ts[int(candle["ts"])]=result["evidence"]
+            return result
+        result=run_execution_backtest(candles,instrument,timeframe,params,start_ts,end_ts,signal_provider=v2_provider)
+        result["v2_evaluations"]=evidence_by_ts
+        result["discovery_evidence"]={"strategy_family":DISCOVERY_STRATEGY_VERSION,"template":template,"template_version":V2_TEMPLATE_VERSION[template],"feature_version":"discovery-features-v1","parameters":normalized,"execution":{**execution.__dict__,"risk_per_trade":normalized["risk_per_trade"],"max_notional_fraction":normalized["max_notional_fraction"],"trading_fee":normalized["trading_fee"],"slippage":normalized["slippage"]},"dataset_fingerprint":dataset_fingerprint,"fold_identity":fold,"historical_input_policy":"PRICE_ONLY_OHLCV","flow_history_requested":False}
+        return result
     normalized_parameters = normalize_template_parameters(template, template_parameters)
     config = validate({"template": template, "parameters": normalized_parameters})
     normalized_ablation_flags = normalize_ablation_flags(template, normalized_parameters, ablation_flags)

@@ -3,6 +3,8 @@ from __future__ import annotations
 import argparse, json, sys, time
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+
 from dashboard.dataset_service import RAW_START_TS, END_TS, fingerprint, quality
 from dashboard.okx_history import INSTRUMENTS, TIMEFRAME_SECONDS, OkxHistoryClient
 from dashboard.research_repository import ResearchRepository

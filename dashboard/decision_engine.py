@@ -6,13 +6,14 @@ from dataclasses import asdict, dataclass, field
 from typing import Any
 
 try:
-    from signal_identity import config_hash as make_config_hash, signal_id as make_signal_id
+    from signal_identity import config_hash as make_config_hash, signal_setup_id as make_signal_setup_id, evaluation_id as make_evaluation_id
     from market_regime import classify_regime
 except ImportError:
-    from .signal_identity import config_hash as make_config_hash, signal_id as make_signal_id
+    from .signal_identity import config_hash as make_config_hash, signal_setup_id as make_signal_setup_id, evaluation_id as make_evaluation_id
     from .market_regime import classify_regime
 
 LIVE_STRATEGY_VERSION = "live-mtf-flow-v1"
+DECISION_ENGINE_VERSION = "paper-decision-engine-v2"
 HISTORICAL_STRATEGY_VERSION = "historical-mtf-no-flow-v1"
 SINGLE_TIMEFRAME_VERSION = "historical-single-timeframe-no-flow-v1"
 
@@ -42,6 +43,9 @@ class FlowContext:
     cvd_delta: float | None = None
     oi_change_pct: float | None = None
     source: str | None = None
+    cvd_timestamp: int | None = None
+    oi_timestamp: int | None = None
+    snapshot_timestamp: int | None = None
 
 
 @dataclass(frozen=True)
@@ -57,6 +61,9 @@ class RiskContext:
 @dataclass(frozen=True)
 class StrategyDecision:
     signal_id: str
+    signal_setup_id: str
+    evaluation_id: str
+    decision_engine_version: str
     instrument: str
     execution_timeframe: str
     candle_close_ts: int
@@ -144,7 +151,7 @@ def evaluate_decision(parameters: Any, market: MarketContext, timeframes: Timefr
                   "frames": timeframes.frames, "frame_biases": frame_biases}
     flow_payload = {**asdict(flow), "score_mode": "live-flow-100" if flow.available else "historical-no-flow-normalized-100"}
     risk_payload = asdict(risk); risk_payload["blockers"] = list(risk.blockers)
-    sid = make_signal_id(version, cfg_hash, market.instrument, market.execution_timeframe, market.candle_close_ts)
+    sid = make_signal_setup_id(version, cfg_hash, market.instrument, market.execution_timeframe, market.candle_close_ts)
     gates = [
         ("indicator_warmup", "Indicator Warm-up", warmed, True, True),
         ("directional_bias", "Directional Bias", bias != "WAIT", True, True),
@@ -165,7 +172,9 @@ def evaluate_decision(parameters: Any, market: MarketContext, timeframes: Timefr
     ]
     gate_results = [{"key": key, "label": label, "label_code": f"gate.{key}", "passed": bool(passed) if applicable else True, "applicable": applicable, "blocking": blocking} for key, label, passed, applicable, blocking in gates]
     regime = classify_regime(market.close, ind)
-    return StrategyDecision(sid, market.instrument, market.execution_timeframe, int(market.candle_close_ts), version, cfg_hash,
+    evaluation_payload = {"evaluation_timestamp": market.candle_close_ts, "market": {"close": market.close, "data_source": market.data_source, "data_version": market.data_version}, "flow": flow_payload, "gates": gate_results, "regime": regime, "source_candle": market.candle_close_ts, "engine": DECISION_ENGINE_VERSION}
+    eid = make_evaluation_id(sid, evaluation_payload)
+    return StrategyDecision(sid, sid, eid, DECISION_ENGINE_VERSION, market.instrument, market.execution_timeframe, int(market.candle_close_ts), version, cfg_hash,
                             action, bias, score if warmed else 0.0, warmed, contributions, failed, ind, tf_payload, flow_payload,
                             risk_payload, entry_allowed, rejection, market.data_source, market.data_version,
                             {"close": market.close, "indicator_keys": sorted(ind), "frame_close_timestamps": {k: v.get("candle_close_ts") for k, v in timeframes.frames.items()}, "parameters": params},

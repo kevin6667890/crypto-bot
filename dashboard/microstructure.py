@@ -321,7 +321,7 @@ class MicrostructureStore:
         values = self.observation_base(source, instrument, timestamp_ms, "snapshot",
                                        "confirmed", source_identity, key)
         with self.connect() as c:
-            before = self._counted_rows(c, table)
+            before = c.total_changes
             c.execute(
                 "INSERT OR IGNORE INTO oi_observations VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 (*values, oi_contracts, oi_currency, oi_usd, provenance_table),
@@ -355,7 +355,7 @@ class MicrostructureStore:
                                            source_identity, key)
             rows.append((*values, open_, high, low, close))
         with self.connect() as c:
-            before = c.total_changes
+            before = self._counted_rows(c, table)
             c.executemany(
                 f"INSERT OR IGNORE INTO {table} VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
             return self._counted_rows(c, table) - before

@@ -58,6 +58,10 @@ export function flowHistoryKey(instrument: string, timeframe: string, series: Fl
   return `${series}:${instrument}:${timeframe}`;
 }
 
+export function persistedFlowInstrument(instrument: string) {
+  return instrument.endsWith("-SWAP") ? instrument.slice(0, -5) : instrument;
+}
+
 export function mergeHistoryPoints(
   retained: FlowHistoryPoint[],
   incoming: unknown,

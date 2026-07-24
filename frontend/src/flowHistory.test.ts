@@ -10,6 +10,7 @@ import {
   historyRequestUrl,
   mergeHistoryPoints,
   olderPageRequest,
+  persistedFlowInstrument,
   requestFlowHistory,
   retainServerHistory,
   visibleRangeFromCandles,
@@ -108,6 +109,11 @@ describe("range-driven flow history", () => {
     guard.select("ETH-USDT", "1h");
     expect(guard.accepts(stale)).toBe(false);
     expect(hydrateFlowHistory("ETH-USDT", "15m", "cvd")).toEqual([]);
+  });
+
+  it("maps perpetual candle instruments to persisted flow instruments", () => {
+    expect(persistedFlowInstrument("ETH-USDT-SWAP")).toBe("ETH-USDT");
+    expect(persistedFlowInstrument("BTC-USDT")).toBe("BTC-USDT");
   });
 
   it("hydrates retained data after a remount", () => {

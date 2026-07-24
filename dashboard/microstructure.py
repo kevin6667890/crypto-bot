@@ -445,6 +445,19 @@ class MicrostructureStore:
             )
 
     def aggregate_all(self) -> dict[str, int]:
+        return self._aggregate_since(None)
+
+    def aggregate_recent(self, timestamp_ms: int | None = None) -> dict[str, int]:
+        """Refresh buckets that can still receive live observations.
+
+        The largest durable bucket is one day, so starting at the current UTC
+        day boundary includes every bucket that live collection can change.
+        Historical backfills continue to call ``aggregate_all`` explicitly.
+        """
+        current = timestamp_ms or now_ms()
+        return self._aggregate_since((current // RESOLUTIONS["1D"]) * RESOLUTIONS["1D"])
+
+    def _aggregate_since(self, since_ms: int | None) -> dict[str, int]:
         counts = {"cvd": 0, "oi": 0, "basis": 0}
         with self.connect() as c:
             instruments = [row[0] for row in c.execute(
@@ -453,11 +466,14 @@ class MicrostructureStore:
                    SELECT instrument FROM mark_price_observations"""
             )]
             for instrument in instruments:
-                self._detect_gaps(c, instrument)
+                self._detect_gaps(c, instrument, since_ms)
                 for name, width in RESOLUTIONS.items():
-                    counts["cvd"] += self._aggregate_cvd(c, instrument, name, width)
-                    counts["oi"] += self._aggregate_oi(c, instrument, name, width)
-                    counts["basis"] += self._aggregate_basis(c, instrument, name, width)
+                    counts["cvd"] += self._aggregate_cvd(
+                        c, instrument, name, width, since_ms)
+                    counts["oi"] += self._aggregate_oi(
+                        c, instrument, name, width, since_ms)
+                    counts["basis"] += self._aggregate_basis(
+                        c, instrument, name, width, since_ms)
             c.execute(
                 """INSERT INTO collector_health(component,status,last_success_ms,last_error,
                    reconnect_count,failed_request_count,retry_count,source_lag_ms,updated_at_ms)
@@ -469,15 +485,22 @@ class MicrostructureStore:
         return counts
 
     @staticmethod
-    def _detect_gaps(c: sqlite3.Connection, instrument: str) -> None:
+    def _detect_gaps(
+        c: sqlite3.Connection, instrument: str, since_ms: int | None = None
+    ) -> None:
         for lane, table, threshold in (
             ("trades", "trade_flow_observations", 60_000),
             ("oi", "oi_observations", 45_000),
             ("mark", "mark_price_observations", 120_000),
         ):
+            where = "instrument=?"
+            parameters: tuple[Any, ...] = (instrument,)
+            if since_ms is not None:
+                where += " AND source_ts_ms>=?"
+                parameters += (since_ms,)
             times = [int(row[0]) for row in c.execute(
                 f"""SELECT DISTINCT source_ts_ms FROM {table}
-                    WHERE instrument=? ORDER BY source_ts_ms""", (instrument,))]
+                    WHERE {where} ORDER BY source_ts_ms""", parameters)]
             for start, end in zip(times, times[1:]):
                 if end - start > threshold:
                     c.execute(
@@ -493,11 +516,19 @@ class MicrostructureStore:
                    or times[-1] - times[0] + expected_frequency < min(width, expected_frequency * 2))
 
     def _aggregate_cvd(self, c: sqlite3.Connection, instrument: str,
-                       resolution: str, width: int) -> int:
+                       resolution: str, width: int,
+                       since_ms: int | None = None) -> int:
+        start_ms = ((since_ms // width) * width
+                    if since_ms is not None else None)
+        time_filter = " AND source_ts_ms>=?" if start_ms is not None else ""
+        parameters: tuple[Any, ...] = (width, width, instrument)
+        if start_ms is not None:
+            parameters += (start_ms,)
         rows = c.execute(
             """SELECT (source_ts_ms / ?) * ? bucket,source_ts_ms,side,notional
                FROM trade_flow_observations WHERE instrument=? AND state='confirmed'
-               ORDER BY source_ts_ms,source_identity""", (width, width, instrument)).fetchall()
+               """ + time_filter + """
+               ORDER BY source_ts_ms,source_identity""", parameters).fetchall()
         grouped: dict[int, list[sqlite3.Row]] = {}
         for row in rows:
             grouped.setdefault(int(row["bucket"]), []).append(row)
@@ -529,13 +560,21 @@ class MicrostructureStore:
         return len(values)
 
     def _aggregate_oi(self, c: sqlite3.Connection, instrument: str,
-                      resolution: str, width: int) -> int:
+                      resolution: str, width: int,
+                      since_ms: int | None = None) -> int:
+        start_ms = ((since_ms // width) * width
+                    if since_ms is not None else None)
+        time_filter = " AND source_ts_ms>=?" if start_ms is not None else ""
+        parameters: tuple[Any, ...] = (width, width, instrument)
+        if start_ms is not None:
+            parameters += (start_ms,)
         rows = c.execute(
             """SELECT (source_ts_ms / ?) * ? bucket,source_ts_ms,
                       COALESCE(oi_usd,oi_currency,oi_contracts) value
                FROM oi_observations WHERE instrument=? AND state='confirmed'
                AND COALESCE(oi_usd,oi_currency,oi_contracts) IS NOT NULL
-               ORDER BY source_ts_ms,source_identity""", (width, width, instrument)).fetchall()
+               """ + time_filter + """
+               ORDER BY source_ts_ms,source_identity""", parameters).fetchall()
         grouped: dict[int, list[sqlite3.Row]] = {}
         for row in rows:
             grouped.setdefault(int(row["bucket"]), []).append(row)
@@ -560,16 +599,31 @@ class MicrostructureStore:
         return len(values)
 
     def _aggregate_basis(self, c: sqlite3.Connection, instrument: str,
-                         resolution: str, width: int) -> int:
+                         resolution: str, width: int,
+                         since_ms: int | None = None) -> int:
         index_instrument = instrument.removesuffix("-SWAP")
+        start_ms = ((since_ms // width) * width
+                    if since_ms is not None else None)
+        mark_filter = " AND source_ts_ms>=?" if start_ms is not None else ""
+        mark_parameters: tuple[Any, ...] = (instrument,)
+        if start_ms is not None:
+            mark_parameters += (start_ms,)
         marks = c.execute(
             """SELECT source_ts_ms,close FROM mark_price_observations
-               WHERE instrument=? AND state='confirmed' ORDER BY source_ts_ms""",
-            (instrument,)).fetchall()
+               WHERE instrument=? AND state='confirmed'""" + mark_filter + """
+               ORDER BY source_ts_ms""", mark_parameters).fetchall()
+        index_filter = ""
+        index_parameters: tuple[Any, ...] = (index_instrument,)
+        if start_ms is not None:
+            # Keep one earlier index value for the causal as-of join.
+            index_filter = """ AND source_ts_ms>=COALESCE(
+                (SELECT MAX(source_ts_ms) FROM index_price_observations
+                 WHERE instrument=? AND state='confirmed' AND source_ts_ms<=?), ?)"""
+            index_parameters += (index_instrument, start_ms, start_ms)
         indices = c.execute(
             """SELECT source_ts_ms,close FROM index_price_observations
-               WHERE instrument=? AND state='confirmed' ORDER BY source_ts_ms""",
-            (index_instrument,)).fetchall()
+               WHERE instrument=? AND state='confirmed'""" + index_filter + """
+               ORDER BY source_ts_ms""", index_parameters).fetchall()
         values_by_bucket: dict[int, list[tuple[int, float, float]]] = {}
         index_position = -1
         for mark in marks:

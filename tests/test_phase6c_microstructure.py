@@ -160,6 +160,41 @@ def test_aggregation_is_deterministic_and_pruning_preserves_it(tmp_path: Path) -
         assert c.execute("SELECT COUNT(*) FROM cvd_aggregates").fetchone()[0] > 0
 
 
+def test_live_aggregation_refreshes_current_day_without_rewriting_history(
+    tmp_path: Path,
+) -> None:
+    value = store(tmp_path)
+    day = 86_400_000
+    old = 1_700_000_000_000 // day * day
+    current = old + day
+    for timestamp, trade_id in ((old + 1_000, "old"), (current + 1_000, "new")):
+        value.insert_trade("BTC-USDT-SWAP", {
+            "ts": timestamp, "px": 50_000, "sz": 1,
+            "side": "buy", "tradeId": trade_id,
+        }, contract_value=.01)
+    value.aggregate_all()
+    with value.connect(readonly=True) as c:
+        historical = tuple(c.execute(
+            """SELECT * FROM cvd_aggregates
+               WHERE resolution='1D' AND bucket_ms=?""", (old,)).fetchone())
+
+    value.insert_trade("BTC-USDT-SWAP", {
+        "ts": current + 2_000, "px": 50_000, "sz": 1,
+        "side": "sell", "tradeId": "late-current",
+    }, contract_value=.01)
+    value.aggregate_recent(current + 3_000)
+
+    with value.connect(readonly=True) as c:
+        assert tuple(c.execute(
+            """SELECT * FROM cvd_aggregates
+               WHERE resolution='1D' AND bucket_ms=?""", (old,)).fetchone()) == historical
+        refreshed = c.execute(
+            """SELECT buy_notional,sell_notional,observation_count
+               FROM cvd_aggregates WHERE resolution='1D' AND bucket_ms=?""",
+            (current,)).fetchone()
+        assert tuple(refreshed) == (500.0, 500.0, 2)
+
+
 def test_basis_join_never_uses_future_index(tmp_path: Path) -> None:
     value = store(tmp_path)
     value.insert_price("mark", "BTC-USDT-SWAP", 2_000, 105, source_identity="m")

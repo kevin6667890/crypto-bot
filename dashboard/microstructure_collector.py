@@ -295,7 +295,7 @@ class Collector:
             pass
         while not self.stop_event.is_set():
             try:
-                await asyncio.to_thread(self.store.aggregate_all)
+                await asyncio.to_thread(self.store.aggregate_recent)
                 # Daily pruning is restart-safe and aggregates first.
                 if now_ms() - self.last_prune_ms > 86_400_000:
                     await asyncio.to_thread(self.store.prune_raw)

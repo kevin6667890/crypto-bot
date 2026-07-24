@@ -7,7 +7,7 @@ import sqlite3
 import pytest
 
 from dashboard.automatic_discovery import DevelopmentData
-from dashboard.automatic_discovery_v2 import _parallel_map
+from dashboard.automatic_discovery_v2 import _execution_payload, _parallel_map
 from dashboard.backtest_engine import run_execution_backtest
 from dashboard.discovery_checkpoint import DiscoveryCheckpoint, checkpoint_key
 from dashboard.discovery_identity import build_parameter_identity
@@ -322,9 +322,34 @@ def test_retry_counts_bounded_and_cancellation_preserves_completed(tmp_path):
 
 
 def test_one_and_two_worker_order_and_results_are_identical():
-    tasks = list(range(20))
-    function = lambda value: (value, value * value)
+    tasks = []
+    for program in candidates().values():
+        rows, features = scripted_fixture(program)
+        tasks.append((program, rows, features))
+    def function(task):
+        program, rows, features = task
+        vector, evaluator = evaluate_trigger_vector(
+            program, rows, features, rows[200]["ts"], rows[207]["ts"],
+            instrument="BTC-USDT", dataset_fingerprint="fixture",
+            fold_identity={"fold": 1},
+        )
+        return program.semantic_identity, vector, evaluator.transitions
     assert _parallel_map(1, tasks, function) == _parallel_map(2, tasks, function)
+
+
+def test_matched_exposure_benchmark_is_diagnostic_and_formal_fields_are_unchanged():
+    payload = _execution_payload({
+        "metrics": {"total_return": 2.0}, "trades": [],
+        "program_evidence": {"maximum_candle_timestamp_loaded": START + 900},
+    }, {
+        "raw_entry_price": 100, "raw_exit_price": 110, "total_return": 9.8,
+    }, START, START + 900)
+    diagnostics = payload["diagnostics"]
+    assert diagnostics["formal_gate_unchanged"] is True
+    assert diagnostics["diagnostic_only"] is True
+    assert diagnostics["formal_gross_benchmark_excess"] == pytest.approx(-8.0)
+    assert diagnostics["formal_net_benchmark_excess"] == pytest.approx(-7.8)
+    assert diagnostics["matched_notional_benchmark_return"] == 0
 
 
 def test_feature_generation_does_not_mutate_raw_ohlcv():

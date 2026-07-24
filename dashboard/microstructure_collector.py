@@ -49,6 +49,9 @@ class Collector:
             headers={"User-Agent": "crypto-bot-research/1"},
         ) as session:
             await self._load_contract_values(session)
+            self.store.record_health(
+                "service", "RUNNING", last_success_ms=now_ms(),
+                last_error=None)
             tasks = [
                 asyncio.create_task(self._writer(), name="serialized-sqlite-writer"),
                 asyncio.create_task(self._trades(session), name="public-trades"),

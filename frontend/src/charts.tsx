@@ -12,6 +12,7 @@ import {
   formatFlowCoverage,
   hydrateFlowHistory,
   olderPageRequest,
+  persistedFlowInstrument,
   requestFlowHistory,
   retainFallbackHistory,
   retainedCoverage,
@@ -208,8 +209,9 @@ export function MarketChart({ instrument = "ETH-USDT", interval = "15m", flow }:
   const candleSelectionChanged = activeCandleSelection.current !== candleSelection;
   if (candleSelectionChanged) activeCandleSelection.current = candleSelection;
   const candles = candleSelectionChanged ? hydrateCandleHistory(instrument, interval) : retainedCandles;
-  const cvdHistory = useServerFlowHistory(instrument, interval, "cvd", flow?.cvd_series);
-  const oiHistory = useServerFlowHistory(instrument, interval, "oi", flow?.oi_series);
+  const flowInstrument = persistedFlowInstrument(instrument);
+  const cvdHistory = useServerFlowHistory(flowInstrument, interval, "cvd", flow?.cvd_series);
+  const oiHistory = useServerFlowHistory(flowInstrument, interval, "oi", flow?.oi_series);
   const cvd = cvdHistory.points, oi = oiHistory.points;
   const requestId = useRef(0);
   const loadRef = useRef<{ refresh: () => void; older: (start: number) => void }>({ refresh: () => undefined, older: () => undefined });

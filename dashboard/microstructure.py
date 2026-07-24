@@ -596,7 +596,6 @@ class MicrostructureStore:
         return result
 
     def coverage(self) -> dict[str, Any]:
-        self.initialize()
         tables = {
             "trades": "trade_flow_observations", "oi": "oi_observations",
             "funding_settled": "funding_settled", "funding_predicted": "funding_predicted",
@@ -650,7 +649,8 @@ class MicrostructureStore:
                 "block_reason": "multiple regimes and 60-90 uninterrupted days are still required"}
 
     def health(self) -> dict[str, Any]:
-        self.initialize()
+        if not self.path.exists():
+            self.initialize()
         coverage = self.coverage()
         with self.connect(readonly=True) as c:
             health = [dict(row) for row in c.execute(

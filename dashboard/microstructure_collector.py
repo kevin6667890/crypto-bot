@@ -287,6 +287,12 @@ class Collector:
             return json.loads(response.read())
 
     async def _maintenance(self) -> None:
+        # Let public streams and health become live before a potentially large
+        # restart-time aggregation pass.
+        try:
+            await asyncio.wait_for(self.stop_event.wait(), timeout=60)
+        except TimeoutError:
+            pass
         while not self.stop_event.is_set():
             try:
                 await asyncio.to_thread(self.store.aggregate_all)

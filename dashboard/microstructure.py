@@ -331,12 +331,13 @@ class MicrostructureStore:
             rows.append((*values, trade_id or None, side, price, size, float(contract_value),
                          notional, provenance_table))
         with self.connect() as c:
-            before = self._counted_rows(c, "trade_flow_observations")
-            c.executemany(
+            cursor = c.executemany(
                 """INSERT OR IGNORE INTO trade_flow_observations VALUES(
                     ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 rows)
-            return self._counted_rows(c, "trade_flow_observations") - before
+            # Connection-local rowcount excludes concurrent live-collector
+            # writes; the global table counter cannot measure one batch.
+            return max(0, cursor.rowcount)
 
     def insert_oi(
         self, instrument: str, timestamp_ms: int, *,

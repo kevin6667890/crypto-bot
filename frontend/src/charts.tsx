@@ -1,8 +1,24 @@
-import { useEffect, useRef, useState } from "react";
-import { AreaSeries, CandlestickSeries, ColorType, createChart, IChartApi, ISeriesApi, LineSeries, UTCTimestamp } from "lightweight-charts";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { AreaData, AreaSeries, CandlestickSeries, ColorType, createChart, IChartApi, ISeriesApi, LineSeries, UTCTimestamp, WhitespaceData } from "lightweight-charts";
 import { Candle, fetchEthCandles, generateEquityCurve } from "./data";
 import { useLanguage } from "./i18n";
 import { ChartCacheKey, formatMillions, loadChartSnapshot, normalizePoints, saveChartSnapshot } from "./chartState";
+import {
+  FlowCoverage,
+  FlowHistoryPoint,
+  FlowRangeRequest,
+  FlowSelectionGuard,
+  FlowSeriesName,
+  formatFlowCoverage,
+  hydrateFlowHistory,
+  olderPageRequest,
+  requestFlowHistory,
+  retainFallbackHistory,
+  retainedCoverage,
+  retainServerHistory,
+  visibleRangeFromCandles,
+  withPreservedLogicalRange,
+} from "./flowHistory";
 
 const chartTheme = {
   layout: { background: { type: ColorType.Solid, color: "transparent" }, textColor: "#6b7280", fontFamily: "Inter, ui-sans-serif, system-ui" },
@@ -125,50 +141,106 @@ function useLastKnownGood<T extends { time: number }>(key: ChartCacheKey, incomi
   return changedKey ? loadChartSnapshot(key, valid) : points;
 }
 
-function alignFlowToCandles(candles: Candle[], points: Array<{ time: number; value: number }>, interval: string) {
-  const seconds = interval === "1m" ? 60 : interval === "5m" ? 300 : interval === "15m" ? 900 : interval === "1h" ? 3600 : interval === "4h" ? 14400 : 86400;
-  const ordered = [...points].sort((a, b) => a.time - b.time);
-  const aligned: Array<{ time: UTCTimestamp; value: number }> = [];
-  let cursor = 0, latest: number | undefined;
-  for (const candle of candles) {
-    const closeTime = Number(candle.time) + seconds;
-    while (cursor < ordered.length && ordered[cursor].time <= closeTime) latest = ordered[cursor++].value;
-    if (latest !== undefined) aligned.push({ time: candle.time, value: latest });
-  }
-  return aligned;
+function intervalSeconds(interval: string) {
+  return interval === "1m" ? 60 : interval === "5m" ? 300 : interval === "15m" ? 900 : interval === "1h" ? 3600 : interval === "4h" ? 14400 : 86400;
+}
+
+function useServerFlowHistory(
+  instrument: string,
+  timeframe: string,
+  series: FlowSeriesName,
+  fallback: unknown,
+) {
+  const guard = useRef(new FlowSelectionGuard());
+  guard.current.select(instrument, timeframe);
+  const [points, setPoints] = useState<FlowHistoryPoint[]>(() => hydrateFlowHistory(instrument, timeframe, series));
+  const [coverage, setCoverage] = useState<FlowCoverage | undefined>(() => retainedCoverage(instrument, timeframe, series));
+  const selection = `${instrument}:${timeframe}:${series}`;
+  const activeSelection = useRef(selection);
+  const selectionChanged = activeSelection.current !== selection;
+  if (selectionChanged) activeSelection.current = selection;
+
+  useEffect(() => {
+    setPoints(hydrateFlowHistory(instrument, timeframe, series));
+    setCoverage(retainedCoverage(instrument, timeframe, series));
+  }, [selection, instrument, timeframe, series]);
+
+  useEffect(() => {
+    const retained = retainFallbackHistory(instrument, timeframe, series, fallback);
+    if (retained.length) setPoints(retained);
+  }, [fallback, selection, instrument, timeframe, series]);
+
+  const load = useCallback(async (range: Omit<FlowRangeRequest, "instrument" | "series">) => {
+    const token = guard.current.token();
+    try {
+      const response = await requestFlowHistory({ instrument, series, ...range });
+      if (!guard.current.accepts(token) || response.instrument !== instrument || response.series !== series) return;
+      const retained = retainServerHistory(timeframe, response);
+      if (retained.length) setPoints(retained);
+      setCoverage(response);
+    } catch {
+      // Network and temporary server failures never clear retained history.
+    }
+  }, [instrument, timeframe, series]);
+  return {
+    points: selectionChanged ? hydrateFlowHistory(instrument, timeframe, series) : points,
+    coverage: selectionChanged ? retainedCoverage(instrument, timeframe, series) : coverage,
+    load,
+  };
+}
+
+function gapAware(
+  points: FlowHistoryPoint[],
+  resolutionSeconds: number,
+): Array<AreaData<UTCTimestamp> | WhitespaceData<UTCTimestamp>> {
+  const result: Array<AreaData<UTCTimestamp> | WhitespaceData<UTCTimestamp>> = [];
+  points.forEach((point, index) => {
+    const previous = points[index - 1];
+    if (previous && point.time - previous.time > resolutionSeconds * 1.5) {
+      result.push({ time: (previous.time + resolutionSeconds) as UTCTimestamp });
+    }
+    result.push({ time: point.time as UTCTimestamp, value: point.value });
+  });
+  return result;
 }
 
 type MarketSeries = { candles: ISeriesApi<"Candlestick">; ma60: ISeriesApi<"Line">; ma200: ISeriesApi<"Line">; cvd: ISeriesApi<"Area">; oi: ISeriesApi<"Area"> };
 
 export function MarketChart({ instrument = "ETH-USDT", interval = "15m", flow }: { instrument?: string; interval?: string; flow?: FlowPaneData }) {
+  const { t } = useLanguage();
   const candleKey = { instrument, timeframe: interval, series: "candles" as const };
   const [receivedCandles, setReceivedCandles] = useState<Candle[]>([]);
   const candles = useLastKnownGood(candleKey, receivedCandles, isCandle);
-  const cvd = useLastKnownGood({ instrument, timeframe: interval, series: "cvd" }, flow?.cvd_series, isFlowPoint);
-  const oi = useLastKnownGood({ instrument, timeframe: interval, series: "oi" }, flow?.oi_series, isFlowPoint);
+  const cvdHistory = useServerFlowHistory(instrument, interval, "cvd", flow?.cvd_series);
+  const oiHistory = useServerFlowHistory(instrument, interval, "oi", flow?.oi_series);
+  const cvd = cvdHistory.points, oi = oiHistory.points;
   const requestId = useRef(0);
   const loadRef = useRef<() => void>(() => undefined);
   const seriesRef = useRef<MarketSeries | null>(null);
-  const dataRef = useRef({ candles, cvd, oi, interval });
-  dataRef.current = { candles, cvd, oi, interval };
+  const marketChartRef = useRef<IChartApi | null>(null);
+  const rangeTimer = useRef(0);
+  const historyLoadRef = useRef({ cvd: cvdHistory.load, oi: oiHistory.load });
+  historyLoadRef.current = { cvd: cvdHistory.load, oi: oiHistory.load };
+  const dataRef = useRef({ candles, cvd, oi, interval, cvdCoverage: cvdHistory.coverage, oiCoverage: oiHistory.coverage });
+  dataRef.current = { candles, cvd, oi, interval, cvdCoverage: cvdHistory.coverage, oiCoverage: oiHistory.coverage };
 
   const applyData = () => {
     const series = seriesRef.current;
     const data = dataRef.current;
     if (!series || !data.candles.length) return;
-    const visible = data.candles.slice(-260);
-    series.candles.setData(visible);
-    const average = (period: number) => data.candles.slice(period - 1).map((candle, index) => ({ time: candle.time, value: data.candles.slice(index, index + period).reduce((sum, item) => sum + item.close, 0) / period })).slice(-260);
-    const ma60 = average(60), ma200 = average(200);
-    if (ma60.length) series.ma60.setData(ma60);
-    if (ma200.length) series.ma200.setData(ma200);
-    const alignedCvd = alignFlowToCandles(visible, data.cvd, data.interval);
-    const alignedOi = alignFlowToCandles(visible, data.oi, data.interval);
-    if (alignedCvd.length) series.cvd.setData(alignedCvd);
-    if (alignedOi.length) series.oi.setData(alignedOi);
+    withPreservedLogicalRange(marketChartRef.current?.timeScale(), () => {
+      series.candles.setData(data.candles);
+      const average = (period: number) => data.candles.slice(period - 1).map((candle, index) => ({ time: candle.time, value: data.candles.slice(index, index + period).reduce((sum, item) => sum + item.close, 0) / period }));
+      const ma60 = average(60), ma200 = average(200);
+      if (ma60.length) series.ma60.setData(ma60);
+      if (ma200.length) series.ma200.setData(ma200);
+      if (data.cvd.length) series.cvd.setData(gapAware(data.cvd, data.cvdCoverage?.resolution_seconds || intervalSeconds(data.interval)));
+      if (data.oi.length) series.oi.setData(gapAware(data.oi, data.oiCoverage?.resolution_seconds || intervalSeconds(data.interval)));
+    });
   };
   const { containerRef } = useResponsiveChart((container) => {
     const chart = createChart(container, { ...chartTheme, width: container.clientWidth, height: container.clientHeight });
+    marketChartRef.current = chart;
     seriesRef.current = {
       candles: chart.addSeries(CandlestickSeries, { upColor: "#00b37e", downColor: "#f6465d", borderUpColor: "#00b37e", borderDownColor: "#f6465d", wickUpColor: "#00b37e", wickDownColor: "#f6465d" }),
       ma60: chart.addSeries(LineSeries, { color: "#f59e0b", lineWidth: 2, priceLineVisible: false }),
@@ -178,12 +250,36 @@ export function MarketChart({ instrument = "ETH-USDT", interval = "15m", flow }:
     };
     seriesRef.current.cvd.createPriceLine({ price: 0, color: "rgba(71,84,103,.45)", lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: "0.00M" });
     applyData();
-    const initial = dataRef.current.candles.slice(-260);
-    if (initial.length > 1) chart.timeScale().setVisibleRange({ from: initial[0].time, to: initial[initial.length - 1].time });
+    const initial = visibleRangeFromCandles(dataRef.current.candles);
+    if (initial) chart.timeScale().setVisibleRange({ from: initial.start as UTCTimestamp, to: initial.end as UTCTimestamp });
+    chart.timeScale().subscribeVisibleTimeRangeChange(range => {
+      if (!range) return;
+      window.clearTimeout(rangeTimer.current);
+      rangeTimer.current = window.setTimeout(() => {
+        const start = Number(range.from), end = Number(range.to);
+        const current = dataRef.current, loaders = historyLoadRef.current;
+        void loaders.cvd({ start, end, maxPoints: 1200 });
+        void loaders.oi({ start, end, maxPoints: 1200 });
+        for (const [load, points, coverage] of [
+          [loaders.cvd, current.cvd, current.cvdCoverage],
+          [loaders.oi, current.oi, current.oiCoverage],
+        ] as const) {
+          const older = olderPageRequest(coverage, points, start, intervalSeconds(current.interval) * 3);
+          if (older) void load(older);
+        }
+      }, 120);
+    });
     chart.panes()[0]?.setStretchFactor(3); chart.panes()[1]?.setStretchFactor(1); chart.panes()[2]?.setStretchFactor(1);
     return chart;
   }, () => { applyData(); loadRef.current(); });
-  useEffect(() => { applyData(); }, [candles, cvd, oi, interval]);
+  useEffect(() => { applyData(); }, [candles, cvd, oi, interval, cvdHistory.coverage, oiHistory.coverage]);
+  useEffect(() => {
+    const range = visibleRangeFromCandles(candles);
+    if (!range) return;
+    void cvdHistory.load({ ...range, maxPoints: 1200 });
+    void oiHistory.load({ ...range, maxPoints: 1200 });
+  }, [candles, instrument, interval, cvdHistory.load, oiHistory.load]);
+  useEffect(() => () => window.clearTimeout(rangeTimer.current), []);
   useEffect(() => {
     const controller = new AbortController();
     const load = async () => {
@@ -198,7 +294,12 @@ export function MarketChart({ instrument = "ETH-USDT", interval = "15m", flow }:
     const timer = window.setInterval(load, 30_000);
     return () => { controller.abort(); window.clearInterval(timer); loadRef.current = () => undefined; };
   }, [instrument, interval]);
-  return <div className="chart-canvas" ref={containerRef} />;
+  return <div className="chart-canvas" ref={containerRef}>
+    <div className="market-flow-coverage" aria-label={t("flow.historyCoverage")}>
+      <span>CVD · {formatFlowCoverage(cvdHistory.coverage)}</span>
+      <span>OI · {formatFlowCoverage(oiHistory.coverage)}</span>
+    </div>
+  </div>;
 }
 
 export function ReplayChart({ candles }: { candles: Candle[] }) {
@@ -220,17 +321,51 @@ export function EquityChart() {
 
 export function FlowChart({ points, color = "#7c3aed", zeroLine = false, instrument = "ETH-USDT", interval = "15m", seriesType = "cvd" }: { points: Array<{ time: number; value: number }>; color?: string; zeroLine?: boolean; instrument?: string; interval?: string; seriesType?: "cvd" | "oi" }) {
   const { t } = useLanguage();
-  const retained = useLastKnownGood({ instrument, timeframe: interval, series: seriesType }, points, isFlowPoint);
+  const history = useServerFlowHistory(instrument, interval, seriesType, points);
+  const retained = history.points;
   const normalized = retained.length === 1 ? [{ time: retained[0].time - 1, value: retained[0].value }, retained[0]] : retained;
   const seriesRef = useRef<ISeriesApi<"Area"> | null>(null);
+  const flowChartRef = useRef<IChartApi | null>(null);
+  const rangeTimer = useRef(0);
+  const historyRef = useRef(history);
+  historyRef.current = history;
+  const intervalRef = useRef(interval);
+  intervalRef.current = interval;
   const dataRef = useRef(normalized); dataRef.current = normalized;
-  const apply = () => { if (dataRef.current.length) seriesRef.current?.setData(dataRef.current.map((point) => ({ time: point.time as UTCTimestamp, value: point.value }))); };
+  const apply = () => {
+    if (!dataRef.current.length) return;
+    withPreservedLogicalRange(flowChartRef.current?.timeScale(), () => {
+      seriesRef.current?.setData(gapAware(dataRef.current, history.coverage?.resolution_seconds || intervalSeconds(interval)));
+    });
+  };
   const { containerRef } = useResponsiveChart((container) => {
     const chart = createChart(container, { ...chartTheme, width: container.clientWidth, height: container.clientHeight, rightPriceScale: { visible: true, borderVisible: false, scaleMargins: { top: .15, bottom: .15 } }, timeScale: { visible: true, borderVisible: false, timeVisible: true, secondsVisible: true, fixLeftEdge: true, fixRightEdge: true } });
+    flowChartRef.current = chart;
     seriesRef.current = chart.addSeries(AreaSeries, { lineColor: color, topColor: `${color}38`, bottomColor: `${color}05`, lineWidth: 2, priceLineVisible: true, lastValueVisible: true, priceFormat: { type: "custom", formatter: formatMillions } });
-    if (zeroLine) seriesRef.current.createPriceLine({ price: 0, color: "rgba(71,84,103,.45)", lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: "0" });
-    apply(); if (dataRef.current.length) chart.timeScale().fitContent(); return chart;
+    if (zeroLine) seriesRef.current.createPriceLine({ price: 0, color: "rgba(71,84,103,.45)", lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: "0.00M" });
+    apply();
+    chart.timeScale().subscribeVisibleTimeRangeChange(range => {
+      if (!range) return;
+      window.clearTimeout(rangeTimer.current);
+      rangeTimer.current = window.setTimeout(() => {
+        const start = Number(range.from), end = Number(range.to);
+        const current = historyRef.current, coverage = current.coverage;
+        void current.load({ start, end, maxPoints: 1200 });
+        const older = olderPageRequest(coverage, current.points, start, intervalSeconds(intervalRef.current) * 3);
+        if (older) void current.load(older);
+      }, 120);
+    });
+    return chart;
   }, apply);
-  useEffect(apply, [normalized]);
-  return <div className="flow-canvas"><div className="flow-canvas-inner" ref={containerRef} />{!normalized.length && <span className="flow-empty">{t("research.noSeries")}</span>}</div>;
+  useEffect(apply, [normalized, history.coverage, interval]);
+  useEffect(() => {
+    const end = Math.floor(Date.now() / 1000);
+    void history.load({ start: end - intervalSeconds(interval) * 500, end, maxPoints: 1200 });
+  }, [instrument, interval, seriesType, history.load]);
+  useEffect(() => () => window.clearTimeout(rangeTimer.current), []);
+  return <div className="flow-canvas">
+    <div className="flow-coverage-state">{formatFlowCoverage(history.coverage)}</div>
+    <div className="flow-canvas-inner" ref={containerRef} />
+    {!normalized.length && <span className="flow-empty">{t("research.noSeries")}</span>}
+  </div>;
 }

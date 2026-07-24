@@ -166,6 +166,7 @@ Factor and empty-trade results.
 - `GET /api/health`
 - `GET /api/health/details`
 - `GET /api/paper/flow/health`
+- `GET /api/paper/flow/history/v1?instrument=BTC-USDT&series=cvd&start={unix}&end={unix}&max_points=1200&cursor={opaque}`
 - `GET /api/jobs`
 - `POST /api/jobs/{id}/cancel`
 - `POST /api/jobs/{id}/retry`
@@ -184,6 +185,31 @@ docker compose up -d --build paper-api frontend
 
 Runtime `.env` files, keys, SQLite databases and candle caches must remain
 outside Git.
+
+### Flow-history retention and aggregation
+
+Raw `flow_trade_buckets`, `flow_price_buckets`, and `oi_snapshots` remain
+bounded to 90 days. Durable aggregates use only persisted observations and are
+retained indefinitely at 5 minute, 1 hour, 4 hour, and 1 day resolutions.
+Missing periods remain absent and are reported as gaps; they are never filled
+with zeroes.
+
+CVD aggregate `delta` is the sum of observed buy notional minus sell notional
+inside the bucket. The API returns a globally anchored cumulative `value`, so
+different ranges, resolutions, and pages keep consistent CVD semantics. OI
+uses the last confirmed observation in a bucket and also returns the observed
+minimum and maximum. Legacy `flow_snapshots` OI is admitted only before the
+first raw OI snapshot for that instrument; its rolling CVD is not used.
+
+The versioned response includes requested and available bounds, latest
+timestamp, raw/returned counts, selected resolution, stale/history flags,
+bidirectional coverage flags, an opaque older-page cursor, source, gap
+metadata, and `flow-retention-v2`. Run the transactional, resumable,
+idempotent backfill after making a verified SQLite snapshot:
+
+```bash
+python scripts/backfill_flow_history.py --database data_cache/paper_trades.db
+```
 
 ## Research report export
 

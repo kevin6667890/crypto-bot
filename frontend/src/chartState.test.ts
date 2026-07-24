@@ -24,6 +24,9 @@ const btc15 = { instrument: "BTC-USDT", timeframe: "15m", series: "candles" as c
 afterEach(() => memory.clear());
 
 describe("last-known-good chart snapshots", () => {
+  it("does not use the old 500-point total-history cap", () => {
+    expect(CHART_POINT_LIMIT).toBeGreaterThan(500);
+  });
   it("stores a nonempty successful candle response", () => {
     expect(saveChartSnapshot(btc15, [candle(1)], isCandle, 10)).toBe(true);
     expect(loadChartSnapshot(btc15, isCandle, 11)).toEqual([candle(1)]);

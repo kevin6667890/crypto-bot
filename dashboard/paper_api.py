@@ -33,6 +33,11 @@ try:
     from decision_engine import FlowContext, MarketContext, RiskContext, TimeframeContext, evaluate_decision, LIVE_STRATEGY_VERSION
     from alert_service import AlertService
     from health_service import HealthService, configure_logging, log_event
+    from flow_history import (
+        FlowHistoryStore,
+        RAW_RETENTION_SECONDS,
+        RETENTION_POLICY_VERSION,
+    )
     from rate_limit import RateLimiter
     from validation_service import ValidationService
     from shadow_service import ShadowService
@@ -45,6 +50,11 @@ except ImportError:
     from .decision_engine import FlowContext, MarketContext, RiskContext, TimeframeContext, evaluate_decision, LIVE_STRATEGY_VERSION
     from .alert_service import AlertService
     from .health_service import HealthService, configure_logging, log_event
+    from .flow_history import (
+        FlowHistoryStore,
+        RAW_RETENTION_SECONDS,
+        RETENTION_POLICY_VERSION,
+    )
     from .rate_limit import RateLimiter
     from .validation_service import ValidationService
     from .shadow_service import ShadowService
@@ -75,7 +85,7 @@ AI_RETRY_BASE_SECONDS = 60
 AI_RETRY_MAX_SECONDS = 3600
 # Keep observed records for 90 days. Pruning is bounded and never tied to a
 # collector outage; missing historical values are never fabricated.
-FLOW_RETENTION_SECONDS = 90 * 86400
+FLOW_RETENTION_SECONDS = RAW_RETENTION_SECONDS
 FLOW_DISPLAY_WINDOW_SECONDS = 6 * 3600
 VPVR_WINDOW_SECONDS = 24 * 3600
 VPVR_MIN_COVERAGE_SECONDS = 15 * 60
@@ -248,6 +258,9 @@ class PaperService:
         self.db_path = db_path
         self._lock = threading.Lock()
         self._init_db()
+        self.flow_history = FlowHistoryStore(self.db_path)
+        self.flow_history.initialize()
+        self.flow_history.backfill()
         self.last_analysis: dict[str, dict[str, Any]] = {
             instrument: {"instrument": instrument, "status": "Starting", "action": "WAIT", "score": 0, "updated_at": now_iso()}
             for instrument in INSTRUMENTS
@@ -544,6 +557,7 @@ class PaperService:
                 if values:
                     conn.executemany("""INSERT INTO flow_trade_buckets(instrument,ts,buy_notional,sell_notional,trade_count) VALUES(?,?,?,?,?)
                         ON CONFLICT(instrument,ts) DO UPDATE SET buy_notional=buy_notional+excluded.buy_notional,sell_notional=sell_notional+excluded.sell_notional,trade_count=trade_count+excluded.trade_count""", values)
+                    self.flow_history.persist_trade_values(conn, values)
                 if price_values:
                     conn.executemany("""INSERT INTO flow_price_buckets(instrument,ts,price,buy_notional,sell_notional,trade_count) VALUES(?,?,?,?,?,?)
                         ON CONFLICT(instrument,ts,price) DO UPDATE SET buy_notional=buy_notional+excluded.buy_notional,sell_notional=sell_notional+excluded.sell_notional,trade_count=trade_count+excluded.trade_count""", price_values)
@@ -562,12 +576,14 @@ class PaperService:
         self.flow_collectors.stop()
 
     def _prune_flow_retention(self) -> None:
-        """Keep long retention separate from the six-hour query window."""
+        """Prune bounded raw data only after durable aggregates are current."""
+        self.flow_history.backfill()
+        cutoff = int(time.time()) - FLOW_RETENTION_SECONDS
         with self._connect() as conn:
-            cutoff = int(time.time()) - FLOW_RETENTION_SECONDS
             conn.execute("DELETE FROM flow_trade_buckets WHERE ts<?", (cutoff,))
             conn.execute("DELETE FROM flow_price_buckets WHERE ts<?", (cutoff,))
             conn.execute("DELETE FROM oi_snapshots WHERE ts<?", (cutoff,))
+        self.flow_history.record_prune(cutoff)
 
     def _sample_oi(self) -> None:
         for instrument in INSTRUMENTS:
@@ -576,12 +592,16 @@ class PaperService:
             oi = float(row.get("oiUsd") or row.get("oi") or 0)
             if oi <= 0:
                 raise ValueError("OKX returned no usable OI")
+            timestamp = int(time.time())
             with self._connect() as conn:
-                conn.execute("INSERT OR REPLACE INTO oi_snapshots(instrument,ts,oi,source) VALUES(?,?,?,?)", (instrument, int(time.time()), oi, "OKX REST public/open-interest"))
+                conn.execute("INSERT OR REPLACE INTO oi_snapshots(instrument,ts,oi,source) VALUES(?,?,?,?)", (instrument, timestamp, oi, "OKX REST public/open-interest"))
+                self.flow_history.persist_oi_observation(conn, instrument, timestamp)
 
     def flow_health(self) -> dict[str, Any]:
         result = self.flow_collectors.health()
         result["database_path_identifier"] = self.db_path.name
+        result["history_policy"] = self.flow_history.policy()
+        result["retention_policy_version"] = RETENTION_POLICY_VERSION
         result["instruments"] = {instrument: self._professional_flow(instrument) for instrument in INSTRUMENTS}
         return result
 
@@ -1054,6 +1074,21 @@ class Handler(BaseHTTPRequestHandler):
         instrument = query.get("instrument", ["ETH-USDT"])[0]
         if parsed.path == "/api/status": self._send(SERVICE.status(instrument))
         elif parsed.path == "/api/paper/flow/health": self._send(SERVICE.flow_health())
+        elif parsed.path == "/api/paper/flow/history/v1":
+            try:
+                def history_int(name: str) -> int | None:
+                    return int(query[name][0]) if name in query else None
+
+                self._send(SERVICE.flow_history.query(
+                    instrument,
+                    query.get("series", ["cvd"])[0],
+                    start=history_int("start"),
+                    end=history_int("end"),
+                    max_points=history_int("max_points") or 1200,
+                    cursor=query.get("cursor", [None])[0],
+                ))
+            except ValueError as error:
+                self._send({"error": str(error)}, HTTPStatus.BAD_REQUEST)
         elif parsed.path == "/api/vpvr":
             def query_float(name: str) -> float | None:
                 try: return float(query[name][0]) if name in query else None

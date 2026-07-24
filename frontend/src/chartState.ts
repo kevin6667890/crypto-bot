@@ -1,6 +1,6 @@
-/** Bounded, versioned last-known-good chart snapshots (no time expiry / 500 points). */
+/** Bounded, versioned last-known-good fallback. The server remains authoritative. */
 export const CHART_CACHE_VERSION = 1;
-export const CHART_POINT_LIMIT = 500;
+export const CHART_POINT_LIMIT = 10_000;
 const PREFIX = `crypto-bot.chart-cache.v${CHART_CACHE_VERSION}:`;
 
 export type ChartSeriesType = "candles" | "cvd" | "oi";

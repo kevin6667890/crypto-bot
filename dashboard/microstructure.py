@@ -99,6 +99,7 @@ class MicrostructureStore:
 
     def __init__(self, path: Path | str | None = None) -> None:
         self.path = Path(path or default_database_path())
+        self._eligibility_cache: tuple[float, dict[str, Any]] | None = None
 
     @contextmanager
     def connect(self, *, readonly: bool = False) -> Iterator[sqlite3.Connection]:
@@ -797,6 +798,10 @@ class MicrostructureStore:
         """
         from bisect import bisect_left, bisect_right
 
+        if (self._eligibility_cache is not None
+                and time.monotonic() - self._eligibility_cache[0] < 30):
+            return self._eligibility_cache[1]
+
         feature_groups = {
             "settled_funding": {
                 "features": ["funding_level", "funding_change", "funding_zscore"],
@@ -870,6 +875,25 @@ class MicrostructureStore:
 
         results: dict[str, Any] = {"feature_groups": {}}
         with self.connect(readonly=True) as c:
+            source_statistics: dict[
+                tuple[str, str, str], dict[str, tuple[int, int, int]]
+            ] = {}
+            source_definitions = {
+                source
+                for definition in feature_groups.values()
+                for source in definition["sources"]
+            }
+            for table, timestamp_column, predicate in source_definitions:
+                source_statistics[(table, timestamp_column, predicate)] = {
+                    str(row["instrument"]): (
+                        int(row["earliest"]), int(row["latest"]), int(row["rows"]))
+                    for row in c.execute(
+                        f"""SELECT instrument,MIN({timestamp_column}) earliest,
+                                   MAX({timestamp_column}) latest,COUNT(*) rows
+                            FROM {table} WHERE {predicate}
+                            GROUP BY instrument""")
+                }
+
             marks: dict[str, list[int]] = {}
             mark_counts: dict[str, int] = {}
             for instrument in INSTRUMENTS:
@@ -887,15 +911,12 @@ class MicrostructureStore:
                     ends: list[int] = []
                     counts: list[int] = []
                     for table, timestamp_column, predicate in definition["sources"]:
-                        row = c.execute(
-                            f"""SELECT MIN({timestamp_column}),MAX({timestamp_column}),COUNT(*)
-                                FROM {table} WHERE instrument=? AND {predicate}""",
-                            (instrument,),
-                        ).fetchone()
-                        if row[0] is not None:
-                            starts.append(int(row[0]))
-                            ends.append(int(row[1]))
-                            counts.append(int(row[2]))
+                        row = source_statistics[
+                            (table, timestamp_column, predicate)].get(instrument)
+                        if row is not None:
+                            starts.append(row[0])
+                            ends.append(row[1])
+                            counts.append(row[2])
                     complete = len(starts) == len(definition["sources"])
                     source_start = max(starts) if complete else None
                     source_end = min(ends) if complete else None
@@ -1031,6 +1052,7 @@ class MicrostructureStore:
                     "status": source_status,
                     "next_eligibility_date": next_date(source_start, source_days),
                 }
+        self._eligibility_cache = (time.monotonic(), results)
         return results
 
     def health(self) -> dict[str, Any]:

@@ -305,19 +305,32 @@ class MicrostructureStore:
         open_: float | None = None, high: float | None = None, low: float | None = None,
         confirmed: bool = True, source_identity: str,
     ) -> bool:
+        return bool(self.insert_price_batch(kind, [
+            (instrument, timestamp_ms, close, open_, high, low, confirmed, source_identity)
+        ]))
+
+    def insert_price_batch(
+        self, kind: str,
+        items: Iterable[
+            tuple[str, int, float, float | None, float | None, float | None, bool, str]
+        ],
+    ) -> int:
         if kind not in {"mark", "index"}:
             raise ValueError("price kind")
         table = f"{kind}_price_observations"
-        key = identity(kind, instrument, source_identity)
         source = f"OKX public {kind} price"
-        values = self.observation_base(source, instrument, timestamp_ms, "1m",
-                                       "confirmed" if confirmed else "provisional",
-                                       source_identity, key)
+        rows = []
+        for instrument, timestamp_ms, close, open_, high, low, confirmed, source_identity in items:
+            key = identity(kind, instrument, source_identity)
+            values = self.observation_base(source, instrument, timestamp_ms, "1m",
+                                           "confirmed" if confirmed else "provisional",
+                                           source_identity, key)
+            rows.append((*values, open_, high, low, close))
         with self.connect() as c:
             before = c.total_changes
-            c.execute(f"INSERT OR IGNORE INTO {table} VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                      (*values, open_, high, low, close))
-            return c.total_changes > before
+            c.executemany(
+                f"INSERT OR IGNORE INTO {table} VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
+            return c.total_changes - before
 
     def insert_funding(
         self, instrument: str, payload: dict[str, Any], *, settled: bool

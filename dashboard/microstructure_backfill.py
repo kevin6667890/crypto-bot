@@ -172,12 +172,15 @@ class OfficialBackfill:
                 exhausted = True
                 break
             pages += 1
+            inserted += self.store.insert_price_batch(kind, [
+                (api_instrument if kind == "index" else instrument,
+                 int(row[0]), float(row[4]), float(row[1]), float(row[2]),
+                 float(row[3]), str(row[5]) == "1",
+                 f"{api_instrument}:1m:{int(row[0])}")
+                for row in rows
+            ])
             for row in rows:
                 timestamp = int(row[0])
-                inserted += int(self.store.insert_price(
-                    kind, api_instrument if kind == "index" else instrument, timestamp,
-                    float(row[4]), open_=float(row[1]), high=float(row[2]), low=float(row[3]),
-                    confirmed=str(row[5]) == "1", source_identity=f"{api_instrument}:1m:{timestamp}"))
                 earliest = timestamp if earliest is None else min(earliest, timestamp)
                 latest = timestamp if latest is None else max(latest, timestamp)
             new_cursor = str(min(int(row[0]) for row in rows))

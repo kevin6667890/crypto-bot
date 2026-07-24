@@ -549,6 +549,12 @@ main {
   grid-template-columns: 40px 1.5fr 0.6fr 0.7fr 0.7fr 0.5fr;
 }
 
+.trade-row.eligibility-row {
+  grid-template-columns: minmax(100px, 0.8fr) minmax(180px, 1.5fr)
+    minmax(120px, 0.9fr) minmax(150px, 1fr) minmax(130px, 0.9fr)
+    minmax(150px, 1fr) minmax(160px, 1.2fr);
+}
+
 .trade-row span {
   min-width: 0;
   overflow: hidden;
@@ -727,6 +733,10 @@ footer span {
 
   .trade-row {
     grid-template-columns: 1fr 0.6fr 0.55fr;
+  }
+
+  .trade-row.eligibility-row {
+    grid-template-columns: 1fr 1fr;
   }
 
   .trade-row span:nth-child(3),

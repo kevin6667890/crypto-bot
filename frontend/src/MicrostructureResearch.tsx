@@ -36,6 +36,12 @@ interface FeatureGroup {
   status: string;
   features: string[];
   usable_days: number;
+  source_usable_days: number;
+  overlap_usable_days: number;
+  source_observation_count: number;
+  event_count: number;
+  source_data_status: string;
+  event_study_status: string;
   blocking_reason?: string;
 }
 
@@ -256,19 +262,23 @@ export default function MicrostructureResearch() {
           </div>
         </div>
         <div className="trade-table">
-          <div className="trade-row table-head">
+          <div className="trade-row table-head eligibility-row">
             <span>{t("micro.featureGroup")}</span>
             <span>{t("micro.features")}</span>
-            <span>{t("micro.usableDays")}</span>
-            <span>{t("micro.status")}</span>
+            <span>Source days / rows</span>
+            <span>Source status</span>
+            <span>Label overlap / events</span>
+            <span>Event-study status</span>
             <span>{t("micro.blockingReason")}</span>
           </div>
           {eligibility && Object.entries(eligibility.feature_groups).map(([group, data]) => (
-            <div className="trade-row" key={group}>
+            <div className="trade-row eligibility-row" key={group}>
               <strong>{group}</strong>
               <span style={{ fontSize: '0.85em', color: 'var(--muted)' }}>{data.features.join(", ")}</span>
-              <span>{data.usable_days}</span>
-              <strong className={getStatusClass(data.status)}>{data.status}</strong>
+              <span>{data.source_usable_days}d / {data.source_observation_count.toLocaleString()}</span>
+              <strong className={getStatusClass(data.source_data_status)}>{data.source_data_status}</strong>
+              <span>{data.overlap_usable_days}d / {data.event_count.toLocaleString()}</span>
+              <strong className={getStatusClass(data.event_study_status)}>{data.event_study_status}</strong>
               <span className="negative">{data.blocking_reason || "--"}</span>
             </div>
           ))}

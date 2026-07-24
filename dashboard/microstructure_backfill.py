@@ -68,11 +68,27 @@ class OfficialBackfill:
         ``max_pages`` is an operational batch boundary, not fabricated
         completeness. Re-running resumes with the official cursor.
         """
+        instrument = instrument if instrument.endswith("-SWAP") else f"{instrument}-SWAP"
         checkpoint = self._checkpoint("trades", instrument)
         cursor = checkpoint.get("cursor")
-        pages = inserted = 0
+        cursor_before = cursor
+        prior_source_earliest = checkpoint.get("last_source_ts_ms")
+        batch_start_source_earliest = prior_source_earliest
+        with self.store.connect(readonly=True) as connection:
+            before_row = connection.execute(
+                """SELECT MIN(source_ts_ms),MAX(source_ts_ms),COUNT(*)
+                   FROM trade_flow_observations
+                   WHERE instrument=? AND state='confirmed'""", (instrument,)).fetchone()
+        earliest_before, latest_before, rows_before = (
+            int(before_row[0]) if before_row[0] is not None else None,
+            int(before_row[1]) if before_row[1] is not None else None,
+            int(before_row[2]),
+        )
+        pages = inserted = fetched = duplicates = 0
         earliest = latest = None
-        exhausted = False
+        terminal_status = "BATCH_LIMIT_REACHED"
+        seen_pages: set[tuple[str, str, int]] = set()
+        retries_before = self.client.retries
         contract_value = self.contract_value(instrument)
         while pages < max_pages:
             params: dict[str, Any] = {"instId": instrument, "limit": 100}
@@ -80,37 +96,78 @@ class OfficialBackfill:
                 params["after"] = cursor
             rows = self.client.get_public("/api/v5/market/history-trades", params)
             if not rows:
-                exhausted = True
+                terminal_status = "SOURCE_RETENTION_BOUNDARY_REACHED"
                 break
+            page_identity = (
+                str(rows[0].get("tradeId")), str(rows[-1].get("tradeId")), len(rows))
+            if page_identity in seen_pages:
+                terminal_status = "REPEATED_PAGE_SOURCE_LIMITATION"
+                break
+            seen_pages.add(page_identity)
             pages += 1
-            inserted += self.store.insert_trade_batch([
+            fetched += len(rows)
+            page_inserted = self.store.insert_trade_batch([
                 (instrument, row, contract_value,
                  "OKX GET /api/v5/market/history-trades", None)
                 for row in rows
             ])
+            inserted += page_inserted
+            duplicates += len(rows) - page_inserted
             for row in rows:
                 timestamp = int(row["ts"])
                 earliest = timestamp if earliest is None else min(earliest, timestamp)
                 latest = timestamp if latest is None else max(latest, timestamp)
             new_cursor = str(rows[-1]["tradeId"])
             if new_cursor == cursor:
-                exhausted = True
+                terminal_status = "NON_ADVANCING_CURSOR_SOURCE_LIMITATION"
+                break
+            if prior_source_earliest is not None and earliest > int(prior_source_earliest):
+                terminal_status = "NON_MONOTONIC_SOURCE_TIMESTAMP"
                 break
             cursor = new_cursor
+            prior_source_earliest = earliest
             self.store.checkpoint("trades", instrument, cursor=cursor,
                                   last_source_ts_ms=earliest, status="running",
-                                  metadata={"pages": pages, "inserted": inserted})
-            time.sleep(0.11)
-        status = "complete" if exhausted else "limited_batch"
+                                  metadata={"pages": pages, "fetched": fetched,
+                                            "inserted": inserted,
+                                            "duplicates": duplicates,
+                                            "cursor_before": cursor_before})
+            time.sleep(0.12)
+        if pages == max_pages and terminal_status == "BATCH_LIMIT_REACHED":
+            status = "BATCH_LIMIT_REACHED"
+        else:
+            status = terminal_status
+        if (status == "BATCH_LIMIT_REACHED" and pages
+                and batch_start_source_earliest is not None
+                and earliest is not None
+                and earliest >= int(batch_start_source_earliest)):
+            status = "NON_MONOTONIC_SOURCE_TIMESTAMP"
         self.store.checkpoint("trades", instrument, cursor=cursor,
                               last_source_ts_ms=earliest, status=status,
-                              metadata={"pages": pages, "inserted": inserted,
+                              metadata={"pages": pages, "fetched": fetched,
+                                        "inserted": inserted, "duplicates": duplicates,
+                                        "cursor_before": cursor_before,
                                         "official_retention": "last 3 months"})
         self._coverage("trades", "OKX GET /api/v5/market/history-trades + WS trades-all",
                        earliest, latest, pages, status)
-        return {"lane": "trades", "instrument": instrument, "pages": pages,
-                "inserted": inserted, "earliest_ms": earliest, "latest_ms": latest,
-                "completeness": status, "cursor": cursor}
+        with self.store.connect(readonly=True) as connection:
+            after_row = connection.execute(
+                """SELECT MIN(source_ts_ms),MAX(source_ts_ms),COUNT(*)
+                   FROM trade_flow_observations
+                   WHERE instrument=? AND state='confirmed'""", (instrument,)).fetchone()
+        return {
+            "lane": "trades", "instrument": instrument, "pages": pages,
+            "fetched_trades": fetched, "inserted": inserted,
+            "duplicate_rows_ignored": duplicates,
+            "earliest_ms": earliest, "latest_ms": latest,
+            "earliest_ms_before": earliest_before,
+            "earliest_ms_after": int(after_row[0]) if after_row[0] is not None else None,
+            "latest_ms_before": latest_before,
+            "latest_ms_after": int(after_row[1]) if after_row[1] is not None else None,
+            "rows_before": rows_before, "rows_after": int(after_row[2]),
+            "completeness": status, "cursor_before": cursor_before,
+            "cursor": cursor, "retries": self.client.retries - retries_before,
+        }
 
     def backfill_funding(self, instrument: str, *, max_pages: int = 100) -> dict[str, Any]:
         cursor = self._checkpoint("funding_settled", instrument).get("cursor")

@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
+    "prebuild": "node scripts/normalize-source.mjs",
     "build": "tsc --noEmit && vite build && node scripts/normalize-dist.mjs",
     "test": "vitest run",
     "preview": "vite preview --host 127.0.0.1"

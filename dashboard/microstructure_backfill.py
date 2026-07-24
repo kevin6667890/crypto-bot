@@ -83,10 +83,12 @@ class OfficialBackfill:
                 exhausted = True
                 break
             pages += 1
+            inserted += self.store.insert_trade_batch([
+                (instrument, row, contract_value,
+                 "OKX GET /api/v5/market/history-trades", None)
+                for row in rows
+            ])
             for row in rows:
-                inserted += int(self.store.insert_trade(
-                    instrument, row, contract_value=contract_value,
-                    source="OKX GET /api/v5/market/history-trades"))
                 timestamp = int(row["ts"])
                 earliest = timestamp if earliest is None else min(earliest, timestamp)
                 latest = timestamp if latest is None else max(latest, timestamp)

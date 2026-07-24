@@ -494,13 +494,13 @@ def run_automatic_discovery_v2(
             elif not _pre_neighborhood(item):
                 metrics = item["btc"]["metrics"]
                 classification = (
-                    "RETIRED_NO_GROSS_EDGE" if metrics["median_gross_excess_return"] <= 0
-                    else "RETIRED_UNSTABLE"
+                    "RETIRE_NO_GROSS_EDGE" if metrics["median_gross_excess_return"] <= 0
+                    else "RETIRE_UNSTABLE"
                 )
             elif not item.get("neighborhood", {}).get("stable"):
-                classification = "RETIRED_UNSTABLE"
+                classification = "RETIRE_UNSTABLE"
             elif "eth" not in item or "sol" not in item:
-                classification = "RETIRED_UNSTABLE"
+                classification = "RETIRE_UNSTABLE"
             else:
                 positive_assets = sum(
                     item[field]["metrics"]["median_gross_excess_return"] > 0
@@ -508,7 +508,7 @@ def run_automatic_discovery_v2(
                 )
                 classification = (
                     "RETAIN_FOR_FORMAL_SEARCH" if positive_assets >= 2
-                    else "RETIRED_CROSS_ASSET_FAILURE"
+                    else "RETIRE_CROSS_ASSET_FAILURE"
                 )
             classifications[classification] += 1
             program_results.append({

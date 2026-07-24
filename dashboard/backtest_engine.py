@@ -44,6 +44,12 @@ def _provider_signal(provider: Callable[[dict[str, Any], int], dict[str, Any]], 
                 raise ValueError(f"Signal provider {key} must be non-empty.")
         if not isinstance(value.get("signal_ts"), int):
             raise ValueError("Signal provider signal_ts must be an integer.")
+        time_stop_bars = value.get("time_stop_bars")
+        if time_stop_bars is not None and (
+            isinstance(time_stop_bars, bool) or not isinstance(time_stop_bars, int)
+            or time_stop_bars <= 0
+        ):
+            raise ValueError("Signal provider time_stop_bars must be a positive integer.")
     score = value.get("score", 0.0)
     if not isinstance(score, (int, float)) or not math.isfinite(float(score)):
         value = {**value, "score": 0.0}
@@ -105,17 +111,21 @@ def run_execution_backtest(
             if size > 0:
                 entry_fee = entry * size * parameters.trading_fee
                 equity_value -= entry_fee
-                position = {"side": side, "entry": entry, "raw_entry": raw_entry, "entry_ts": ts, "stop": stop, "target": target, "size": size, "entry_fee": entry_fee, "risk_amount": stop_distance * size, "score": pending["score"], "signal_ts": pending["signal_ts"], "signal_id": pending["signal_id"], "strategy_version": pending["strategy_version"], "config_hash": pending["config_hash"], "expected_entry_ts": ts, "expected_entry_price": raw_entry, "stop_distance": stop_distance, "risk_budget": risk_budget, "maximum_notional": maximum_notional}
+                position = {"side": side, "entry": entry, "raw_entry": raw_entry, "entry_ts": ts, "entry_index": index, "stop": stop, "target": target, "size": size, "entry_fee": entry_fee, "risk_amount": stop_distance * size, "score": pending["score"], "signal_ts": pending["signal_ts"], "signal_id": pending["signal_id"], "strategy_version": pending["strategy_version"], "config_hash": pending["config_hash"], "expected_entry_ts": ts, "expected_entry_price": raw_entry, "stop_distance": stop_distance, "risk_budget": risk_budget, "maximum_notional": maximum_notional, "time_stop_bars": pending.get("time_stop_bars")}
             pending = None
 
         if position:
             side = position["side"]
             hit_stop = float(candle["low"]) <= position["stop"] if side == "LONG" else float(candle["high"]) >= position["stop"]
             hit_target = float(candle["high"]) >= position["target"] if side == "LONG" else float(candle["low"]) <= position["target"]
-            if hit_stop or hit_target:
+            hit_time_stop = bool(
+                position.get("time_stop_bars")
+                and index - int(position["entry_index"]) >= int(position["time_stop_bars"])
+            )
+            if hit_stop or hit_target or hit_time_stop:
                 # Conservative ordering when an OHLC bar touches both levels.
-                reason = "STOP_LOSS" if hit_stop else "TAKE_PROFIT"
-                raw_exit = position["stop"] if hit_stop else position["target"]
+                reason = "STOP_LOSS" if hit_stop else "TAKE_PROFIT" if hit_target else "TIME_STOP"
+                raw_exit = position["stop"] if hit_stop else position["target"] if hit_target else float(candle["close"])
                 exit_price = raw_exit * (1 - parameters.slippage if side == "LONG" else 1 + parameters.slippage)
                 gross = (exit_price - position["entry"]) * position["size"] * (1 if side == "LONG" else -1)
                 exit_fee = exit_price * position["size"] * parameters.trading_fee
@@ -167,7 +177,8 @@ def run_execution_backtest(
             if position is None and pending is None and index >= cooldown_until_index:
                 pending = {"side": signal["action"], "atr": signal["atr"], "score": signal["score"], "signal_ts": ts,
                            "signal_id": signal["signal_id"], "strategy_version": signal["strategy_version"], "config_hash": signal["config_hash"],
-                           "stop_distance": signal.get("stop_distance"), "target_r": signal.get("target_r")}
+                           "stop_distance": signal.get("stop_distance"), "target_r": signal.get("target_r"),
+                           "time_stop_bars": signal.get("time_stop_bars")}
 
     if position and equity:
         candle = next(row for row in reversed(candles) if start_ts <= int(row["ts"]) <= end_ts)

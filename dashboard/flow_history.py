@@ -253,14 +253,14 @@ class FlowHistoryStore:
     ) -> int:
         key = f"{RETENTION_POLICY_VERSION}:{instrument}:{series}:{resolution}"
         with self._connect() as connection:
-            lower, upper = self._series_bounds(connection, series, instrument)
-            if lower is None or upper is None:
-                return 0
             progress = connection.execute(
                 "SELECT status,last_completed_ts FROM flow_history_migrations WHERE migration_key=?",
                 (key,),
             ).fetchone()
             if progress and progress["status"] == "complete" and not force:
+                return 0
+            lower, upper = self._series_bounds(connection, series, instrument)
+            if lower is None or upper is None:
                 return 0
             start = (lower // resolution) * resolution
             if progress and progress["last_completed_ts"] is not None and not force:

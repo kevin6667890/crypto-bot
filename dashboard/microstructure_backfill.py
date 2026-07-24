@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import time
 from typing import Any
 from urllib.error import HTTPError, URLError
@@ -89,6 +90,7 @@ class OfficialBackfill:
         terminal_status = "BATCH_LIMIT_REACHED"
         seen_pages: set[tuple[str, str, int]] = set()
         retries_before = self.client.retries
+        database_retries = 0
         contract_value = self.contract_value(instrument)
         while pages < max_pages:
             params: dict[str, Any] = {"instId": instrument, "limit": 100}
@@ -106,11 +108,20 @@ class OfficialBackfill:
             seen_pages.add(page_identity)
             pages += 1
             fetched += len(rows)
-            page_inserted = self.store.insert_trade_batch([
+            batch = [
                 (instrument, row, contract_value,
                  "OKX GET /api/v5/market/history-trades", None)
                 for row in rows
-            ])
+            ]
+            for database_attempt in range(5):
+                try:
+                    page_inserted = self.store.insert_trade_batch(batch)
+                    break
+                except sqlite3.OperationalError as error:
+                    if "locked" not in str(error).lower() or database_attempt == 4:
+                        raise
+                    database_retries += 1
+                    time.sleep(min(30, 2 ** (database_attempt + 1)))
             inserted += page_inserted
             duplicates += len(rows) - page_inserted
             for row in rows:
@@ -166,7 +177,9 @@ class OfficialBackfill:
             "latest_ms_after": int(after_row[1]) if after_row[1] is not None else None,
             "rows_before": rows_before, "rows_after": int(after_row[2]),
             "completeness": status, "cursor_before": cursor_before,
-            "cursor": cursor, "retries": self.client.retries - retries_before,
+            "cursor": cursor,
+            "retries": self.client.retries - retries_before + database_retries,
+            "database_lock_retries": database_retries,
         }
 
     def backfill_funding(self, instrument: str, *, max_pages: int = 100) -> dict[str, Any]:

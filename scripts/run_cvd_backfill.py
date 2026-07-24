@@ -98,6 +98,7 @@ def main() -> None:
                 "fetched": result["fetched_trades"],
                 "inserted": result["inserted"],
                 "duplicates": result["duplicate_rows_ignored"],
+                "retries": result["retries"],
                 "status": result["completeness"],
                 "elapsed_seconds": round(time.monotonic() - batch_started, 3),
             }

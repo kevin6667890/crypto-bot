@@ -21,6 +21,7 @@ import { formatMillions } from "./chartState";
 import StrategyResearch from "./StrategyResearch";
 import DiscoveryLab from "./DiscoveryLab";
 import Operations from "./Operations";
+import MicrostructureResearch from "./MicrostructureResearch";
 import { useLanguage } from "./i18n";
 import {
   demoSnapshot,
@@ -659,7 +660,7 @@ function Workspace() {
   const [selectedTrade, setSelectedTrade] = useState<PaperStatus["closed_trades"][number] | null>(null);
   const [vpvr, setVpvr] = useState<VpvrProfile | null>(null);
   const [activePage, setActivePage] = useState<
-    "market" | "research" | "operations"
+    "market" | "research" | "microstructure" | "operations"
   >("market");
   const [question, setQuestion] = useState("");
   const [chatAnswer, setChatAnswer] = useState("");
@@ -834,6 +835,12 @@ function Workspace() {
               onClick={() => setActivePage("research")}
             >
               {t("nav.research")}
+            </button>
+            <button
+              className={activePage === "microstructure" ? "active" : ""}
+              onClick={() => setActivePage("microstructure")}
+            >
+              {t("nav.microstructure")}
             </button>
             <button
               className={activePage === "operations" ? "active" : ""}
@@ -1554,6 +1561,8 @@ function Workspace() {
         </div>
       ) : activePage === "research" ? (
         <><StrategyResearch /><DiscoveryLab /></>
+      ) : activePage === "microstructure" ? (
+        <MicrostructureResearch />
       ) : (
         <Operations />
       )}

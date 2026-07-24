@@ -44,6 +44,7 @@ try:
     from lifecycle_service import LifecycleService
     from volume_profile import calculate_trade_volume_profile, calculate_volume_profile
     from microstructure import MicrostructureStore
+    from microstructure_research import SourceSpecificEventStudy
 except ImportError:
     from .research_service import ResearchService
     from .strategy_rules import StrategyParameters, calculate_indicators, validate_parameters
@@ -62,6 +63,7 @@ except ImportError:
     from .lifecycle_service import LifecycleService
     from .volume_profile import calculate_trade_volume_profile, calculate_volume_profile
     from .microstructure import MicrostructureStore
+    from .microstructure_research import SourceSpecificEventStudy
 
 try:
     from dotenv import load_dotenv
@@ -518,6 +520,23 @@ class PaperService:
             streamed = self._professional_vpvr(instrument, bins=bins, price_low=price_low, price_high=price_high)
             profile["collection"] = {"coverage_seconds": streamed.get("coverage_seconds", 0), "trade_count": streamed.get("trade_count", 0), "reason": streamed.get("reason")}
         return profile
+
+    def _microstructure_chart_data(self, series: str, instrument: str, limit: int) -> dict:
+        data = []
+        with MICROSTRUCTURE.connect(readonly=True) as c:
+            if series == "funding":
+                rows = c.execute("SELECT funding_time_ms as ts, funding_rate as val FROM funding_settled WHERE instrument=? ORDER BY funding_time_ms DESC LIMIT ?", (instrument, limit)).fetchall()
+            elif series == "basis":
+                rows = c.execute("SELECT bucket_ms as ts, last_basis as val FROM basis_aggregates WHERE instrument=? AND resolution='1H' ORDER BY bucket_ms DESC LIMIT ?", (instrument, limit)).fetchall()
+            elif series == "cvd":
+                rows = c.execute("SELECT bucket_ms as ts, cumulative_anchored as val FROM cvd_aggregates WHERE instrument=? AND resolution='1H' ORDER BY bucket_ms DESC LIMIT ?", (instrument, limit)).fetchall()
+            elif series == "oi":
+                rows = c.execute("SELECT bucket_ms as ts, last_value as val FROM oi_aggregates WHERE instrument=? AND resolution='1H' ORDER BY bucket_ms DESC LIMIT ?", (instrument, limit)).fetchall()
+            else:
+                rows = []
+        for row in reversed(rows):
+            data.append({"time": int(row["ts"]) // 1000, "value": float(row["val"])})
+        return {"series": series, "instrument": instrument, "data": data}
 
     def _ingest_flow_trade(self, instrument: str, payload: dict[str, Any]) -> None:
         try:
@@ -1103,6 +1122,28 @@ class Handler(BaseHTTPRequestHandler):
         elif parsed.path == "/api/health": self._send(HEALTH.payload(False))
         elif parsed.path == "/api/research/microstructure/health":
             self._send(MICROSTRUCTURE.health())
+        elif parsed.path == "/api/research/microstructure/coverage":
+            self._send(MICROSTRUCTURE.coverage())
+        elif parsed.path == "/api/research/microstructure/eligibility":
+            self._send(MICROSTRUCTURE.per_feature_eligibility())
+        elif parsed.path == "/api/research/microstructure/charts/funding":
+            instrument = query.get("instrument", ["BTC-USDT-SWAP"])[0]
+            limit = min(int(query.get("limit", ["500"])[0]), 2000)
+            self._send(SERVICE._microstructure_chart_data("funding", instrument, limit))
+        elif parsed.path == "/api/research/microstructure/charts/basis":
+            instrument = query.get("instrument", ["BTC-USDT-SWAP"])[0]
+            limit = min(int(query.get("limit", ["500"])[0]), 2000)
+            self._send(SERVICE._microstructure_chart_data("basis", instrument, limit))
+        elif parsed.path == "/api/research/microstructure/charts/cvd":
+            instrument = query.get("instrument", ["BTC-USDT-SWAP"])[0]
+            limit = min(int(query.get("limit", ["500"])[0]), 2000)
+            self._send(SERVICE._microstructure_chart_data("cvd", instrument, limit))
+        elif parsed.path == "/api/research/microstructure/charts/oi":
+            instrument = query.get("instrument", ["BTC-USDT-SWAP"])[0]
+            limit = min(int(query.get("limit", ["500"])[0]), 2000)
+            self._send(SERVICE._microstructure_chart_data("oi", instrument, limit))
+        elif parsed.path == "/api/research/microstructure/event-study":
+            self._send(SourceSpecificEventStudy(MICROSTRUCTURE).run_all_eligible())
         elif parsed.path == "/api/health/details":
             details=HEALTH.payload(True); shadows=SHADOW.list(); counts=VALIDATION.repository.table_counts(); details.update({"shadow_scheduler_status":"running","active_shadow_strategies":sum(x["status"]=="RUNNING" for x in shadows),"validation_job_types":["GATE_ANALYSIS","SENSITIVITY","BENCHMARK","ROBUSTNESS"],"phase4_database_rows":sum(counts.get(name,0) for name in counts if name.startswith(("gate_","near_","sensitivity_","benchmark_","robustness_","shadow_","strategy_lifecycle","promotion_","strategy_audit"))),"promotion_audit_alerts":sum(str(x.get("severity","")).lower()=="critical" and str(x.get("status","")).lower()=="open" for x in ALERTS.list())});self._send(details)
         elif parsed.path == "/api/jobs": self._send({"items":RESEARCH.jobs.list(int(query.get("limit",["100"])[0]))})

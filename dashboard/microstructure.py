@@ -754,6 +754,149 @@ class MicrostructureStore:
                 "formal_claims_permitted": False,
                 "block_reason": "multiple regimes and 60-90 uninterrupted days are still required"}
 
+    def per_feature_eligibility(self) -> dict[str, Any]:
+        coverage = self.coverage()
+        feature_groups = {
+            "settled_funding": {
+                "features": ["funding_level", "funding_change", "funding_zscore"],
+                "required_sources": ["funding_settled"]
+            },
+            "predicted_funding": {
+                "features": ["funding_predicted"],
+                "required_sources": ["funding_predicted"]
+            },
+            "basis": {
+                "features": ["basis_level", "basis_zscore", "basis_expansion"],
+                "required_sources": ["mark", "index"]
+            },
+            "cvd": {
+                "features": ["cvd_delta", "cvd_rolling", "cvd_slope", "cvd_zscore", "cvd_imbalance", "cvd_volume_normalized", "price_cvd_divergence"],
+                "required_sources": ["trades"]
+            },
+            "oi": {
+                "features": ["oi_absolute_change", "oi_percentage_change", "oi_zscore", "oi_acceleration"],
+                "required_sources": ["oi"]
+            },
+            "cvd_oi_interactions": {
+                "features": ["breakout_with_cvd", "breakout_without_cvd", "price_up_oi_expansion", "price_down_oi_expansion"],
+                "required_sources": ["trades", "oi"]
+            },
+            "funding_oi_interactions": {
+                "features": ["extreme_funding_oi_expansion"],
+                "required_sources": ["funding_settled", "oi"]
+            },
+            "liquidation": {
+                "features": ["liquidation"],
+                "required_sources": ["liquidations"]
+            }
+        }
+        
+        with self.connect(readonly=True) as c:
+            gaps = [dict(row) for row in c.execute(
+                "SELECT lane, instrument, start_ms, end_ms FROM collection_gaps WHERE resolved_at_ms IS NULL"
+            ).fetchall()]
+            
+        gap_dict = {}
+        for gap in gaps:
+            gap_dict.setdefault(gap["lane"], []).append(gap)
+            
+        results = {"feature_groups": {}}
+        for group_name, group_info in feature_groups.items():
+            req_sources = group_info["required_sources"]
+            instruments_data = {}
+            instrument_bounds = {}
+            
+            for source in req_sources:
+                if source not in coverage:
+                    continue
+                for item in coverage[source]:
+                    inst = item["instrument"]
+                    normalized_inst = inst if inst.endswith("-SWAP") else inst + "-SWAP"
+                    if normalized_inst not in instrument_bounds:
+                        instrument_bounds[normalized_inst] = {"starts": [], "ends": []}
+                    if item.get("earliest_ms"):
+                        instrument_bounds[normalized_inst]["starts"].append(item["earliest_ms"])
+                    if item.get("latest_ms"):
+                        instrument_bounds[normalized_inst]["ends"].append(item["latest_ms"])
+                        
+            group_earliest = None
+            group_latest = None
+            total_gaps_ms = 0
+            
+            for inst, bounds in instrument_bounds.items():
+                if len(bounds["starts"]) == len(req_sources) and len(bounds["ends"]) == len(req_sources):
+                    start = max(bounds["starts"])
+                    end = min(bounds["ends"])
+                    if start < end:
+                        instruments_data[inst] = {"earliest_usable_ms": start, "latest_usable_ms": end}
+                        if group_earliest is None or start < group_earliest:
+                            group_earliest = start
+                        if group_latest is None or end > group_latest:
+                            group_latest = end
+                            
+            # Calculate gap deductions (simplified union of gaps for the required sources)
+            gap_intervals = []
+            for source in req_sources:
+                for gap in gap_dict.get(source, []):
+                    if group_earliest and group_latest:
+                        gap_start = max(gap["start_ms"], group_earliest)
+                        gap_end = min(gap["end_ms"], group_latest)
+                        if gap_start < gap_end:
+                            gap_intervals.append((gap_start, gap_end))
+            
+            # merge gap intervals
+            if gap_intervals:
+                gap_intervals.sort(key=lambda x: x[0])
+                merged = [gap_intervals[0]]
+                for current in gap_intervals[1:]:
+                    last = merged[-1]
+                    if current[0] <= last[1]:
+                        merged[-1] = (last[0], max(last[1], current[1]))
+                    else:
+                        merged.append(current)
+                for m in merged:
+                    total_gaps_ms += (m[1] - m[0])
+                    
+            if group_earliest and group_latest:
+                raw_days = (group_latest - group_earliest) / 86400000.0
+                gap_days = total_gaps_ms / 86400000.0
+                usable_days = max(0.0, raw_days - gap_days)
+            else:
+                raw_days = 0.0
+                gap_days = 0.0
+                usable_days = 0.0
+                
+            if usable_days < 14:
+                status = "EXPLORATORY_ONLY"
+                blocking_reason = "Insufficient historical sample size for feature stability validation"
+            elif usable_days < 30:
+                status = "MINIMUM_SAMPLE_REACHED"
+                blocking_reason = "Requires 30 days for formal regime validation"
+            elif usable_days < 60:
+                status = "VALIDATION_READY"
+                blocking_reason = "Requires 60 days for formal research readiness"
+            else:
+                status = "FORMAL_RESEARCH_READY"
+                blocking_reason = None
+                
+            next_date = (datetime.fromtimestamp(group_earliest / 1000, timezone.utc) + timedelta(days=MINIMUM_SAMPLE_DAYS)).date().isoformat() if group_earliest else None
+            
+            results["feature_groups"][group_name] = {
+                "features": group_info["features"],
+                "required_sources": req_sources,
+                "instruments": instruments_data,
+                "earliest_usable_ms": group_earliest,
+                "latest_usable_ms": group_latest,
+                "usable_days": round(raw_days, 6),
+                "gap_adjusted_sample_days": round(usable_days, 6),
+                "event_count": 0,
+                "status": status,
+                "next_eligibility_date": next_date,
+                "blocking_reason": blocking_reason
+            }
+            
+        return results
+
     def health(self) -> dict[str, Any]:
         if not self.path.exists():
             self.initialize()
@@ -792,6 +935,7 @@ class MicrostructureStore:
             "database_size_bytes": self.path.stat().st_size if self.path.exists() else 0,
             "last_aggregation_timestamp_ms": aggregation[0] if aggregation else None,
             **sample,
+            "per_feature_eligibility": self.per_feature_eligibility(),
         }
 
 

@@ -994,6 +994,16 @@ export async function fetchEthCandles(
   return fetchOkxCandles(interval, limit, instrument, signal);
 }
 
+export async function fetchOlderCandles(
+  interval: string,
+  limit: number,
+  instrument: string,
+  before: number,
+  signal?: AbortSignal,
+): Promise<Candle[]> {
+  return fetchOkxCandles(interval, limit, instrument, signal, before);
+}
+
 export async function fetchSignalAnalysis(
   instrument = "ETH-USDT"
 ): Promise<SignalAnalysis> {
@@ -1123,14 +1133,15 @@ async function fetchOkxCandles(
   limit = 160,
   instrument = "ETH-USDT",
   signal?: AbortSignal,
+  before?: number,
 ): Promise<Candle[]> {
   const bar = normalizeOkxBar(interval);
   const rows = new Map<number, string[]>();
-  let after: string | undefined;
+  let after = before === undefined ? undefined : String(Math.floor(before * 1000));
   while (rows.size < limit) {
     const pageSize = Math.min(300, limit - rows.size);
-    const endpoint = after ? "history-candles" : "candles";
-    const cursor = after ? `&after=${after}` : "";
+    const endpoint = after !== undefined ? "history-candles" : "candles";
+    const cursor = after !== undefined ? `&after=${after}` : "";
     const response = await fetch(
       `https://www.okx.com/api/v5/market/${endpoint}?instId=${instrument}&bar=${bar}&limit=${pageSize}${cursor}`,
       { signal }

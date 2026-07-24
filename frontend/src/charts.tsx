@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AreaData, AreaSeries, CandlestickSeries, ColorType, createChart, IChartApi, ISeriesApi, LineSeries, UTCTimestamp, WhitespaceData } from "lightweight-charts";
-import { Candle, fetchEthCandles, generateEquityCurve } from "./data";
+import { Candle, fetchEthCandles, fetchOlderCandles, generateEquityCurve } from "./data";
 import { useLanguage } from "./i18n";
-import { ChartCacheKey, formatMillions, loadChartSnapshot, normalizePoints, saveChartSnapshot } from "./chartState";
+import { formatMillions, normalizePoints } from "./chartState";
 import {
   FlowCoverage,
   FlowHistoryPoint,
@@ -17,8 +17,16 @@ import {
   retainedCoverage,
   retainServerHistory,
   visibleRangeFromCandles,
-  withPreservedLogicalRange,
 } from "./flowHistory";
+import {
+  CandleSelectionGuard,
+  flowOnCandleTimeline,
+  hydrateCandleHistory,
+  movingAverageSeries,
+  olderCandlePageRequest,
+  retainCandlePage,
+  withPreservedTimeRange,
+} from "./candleHistory";
 
 const chartTheme = {
   layout: { background: { type: ColorType.Solid, color: "transparent" }, textColor: "#6b7280", fontFamily: "Inter, ui-sans-serif, system-ui" },
@@ -76,7 +84,7 @@ function useResponsiveChart(factory: ChartFactory, onRecover?: () => void) {
     const recover = () => {
       if (document.hidden || recoveryQueued) return;
       recoveryQueued = true;
-      const priorRange = chartRef.current?.timeScale().getVisibleLogicalRange() ?? null;
+      const priorRange = chartRef.current?.timeScale().getVisibleRange() ?? null;
       let attempts = 0;
       const reflow = () => {
         if (disposed) return;
@@ -86,7 +94,7 @@ function useResponsiveChart(factory: ChartFactory, onRecover?: () => void) {
           // background-tab transition. Reapplying non-empty in-memory data is
           // safe and forces that repaint without ever clearing a series.
           recoverRef.current?.();
-          if (priorRange) chartRef.current?.timeScale().setVisibleLogicalRange(priorRange);
+          if (priorRange) chartRef.current?.timeScale().setVisibleRange(priorRange);
         }
         recoveryQueued = false;
       };
@@ -124,22 +132,6 @@ const isFlowPoint = (point: unknown): point is { time: number; value: number } =
   const row = point as { time?: number; value?: number };
   return !!row && Number.isFinite(row.time) && Number.isFinite(row.value);
 };
-
-function useLastKnownGood<T extends { time: number }>(key: ChartCacheKey, incoming: unknown, valid: (point: unknown) => point is T) {
-  const serializedKey = `${key.series}:${key.instrument}:${key.timeframe}`;
-  const [points, setPoints] = useState<T[]>(() => loadChartSnapshot(key, valid));
-  const activeKey = useRef(serializedKey);
-  const changedKey = activeKey.current !== serializedKey;
-  if (changedKey) activeKey.current = serializedKey;
-  useEffect(() => { setPoints(loadChartSnapshot(key, valid)); }, [serializedKey, valid]);
-  useEffect(() => {
-    const normalized = normalizePoints(incoming, valid);
-    if (!normalized.length) return;
-    saveChartSnapshot(key, normalized, valid);
-    setPoints(normalized);
-  }, [incoming, serializedKey, valid]);
-  return changedKey ? loadChartSnapshot(key, valid) : points;
-}
 
 function intervalSeconds(interval: string) {
   return interval === "1m" ? 60 : interval === "5m" ? 300 : interval === "15m" ? 900 : interval === "1h" ? 3600 : interval === "4h" ? 14400 : 86400;
@@ -208,14 +200,19 @@ type MarketSeries = { candles: ISeriesApi<"Candlestick">; ma60: ISeriesApi<"Line
 
 export function MarketChart({ instrument = "ETH-USDT", interval = "15m", flow }: { instrument?: string; interval?: string; flow?: FlowPaneData }) {
   const { t } = useLanguage();
-  const candleKey = { instrument, timeframe: interval, series: "candles" as const };
-  const [receivedCandles, setReceivedCandles] = useState<Candle[]>([]);
-  const candles = useLastKnownGood(candleKey, receivedCandles, isCandle);
+  const candleSelection = `${instrument}:${interval}`;
+  const candleGuard = useRef(new CandleSelectionGuard());
+  candleGuard.current.select(instrument, interval);
+  const [retainedCandles, setRetainedCandles] = useState<Candle[]>(() => hydrateCandleHistory(instrument, interval));
+  const activeCandleSelection = useRef(candleSelection);
+  const candleSelectionChanged = activeCandleSelection.current !== candleSelection;
+  if (candleSelectionChanged) activeCandleSelection.current = candleSelection;
+  const candles = candleSelectionChanged ? hydrateCandleHistory(instrument, interval) : retainedCandles;
   const cvdHistory = useServerFlowHistory(instrument, interval, "cvd", flow?.cvd_series);
   const oiHistory = useServerFlowHistory(instrument, interval, "oi", flow?.oi_series);
   const cvd = cvdHistory.points, oi = oiHistory.points;
   const requestId = useRef(0);
-  const loadRef = useRef<() => void>(() => undefined);
+  const loadRef = useRef<{ refresh: () => void; older: (start: number) => void }>({ refresh: () => undefined, older: () => undefined });
   const seriesRef = useRef<MarketSeries | null>(null);
   const marketChartRef = useRef<IChartApi | null>(null);
   const rangeTimer = useRef(0);
@@ -228,14 +225,13 @@ export function MarketChart({ instrument = "ETH-USDT", interval = "15m", flow }:
     const series = seriesRef.current;
     const data = dataRef.current;
     if (!series || !data.candles.length) return;
-    withPreservedLogicalRange(marketChartRef.current?.timeScale(), () => {
+    withPreservedTimeRange(marketChartRef.current?.timeScale(), () => {
       series.candles.setData(data.candles);
-      const average = (period: number) => data.candles.slice(period - 1).map((candle, index) => ({ time: candle.time, value: data.candles.slice(index, index + period).reduce((sum, item) => sum + item.close, 0) / period }));
-      const ma60 = average(60), ma200 = average(200);
-      if (ma60.length) series.ma60.setData(ma60);
-      if (ma200.length) series.ma200.setData(ma200);
-      if (data.cvd.length) series.cvd.setData(gapAware(data.cvd, data.cvdCoverage?.resolution_seconds || intervalSeconds(data.interval)));
-      if (data.oi.length) series.oi.setData(gapAware(data.oi, data.oiCoverage?.resolution_seconds || intervalSeconds(data.interval)));
+      const ma60 = movingAverageSeries(data.candles, 60), ma200 = movingAverageSeries(data.candles, 200);
+      series.ma60.setData(ma60);
+      series.ma200.setData(ma200);
+      series.cvd.setData(flowOnCandleTimeline(data.candles, data.cvd, intervalSeconds(data.interval)));
+      series.oi.setData(flowOnCandleTimeline(data.candles, data.oi, intervalSeconds(data.interval)));
     });
   };
   const { containerRef } = useResponsiveChart((container) => {
@@ -258,6 +254,7 @@ export function MarketChart({ instrument = "ETH-USDT", interval = "15m", flow }:
       rangeTimer.current = window.setTimeout(() => {
         const start = Number(range.from), end = Number(range.to);
         const current = dataRef.current, loaders = historyLoadRef.current;
+        loadRef.current.older(start);
         void loaders.cvd({ start, end, maxPoints: 1200 });
         void loaders.oi({ start, end, maxPoints: 1200 });
         for (const [load, points, coverage] of [
@@ -271,7 +268,7 @@ export function MarketChart({ instrument = "ETH-USDT", interval = "15m", flow }:
     });
     chart.panes()[0]?.setStretchFactor(3); chart.panes()[1]?.setStretchFactor(1); chart.panes()[2]?.setStretchFactor(1);
     return chart;
-  }, () => { applyData(); loadRef.current(); });
+  }, () => { applyData(); loadRef.current.refresh(); });
   useEffect(() => { applyData(); }, [candles, cvd, oi, interval, cvdHistory.coverage, oiHistory.coverage]);
   useEffect(() => {
     const range = visibleRangeFromCandles(candles);
@@ -281,18 +278,47 @@ export function MarketChart({ instrument = "ETH-USDT", interval = "15m", flow }:
   }, [candles, instrument, interval, cvdHistory.load, oiHistory.load]);
   useEffect(() => () => window.clearTimeout(rangeTimer.current), []);
   useEffect(() => {
+    setRetainedCandles(hydrateCandleHistory(instrument, interval));
+  }, [candleSelection, instrument, interval]);
+  useEffect(() => {
     const controller = new AbortController();
+    const olderInflight = new Set<number>();
+    const accept = (token: ReturnType<CandleSelectionGuard["token"]>, points: Candle[]) => {
+      if (!candleGuard.current.accepts(token)) return;
+      const merged = retainCandlePage(instrument, interval, { instrument, timeframe: interval, points });
+      if (merged.length) setRetainedCandles(merged);
+    };
     const load = async () => {
       const request = ++requestId.current;
+      const token = candleGuard.current.token();
       try {
         const live = await fetchEthCandles(interval, 500, instrument, controller.signal);
-        if (request === requestId.current && normalizePoints(live, isCandle).length) setReceivedCandles(live);
+        if (request === requestId.current) accept(token, normalizePoints(live, isCandle));
       } catch (error) { if (!(error instanceof DOMException && error.name === "AbortError")) { /* retain LKG */ } }
     };
-    loadRef.current = () => { void load(); };
+    const loadOlder = async (visibleStart: number) => {
+      const current = hydrateCandleHistory(instrument, interval);
+      const request = olderCandlePageRequest(current, visibleStart, intervalSeconds(interval));
+      if (!request || olderInflight.has(request.before)) return;
+      olderInflight.add(request.before);
+      const token = candleGuard.current.token();
+      try {
+        const older = await fetchOlderCandles(interval, request.limit, instrument, request.before, controller.signal);
+        accept(token, normalizePoints(older, isCandle));
+      } catch (error) {
+        if (!(error instanceof DOMException && error.name === "AbortError")) { /* retain LKG */ }
+      } finally {
+        olderInflight.delete(request.before);
+      }
+    };
+    loadRef.current = { refresh: () => { void load(); }, older: start => { void loadOlder(start); } };
     void load();
     const timer = window.setInterval(load, 30_000);
-    return () => { controller.abort(); window.clearInterval(timer); loadRef.current = () => undefined; };
+    return () => {
+      controller.abort();
+      window.clearInterval(timer);
+      loadRef.current = { refresh: () => undefined, older: () => undefined };
+    };
   }, [instrument, interval]);
   return <div className="chart-canvas" ref={containerRef}>
     <div className="market-flow-coverage" aria-label={t("flow.historyCoverage")}>
@@ -334,7 +360,7 @@ export function FlowChart({ points, color = "#7c3aed", zeroLine = false, instrum
   const dataRef = useRef(normalized); dataRef.current = normalized;
   const apply = () => {
     if (!dataRef.current.length) return;
-    withPreservedLogicalRange(flowChartRef.current?.timeScale(), () => {
+    withPreservedTimeRange(flowChartRef.current?.timeScale(), () => {
       seriesRef.current?.setData(gapAware(dataRef.current, history.coverage?.resolution_seconds || intervalSeconds(interval)));
     });
   };

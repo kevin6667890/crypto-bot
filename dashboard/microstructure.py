@@ -191,8 +191,30 @@ class MicrostructureStore:
                     manifest_id TEXT PRIMARY KEY, manifest_type TEXT NOT NULL,
                     version TEXT NOT NULL, status TEXT NOT NULL, payload_json TEXT NOT NULL,
                     created_at_ms INTEGER NOT NULL);
+                CREATE TABLE IF NOT EXISTS table_row_counts(
+                    table_name TEXT PRIMARY KEY, row_count INTEGER NOT NULL);
                 """
             )
+            counted_tables = (
+                "trade_flow_observations", "oi_observations", "funding_settled",
+                "funding_predicted", "mark_price_observations",
+                "index_price_observations", "liquidation_observations",
+                "cvd_aggregates", "oi_aggregates", "basis_aggregates",
+            )
+            for table in counted_tables:
+                c.execute(
+                    f"""INSERT OR IGNORE INTO table_row_counts
+                        SELECT ?,COUNT(*) FROM {table}""", (table,))
+                c.execute(
+                    f"""CREATE TRIGGER IF NOT EXISTS count_{table}_insert
+                        AFTER INSERT ON {table} BEGIN
+                        UPDATE table_row_counts SET row_count=row_count+1
+                        WHERE table_name='{table}'; END""")
+                c.execute(
+                    f"""CREATE TRIGGER IF NOT EXISTS count_{table}_delete
+                        AFTER DELETE ON {table} BEGIN
+                        UPDATE table_row_counts SET row_count=row_count-1
+                        WHERE table_name='{table}'; END""")
             c.execute(
                 """INSERT OR IGNORE INTO schema_metadata VALUES(?,?,?,?,?)""",
                 (MICROSTRUCTURE_SCHEMA_VERSION, MICROSTRUCTURE_SOURCE_VERSION,
@@ -612,6 +634,29 @@ class MicrostructureStore:
                 result[lane] = [dict(row) for row in rows]
         return result
 
+    def _health_coverage(self) -> dict[str, Any]:
+        tables = {
+            "trades": "trade_flow_observations", "oi": "oi_observations",
+            "funding_settled": "funding_settled", "funding_predicted": "funding_predicted",
+            "mark": "mark_price_observations", "index": "index_price_observations",
+            "liquidations": "liquidation_observations",
+        }
+        result: dict[str, list[dict[str, Any]]] = {}
+        with self.connect(readonly=True) as c:
+            for lane, table in tables.items():
+                instruments = ([item.removesuffix("-SWAP") for item in INSTRUMENTS]
+                               if lane == "index" else list(INSTRUMENTS))
+                result[lane] = []
+                for instrument in instruments:
+                    row = c.execute(
+                        f"""SELECT MIN(source_ts_ms),MAX(source_ts_ms)
+                            FROM {table} WHERE instrument=?""", (instrument,)).fetchone()
+                    if row[1] is not None:
+                        result[lane].append({
+                            "instrument": instrument, "earliest_ms": int(row[0]),
+                            "latest_ms": int(row[1])})
+        return result
+
     def sample_status(self, coverage: dict[str, Any] | None = None) -> dict[str, Any]:
         coverage = coverage or self.coverage()
         starts, ends = [], []
@@ -651,20 +696,20 @@ class MicrostructureStore:
     def health(self) -> dict[str, Any]:
         if not self.path.exists():
             self.initialize()
-        coverage = self.coverage()
+        coverage = self._health_coverage()
         with self.connect(readonly=True) as c:
             health = [dict(row) for row in c.execute(
                 "SELECT * FROM collector_health ORDER BY component")]
             gap_count = int(c.execute(
                 "SELECT COUNT(*) FROM collection_gaps WHERE resolved_at_ms IS NULL").fetchone()[0])
-            raw_rows = sum(int(c.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
-                           for table in ("trade_flow_observations", "oi_observations",
-                                         "mark_price_observations", "index_price_observations",
-                                         "funding_settled", "funding_predicted",
-                                         "liquidation_observations"))
-            aggregate_rows = sum(int(c.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
-                                 for table in ("cvd_aggregates", "oi_aggregates",
-                                               "basis_aggregates"))
+            counts = {row["table_name"]: int(row["row_count"]) for row in c.execute(
+                "SELECT table_name,row_count FROM table_row_counts")}
+            raw_rows = sum(counts.get(table, 0) for table in (
+                "trade_flow_observations", "oi_observations",
+                "mark_price_observations", "index_price_observations",
+                "funding_settled", "funding_predicted", "liquidation_observations"))
+            aggregate_rows = sum(counts.get(table, 0) for table in (
+                "cvd_aggregates", "oi_aggregates", "basis_aggregates"))
             aggregation = c.execute(
                 "SELECT last_success_ms FROM collector_health WHERE component='aggregation'"
             ).fetchone()

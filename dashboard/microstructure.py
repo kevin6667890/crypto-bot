@@ -46,7 +46,7 @@ def default_database_path() -> Path:
     configured = os.getenv("MICROSTRUCTURE_DB_PATH")
     if configured:
         return Path(configured)
-    return Path.home() / "crypto-bot-research" / "data" / "market_microstructure.db"
+    return Path(__file__).resolve().parent.parent / "data_cache" / "market_microstructure.db"
 
 
 def identity(*parts: object) -> str:
@@ -66,6 +66,32 @@ OBSERVATION_COLUMNS = """
     source_identity TEXT NOT NULL,
     uniqueness_key TEXT PRIMARY KEY
 """
+
+
+def normalize_swap_instrument(instrument: str) -> str:
+    """Return the canonical research instrument used by swap feature tables."""
+    value = str(instrument).upper()
+    return value if value.endswith("-SWAP") else f"{value}-SWAP"
+
+
+def normalize_index_instrument(instrument: str) -> str:
+    """Return the canonical OKX index instrument (without ``-SWAP``)."""
+    return normalize_swap_instrument(instrument).removesuffix("-SWAP")
+
+
+def normalize_epoch_ms(value: int | str) -> int:
+    """Normalize an epoch to milliseconds and reject ambiguous units.
+
+    Legacy Phase 6C tables store Unix seconds while the microstructure schema
+    stores milliseconds.  Normalization occurs at the ingestion boundary so a
+    single table can never silently contain both units.
+    """
+    timestamp = int(value)
+    if 946_684_800 <= timestamp <= 4_102_444_800:
+        return timestamp * 1000
+    if 946_684_800_000 <= timestamp <= 4_102_444_800_000:
+        return timestamp
+    raise ValueError(f"timestamp is neither supported epoch seconds nor milliseconds: {value}")
 
 
 class MicrostructureStore:
@@ -291,9 +317,8 @@ class MicrostructureStore:
             side = str(payload["side"]).lower()
             if side not in {"buy", "sell"}:
                 raise ValueError("official trade side must be buy or sell")
-            timestamp = int(payload["ts"])
-            if timestamp < 10_000_000_000:
-                timestamp *= 1000
+            instrument = normalize_swap_instrument(instrument)
+            timestamp = normalize_epoch_ms(payload["ts"])
             price, size = float(payload["px"]), float(payload["sz"])
             # Linear USDT swaps quote contracts in base-coin ctVal.
             notional = price * size * float(contract_value)
@@ -317,6 +342,8 @@ class MicrostructureStore:
         oi_contracts: float | None, oi_currency: float | None, oi_usd: float | None,
         source: str, source_identity: str, provenance_table: str | None = None,
     ) -> bool:
+        instrument = normalize_swap_instrument(instrument)
+        timestamp_ms = normalize_epoch_ms(timestamp_ms)
         key = identity("oi", source, instrument, source_identity)
         values = self.observation_base(source, instrument, timestamp_ms, "snapshot",
                                        "confirmed", source_identity, key)
@@ -349,6 +376,9 @@ class MicrostructureStore:
         source = f"OKX public {kind} price"
         rows = []
         for instrument, timestamp_ms, close, open_, high, low, confirmed, source_identity in items:
+            instrument = (normalize_swap_instrument(instrument) if kind == "mark"
+                          else normalize_index_instrument(instrument))
+            timestamp_ms = normalize_epoch_ms(timestamp_ms)
             key = identity(kind, instrument, source_identity)
             values = self.observation_base(source, instrument, timestamp_ms, "1m",
                                            "confirmed" if confirmed else "provisional",
@@ -363,8 +393,9 @@ class MicrostructureStore:
     def insert_funding(
         self, instrument: str, payload: dict[str, Any], *, settled: bool
     ) -> bool:
+        instrument = normalize_swap_instrument(instrument)
         if settled:
-            timestamp = int(payload["fundingTime"])
+            timestamp = normalize_epoch_ms(payload["fundingTime"])
             rate = float(payload["fundingRate"])
             realized = float(payload.get("realizedRate") or rate)
             source_id = f"{instrument}:{timestamp}"
@@ -374,8 +405,8 @@ class MicrostructureStore:
             sql = "INSERT OR IGNORE INTO funding_settled VALUES(?,?,?,?,?,?,?,?,?,?,?,?)"
             tail = (rate, realized, timestamp)
         else:
-            source_timestamp = int(payload.get("ts") or now_ms())
-            funding_time = int(payload["fundingTime"])
+            source_timestamp = normalize_epoch_ms(payload.get("ts") or now_ms())
+            funding_time = normalize_epoch_ms(payload["fundingTime"])
             rate = float(payload["fundingRate"])
             source_id = f"{instrument}:{source_timestamp}:{funding_time}"
             key = identity("funding_predicted", source_id)
@@ -390,7 +421,9 @@ class MicrostructureStore:
             return c.total_changes > before
 
     def insert_liquidation(self, instrument: str, payload: dict[str, Any]) -> bool:
-        timestamp = int(payload.get("ts") or payload.get("bkLossTs") or now_ms())
+        instrument = normalize_swap_instrument(instrument)
+        timestamp = normalize_epoch_ms(
+            payload.get("ts") or payload.get("bkLossTs") or now_ms())
         source_id = str(payload.get("ordId") or identity(instrument, timestamp,
                                                         payload.get("side"), payload.get("sz")))
         key = identity("liquidation", instrument, source_id)
@@ -755,146 +788,249 @@ class MicrostructureStore:
                 "block_reason": "multiple regimes and 60-90 uninterrupted days are still required"}
 
     def per_feature_eligibility(self) -> dict[str, Any]:
-        coverage = self.coverage()
+        """Report source coverage separately from label-overlap eligibility.
+
+        A collector restart is a quality annotation, not a new beginning of
+        history.  Consequently unresolved collection gaps are never subtracted
+        from the source's genuine earliest/latest span.  Event-study readiness
+        is computed independently from confirmed mark-price overlap.
+        """
+        from bisect import bisect_left, bisect_right
+
         feature_groups = {
             "settled_funding": {
                 "features": ["funding_level", "funding_change", "funding_zscore"],
-                "required_sources": ["funding_settled"]
+                "sources": [("funding_settled", "source_ts_ms", "state='confirmed'")],
+                "events": ("funding_settled", "funding_time_ms", "state='confirmed'"),
             },
             "predicted_funding": {
                 "features": ["funding_predicted"],
-                "required_sources": ["funding_predicted"]
+                "sources": [("funding_predicted", "source_ts_ms", "state='provisional'")],
+                "events": ("funding_predicted", "source_ts_ms", "state='provisional'"),
             },
             "basis": {
-                "features": ["basis_level", "basis_zscore", "basis_expansion"],
-                "required_sources": ["mark", "index"]
+                "features": ["basis_level", "basis_zscore", "basis_expansion_contraction"],
+                "sources": [("basis_aggregates", "bucket_ms", "resolution='1H'")],
+                "events": ("basis_aggregates", "bucket_ms", "resolution='1H'"),
             },
             "cvd": {
-                "features": ["cvd_delta", "cvd_rolling", "cvd_slope", "cvd_zscore", "cvd_imbalance", "cvd_volume_normalized", "price_cvd_divergence"],
-                "required_sources": ["trades"]
+                "features": ["cvd_delta", "cvd_rolling", "cvd_slope", "cvd_zscore"],
+                "sources": [("trade_flow_observations", "source_ts_ms", "state='confirmed'")],
+                "events": ("cvd_aggregates", "bucket_ms", "resolution='15m'"),
             },
             "oi": {
-                "features": ["oi_absolute_change", "oi_percentage_change", "oi_zscore", "oi_acceleration"],
-                "required_sources": ["oi"]
+                "features": ["oi_absolute_change", "oi_percentage_change", "oi_zscore",
+                             "oi_acceleration"],
+                "sources": [("oi_observations", "source_ts_ms", "state='confirmed'")],
+                "events": ("oi_aggregates", "bucket_ms", "resolution='15m'"),
             },
-            "cvd_oi_interactions": {
-                "features": ["breakout_with_cvd", "breakout_without_cvd", "price_up_oi_expansion", "price_down_oi_expansion"],
-                "required_sources": ["trades", "oi"]
+            "cvd_oi": {
+                "features": ["cvd_oi_interaction"],
+                "sources": [
+                    ("trade_flow_observations", "source_ts_ms", "state='confirmed'"),
+                    ("oi_observations", "source_ts_ms", "state='confirmed'"),
+                ],
+                "events": ("cvd_aggregates", "bucket_ms", "resolution='15m'"),
             },
-            "funding_oi_interactions": {
-                "features": ["extreme_funding_oi_expansion"],
-                "required_sources": ["funding_settled", "oi"]
+            "funding_oi": {
+                "features": ["funding_oi_interaction"],
+                "sources": [
+                    ("funding_settled", "source_ts_ms", "state='confirmed'"),
+                    ("oi_observations", "source_ts_ms", "state='confirmed'"),
+                ],
+                "events": ("funding_settled", "funding_time_ms", "state='confirmed'"),
             },
-            "liquidation": {
+            "liquidations": {
                 "features": ["liquidation"],
-                "required_sources": ["liquidations"]
-            }
+                "sources": [
+                    ("liquidation_observations", "source_ts_ms", "state='confirmed'"),
+                ],
+                "events": (
+                    "liquidation_observations", "source_ts_ms", "state='confirmed'"),
+            },
         }
-        
+
+        def status_for(days: float, count: int) -> str:
+            if count <= 0 or days < 14:
+                return "EXPLORATORY_ONLY"
+            if days < 30:
+                return "MINIMUM_SAMPLE_REACHED"
+            if days < 60:
+                return "VALIDATION_READY"
+            return "FORMAL_RESEARCH_READY"
+
+        def next_date(start_ms: int | None, days: float) -> str | None:
+            if start_ms is None or days >= MINIMUM_SAMPLE_DAYS:
+                return None
+            return (datetime.fromtimestamp(start_ms / 1000, timezone.utc)
+                    + timedelta(days=MINIMUM_SAMPLE_DAYS)).date().isoformat()
+
+        def span_days(start: int | None, end: int | None) -> float:
+            return max(0.0, (end - start) / 86_400_000) if start and end else 0.0
+
+        results: dict[str, Any] = {"feature_groups": {}}
         with self.connect(readonly=True) as c:
-            gaps = [dict(row) for row in c.execute(
-                "SELECT lane, instrument, start_ms, end_ms FROM collection_gaps WHERE resolved_at_ms IS NULL"
-            ).fetchall()]
-            
-        gap_dict = {}
-        for gap in gaps:
-            gap_dict.setdefault(gap["lane"], []).append(gap)
-            
-        results = {"feature_groups": {}}
-        for group_name, group_info in feature_groups.items():
-            req_sources = group_info["required_sources"]
-            instruments_data = {}
-            instrument_bounds = {}
-            
-            for source in req_sources:
-                if source not in coverage:
-                    continue
-                for item in coverage[source]:
-                    inst = item["instrument"]
-                    normalized_inst = inst if inst.endswith("-SWAP") else inst + "-SWAP"
-                    if normalized_inst not in instrument_bounds:
-                        instrument_bounds[normalized_inst] = {"starts": [], "ends": []}
-                    if item.get("earliest_ms"):
-                        instrument_bounds[normalized_inst]["starts"].append(item["earliest_ms"])
-                    if item.get("latest_ms"):
-                        instrument_bounds[normalized_inst]["ends"].append(item["latest_ms"])
-                        
-            group_earliest = None
-            group_latest = None
-            total_gaps_ms = 0
-            
-            for inst, bounds in instrument_bounds.items():
-                if len(bounds["starts"]) == len(req_sources) and len(bounds["ends"]) == len(req_sources):
-                    start = max(bounds["starts"])
-                    end = min(bounds["ends"])
-                    if start < end:
-                        instruments_data[inst] = {"earliest_usable_ms": start, "latest_usable_ms": end}
-                        if group_earliest is None or start < group_earliest:
-                            group_earliest = start
-                        if group_latest is None or end > group_latest:
-                            group_latest = end
-                            
-            # Calculate gap deductions (simplified union of gaps for the required sources)
-            gap_intervals = []
-            for source in req_sources:
-                for gap in gap_dict.get(source, []):
-                    if group_earliest and group_latest:
-                        gap_start = max(gap["start_ms"], group_earliest)
-                        gap_end = min(gap["end_ms"], group_latest)
-                        if gap_start < gap_end:
-                            gap_intervals.append((gap_start, gap_end))
-            
-            # merge gap intervals
-            if gap_intervals:
-                gap_intervals.sort(key=lambda x: x[0])
-                merged = [gap_intervals[0]]
-                for current in gap_intervals[1:]:
-                    last = merged[-1]
-                    if current[0] <= last[1]:
-                        merged[-1] = (last[0], max(last[1], current[1]))
-                    else:
-                        merged.append(current)
-                for m in merged:
-                    total_gaps_ms += (m[1] - m[0])
-                    
-            if group_earliest and group_latest:
-                raw_days = (group_latest - group_earliest) / 86400000.0
-                gap_days = total_gaps_ms / 86400000.0
-                usable_days = max(0.0, raw_days - gap_days)
-            else:
-                raw_days = 0.0
-                gap_days = 0.0
-                usable_days = 0.0
-                
-            if usable_days < 14:
-                status = "EXPLORATORY_ONLY"
-                blocking_reason = "Insufficient historical sample size for feature stability validation"
-            elif usable_days < 30:
-                status = "MINIMUM_SAMPLE_REACHED"
-                blocking_reason = "Requires 30 days for formal regime validation"
-            elif usable_days < 60:
-                status = "VALIDATION_READY"
-                blocking_reason = "Requires 60 days for formal research readiness"
-            else:
-                status = "FORMAL_RESEARCH_READY"
-                blocking_reason = None
-                
-            next_date = (datetime.fromtimestamp(group_earliest / 1000, timezone.utc) + timedelta(days=MINIMUM_SAMPLE_DAYS)).date().isoformat() if group_earliest else None
-            
-            results["feature_groups"][group_name] = {
-                "features": group_info["features"],
-                "required_sources": req_sources,
-                "instruments": instruments_data,
-                "earliest_usable_ms": group_earliest,
-                "latest_usable_ms": group_latest,
-                "usable_days": round(raw_days, 6),
-                "gap_adjusted_sample_days": round(usable_days, 6),
-                "event_count": 0,
-                "status": status,
-                "next_eligibility_date": next_date,
-                "blocking_reason": blocking_reason
-            }
-            
+            marks: dict[str, list[int]] = {}
+            mark_counts: dict[str, int] = {}
+            for instrument in INSTRUMENTS:
+                values = [int(row[0]) for row in c.execute(
+                    """SELECT source_ts_ms FROM mark_price_observations
+                       WHERE instrument=? AND state='confirmed'
+                       ORDER BY source_ts_ms""", (instrument,))]
+                marks[instrument] = values
+                mark_counts[instrument] = len(values)
+
+            for group_name, definition in feature_groups.items():
+                instrument_rows: dict[str, dict[str, Any]] = {}
+                for instrument in INSTRUMENTS:
+                    starts: list[int] = []
+                    ends: list[int] = []
+                    counts: list[int] = []
+                    for table, timestamp_column, predicate in definition["sources"]:
+                        row = c.execute(
+                            f"""SELECT MIN({timestamp_column}),MAX({timestamp_column}),COUNT(*)
+                                FROM {table} WHERE instrument=? AND {predicate}""",
+                            (instrument,),
+                        ).fetchone()
+                        if row[0] is not None:
+                            starts.append(int(row[0]))
+                            ends.append(int(row[1]))
+                            counts.append(int(row[2]))
+                    complete = len(starts) == len(definition["sources"])
+                    source_start = max(starts) if complete else None
+                    source_end = min(ends) if complete else None
+                    source_count = min(counts) if complete and counts else 0
+                    source_days = span_days(source_start, source_end)
+
+                    label_times = marks[instrument]
+                    label_start = label_times[0] if label_times else None
+                    label_end = label_times[-1] if label_times else None
+                    overlap_start = (max(source_start, label_start)
+                                     if source_start and label_start else None)
+                    overlap_end = (min(source_end, label_end)
+                                   if source_end and label_end else None)
+                    if overlap_start is not None and overlap_end is not None:
+                        if overlap_start > overlap_end:
+                            overlap_start = overlap_end = None
+                    overlap_days = span_days(overlap_start, overlap_end)
+
+                    event_table, event_column, event_predicate = definition["events"]
+                    event_times = [int(row[0]) for row in c.execute(
+                        f"""SELECT {event_column} FROM {event_table}
+                            WHERE instrument=? AND {event_predicate}
+                            ORDER BY {event_column}""", (instrument,))]
+                    if group_name == "cvd_oi":
+                        oi_times = {int(row[0]) for row in c.execute(
+                            """SELECT bucket_ms FROM oi_aggregates
+                               WHERE instrument=? AND resolution='15m'""",
+                            (instrument,))}
+                        event_times = [value for value in event_times if value in oi_times]
+                    elif group_name == "funding_oi":
+                        oi_times = [int(row[0]) for row in c.execute(
+                            """SELECT bucket_ms FROM oi_aggregates
+                               WHERE instrument=? AND resolution='15m'
+                               ORDER BY bucket_ms""", (instrument,))]
+                        event_times = [
+                            value for value in event_times
+                            if oi_times and bisect_right(oi_times, value) > 0
+                            and value - oi_times[bisect_right(oi_times, value) - 1] <= 900_000
+                        ]
+
+                    # A valid 15-minute event needs observed (not interpolated)
+                    # decision and forward mark labels no more than one minute
+                    # away from their requested timestamps.
+                    event_count = 0
+                    for value in event_times:
+                        base_pos = bisect_right(label_times, value) - 1
+                        target = value + HORIZONS["15m"]
+                        target_pos = bisect_left(label_times, target)
+                        if (base_pos >= 0 and target_pos < len(label_times)
+                                and value - label_times[base_pos] <= 60_000
+                                and label_times[target_pos] - target <= 60_000):
+                            event_count += 1
+
+                    instrument_rows[instrument] = {
+                        "source_earliest_ms": source_start,
+                        "source_latest_ms": source_end,
+                        "source_usable_days": round(source_days, 6),
+                        "source_observation_count": source_count,
+                        "label_earliest_ms": label_start,
+                        "label_latest_ms": label_end,
+                        "label_observation_count": mark_counts[instrument],
+                        "overlap_earliest_ms": overlap_start,
+                        "overlap_latest_ms": overlap_end,
+                        "overlap_usable_days": round(overlap_days, 6),
+                        "event_count": event_count,
+                        "source_data_status": status_for(source_days, source_count),
+                        "event_study_status": status_for(overlap_days, event_count),
+                    }
+
+                source_starts = [x["source_earliest_ms"] for x in instrument_rows.values()
+                                 if x["source_earliest_ms"] is not None]
+                source_ends = [x["source_latest_ms"] for x in instrument_rows.values()
+                               if x["source_latest_ms"] is not None]
+                label_starts = [x["label_earliest_ms"] for x in instrument_rows.values()
+                                if x["label_earliest_ms"] is not None]
+                label_ends = [x["label_latest_ms"] for x in instrument_rows.values()
+                              if x["label_latest_ms"] is not None]
+                overlap_starts = [x["overlap_earliest_ms"] for x in instrument_rows.values()
+                                  if x["overlap_earliest_ms"] is not None]
+                overlap_ends = [x["overlap_latest_ms"] for x in instrument_rows.values()
+                                if x["overlap_latest_ms"] is not None]
+                all_instruments = len(source_starts) == len(INSTRUMENTS)
+                source_start = max(source_starts) if all_instruments else None
+                source_end = min(source_ends) if all_instruments else None
+                label_start = max(label_starts) if len(label_starts) == len(INSTRUMENTS) else None
+                label_end = min(label_ends) if len(label_ends) == len(INSTRUMENTS) else None
+                overlap_start = (max(overlap_starts)
+                                 if len(overlap_starts) == len(INSTRUMENTS) else None)
+                overlap_end = (min(overlap_ends)
+                               if len(overlap_ends) == len(INSTRUMENTS) else None)
+                source_days = span_days(source_start, source_end)
+                overlap_days = span_days(overlap_start, overlap_end)
+                source_count = sum(x["source_observation_count"]
+                                   for x in instrument_rows.values())
+                event_count = sum(x["event_count"] for x in instrument_rows.values())
+                source_status = status_for(source_days, source_count)
+                event_status = status_for(overlap_days, event_count)
+                if source_count == 0:
+                    blocking_reason = "No genuine source observations"
+                elif source_status == "EXPLORATORY_ONLY":
+                    blocking_reason = "Source coverage is below 14 days"
+                elif event_count == 0:
+                    blocking_reason = "No exact confirmed mark-price label pairs overlap"
+                elif event_status == "EXPLORATORY_ONLY":
+                    blocking_reason = "Exact feature/mark overlap is below 14 days"
+                else:
+                    blocking_reason = None
+
+                results["feature_groups"][group_name] = {
+                    "features": definition["features"],
+                    "instruments": instrument_rows,
+                    "source_earliest_ms": source_start,
+                    "source_latest_ms": source_end,
+                    "source_usable_days": round(source_days, 6),
+                    "source_observation_count": source_count,
+                    "label_earliest_ms": label_start,
+                    "label_latest_ms": label_end,
+                    "overlap_earliest_ms": overlap_start,
+                    "overlap_latest_ms": overlap_end,
+                    "overlap_usable_days": round(overlap_days, 6),
+                    "event_count": event_count,
+                    "source_data_status": source_status,
+                    "event_study_status": event_status,
+                    "next_source_eligibility_date": next_date(source_start, source_days),
+                    "next_event_study_eligibility_date": next_date(
+                        overlap_start, overlap_days),
+                    "blocking_reason": blocking_reason,
+                    # Backward-compatible fields for the existing dashboard.
+                    "earliest_usable_ms": source_start,
+                    "latest_usable_ms": source_end,
+                    "usable_days": round(source_days, 6),
+                    "gap_adjusted_sample_days": round(source_days, 6),
+                    "status": source_status,
+                    "next_eligibility_date": next_date(source_start, source_days),
+                }
         return results
 
     def health(self) -> dict[str, Any]:

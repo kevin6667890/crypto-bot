@@ -197,8 +197,10 @@ def test_live_aggregation_refreshes_current_day_without_rewriting_history(
 
 def test_basis_join_never_uses_future_index(tmp_path: Path) -> None:
     value = store(tmp_path)
-    value.insert_price("mark", "BTC-USDT-SWAP", 2_000, 105, source_identity="m")
-    value.insert_price("index", "BTC-USDT", 3_000, 100, source_identity="future")
+    value.insert_price(
+        "mark", "BTC-USDT-SWAP", 1_700_000_002_000, 105, source_identity="m")
+    value.insert_price(
+        "index", "BTC-USDT", 1_700_000_003_000, 100, source_identity="future")
     value.aggregate_all()
     with value.connect(readonly=True) as c:
         assert c.execute("SELECT COUNT(*) FROM basis_aggregates").fetchone()[0] == 0
@@ -277,7 +279,9 @@ def test_backfill_is_idempotent_and_checkpointed(tmp_path: Path) -> None:
     assert first["inserted"] == 1
     assert second["inserted"] == 0
     with value.connect(readonly=True) as c:
-        assert c.execute("SELECT status FROM collection_checkpoints").fetchone()[0] == "complete"
+        assert c.execute(
+            "SELECT status FROM collection_checkpoints").fetchone()[0] == (
+                "NON_ADVANCING_CURSOR_SOURCE_LIMITATION")
 
 
 def test_public_client_rejects_order_and_private_paths() -> None:

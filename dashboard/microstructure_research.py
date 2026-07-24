@@ -16,18 +16,21 @@ import json
 import math
 import statistics
 import uuid
+from bisect import bisect_left, bisect_right
 from datetime import datetime, timezone
 from typing import Any
 
 try:
     from microstructure import (
         INSTRUMENTS, HORIZONS, MINIMUM_SAMPLE_DAYS,
-        MICROSTRUCTURE_REPORT_VERSION, MicrostructureStore, now_ms,
+        MICROSTRUCTURE_REPORT_VERSION, MicrostructureStore, normalize_swap_instrument,
+        now_ms,
     )
 except ImportError:
     from .microstructure import (
         INSTRUMENTS, HORIZONS, MINIMUM_SAMPLE_DAYS,
-        MICROSTRUCTURE_REPORT_VERSION, MicrostructureStore, now_ms,
+        MICROSTRUCTURE_REPORT_VERSION, MicrostructureStore, normalize_swap_instrument,
+        now_ms,
     )
 
 
@@ -112,6 +115,7 @@ class SourceSpecificEventStudy:
     def __init__(self, store: MicrostructureStore) -> None:
         self.store = store
         self.report_id = f"source-study-{uuid.uuid4().hex[:8]}"
+        self._mark_timestamp_cache: dict[int, list[int]] = {}
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -119,6 +123,7 @@ class SourceSpecificEventStudy:
 
     def _mark_prices(self, instrument: str) -> dict[int, float]:
         """Load mark prices keyed by timestamp_ms for fast lookup."""
+        instrument = normalize_swap_instrument(instrument)
         with self.store.connect(readonly=True) as c:
             rows = c.execute(
                 """SELECT source_ts_ms, close FROM mark_price_observations
@@ -126,30 +131,30 @@ class SourceSpecificEventStudy:
                    ORDER BY source_ts_ms""",
                 (instrument,),
             ).fetchall()
-        return {int(r["source_ts_ms"]): float(r["close"]) for r in rows}
+        result = {int(r["source_ts_ms"]): float(r["close"]) for r in rows}
+        self._mark_timestamp_cache[id(result)] = list(result)
+        return result
 
     def _forward_return(self, mark_prices: dict[int, float],
                         decision_ms: int, horizon_ms: int) -> float | None:
         """Find mark price at decision+horizon and calculate return."""
-        target_ms = decision_ms + horizon_ms
-        # Find the earliest confirmed mark >= target_ms
-        closest_ms = None
-        for ts in mark_prices:
-            if ts >= target_ms:
-                if closest_ms is None or ts < closest_ms:
-                    closest_ms = ts
-        if closest_ms is None:
+        if not mark_prices:
             return None
-        base_price = mark_prices.get(decision_ms)
-        if base_price is None:
-            # Use latest mark at or before decision_ms
-            candidates = [ts for ts in mark_prices if ts <= decision_ms]
-            if not candidates:
-                return None
-            base_price = mark_prices[max(candidates)]
+        timestamps = self._mark_timestamp_cache.setdefault(
+            id(mark_prices), list(mark_prices))
+        base_position = bisect_right(timestamps, decision_ms) - 1
+        target_ms = decision_ms + horizon_ms
+        target_position = bisect_left(timestamps, target_ms)
+        if base_position < 0 or target_position >= len(timestamps):
+            return None
+        base_ms = timestamps[base_position]
+        forward_ms = timestamps[target_position]
+        if decision_ms - base_ms > 60_000 or forward_ms - target_ms > 60_000:
+            return None
+        base_price = mark_prices[base_ms]
         if base_price == 0:
             return None
-        return (mark_prices[closest_ms] - base_price) / base_price
+        return (mark_prices[forward_ms] - base_price) / base_price
 
     def _study_features(self, feature_name: str, observations: list[tuple[int, float]],
                         mark_prices: dict[int, float],
@@ -207,6 +212,7 @@ class SourceSpecificEventStudy:
 
     def _funding_features(self, instrument: str) -> dict[str, list[tuple[int, float]]]:
         """Extract funding features from settled funding data."""
+        instrument = normalize_swap_instrument(instrument)
         with self.store.connect(readonly=True) as c:
             rows = c.execute(
                 """SELECT funding_time_ms, funding_rate FROM funding_settled
@@ -241,15 +247,9 @@ class SourceSpecificEventStudy:
         return features
 
     def run_funding_study(self) -> dict[str, Any]:
-        """Study settled funding features where coverage >= 14 days."""
+        """Study every genuine settled-funding/mark overlap."""
         elig = self.store.per_feature_eligibility()
         group = elig.get("feature_groups", {}).get("settled_funding", {})
-        if group.get("status") == "EXPLORATORY_ONLY":
-            return {
-                "exploratory_only": True, "study_type": "funding_settled",
-                "skipped": True, "reason": "insufficient_coverage",
-                "usable_days": group.get("gap_adjusted_sample_days", 0),
-            }
 
         results_by_instrument: dict[str, dict[str, Any]] = {}
         for instrument in INSTRUMENTS:
@@ -271,6 +271,8 @@ class SourceSpecificEventStudy:
             "study_type": "funding_settled",
             "report_id": self.report_id,
             "coverage_days": group.get("gap_adjusted_sample_days", 0),
+            "source_data_status": group.get("source_data_status"),
+            "event_study_status": group.get("event_study_status"),
             "instruments": results_by_instrument,
         }
 
@@ -280,6 +282,7 @@ class SourceSpecificEventStudy:
 
     def _basis_features(self, instrument: str) -> dict[str, list[tuple[int, float]]]:
         """Extract basis features from basis_aggregates."""
+        instrument = normalize_swap_instrument(instrument)
         with self.store.connect(readonly=True) as c:
             rows = c.execute(
                 """SELECT bucket_ms, last_basis_pct, expansion
@@ -317,15 +320,9 @@ class SourceSpecificEventStudy:
         return features
 
     def run_basis_study(self) -> dict[str, Any]:
-        """Study basis features where mark+index coverage >= 14 days."""
+        """Study every genuine basis/mark overlap."""
         elig = self.store.per_feature_eligibility()
         group = elig.get("feature_groups", {}).get("basis", {})
-        if group.get("status") == "EXPLORATORY_ONLY":
-            return {
-                "exploratory_only": True, "study_type": "basis",
-                "skipped": True, "reason": "insufficient_coverage",
-                "usable_days": group.get("gap_adjusted_sample_days", 0),
-            }
 
         results_by_instrument: dict[str, dict[str, Any]] = {}
         for instrument in INSTRUMENTS:
@@ -347,6 +344,8 @@ class SourceSpecificEventStudy:
             "study_type": "basis",
             "report_id": self.report_id,
             "coverage_days": group.get("gap_adjusted_sample_days", 0),
+            "source_data_status": group.get("source_data_status"),
+            "event_study_status": group.get("event_study_status"),
             "instruments": results_by_instrument,
         }
 
@@ -359,13 +358,6 @@ class SourceSpecificEventStudy:
         elig = self.store.per_feature_eligibility()
         funding_group = elig.get("feature_groups", {}).get("settled_funding", {})
         basis_group = elig.get("feature_groups", {}).get("basis", {})
-        if (funding_group.get("status") == "EXPLORATORY_ONLY" or
-                basis_group.get("status") == "EXPLORATORY_ONLY"):
-            return {
-                "exploratory_only": True,
-                "study_type": "funding_basis_interaction",
-                "skipped": True, "reason": "insufficient_coverage",
-            }
 
         results_by_instrument: dict[str, dict[str, Any]] = {}
         for instrument in INSTRUMENTS:
@@ -411,6 +403,14 @@ class SourceSpecificEventStudy:
             "exploratory_only": True,
             "study_type": "funding_basis_interaction",
             "report_id": self.report_id,
+            "source_data_status": {
+                "settled_funding": funding_group.get("source_data_status"),
+                "basis": basis_group.get("source_data_status"),
+            },
+            "event_study_status": {
+                "settled_funding": funding_group.get("event_study_status"),
+                "basis": basis_group.get("event_study_status"),
+            },
             "instruments": results_by_instrument,
         }
 
@@ -429,17 +429,9 @@ class SourceSpecificEventStudy:
             "studies": {},
         }
 
-        groups = elig.get("feature_groups", {})
-
-        if groups.get("settled_funding", {}).get("status") != "EXPLORATORY_ONLY":
-            results["studies"]["funding"] = self.run_funding_study()
-
-        if groups.get("basis", {}).get("status") != "EXPLORATORY_ONLY":
-            results["studies"]["basis"] = self.run_basis_study()
-
-        if (groups.get("settled_funding", {}).get("status") != "EXPLORATORY_ONLY" and
-                groups.get("basis", {}).get("status") != "EXPLORATORY_ONLY"):
-            results["studies"]["funding_basis_interaction"] = \
-                self.run_funding_basis_interaction()
+        results["studies"]["funding"] = self.run_funding_study()
+        results["studies"]["basis"] = self.run_basis_study()
+        results["studies"]["funding_basis_interaction"] = \
+            self.run_funding_basis_interaction()
 
         return results

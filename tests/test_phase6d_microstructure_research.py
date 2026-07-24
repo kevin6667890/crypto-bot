@@ -132,6 +132,12 @@ def test_source_and_event_study_status_are_separate(
     assert item["event_study_status"] == "EXPLORATORY_ONLY"
 
 
+def test_collector_health_can_skip_expensive_research_eligibility(
+        store: MicrostructureStore) -> None:
+    health = store.health(include_eligibility=False)
+    assert "per_feature_eligibility" not in health
+
+
 def test_event_study_uses_every_genuine_overlapping_mark(
         store: MicrostructureStore) -> None:
     study = SourceSpecificEventStudy(store)

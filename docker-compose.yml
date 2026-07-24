@@ -30,6 +30,7 @@ services:
     environment:
       PAPER_API_HOST: 0.0.0.0
       GIT_COMMIT: ${GIT_COMMIT:-unknown}
+      MICROSTRUCTURE_DB_PATH: /app/data_cache/market_microstructure.db
     volumes:
       - ./data_cache:/app/data_cache
     healthcheck:
@@ -38,6 +39,22 @@ services:
       timeout: 5s
       retries: 3
       start_period: 15s
+    restart: unless-stopped
+
+  microstructure-collector:
+    build: .
+    command: python -m dashboard.microstructure_collector
+    environment:
+      MICROSTRUCTURE_DB_PATH: /app/data_cache/market_microstructure.db
+      PYTHONUNBUFFERED: "1"
+    volumes:
+      - ./data_cache:/app/data_cache
+    healthcheck:
+      test: ["CMD", "python", "-c", "from urllib.request import urlopen; urlopen('http://127.0.0.1:8770/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
     restart: unless-stopped
 
   frontend:

@@ -43,6 +43,7 @@ try:
     from shadow_service import ShadowService
     from lifecycle_service import LifecycleService
     from volume_profile import calculate_trade_volume_profile, calculate_volume_profile
+    from microstructure import MicrostructureStore
 except ImportError:
     from .research_service import ResearchService
     from .strategy_rules import StrategyParameters, calculate_indicators, validate_parameters
@@ -60,6 +61,7 @@ except ImportError:
     from .shadow_service import ShadowService
     from .lifecycle_service import LifecycleService
     from .volume_profile import calculate_trade_volume_profile, calculate_volume_profile
+    from .microstructure import MicrostructureStore
 
 try:
     from dotenv import load_dotenv
@@ -1034,6 +1036,9 @@ SHADOW = ShadowService(VALIDATION.repository)
 SHADOW.ensure_default_candidates()
 LIFECYCLE = LifecycleService(VALIDATION.repository, ALERTS)
 HEALTH = HealthService(DB_PATH,SERVICE,RESEARCH.jobs,ALERTS,ROOT)
+MICROSTRUCTURE = MicrostructureStore(
+    Path(os.getenv("MICROSTRUCTURE_DB_PATH", ROOT / "data_cache" / "market_microstructure.db"))
+)
 LIMITER = RateLimiter()
 LOGGER = configure_logging(ROOT)
 
@@ -1096,6 +1101,8 @@ class Handler(BaseHTTPRequestHandler):
             bins = max(18, min(42, int(query_float("bins") or 32)))
             self._send(SERVICE.vpvr_profile(instrument, query.get("interval", ["15m"])[0], bins, query_float("price_low"), query_float("price_high")))
         elif parsed.path == "/api/health": self._send(HEALTH.payload(False))
+        elif parsed.path == "/api/research/microstructure/health":
+            self._send(MICROSTRUCTURE.health())
         elif parsed.path == "/api/health/details":
             details=HEALTH.payload(True); shadows=SHADOW.list(); counts=VALIDATION.repository.table_counts(); details.update({"shadow_scheduler_status":"running","active_shadow_strategies":sum(x["status"]=="RUNNING" for x in shadows),"validation_job_types":["GATE_ANALYSIS","SENSITIVITY","BENCHMARK","ROBUSTNESS"],"phase4_database_rows":sum(counts.get(name,0) for name in counts if name.startswith(("gate_","near_","sensitivity_","benchmark_","robustness_","shadow_","strategy_lifecycle","promotion_","strategy_audit"))),"promotion_audit_alerts":sum(str(x.get("severity","")).lower()=="critical" and str(x.get("status","")).lower()=="open" for x in ALERTS.list())});self._send(details)
         elif parsed.path == "/api/jobs": self._send({"items":RESEARCH.jobs.list(int(query.get("limit",["100"])[0]))})

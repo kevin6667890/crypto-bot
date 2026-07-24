@@ -140,9 +140,25 @@ class Collector:
                         f"{kind}_forward", item["instrument"], cursor=None,
                         last_source_ts_ms=timestamp, status="running")
             except Exception as error:
-                self.store.record_health(
-                    "writer", "ERROR",
-                    last_error=f"{type(error).__name__}: {str(error)[:160]}")
+                try:
+                    self.store.record_health(
+                        "writer", "ERROR",
+                        last_error=f"{type(error).__name__}: {str(error)[:160]}")
+                except Exception:
+                    pass
+                # The deterministic identities make a replay safe.  Do not
+                # discard observations merely because another maintenance
+                # transaction briefly held SQLite's single writer lock.
+                for item in batch:
+                    await self.queue.put(item)
+                await asyncio.sleep(1)
+            else:
+                try:
+                    self.store.record_health(
+                        "writer", "LIVE", last_success_ms=now_ms(),
+                        last_error=None)
+                except Exception:
+                    pass
             finally:
                 for _ in batch:
                     self.queue.task_done()
@@ -164,6 +180,10 @@ class Collector:
         if latest:
             self.store.record_health(
                 f"trades:{instrument}", "LIVE", last_success_ms=now_ms(),
+                source_lag_ms=max(0, now_ms() - latest),
+                **self.counters["trades"])
+            self.store.record_health(
+                "trades", "LIVE", last_success_ms=now_ms(),
                 source_lag_ms=max(0, now_ms() - latest),
                 **self.counters["trades"])
 
@@ -199,11 +219,22 @@ class Collector:
                                               close_timeout=5) as socket:
                     await socket.send(json.dumps({"op": "subscribe", "args": args}))
                     while not self.stop_event.is_set():
-                        raw = await asyncio.wait_for(socket.recv(), timeout=60)
+                        try:
+                            raw = await asyncio.wait_for(socket.recv(), timeout=60)
+                        except TimeoutError:
+                            pong = await socket.ping()
+                            await asyncio.wait_for(pong, timeout=10)
+                            self.store.record_health(
+                                component, "LIVE", last_success_ms=now_ms(),
+                                **self.counters[component])
+                            continue
                         message = json.loads(raw)
                         if message.get("event") == "error":
                             raise RuntimeError(str(message.get("msg") or "subscription rejected"))
                         if message.get("event") == "subscribe":
+                            self.store.record_health(
+                                component, "LIVE", last_success_ms=now_ms(),
+                                **self.counters[component])
                             continue
                         await handler(message)
                         delivered = True

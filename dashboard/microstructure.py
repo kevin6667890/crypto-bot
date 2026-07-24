@@ -612,8 +612,8 @@ class MicrostructureStore:
                 result[lane] = [dict(row) for row in rows]
         return result
 
-    def sample_status(self) -> dict[str, Any]:
-        coverage = self.coverage()
+    def sample_status(self, coverage: dict[str, Any] | None = None) -> dict[str, Any]:
+        coverage = coverage or self.coverage()
         starts, ends = [], []
         for lane in ("trades", "oi", "mark", "index"):
             starts.extend(row["earliest_ms"] for row in coverage[lane] if row["earliest_ms"])
@@ -670,7 +670,7 @@ class MicrostructureStore:
             ).fetchone()
         latest = {lane: {row["instrument"]: row["latest_ms"] for row in rows}
                   for lane, rows in coverage.items()}
-        sample = self.sample_status()
+        sample = self.sample_status(coverage)
         return {
             "service_status": "RUNNING" if any(x["status"] == "LIVE" for x in health) else "INITIALIZED",
             "database_schema_version": MICROSTRUCTURE_SCHEMA_VERSION,

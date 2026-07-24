@@ -624,6 +624,14 @@ class MicrostructureStore:
         # appear covered.
         start = max(starts) if starts else None
         end = min(ends) if ends else None
+        with self.connect(readonly=True) as c:
+            latest_gap_end = c.execute(
+                """SELECT MAX(end_ms) FROM collection_gaps
+                   WHERE resolved_at_ms IS NULL
+                   AND lane IN ('trades','oi','mark','index')"""
+            ).fetchone()[0]
+        if start is not None and latest_gap_end is not None:
+            start = max(start, int(latest_gap_end))
         sample_days = max(0.0, ((end - start) / 86_400_000) if start and end else 0.0)
         if sample_days < 14:
             status = "EXPLORATORY_ONLY"

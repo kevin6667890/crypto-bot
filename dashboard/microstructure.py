@@ -191,14 +191,42 @@ class MicrostructureStore:
                     manifest_id TEXT PRIMARY KEY, manifest_type TEXT NOT NULL,
                     version TEXT NOT NULL, status TEXT NOT NULL, payload_json TEXT NOT NULL,
                     created_at_ms INTEGER NOT NULL);
+                CREATE TABLE IF NOT EXISTS table_row_counts(
+                    table_name TEXT PRIMARY KEY, row_count INTEGER NOT NULL);
                 """
             )
+            counted_tables = (
+                "trade_flow_observations", "oi_observations", "funding_settled",
+                "funding_predicted", "mark_price_observations",
+                "index_price_observations", "liquidation_observations",
+                "cvd_aggregates", "oi_aggregates", "basis_aggregates",
+            )
+            for table in counted_tables:
+                c.execute(
+                    f"""INSERT OR IGNORE INTO table_row_counts
+                        SELECT ?,COUNT(*) FROM {table}""", (table,))
+                c.execute(
+                    f"""CREATE TRIGGER IF NOT EXISTS count_{table}_insert
+                        AFTER INSERT ON {table} BEGIN
+                        UPDATE table_row_counts SET row_count=row_count+1
+                        WHERE table_name='{table}'; END""")
+                c.execute(
+                    f"""CREATE TRIGGER IF NOT EXISTS count_{table}_delete
+                        AFTER DELETE ON {table} BEGIN
+                        UPDATE table_row_counts SET row_count=row_count-1
+                        WHERE table_name='{table}'; END""")
             c.execute(
                 """INSERT OR IGNORE INTO schema_metadata VALUES(?,?,?,?,?)""",
                 (MICROSTRUCTURE_SCHEMA_VERSION, MICROSTRUCTURE_SOURCE_VERSION,
                  MICROSTRUCTURE_FEATURE_VERSION, MICROSTRUCTURE_REPORT_VERSION, now_ms()),
             )
         self.seed_source_audit()
+
+    @staticmethod
+    def _counted_rows(c: sqlite3.Connection, table: str) -> int:
+        return int(c.execute(
+            "SELECT row_count FROM table_row_counts WHERE table_name=?", (table,)
+        ).fetchone()[0])
 
     def seed_source_audit(self) -> None:
         rows = [
@@ -277,12 +305,12 @@ class MicrostructureStore:
             rows.append((*values, trade_id or None, side, price, size, float(contract_value),
                          notional, provenance_table))
         with self.connect() as c:
-            before = c.total_changes
+            before = self._counted_rows(c, "trade_flow_observations")
             c.executemany(
                 """INSERT OR IGNORE INTO trade_flow_observations VALUES(
                     ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 rows)
-            return c.total_changes - before
+            return self._counted_rows(c, "trade_flow_observations") - before
 
     def insert_oi(
         self, instrument: str, timestamp_ms: int, *,
@@ -327,10 +355,10 @@ class MicrostructureStore:
                                            source_identity, key)
             rows.append((*values, open_, high, low, close))
         with self.connect() as c:
-            before = c.total_changes
+            before = self._counted_rows(c, table)
             c.executemany(
                 f"INSERT OR IGNORE INTO {table} VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)", rows)
-            return c.total_changes - before
+            return self._counted_rows(c, table) - before
 
     def insert_funding(
         self, instrument: str, payload: dict[str, Any], *, settled: bool
@@ -586,13 +614,14 @@ class MicrostructureStore:
         with self.connect() as c:
             for table in ("trade_flow_observations", "oi_observations",
                           "mark_price_observations", "index_price_observations"):
-                before = c.total_changes
+                before = self._counted_rows(c, table)
                 c.execute(f"DELETE FROM {table} WHERE source_ts_ms<?", (cutoff,))
-                result[table] = c.total_changes - before
-            before = c.total_changes
+                result[table] = before - self._counted_rows(c, table)
+            before = self._counted_rows(c, "liquidation_observations")
             c.execute("DELETE FROM liquidation_observations WHERE source_ts_ms<?",
                       (liquidation_cutoff,))
-            result["liquidation_observations"] = c.total_changes - before
+            result["liquidation_observations"] = (
+                before - self._counted_rows(c, "liquidation_observations"))
         return result
 
     def coverage(self) -> dict[str, Any]:
@@ -610,6 +639,29 @@ class MicrostructureStore:
                                MAX(source_ts_ms) latest_ms FROM {table} GROUP BY instrument"""
                 ).fetchall()
                 result[lane] = [dict(row) for row in rows]
+        return result
+
+    def _health_coverage(self) -> dict[str, Any]:
+        tables = {
+            "trades": "trade_flow_observations", "oi": "oi_observations",
+            "funding_settled": "funding_settled", "funding_predicted": "funding_predicted",
+            "mark": "mark_price_observations", "index": "index_price_observations",
+            "liquidations": "liquidation_observations",
+        }
+        result: dict[str, list[dict[str, Any]]] = {}
+        with self.connect(readonly=True) as c:
+            for lane, table in tables.items():
+                instruments = ([item.removesuffix("-SWAP") for item in INSTRUMENTS]
+                               if lane == "index" else list(INSTRUMENTS))
+                result[lane] = []
+                for instrument in instruments:
+                    row = c.execute(
+                        f"""SELECT MIN(source_ts_ms),MAX(source_ts_ms)
+                            FROM {table} WHERE instrument=?""", (instrument,)).fetchone()
+                    if row[1] is not None:
+                        result[lane].append({
+                            "instrument": instrument, "earliest_ms": int(row[0]),
+                            "latest_ms": int(row[1])})
         return result
 
     def sample_status(self, coverage: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -651,20 +703,20 @@ class MicrostructureStore:
     def health(self) -> dict[str, Any]:
         if not self.path.exists():
             self.initialize()
-        coverage = self.coverage()
+        coverage = self._health_coverage()
         with self.connect(readonly=True) as c:
             health = [dict(row) for row in c.execute(
                 "SELECT * FROM collector_health ORDER BY component")]
             gap_count = int(c.execute(
                 "SELECT COUNT(*) FROM collection_gaps WHERE resolved_at_ms IS NULL").fetchone()[0])
-            raw_rows = sum(int(c.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
-                           for table in ("trade_flow_observations", "oi_observations",
-                                         "mark_price_observations", "index_price_observations",
-                                         "funding_settled", "funding_predicted",
-                                         "liquidation_observations"))
-            aggregate_rows = sum(int(c.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0])
-                                 for table in ("cvd_aggregates", "oi_aggregates",
-                                               "basis_aggregates"))
+            counts = {row["table_name"]: int(row["row_count"]) for row in c.execute(
+                "SELECT table_name,row_count FROM table_row_counts")}
+            raw_rows = sum(counts.get(table, 0) for table in (
+                "trade_flow_observations", "oi_observations",
+                "mark_price_observations", "index_price_observations",
+                "funding_settled", "funding_predicted", "liquidation_observations"))
+            aggregate_rows = sum(counts.get(table, 0) for table in (
+                "cvd_aggregates", "oi_aggregates", "basis_aggregates"))
             aggregation = c.execute(
                 "SELECT last_success_ms FROM collector_health WHERE component='aggregation'"
             ).fetchone()
@@ -725,11 +777,14 @@ class MicrostructureMigration:
                             values.append((*base, None, side, 1.0, float(amount), 1.0,
                                            float(amount), "flow_trade_buckets"))
                     with self.destination.connect() as c:
-                        before = c.total_changes
+                        before = self.destination._counted_rows(
+                            c, "trade_flow_observations")
                         c.executemany(
                             """INSERT OR IGNORE INTO trade_flow_observations VALUES(
                                ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", values)
-                        result["trade_flow_observations"] += c.total_changes - before
+                        result["trade_flow_observations"] += (
+                            self.destination._counted_rows(
+                                c, "trade_flow_observations") - before)
             if "oi_snapshots" in tables:
                 cursor = source.execute(
                     "SELECT instrument,ts,oi,source FROM oi_snapshots ORDER BY instrument,ts")
@@ -745,11 +800,12 @@ class MicrostructureMigration:
                             identity("oi", f"migrated {row['source']}", instrument, source_id))
                         values.append((*base, None, None, float(row["oi"]), "oi_snapshots"))
                     with self.destination.connect() as c:
-                        before = c.total_changes
+                        before = self.destination._counted_rows(c, "oi_observations")
                         c.executemany(
                             "INSERT OR IGNORE INTO oi_observations VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
                             values)
-                        result["oi_observations"] += c.total_changes - before
+                        result["oi_observations"] += (
+                            self.destination._counted_rows(c, "oi_observations") - before)
             # Genuine legacy OI before native snapshots; no CVD snapshot migration.
             if "flow_snapshots" in tables:
                 columns = {row[1] for row in source.execute("PRAGMA table_info(flow_snapshots)")}
@@ -774,11 +830,12 @@ class MicrostructureMigration:
                                 source_id, identity("oi", source_name, instrument, source_id))
                             values.append((*base, None, None, float(row["oi"]), "flow_snapshots"))
                         with self.destination.connect() as c:
-                            before = c.total_changes
+                            before = self.destination._counted_rows(c, "oi_observations")
                             c.executemany(
                                 "INSERT OR IGNORE INTO oi_observations VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
                                 values)
-                            result["oi_observations"] += c.total_changes - before
+                            result["oi_observations"] += (
+                                self.destination._counted_rows(c, "oi_observations") - before)
             if "flow_history_aggregates" in tables:
                 self._migrate_legacy_aggregates(source, result)
             self.destination.aggregate_all()
@@ -806,7 +863,7 @@ class MicrostructureMigration:
                 instrument = self._swap(row["instrument"])
                 if row["series"] == "cvd" and row["delta"] is not None:
                     # Preserve durable legacy aggregate with explicit provenance.
-                    before = destination.total_changes
+                    before = self.destination._counted_rows(destination, "cvd_aggregates")
                     delta = float(row["delta"])
                     destination.execute(
                         """INSERT OR IGNORE INTO cvd_aggregates VALUES(
@@ -815,9 +872,10 @@ class MicrostructureMigration:
                          max(delta, 0), max(-delta, 0), delta, delta,
                          int(row["observation_count"]), int(row["first_ts"]) * 1000,
                          int(row["last_ts"]) * 1000, 0, MICROSTRUCTURE_SOURCE_VERSION))
-                    result["cvd_aggregates"] += destination.total_changes - before
+                    result["cvd_aggregates"] += (
+                        self.destination._counted_rows(destination, "cvd_aggregates") - before)
                 elif row["series"] == "oi" and row["value_last"] is not None:
-                    before = destination.total_changes
+                    before = self.destination._counted_rows(destination, "oi_aggregates")
                     first = float(row["value_last"])
                     destination.execute(
                         """INSERT OR IGNORE INTO oi_aggregates VALUES(
@@ -827,7 +885,8 @@ class MicrostructureMigration:
                          0.0, 0.0, int(row["observation_count"]),
                          int(row["first_ts"]) * 1000, int(row["last_ts"]) * 1000,
                          0, MICROSTRUCTURE_SOURCE_VERSION))
-                    result["oi_aggregates"] += destination.total_changes - before
+                    result["oi_aggregates"] += (
+                        self.destination._counted_rows(destination, "oi_aggregates") - before)
 
 
 def _zscore(values: list[float]) -> float | None:

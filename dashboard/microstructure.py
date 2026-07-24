@@ -1055,7 +1055,7 @@ class MicrostructureStore:
         self._eligibility_cache = (time.monotonic(), results)
         return results
 
-    def health(self) -> dict[str, Any]:
+    def health(self, *, include_eligibility: bool = True) -> dict[str, Any]:
         if not self.path.exists():
             self.initialize()
         coverage = self._health_coverage()
@@ -1078,7 +1078,7 @@ class MicrostructureStore:
         latest = {lane: {row["instrument"]: row["latest_ms"] for row in rows}
                   for lane, rows in coverage.items()}
         sample = self.sample_status(coverage)
-        return {
+        result = {
             "service_status": "RUNNING" if any(x["status"] == "LIVE" for x in health) else "INITIALIZED",
             "database_schema_version": MICROSTRUCTURE_SCHEMA_VERSION,
             "source_version": MICROSTRUCTURE_SOURCE_VERSION,
@@ -1093,8 +1093,10 @@ class MicrostructureStore:
             "database_size_bytes": self.path.stat().st_size if self.path.exists() else 0,
             "last_aggregation_timestamp_ms": aggregation[0] if aggregation else None,
             **sample,
-            "per_feature_eligibility": self.per_feature_eligibility(),
         }
+        if include_eligibility:
+            result["per_feature_eligibility"] = self.per_feature_eligibility()
+        return result
 
 
 class MicrostructureMigration:

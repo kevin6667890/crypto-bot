@@ -1125,6 +1125,15 @@ class MicrostructureStore:
             result["per_feature_eligibility"] = self.per_feature_eligibility()
         return result
 
+    def liveness(self) -> dict[str, Any]:
+        """Return constant-time process health without scanning historical rows."""
+        return {
+            "service_status": "RUNNING",
+            "database_schema_version": MICROSTRUCTURE_SCHEMA_VERSION,
+            "database_exists": self.path.exists(),
+            "database_size_bytes": self.path.stat().st_size if self.path.exists() else 0,
+        }
+
 
 class MicrostructureMigration:
     """Copies only recognized genuine observations; source DB is read-only."""

@@ -349,9 +349,7 @@ def start_health_server(store: MicrostructureStore) -> ThreadingHTTPServer:
             if self.path not in {"/health", "/api/research/microstructure/health"}:
                 self.send_error(HTTPStatus.NOT_FOUND)
                 return
-            # Container liveness must remain constant-time even when research
-            # eligibility scans a large historical dataset.
-            body = json.dumps(store.health(include_eligibility=False)).encode()
+            body = json.dumps(store.liveness()).encode()
             self.send_response(HTTPStatus.OK)
             self.send_header("Content-Type", "application/json")
             self.send_header("Cache-Control", "no-store")

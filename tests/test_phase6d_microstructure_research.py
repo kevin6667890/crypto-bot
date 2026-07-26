@@ -138,6 +138,16 @@ def test_collector_health_can_skip_expensive_research_eligibility(
     assert "per_feature_eligibility" not in health
 
 
+def test_collector_liveness_does_not_scan_historical_coverage(
+        store: MicrostructureStore, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        store, "_health_coverage",
+        lambda: (_ for _ in ()).throw(AssertionError("historical scan")))
+    health = store.liveness()
+    assert health["service_status"] == "RUNNING"
+    assert health["database_exists"] is True
+
+
 def test_event_study_uses_every_genuine_overlapping_mark(
         store: MicrostructureStore) -> None:
     study = SourceSpecificEventStudy(store)

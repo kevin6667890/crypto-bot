@@ -101,6 +101,9 @@ class ResearchRepository:
                     FOREIGN KEY(signal_id) REFERENCES decision_signals(signal_id),
                     FOREIGN KEY(run_id) REFERENCES backtest_runs(id) ON DELETE CASCADE
                 );
+                CREATE TABLE IF NOT EXISTS repository_migrations (
+                    migration_key TEXT PRIMARY KEY, completed_at TEXT NOT NULL
+                );
                 CREATE TABLE IF NOT EXISTS portfolio_backtest_runs (
                     id INTEGER PRIMARY KEY AUTOINCREMENT, job_id INTEGER, status TEXT NOT NULL, parameters TEXT NOT NULL,
                     result TEXT, error TEXT, created_at TEXT NOT NULL, completed_at TEXT
@@ -228,8 +231,34 @@ class ResearchRepository:
             self._ensure_column(connection, "historical_candles", "source_instrument", "TEXT")
             self._ensure_column(connection, "historical_candles", "normalized_instrument", "TEXT")
             self._ensure_column(connection, "historical_candles", "source_version", "TEXT")
-            connection.execute("""INSERT OR IGNORE INTO decision_signal_runs(signal_id,run_id,source,decision_payload,gate_payload,regime,regime_version)
-                SELECT signal_id,run_id,source,decision_payload,gate_payload,regime,regime_version FROM decision_signals WHERE run_id IS NOT NULL""")
+            migration_key = "decision-signal-runs-v1"
+            migrated = connection.execute(
+                "SELECT 1 FROM repository_migrations WHERE migration_key=?",
+                (migration_key,),
+            ).fetchone()
+            if not migrated:
+                # This legacy projection was originally rebuilt on every API
+                # start.  On a multi-gigabyte database that re-read every JSON
+                # decision payload before the HTTP listener could bind.  The
+                # original INSERT was transactional, so an existing projection
+                # proves that an earlier run committed; otherwise populate it
+                # once and persist a durable completion marker.
+                projection_exists = connection.execute(
+                    "SELECT 1 FROM decision_signal_runs LIMIT 1"
+                ).fetchone()
+                if not projection_exists:
+                    connection.execute(
+                        """INSERT OR IGNORE INTO decision_signal_runs(
+                               signal_id,run_id,source,decision_payload,gate_payload,
+                               regime,regime_version)
+                           SELECT signal_id,run_id,source,decision_payload,gate_payload,
+                                  regime,regime_version
+                           FROM decision_signals WHERE run_id IS NOT NULL"""
+                    )
+                connection.execute(
+                    "INSERT INTO repository_migrations VALUES(?,?)",
+                    (migration_key, utc_now()),
+                )
             connection.execute("UPDATE backtest_runs SET status='FAILED',progress=100,progress_message='Interrupted by service restart',message_code='job.interrupted.restart',message_params='{}',error='Backtest worker was interrupted by a service restart',updated_at=? WHERE status IN ('QUEUED','RUNNING')", (utc_now(),))
             now = utc_now()
             connection.execute("UPDATE optimization_runs SET status='INTERRUPTED',error='Service restarted while optimization was running',updated_at=?,completed_at=? WHERE status='RUNNING'", (now, now))

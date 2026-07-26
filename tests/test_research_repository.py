@@ -1,5 +1,6 @@
 import sqlite3
 import json
+from contextlib import contextmanager
 from urllib.error import HTTPError
 
 from dashboard import okx_history
@@ -50,6 +51,55 @@ def test_reused_decision_signal_remains_linked_to_each_backtest_run(tmp_path):
     assert first["signal_id"] == second["signal_id"] == "same-canonical-signal"
     assert first["score"] == 50 and first["gate_results"] == []
     assert second["score"] == 75 and second["gate_results"][0]["key"] == "rsi_range"
+
+
+def test_completed_decision_projection_is_not_rescanned_on_startup(tmp_path):
+    database = tmp_path / "startup.db"
+    repository = ResearchRepository(database)
+    run_id = repository.create_run({
+        "instrument": "BTC-USDT", "timeframe": "15m",
+        "start_date": "2026-01-01", "end_date": "2026-01-02", "parameters": {},
+    })
+    decision = {
+        "signal_id": "already-projected", "instrument": "BTC-USDT",
+        "execution_timeframe": "15m", "candle_close_ts": 1767225600000,
+        "strategy_version": "canonical-v4", "config_hash": "abc",
+        "action": "WAIT", "bias": "LONG", "score": 50, "gate_results": [],
+    }
+    repository.save_result(
+        run_id,
+        {"trades": [], "equity": [], "decisions": [decision],
+         "metrics": {}, "data_quality": {}},
+    )
+    with repository.connect() as connection:
+        connection.execute(
+            "DELETE FROM repository_migrations WHERE migration_key=?",
+            ("decision-signal-runs-v1",),
+        )
+
+    statements = []
+
+    class TracedRepository(ResearchRepository):
+        @contextmanager
+        def connect(self):
+            with super().connect() as connection:
+                connection.set_trace_callback(statements.append)
+                yield connection
+
+    TracedRepository(database)
+    normalized = [" ".join(statement.lower().split()) for statement in statements]
+    assert not any(
+        statement.startswith("insert or ignore into decision_signal_runs")
+        for statement in normalized
+    )
+    with sqlite3.connect(database) as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM decision_signal_runs"
+        ).fetchone()[0] == 1
+        assert connection.execute(
+            "SELECT COUNT(*) FROM repository_migrations WHERE migration_key=?",
+            ("decision-signal-runs-v1",),
+        ).fetchone()[0] == 1
 
 
 def test_okx_rate_limit_is_retried(monkeypatch):

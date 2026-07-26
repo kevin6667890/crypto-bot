@@ -52,6 +52,7 @@ class ValidationRepository:
             CREATE TABLE IF NOT EXISTS robustness_runs(id INTEGER PRIMARY KEY AUTOINCREMENT,job_id INTEGER,status TEXT NOT NULL,input_run_id INTEGER,strategy_version TEXT,config_hash TEXT,random_seed INTEGER NOT NULL,request TEXT NOT NULL,result TEXT,error TEXT,created_at TEXT NOT NULL,completed_at TEXT);
             CREATE TABLE IF NOT EXISTS robustness_results(id INTEGER PRIMARY KEY AUTOINCREMENT,run_id INTEGER NOT NULL,simulation_type TEXT NOT NULL,payload TEXT NOT NULL,FOREIGN KEY(run_id) REFERENCES robustness_runs(id));
             CREATE TABLE IF NOT EXISTS decision_signal_runs(signal_id TEXT NOT NULL,run_id INTEGER NOT NULL,source TEXT NOT NULL DEFAULT 'BACKTEST',PRIMARY KEY(signal_id,run_id),FOREIGN KEY(signal_id) REFERENCES decision_signals(signal_id),FOREIGN KEY(run_id) REFERENCES backtest_runs(id) ON DELETE CASCADE);
+            CREATE TABLE IF NOT EXISTS repository_migrations(migration_key TEXT PRIMARY KEY,completed_at TEXT NOT NULL);
             CREATE TABLE IF NOT EXISTS shadow_strategies(id INTEGER PRIMARY KEY AUTOINCREMENT,shadow_strategy_id TEXT NOT NULL UNIQUE,name TEXT NOT NULL,strategy_version TEXT NOT NULL,config_hash TEXT NOT NULL,parameters TEXT NOT NULL,instruments TEXT NOT NULL,enabled INTEGER NOT NULL DEFAULT 0,started_at TEXT,stopped_at TEXT,status TEXT NOT NULL,virtual_initial_capital REAL NOT NULL,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,archived_at TEXT);
             CREATE UNIQUE INDEX IF NOT EXISTS idx_shadow_active_unique ON shadow_strategies(config_hash,instruments) WHERE status IN ('RUNNING','PAUSED');
             CREATE TABLE IF NOT EXISTS shadow_strategy_states(shadow_strategy_id TEXT PRIMARY KEY,current_equity REAL NOT NULL,cash REAL NOT NULL,open_positions TEXT NOT NULL DEFAULT '{}',closed_trades INTEGER NOT NULL DEFAULT 0,total_r REAL NOT NULL DEFAULT 0,fees REAL NOT NULL DEFAULT 0,peak_equity REAL NOT NULL,drawdown REAL NOT NULL DEFAULT 0,last_candle_ts INTEGER,updated_at TEXT NOT NULL,FOREIGN KEY(shadow_strategy_id) REFERENCES shadow_strategies(shadow_strategy_id));
@@ -76,9 +77,31 @@ class ValidationRepository:
                 self._ensure_column(c, "decision_signals", col, decl)
             for col, decl in (("decision_payload", "TEXT"), ("gate_payload", "TEXT"), ("regime", "TEXT"), ("regime_version", "TEXT")):
                 self._ensure_column(c, "decision_signal_runs", col, decl)
-            if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='decision_signals'").fetchone():
-                c.execute("""INSERT OR IGNORE INTO decision_signal_runs(signal_id,run_id,source,decision_payload,gate_payload,regime,regime_version)
-                    SELECT signal_id,run_id,source,decision_payload,gate_payload,regime,regime_version FROM decision_signals WHERE run_id IS NOT NULL""")
+            migration_key = "validation-decision-signal-runs-v1"
+            migrated = c.execute(
+                "SELECT 1 FROM repository_migrations WHERE migration_key=?",
+                (migration_key,),
+            ).fetchone()
+            if not migrated:
+                source_exists = c.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='decision_signals'"
+                ).fetchone()
+                projection_exists = c.execute(
+                    "SELECT 1 FROM decision_signal_runs LIMIT 1"
+                ).fetchone()
+                if source_exists and not projection_exists:
+                    c.execute(
+                        """INSERT OR IGNORE INTO decision_signal_runs(
+                               signal_id,run_id,source,decision_payload,gate_payload,
+                               regime,regime_version)
+                           SELECT signal_id,run_id,source,decision_payload,gate_payload,
+                                  regime,regime_version
+                           FROM decision_signals WHERE run_id IS NOT NULL"""
+                    )
+                c.execute(
+                    "INSERT INTO repository_migrations VALUES(?,?)",
+                    (migration_key, utc_now()),
+                )
             if c.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='strategy_configs'").fetchone():
                 rows = c.execute("SELECT id,name,parameters FROM strategy_configs").fetchall()
                 for row in rows:

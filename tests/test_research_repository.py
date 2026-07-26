@@ -102,6 +102,45 @@ def test_completed_decision_projection_is_not_rescanned_on_startup(tmp_path):
         ).fetchone()[0] == 1
 
 
+def test_validation_startup_does_not_rescan_completed_projection(tmp_path):
+    database = tmp_path / "validation-startup.db"
+    repository = ResearchRepository(database)
+    run_id = repository.create_run({
+        "instrument": "BTC-USDT", "timeframe": "15m",
+        "start_date": "2026-01-01", "end_date": "2026-01-02", "parameters": {},
+    })
+    repository.save_result(run_id, {
+        "trades": [], "equity": [], "metrics": {}, "data_quality": {},
+        "decisions": [{
+            "signal_id": "validation-projected", "instrument": "BTC-USDT",
+            "execution_timeframe": "15m", "candle_close_ts": 1767225600000,
+            "strategy_version": "canonical-v4", "config_hash": "abc",
+            "action": "WAIT", "bias": "LONG", "score": 50, "gate_results": [],
+        }],
+    })
+    with repository.connect() as connection:
+        connection.execute(
+            "DELETE FROM repository_migrations WHERE migration_key=?",
+            ("validation-decision-signal-runs-v1",),
+        )
+
+    statements = []
+
+    class TracedValidationRepository(ValidationRepository):
+        @contextmanager
+        def connect(self):
+            with super().connect() as connection:
+                connection.set_trace_callback(statements.append)
+                yield connection
+
+    TracedValidationRepository(database)
+    normalized = [" ".join(statement.lower().split()) for statement in statements]
+    assert not any(
+        statement.startswith("insert or ignore into decision_signal_runs")
+        for statement in normalized
+    )
+
+
 def test_okx_rate_limit_is_retried(monkeypatch):
     calls = 0
 

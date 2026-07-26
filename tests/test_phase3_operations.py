@@ -79,3 +79,12 @@ def test_database_integrity_check_does_not_block_service_construction(tmp_path:P
     assert health.integrity_status=="deferred" and not checked.is_set()
     assert health.start_integrity_check(0) is True
     assert checked.wait(1)
+
+
+def test_startup_integrity_check_is_opt_in(monkeypatch):
+    from dashboard.paper_api import startup_integrity_check_enabled
+
+    monkeypatch.delenv("PAPER_API_STARTUP_INTEGRITY_CHECK", raising=False)
+    assert startup_integrity_check_enabled() is False
+    monkeypatch.setenv("PAPER_API_STARTUP_INTEGRITY_CHECK", "true")
+    assert startup_integrity_check_enabled() is True

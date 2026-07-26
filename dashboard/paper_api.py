@@ -1429,6 +1429,15 @@ class Handler(BaseHTTPRequestHandler):
         return
 
 
+def startup_integrity_check_enabled() -> bool:
+    return os.getenv("PAPER_API_STARTUP_INTEGRITY_CHECK", "").strip().lower() in {
+        "1",
+        "true",
+        "yes",
+        "on",
+    }
+
+
 def run() -> None:
     def scheduler() -> None:
         SERVICE.scheduler_running=True
@@ -1439,7 +1448,8 @@ def run() -> None:
     threading.Thread(target=scheduler, daemon=True).start()
     host = os.getenv("PAPER_API_HOST", "127.0.0.1")
     server = ThreadingHTTPServer((host, int(os.getenv("PAPER_API_PORT", "8765"))), Handler)
-    HEALTH.start_integrity_check()
+    if startup_integrity_check_enabled():
+        HEALTH.start_integrity_check()
     try:
         server.serve_forever()
     except KeyboardInterrupt:

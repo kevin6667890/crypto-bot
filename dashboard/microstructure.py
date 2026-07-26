@@ -13,6 +13,7 @@ import math
 import os
 import sqlite3
 import statistics
+import threading
 import time
 from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
@@ -100,6 +101,9 @@ class MicrostructureStore:
     def __init__(self, path: Path | str | None = None) -> None:
         self.path = Path(path or default_database_path())
         self._eligibility_cache: tuple[float, dict[str, Any]] | None = None
+        self._eligibility_lock = threading.Lock()
+        self._coverage_cache: tuple[float, dict[str, Any]] | None = None
+        self._coverage_lock = threading.Lock()
 
     @contextmanager
     def connect(self, *, readonly: bool = False) -> Iterator[sqlite3.Connection]:
@@ -714,6 +718,18 @@ class MicrostructureStore:
         return result
 
     def coverage(self) -> dict[str, Any]:
+        if (self._coverage_cache is not None
+                and time.monotonic() - self._coverage_cache[0] < 300):
+            return self._coverage_cache[1]
+        with self._coverage_lock:
+            if (self._coverage_cache is not None
+                    and time.monotonic() - self._coverage_cache[0] < 300):
+                return self._coverage_cache[1]
+            result = self._calculate_coverage()
+            self._coverage_cache = (time.monotonic(), result)
+            return result
+
+    def _calculate_coverage(self) -> dict[str, Any]:
         tables = {
             "trades": "trade_flow_observations", "oi": "oi_observations",
             "funding_settled": "funding_settled", "funding_predicted": "funding_predicted",
@@ -800,8 +816,19 @@ class MicrostructureStore:
         from bisect import bisect_left, bisect_right
 
         if (self._eligibility_cache is not None
-                and time.monotonic() - self._eligibility_cache[0] < 30):
+                and time.monotonic() - self._eligibility_cache[0] < 300):
             return self._eligibility_cache[1]
+        with self._eligibility_lock:
+            if (self._eligibility_cache is not None
+                    and time.monotonic() - self._eligibility_cache[0] < 300):
+                return self._eligibility_cache[1]
+            result = self._calculate_feature_eligibility()
+            self._eligibility_cache = (time.monotonic(), result)
+            return result
+
+    def _calculate_feature_eligibility(self) -> dict[str, Any]:
+        """Compute the uncached eligibility snapshot."""
+        from bisect import bisect_left, bisect_right
 
         feature_groups = {
             "settled_funding": {
@@ -1053,7 +1080,6 @@ class MicrostructureStore:
                     "status": source_status,
                     "next_eligibility_date": next_date(source_start, source_days),
                 }
-        self._eligibility_cache = (time.monotonic(), results)
         return results
 
     def health(self, *, include_eligibility: bool = True) -> dict[str, Any]:

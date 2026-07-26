@@ -534,9 +534,17 @@ class PaperService:
                 rows = c.execute("SELECT bucket_ms as ts, last_value as val FROM oi_aggregates WHERE instrument=? AND resolution='1H' ORDER BY bucket_ms DESC LIMIT ?", (instrument, limit)).fetchall()
             else:
                 rows = []
-        for row in reversed(rows):
-            data.append({"time": int(row["ts"]) // 1000, "value": float(row["val"])})
-        return {"series": series, "instrument": instrument, "data": data}
+        points = [
+            {"time": int(row["ts"]), "value": float(row["val"])}
+            for row in reversed(rows)
+        ]
+        # ``points`` is the canonical millisecond contract used by the
+        # microstructure UI. Keep the legacy seconds-based ``data`` field for
+        # callers deployed before Phase 6D correction.
+        data = [{"time": point["time"] // 1000, "value": point["value"]}
+                for point in points]
+        return {"series": series, "instrument": instrument,
+                "points": points, "data": data}
 
     def _ingest_flow_trade(self, instrument: str, payload: dict[str, Any]) -> None:
         try:
@@ -1121,7 +1129,7 @@ class Handler(BaseHTTPRequestHandler):
             self._send(SERVICE.vpvr_profile(instrument, query.get("interval", ["15m"])[0], bins, query_float("price_low"), query_float("price_high")))
         elif parsed.path == "/api/health": self._send(HEALTH.payload(False))
         elif parsed.path == "/api/research/microstructure/health":
-            self._send(MICROSTRUCTURE.health())
+            self._send(MICROSTRUCTURE.health(include_eligibility=False))
         elif parsed.path == "/api/research/microstructure/coverage":
             self._send(MICROSTRUCTURE.coverage())
         elif parsed.path == "/api/research/microstructure/eligibility":

@@ -126,32 +126,39 @@ export default function MicrostructureResearch() {
   const [oiData, setOiData] = useState<ChartPoint[]>([]);
 
   const fetchAll = async () => {
-    try {
-      const hRes = await fetch("/api/research/microstructure/health");
-      if (hRes.ok) setHealth(await hRes.json());
-
-      const cRes = await fetch("/api/research/microstructure/coverage");
-      if (cRes.ok) setCoverage(await cRes.json());
-
-      const eRes = await fetch("/api/research/microstructure/eligibility");
-      if (eRes.ok) setEligibility(await eRes.json());
-
-      const instrument = "BTC-USDT-SWAP";
-      
-      const fRes = await fetch(`/api/research/microstructure/charts/funding?instrument=${instrument}&limit=500`);
-      if (fRes.ok) { const d = await fRes.json(); setFundingData(d.points || []); }
-
-      const bRes = await fetch(`/api/research/microstructure/charts/basis?instrument=${instrument}&limit=500`);
-      if (bRes.ok) { const d = await bRes.json(); setBasisData(d.points || []); }
-
-      const cvRes = await fetch(`/api/research/microstructure/charts/cvd?instrument=${instrument}&limit=500`);
-      if (cvRes.ok) { const d = await cvRes.json(); setCvdData(d.points || []); }
-
-      const oRes = await fetch(`/api/research/microstructure/charts/oi?instrument=${instrument}&limit=500`);
-      if (oRes.ok) { const d = await oRes.json(); setOiData(d.points || []); }
-    } catch (err) {
-      console.error("Microstructure API error", err);
-    }
+    const load = async <T,>(
+      url: string,
+      apply: (payload: T) => void,
+    ) => {
+      try {
+        const response = await fetch(url);
+        if (response.ok) apply(await response.json());
+      } catch (err) {
+        console.error(`Microstructure API error: ${url}`, err);
+      }
+    };
+    const instrument = "BTC-USDT-SWAP";
+    const chart = (apply: (points: ChartPoint[]) => void) =>
+      (payload: ChartResponse & { data?: ChartPoint[] }) => {
+        if (payload.points) {
+          apply(payload.points);
+          return;
+        }
+        // Compatibility with the original seconds-based API response.
+        apply((payload.data || []).map((point) => ({
+          ...point,
+          time: point.time * 1000,
+        })));
+      };
+    await Promise.all([
+      load<HealthResponse>("/api/research/microstructure/health", setHealth),
+      load<CoverageResponse>("/api/research/microstructure/coverage", setCoverage),
+      load<EligibilityResponse>("/api/research/microstructure/eligibility", setEligibility),
+      load<ChartResponse>(`/api/research/microstructure/charts/funding?instrument=${instrument}&limit=500`, chart(setFundingData)),
+      load<ChartResponse>(`/api/research/microstructure/charts/basis?instrument=${instrument}&limit=500`, chart(setBasisData)),
+      load<ChartResponse>(`/api/research/microstructure/charts/cvd?instrument=${instrument}&limit=500`, chart(setCvdData)),
+      load<ChartResponse>(`/api/research/microstructure/charts/oi?instrument=${instrument}&limit=500`, chart(setOiData)),
+    ]);
   };
 
   useEffect(() => {

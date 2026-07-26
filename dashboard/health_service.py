@@ -1,6 +1,6 @@
 """Sanitized operational health and structured rotating logging."""
 from __future__ import annotations
-import json, logging, os, shutil, sqlite3, subprocess, time
+import json, logging, os, shutil, sqlite3, subprocess, threading, time
 from datetime import datetime, timezone
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -19,9 +19,17 @@ def log_event(logger:logging.Logger,level:str,component:str,event:str,**fields:A
 
 class HealthService:
     def __init__(self,db_path:Path,paper:Any,jobs:Any,alerts:Any,root:Path):
-        self.db_path=Path(db_path); self.paper=paper; self.jobs=jobs; self.alerts=alerts; self.root=root; self.started=time.monotonic(); self.integrity_status="unknown"; self.integrity_at=None
-        try:self.check_integrity()
-        except Exception:self.integrity_status="error"
+        self.db_path=Path(db_path); self.paper=paper; self.jobs=jobs; self.alerts=alerts; self.root=root; self.started=time.monotonic(); self.integrity_status="deferred"; self.integrity_at=None
+        self._integrity_thread:threading.Thread|None=None
+    def start_integrity_check(self,delay_seconds:float=30)->bool:
+        if self._integrity_thread and self._integrity_thread.is_alive():return False
+        def worker()->None:
+            if delay_seconds>0:time.sleep(delay_seconds)
+            self.integrity_status="checking"
+            try:self.check_integrity()
+            except Exception:self.integrity_status="error"
+        self._integrity_thread=threading.Thread(target=worker,daemon=True,name="database-integrity-check")
+        self._integrity_thread.start();return True
     def check_integrity(self)->str:
         with sqlite3.connect(self.db_path,timeout=10) as c:self.integrity_status=c.execute("PRAGMA integrity_check").fetchone()[0]
         self.integrity_at=datetime.now(timezone.utc).isoformat(); return self.integrity_status

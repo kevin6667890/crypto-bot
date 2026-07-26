@@ -63,3 +63,19 @@ def test_health_is_sanitized_and_deepseek_is_boolean(tmp_path:Path,monkeypatch):
     rendered=str(payload)
     assert payload["deepseek_configured"] is True
     assert "super-secret-value" not in rendered and str(db) not in rendered and ".env" not in rendered
+
+
+def test_database_integrity_check_does_not_block_service_construction(tmp_path:Path,monkeypatch):
+    db=tmp_path/"paper.db"
+    with sqlite3.connect(db) as c:c.execute("create table sample(id integer)")
+    checked=threading.Event()
+    monkeypatch.setattr(HealthService,"check_integrity",lambda self: checked.set() or "ok")
+    class Paper:
+        last_analysis={}
+        scheduler_running=False
+    class Jobs:
+        def list(self,_limit):return []
+    health=HealthService(db,Paper(),Jobs(),AlertService(db),tmp_path)
+    assert health.integrity_status=="deferred" and not checked.is_set()
+    assert health.start_integrity_check(0) is True
+    assert checked.wait(1)

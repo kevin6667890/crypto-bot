@@ -1431,6 +1431,7 @@ def run() -> None:
     threading.Thread(target=scheduler, daemon=True).start()
     host = os.getenv("PAPER_API_HOST", "127.0.0.1")
     server = ThreadingHTTPServer((host, int(os.getenv("PAPER_API_PORT", "8765"))), Handler)
+    HEALTH.start_integrity_check()
     try:
         server.serve_forever()
     except KeyboardInterrupt:

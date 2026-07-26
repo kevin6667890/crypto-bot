@@ -51,7 +51,8 @@ class OfficialBackfill:
     def __init__(self, store: MicrostructureStore, client: PublicOKXClient | None = None) -> None:
         self.store = store
         self.client = client or PublicOKXClient()
-        self.store.initialize()
+        if not self.store.is_initialized():
+            self.store.initialize()
         self.contract_values: dict[str, float] = {}
 
     def contract_value(self, instrument: str) -> float:

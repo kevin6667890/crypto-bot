@@ -253,6 +253,20 @@ class MicrostructureStore:
             )
         self.seed_source_audit()
 
+    def is_initialized(self) -> bool:
+        if not self.path.exists():
+            return False
+        try:
+            with self.connect(readonly=True) as c:
+                row = c.execute(
+                    """SELECT 1 FROM schema_metadata
+                       WHERE schema_version=? LIMIT 1""",
+                    (MICROSTRUCTURE_SCHEMA_VERSION,),
+                ).fetchone()
+            return row is not None
+        except sqlite3.Error:
+            return False
+
     @staticmethod
     def _counted_rows(c: sqlite3.Connection, table: str) -> int:
         return int(c.execute(

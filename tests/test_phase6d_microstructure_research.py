@@ -148,6 +148,14 @@ def test_collector_liveness_does_not_scan_historical_coverage(
     assert health["database_exists"] is True
 
 
+def test_backfill_skips_reinitializing_an_existing_schema(
+        store: MicrostructureStore, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        store, "initialize",
+        lambda: (_ for _ in ()).throw(AssertionError("schema reinitialization")))
+    OfficialBackfill(store, client=object())  # type: ignore[arg-type]
+
+
 def test_event_study_uses_every_genuine_overlapping_mark(
         store: MicrostructureStore) -> None:
     study = SourceSpecificEventStudy(store)

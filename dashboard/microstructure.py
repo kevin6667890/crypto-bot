@@ -1011,12 +1011,12 @@ class MicrostructureStore:
         feature_groups = {
             "settled_funding": {
                 "features": ["funding_level", "funding_change", "funding_zscore"],
-                "sources": [("funding_settled", "source_ts_ms", "state='confirmed'")],
+                "sources": [("funding_settled", "source_ts_ms", "1=1")],
                 "events": ("funding_settled", "funding_time_ms", "state='confirmed'"),
             },
             "predicted_funding": {
                 "features": ["funding_predicted"],
-                "sources": [("funding_predicted", "source_ts_ms", "state='provisional'")],
+                "sources": [("funding_predicted", "source_ts_ms", "1=1")],
                 "events": ("funding_predicted", "source_ts_ms", "state='provisional'"),
             },
             "basis": {
@@ -1026,35 +1026,35 @@ class MicrostructureStore:
             },
             "cvd": {
                 "features": ["cvd_delta", "cvd_rolling", "cvd_slope", "cvd_zscore"],
-                "sources": [("trade_flow_observations", "source_ts_ms", "state='confirmed'")],
+                "sources": [("trade_flow_observations", "source_ts_ms", "1=1")],
                 "events": ("cvd_aggregates", "bucket_ms", "resolution='15m'"),
             },
             "oi": {
                 "features": ["oi_absolute_change", "oi_percentage_change", "oi_zscore",
                              "oi_acceleration"],
-                "sources": [("oi_observations", "source_ts_ms", "state='confirmed'")],
+                "sources": [("oi_observations", "source_ts_ms", "1=1")],
                 "events": ("oi_aggregates", "bucket_ms", "resolution='15m'"),
             },
             "cvd_oi": {
                 "features": ["cvd_oi_interaction"],
                 "sources": [
-                    ("trade_flow_observations", "source_ts_ms", "state='confirmed'"),
-                    ("oi_observations", "source_ts_ms", "state='confirmed'"),
+                    ("trade_flow_observations", "source_ts_ms", "1=1"),
+                    ("oi_observations", "source_ts_ms", "1=1"),
                 ],
                 "events": ("cvd_aggregates", "bucket_ms", "resolution='15m'"),
             },
             "funding_oi": {
                 "features": ["funding_oi_interaction"],
                 "sources": [
-                    ("funding_settled", "source_ts_ms", "state='confirmed'"),
-                    ("oi_observations", "source_ts_ms", "state='confirmed'"),
+                    ("funding_settled", "source_ts_ms", "1=1"),
+                    ("oi_observations", "source_ts_ms", "1=1"),
                 ],
                 "events": ("funding_settled", "funding_time_ms", "state='confirmed'"),
             },
             "liquidations": {
                 "features": ["liquidation"],
                 "sources": [
-                    ("liquidation_observations", "source_ts_ms", "state='confirmed'"),
+                    ("liquidation_observations", "source_ts_ms", "1=1"),
                 ],
                 "events": (
                     "liquidation_observations", "source_ts_ms", "state='confirmed'"),
@@ -1136,15 +1136,19 @@ class MicrostructureStore:
                 for source in definition["sources"]
             }
             for table, timestamp_column, predicate in source_definitions:
-                source_statistics[(table, timestamp_column, predicate)] = {
-                    str(row["instrument"]): (
-                        int(row["earliest"]), int(row["latest"]), int(row["rows"]))
-                    for row in c.execute(
-                        f"""SELECT instrument,MIN({timestamp_column}) earliest,
+                statistics_by_instrument = {}
+                for instrument in INSTRUMENTS:
+                    row = c.execute(
+                        f"""SELECT MIN({timestamp_column}) earliest,
                                    MAX({timestamp_column}) latest,COUNT(*) rows
-                            FROM {table} WHERE {predicate}
-                            GROUP BY instrument""")
-                }
+                            FROM {table}
+                            WHERE instrument=? AND {predicate}""",
+                        (instrument,)).fetchone()
+                    if row["earliest"] is not None:
+                        statistics_by_instrument[instrument] = (
+                            int(row["earliest"]), int(row["latest"]), int(row["rows"]))
+                source_statistics[(table, timestamp_column, predicate)] = \
+                    statistics_by_instrument
 
             marks: dict[str, list[int]] = {}
             mark_counts: dict[str, int] = {}

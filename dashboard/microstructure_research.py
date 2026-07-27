@@ -189,8 +189,10 @@ class SourceSpecificEventStudy:
     ) -> tuple[float, int] | None:
         if not mark_prices:
             return None
-        timestamps = self._mark_timestamp_cache.setdefault(
-            id(mark_prices), list(mark_prices))
+        timestamps = self._mark_timestamp_cache.get(id(mark_prices))
+        if timestamps is None:
+            timestamps = list(mark_prices)
+            self._mark_timestamp_cache[id(mark_prices)] = timestamps
         base_position = bisect_right(timestamps, decision_ms) - 1
         target_ms = decision_ms + horizon_ms
         target_position = bisect_left(timestamps, target_ms)
@@ -208,8 +210,10 @@ class SourceSpecificEventStudy:
         return (mark_prices[forward_ms] - base_price) / base_price, forward_ms
 
     def _regime(self, mark_prices: dict[int, float], decision_ms: int) -> str:
-        timestamps = self._mark_timestamp_cache.setdefault(
-            id(mark_prices), list(mark_prices))
+        timestamps = self._mark_timestamp_cache.get(id(mark_prices))
+        if timestamps is None:
+            timestamps = list(mark_prices)
+            self._mark_timestamp_cache[id(mark_prices)] = timestamps
         current_position = bisect_right(timestamps, decision_ms) - 1
         prior_position = bisect_right(timestamps, decision_ms - 86_400_000) - 1
         if current_position < 0 or prior_position < 0:

@@ -612,33 +612,44 @@ class MicrostructureStore:
                 gaps = c.execute(
                     """SELECT * FROM collection_gaps
                        ORDER BY start_ms,lane,instrument,end_ms""").fetchall()
+                boundary_sources: dict[tuple[str, str, int], str] = {}
+                for lane, (table, timestamp_column) in tables.items():
+                    for instrument in INSTRUMENTS:
+                        timestamps = sorted({
+                            int(value)
+                            for gap in gaps if gap["lane"] == lane
+                            and gap["instrument"] == instrument
+                            for value in (gap["start_ms"], gap["end_ms"])
+                        })
+                        for offset in range(0, len(timestamps), 400):
+                            chunk = timestamps[offset:offset + 400]
+                            if not chunk:
+                                continue
+                            placeholders = ",".join("?" for _ in chunk)
+                            for row in c.execute(
+                                f"""SELECT {timestamp_column},source FROM {table}
+                                    WHERE instrument=?
+                                    AND {timestamp_column} IN ({placeholders})""",
+                                (instrument, *chunk),
+                            ):
+                                boundary_sources[(
+                                    lane, instrument, int(row[0]))] = str(row[1])
                 for gap in gaps:
                     lane = str(gap["lane"])
                     table_definition = tables.get(lane)
                     interior = 0
-                    before_source = after_source = ""
-                    if table_definition:
+                    if table_definition and lane != "oi" and gap["resolved_at_ms"] is None:
                         table, timestamp_column = table_definition
                         interior = int(c.execute(
-                            f"""SELECT COUNT(*) FROM {table}
+                            f"""SELECT EXISTS(SELECT 1 FROM {table}
                                 WHERE instrument=? AND {timestamp_column}>?
-                                AND {timestamp_column}<?""",
+                                AND {timestamp_column}<? LIMIT 1)""",
                             (gap["instrument"], gap["start_ms"], gap["end_ms"]),
                         ).fetchone()[0])
-                        before = c.execute(
-                            f"""SELECT source FROM {table}
-                                WHERE instrument=? AND {timestamp_column}<=?
-                                ORDER BY {timestamp_column} DESC LIMIT 1""",
-                            (gap["instrument"], gap["start_ms"]),
-                        ).fetchone()
-                        after = c.execute(
-                            f"""SELECT source FROM {table}
-                                WHERE instrument=? AND {timestamp_column}>=?
-                                ORDER BY {timestamp_column} LIMIT 1""",
-                            (gap["instrument"], gap["end_ms"]),
-                        ).fetchone()
-                        before_source = str(before[0]) if before else ""
-                        after_source = str(after[0]) if after else ""
+                    before_source = boundary_sources.get(
+                        (lane, str(gap["instrument"]), int(gap["start_ms"])), "")
+                    after_source = boundary_sources.get(
+                        (lane, str(gap["instrument"]), int(gap["end_ms"])), "")
                     duration = int(gap["end_ms"]) - int(gap["start_ms"])
                     classification = self.classify_gap(
                         lane, duration, has_interior=interior > 0,

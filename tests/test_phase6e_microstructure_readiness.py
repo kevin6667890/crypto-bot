@@ -218,6 +218,26 @@ def test_gap_classification_is_deterministic() -> None:
         "RECOVERABLE_BACKFILL_GAP"
 
 
+def test_later_genuine_backfill_resolves_recorded_gap(
+    store: MicrostructureStore,
+) -> None:
+    for timestamp, trade_id in (
+        (NOW, "start"), (NOW + 60_000, "interior"), (NOW + 120_000, "end")):
+        store.insert_trade_batch([(
+            "BTC-USDT-SWAP",
+            {"tradeId": trade_id, "px": "100", "sz": "1", "side": "buy",
+             "ts": str(timestamp)},
+            0.01, "OKX GET /api/v5/market/history-trades", None,
+        )])
+    with store.connect() as connection:
+        connection.execute(
+            """INSERT INTO collection_gaps VALUES(
+               'trades','BTC-USDT-SWAP',?,?,?, ?,NULL)""",
+            (NOW, NOW + 120_000, "source observation gap", NOW))
+    report = store.gap_report(reference_ms=NOW + 120_000, include_items=True)
+    assert report["items"][0]["classification"] == "RESOLVED"
+
+
 def test_expected_sparse_events_are_not_critical_gaps() -> None:
     assert MicrostructureStore.classify_gap(
         "liquidations", 10 * DAY) == "EXPECTED_EVENT_SPARSE"

@@ -14,6 +14,7 @@ from dashboard.factor_statistical_audit import (
     FrozenExperiment,
     FrozenTrial,
     StatisticalAuditLedger,
+    _native_metrics,
     _portfolio_metrics,
     _source_event_ids,
     assign_multiple_testing,
@@ -73,6 +74,19 @@ def test_non_overlapping_label_sampling_is_deterministic() -> None:
     second = deterministic_non_overlapping_indices(timestamps.copy(), 30)
     assert first.tolist() == [0, 3, 5]
     np.testing.assert_array_equal(first, second)
+
+
+def test_insufficient_native_sample_reports_non_overlapping_count() -> None:
+    timestamps = np.arange(26, dtype=np.int64) * 3_600_000
+    scores = np.linspace(-1.0, 1.0, timestamps.size)
+    labels = np.linspace(0.01, 0.02, timestamps.size)
+
+    metrics, indices = _native_metrics(
+        timestamps, scores, labels, 3_600_000, bootstrap_seed=7)
+
+    assert metrics["status"] == "INSUFFICIENT_SAMPLE"
+    assert metrics["non_overlapping_count"] == 26
+    assert indices.size == 26
 
 
 def test_block_bootstrap_is_deterministic_under_fixed_seed() -> None:

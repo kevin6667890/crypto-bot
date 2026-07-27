@@ -64,3 +64,7 @@ ohlcv/
 eth_usdt_5m_3years.csv
 pandas_ta.zip
 microstructure.db*
+.research/
+factor_ledger*.db*
+factor_autoresearch_report*.json
+factor_library*.json

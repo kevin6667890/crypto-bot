@@ -13,6 +13,23 @@ interface HealthResponse {
   next_eligibility?: string;
   liquidation_events_count?: number;
   feature_statistics?: Record<string, any>;
+  collector_warnings?: Array<{
+    code: string; severity: string; component: string; instrument?: string | null; message: string;
+  }>;
+  gap_summary?: {
+    recorded_gap_count: number;
+    synthetic_live_gap_count: number;
+    by_classification: Record<string, { count: number; total_duration_ms: number }>;
+    critical_live_gaps: Array<{ lane: string; instrument: string; duration_ms: number }>;
+  };
+  funding_schedule?: Record<string, {
+    latest_settlement_ms?: number; next_expected_settlement_ms?: number; overdue: boolean;
+  }>;
+  liquidation_health?: {
+    stream_connected: boolean; connection_status: string; last_heartbeat_ms?: number;
+    last_message_ms?: number; last_genuine_event_ms?: number; event_count: number;
+    reconnect_count: number; completeness_limitation: string;
+  };
 }
 
 interface CoverageItem {
@@ -43,6 +60,19 @@ interface FeatureGroup {
   source_data_status: string;
   event_study_status: string;
   blocking_reason?: string;
+  instruments: Record<string, {
+    source_days: number;
+    source_rows: number;
+    gap_adjusted_usable_days: number;
+    label_earliest_ms?: number;
+    label_latest_ms?: number;
+    overlap_usable_days: number;
+    event_count: number;
+    source_data_status: string;
+    event_study_status: string;
+    next_eligibility_date?: string;
+    blocking_reason?: string;
+  }>;
 }
 
 interface EligibilityResponse {
@@ -57,6 +87,24 @@ interface ChartPoint {
 interface ChartResponse {
   instrument: string;
   points: ChartPoint[];
+}
+
+interface ValidationResponse {
+  available: boolean;
+  disclaimer: string;
+  completed_oot_claim: boolean;
+  chronological_partition_policy?: string;
+  studies?: {
+    funding?: { instruments?: Record<string, ValidationInstrument> };
+    basis?: { instruments?: Record<string, ValidationInstrument> };
+  };
+}
+
+interface ValidationInstrument {
+  feature_classifications?: Record<string, string>;
+  features?: Record<string, Record<string, {
+    segments?: Record<string, { event_count?: number; sign_consistency?: number }>;
+  }>>;
 }
 
 const chartTheme = {
@@ -119,6 +167,8 @@ export default function MicrostructureResearch() {
   const [health, setHealth] = useState<HealthResponse | null>(null);
   const [coverage, setCoverage] = useState<CoverageResponse | null>(null);
   const [eligibility, setEligibility] = useState<EligibilityResponse | null>(null);
+  const [validation, setValidation] = useState<ValidationResponse | null>(null);
+  const [eligibilityInstrument, setEligibilityInstrument] = useState("BTC-USDT-SWAP");
   
   const [fundingData, setFundingData] = useState<ChartPoint[]>([]);
   const [basisData, setBasisData] = useState<ChartPoint[]>([]);
@@ -154,6 +204,7 @@ export default function MicrostructureResearch() {
       load<HealthResponse>("/api/research/microstructure/health", setHealth),
       load<CoverageResponse>("/api/research/microstructure/coverage", setCoverage),
       load<EligibilityResponse>("/api/research/microstructure/eligibility", setEligibility),
+      load<ValidationResponse>("/api/research/microstructure/validation", setValidation),
       load<ChartResponse>(`/api/research/microstructure/charts/funding?instrument=${instrument}&limit=500`, chart(setFundingData)),
       load<ChartResponse>(`/api/research/microstructure/charts/basis?instrument=${instrument}&limit=500`, chart(setBasisData)),
       load<ChartResponse>(`/api/research/microstructure/charts/cvd?instrument=${instrument}&limit=500`, chart(setCvdData)),
@@ -183,6 +234,21 @@ export default function MicrostructureResearch() {
     if (s === "FORMAL_RESEARCH_READY") return "pass"; // bright green
     return "";
   };
+
+  const validationRows = (item?: ValidationInstrument) => Object.entries(item?.features || {}).map(
+    ([feature, horizons]) => {
+      const preferred = horizons["1H"] || Object.values(horizons)[0] || {};
+      const research = preferred.segments?.RESEARCH_CALIBRATION;
+      const later = preferred.segments?.LATER_VALIDATION;
+      return {
+        feature,
+        classification: item?.feature_classifications?.[feature] || "INSUFFICIENT_SAMPLE",
+        researchCount: research?.event_count || 0,
+        validationCount: later?.event_count || 0,
+        stability: later?.sign_consistency,
+      };
+    }
+  );
 
   return (
     <div className="main-grid" id="microstructure">
@@ -223,6 +289,14 @@ export default function MicrostructureResearch() {
             <strong className={getStatusClass(health?.sample_status || "")}>{health?.sample_status || "--"}</strong>
           </div>
         </div>
+        <div className="alert-list" style={{ marginTop: 12 }}>
+          {(health?.collector_warnings || []).map((warning, index) => (
+            <div className={`demo-note ${warning.severity === "critical" ? "negative" : ""}`} key={`${warning.code}-${warning.instrument}-${index}`}>
+              <strong>{warning.code}</strong>
+              {warning.instrument ? ` · ${warning.instrument}` : ""} — {warning.message}
+            </div>
+          ))}
+        </div>
       </section>
 
       <section className="panel wide-panel">
@@ -245,7 +319,14 @@ export default function MicrostructureResearch() {
             (items as CoverageItem[]).map((item, idx) => {
               const now = Date.now();
               const lagMs = now - item.latest_ms;
-              const lagStr = lagMs > 0 ? `${(lagMs / 1000).toFixed(1)}s` : "--";
+              const schedule = health?.funding_schedule?.[item.instrument];
+              const eventBased = source === "liquidations";
+              const settled = source === "funding_settled";
+              const lagStr = eventBased
+                ? "event-based"
+                : settled
+                  ? (schedule?.overdue ? "OVERDUE" : "on schedule")
+                  : lagMs > 0 ? `${(lagMs / 1000).toFixed(1)}s` : "--";
               return (
                 <div className="trade-row" key={`${source}-${item.instrument}-${idx}`}>
                   <span>{source}</span>
@@ -253,7 +334,7 @@ export default function MicrostructureResearch() {
                   <span>{new Date(item.earliest_ms).toLocaleString()}</span>
                   <span>{new Date(item.latest_ms).toLocaleString()}</span>
                   <span>{item.rows.toLocaleString()}</span>
-                  <strong className={lagMs > 60000 ? "negative" : "positive"}>{lagStr}</strong>
+                  <strong className={(settled && schedule?.overdue) || (!eventBased && !settled && lagMs > 60000) ? "negative" : "positive"}>{lagStr}</strong>
                 </div>
               );
             })
@@ -269,6 +350,13 @@ export default function MicrostructureResearch() {
           </div>
         </div>
         <div className="trade-table">
+          <div className="instrument-tabs" style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+            {["BTC-USDT-SWAP", "ETH-USDT-SWAP", "SOL-USDT-SWAP"].map((value) => (
+              <button className={eligibilityInstrument === value ? "active" : ""} key={value} onClick={() => setEligibilityInstrument(value)}>
+                {value.split("-")[0]}
+              </button>
+            ))}
+          </div>
           <div className="trade-row table-head eligibility-row">
             <span>{t("micro.featureGroup")}</span>
             <span>{t("micro.features")}</span>
@@ -278,21 +366,42 @@ export default function MicrostructureResearch() {
             <span>Event-study status</span>
             <span>{t("micro.blockingReason")}</span>
           </div>
-          {eligibility && Object.entries(eligibility.feature_groups).map(([group, data]) => (
-            <div className="trade-row eligibility-row" key={group}>
+          {eligibility && Object.entries(eligibility.feature_groups).map(([group, data]) => {
+            const row = data.instruments?.[eligibilityInstrument];
+            if (!row) return null;
+            return (
+            <div className="trade-row eligibility-row" key={`${group}-${eligibilityInstrument}`}>
               <strong>{group}</strong>
               <span style={{ fontSize: '0.85em', color: 'var(--muted)' }}>{data.features.join(", ")}</span>
-              <span>{data.source_usable_days}d / {data.source_observation_count.toLocaleString()}</span>
-              <strong className={getStatusClass(data.source_data_status)}>{data.source_data_status}</strong>
-              <span>{data.overlap_usable_days}d / {data.event_count.toLocaleString()}</span>
-              <strong className={getStatusClass(data.event_study_status)}>{data.event_study_status}</strong>
-              <span className="negative">{data.blocking_reason || "--"}</span>
+              <span>{row.gap_adjusted_usable_days}d / {row.source_rows.toLocaleString()}</span>
+              <strong className={getStatusClass(row.source_data_status)}>{row.source_data_status}</strong>
+              <span>{row.overlap_usable_days}d / {row.event_count.toLocaleString()}</span>
+              <strong className={getStatusClass(row.event_study_status)}>{row.event_study_status}</strong>
+              <span className={row.blocking_reason ? "negative" : ""}>{row.blocking_reason || row.next_eligibility_date || "--"}</span>
+            </div>
+          )})}
+        </div>
+      </section>
+
+      <section className="panel wide-panel">
+        <div className="panel-head">
+          <div>
+            <span className="eyebrow">Gap classification / 缺口分类</span>
+            <h2>Recorded and live gaps</h2>
+          </div>
+        </div>
+        <div className="execution-summary">
+          {Object.entries(health?.gap_summary?.by_classification || {}).map(([classification, data]) => (
+            <div className={`metric-card ${classification === "CRITICAL_LIVE_GAP" ? "tone-warning" : "tone-neutral"}`} key={classification}>
+              <span>{classification}</span>
+              <strong>{data.count.toLocaleString()}</strong>
+              <small>{(data.total_duration_ms / 3_600_000).toFixed(2)}h</small>
             </div>
           ))}
         </div>
       </section>
 
-      {health?.liquidation_events_count !== undefined && (
+      {health?.liquidation_health && (
         <section className="panel">
           <div className="panel-head">
             <div>
@@ -303,25 +412,69 @@ export default function MicrostructureResearch() {
           <div className="execution-summary">
             <div className="metric-card tone-neutral">
               <span>{t("micro.eventCount")}</span>
-              <strong>{health.liquidation_events_count.toLocaleString()}</strong>
+              <strong>{health.liquidation_health.event_count.toLocaleString()}</strong>
+            </div>
+            <div className="metric-card tone-neutral">
+              <span>Stream</span>
+              <strong className={health.liquidation_health.stream_connected ? "positive" : "negative"}>
+                {health.liquidation_health.connection_status}
+              </strong>
+            </div>
+            <div className="metric-card tone-neutral">
+              <span>Last genuine event</span>
+              <strong>{health.liquidation_health.last_genuine_event_ms ? new Date(health.liquidation_health.last_genuine_event_ms).toLocaleString() : "--"}</strong>
+            </div>
+            <div className="metric-card tone-neutral">
+              <span>Reconnects</span>
+              <strong>{health.liquidation_health.reconnect_count}</strong>
             </div>
           </div>
+          <p className="muted">{health.liquidation_health.completeness_limitation}</p>
         </section>
       )}
 
-      {health?.feature_statistics && Object.keys(health.feature_statistics).length > 0 && (
-        <section className="panel wide-panel">
-          <div className="panel-head">
-            <div>
-              <span className="eyebrow">{t("micro.statistics")}</span>
-              <h2>{t("micro.statistics")}</h2>
-            </div>
+      <section className="panel wide-panel">
+        <div className="panel-head">
+          <div>
+            <span className="eyebrow">Chronological validation / 时序验证</span>
+            <h2>Funding and BTC basis</h2>
           </div>
-          <pre style={{ padding: 12, background: 'var(--surface)', borderRadius: 4, overflowX: 'auto', fontSize: '0.85em' }}>
-            {JSON.stringify(health.feature_statistics, null, 2)}
-          </pre>
-        </section>
-      )}
+        </div>
+        <div className="demo-note">{validation?.disclaimer || "VALIDATION RESEARCH ONLY — NOT A TRADING SIGNAL"}</div>
+        <p className="muted">{validation?.chronological_partition_policy || "No persisted validation report is available yet."}</p>
+        {validation?.available && ["BTC-USDT-SWAP", "ETH-USDT-SWAP", "SOL-USDT-SWAP"].map((value) => {
+          const funding = validation.studies?.funding?.instruments?.[value];
+          if (!funding) return null;
+          return (
+            <div className="trade-table" key={`funding-${value}`} style={{ marginTop: 12 }}>
+              <strong>Settled funding · {value}</strong>
+              {validationRows(funding).map((row) => (
+                <div className="trade-row" key={row.feature}>
+                  <span>{row.feature}</span><span>{row.classification}</span>
+                  <span>{row.researchCount} calibration</span><span>{row.validationCount} later validation</span>
+                  <span>sign stability {row.stability === undefined ? "--" : row.stability.toFixed(2)}</span><span>1H view</span>
+                </div>
+              ))}
+            </div>
+          );
+        })}
+        {validation?.available && (() => {
+          const basis = validation.studies?.basis?.instruments?.["BTC-USDT-SWAP"];
+          if (!basis) return null;
+          return (
+            <div className="trade-table" style={{ marginTop: 12 }}>
+              <strong>BTC basis only</strong>
+              {validationRows(basis).map((row) => (
+                <div className="trade-row" key={row.feature}>
+                  <span>{row.feature}</span><span>{row.classification}</span>
+                  <span>{row.researchCount} calibration</span><span>{row.validationCount} later validation</span>
+                  <span>sign stability {row.stability === undefined ? "--" : row.stability.toFixed(2)}</span><span>1H view</span>
+                </div>
+              ))}
+            </div>
+          );
+        })()}
+      </section>
 
       <div style={{ gridColumn: "1 / -1", display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>
         <SimpleLineChart data={fundingData} title={t("micro.funding")} />

@@ -32,6 +32,7 @@ RAW_RETENTION_MS = 90 * 86_400_000
 LIQUIDATION_RETENTION_MS = 180 * 86_400_000
 FORMAL_SAMPLE_DAYS = 90
 MINIMUM_SAMPLE_DAYS = 14
+TRADE_LIVE_WARNING_MS = 30_000
 
 
 def now_ms() -> int:
@@ -104,6 +105,8 @@ class MicrostructureStore:
         self._eligibility_lock = threading.Lock()
         self._coverage_cache: tuple[float, dict[str, Any]] | None = None
         self._coverage_lock = threading.Lock()
+        self._gap_cache: tuple[float, dict[str, Any]] | None = None
+        self._gap_lock = threading.Lock()
 
     @contextmanager
     def connect(self, *, readonly: bool = False) -> Iterator[sqlite3.Connection]:
@@ -543,7 +546,9 @@ class MicrostructureStore:
     ) -> None:
         for lane, table, threshold in (
             ("trades", "trade_flow_observations", 60_000),
-            ("oi", "oi_observations", 45_000),
+            # A 15-second REST poll can legitimately span just over 45 seconds
+            # after two bounded retries and scheduler jitter.
+            ("oi", "oi_observations", 60_000),
             ("mark", "mark_price_observations", 120_000),
         ):
             where = "instrument=?"
@@ -560,6 +565,151 @@ class MicrostructureStore:
                         """INSERT OR IGNORE INTO collection_gaps
                            VALUES(?,?,?,?,?,?,NULL)""",
                         (lane, instrument, start, end, "source observation gap", now_ms()))
+
+    @staticmethod
+    def classify_gap(
+        lane: str, duration_ms: int, *, has_interior: bool = False,
+        before_source: str = "", after_source: str = "",
+        start_ms: int | None = None, reference_ms: int | None = None,
+        resolved: bool = False,
+    ) -> str:
+        """Deterministic classification; missing values are never synthesized."""
+        if resolved or has_interior:
+            return "RESOLVED"
+        if lane in {"liquidations", "liquidation"}:
+            return "EXPECTED_EVENT_SPARSE"
+        if lane == "oi" and duration_ms <= 60_000:
+            return "FALSE_POSITIVE"
+        if ("migrated" in before_source.lower() or "legacy" in before_source.lower()):
+            if ("migrated" in after_source.lower() or "legacy" in after_source.lower()):
+                return "LEGACY_BOUNDARY"
+        current = reference_ms or now_ms()
+        if lane == "oi":
+            # OKX exposes current OI but no official historical OI endpoint.
+            return "HISTORICAL_SOURCE_LIMIT"
+        if start_ms is not None and start_ms < current - RAW_RETENTION_MS:
+            return "HISTORICAL_SOURCE_LIMIT"
+        return "RECOVERABLE_BACKFILL_GAP"
+
+    def gap_report(
+        self, *, reference_ms: int | None = None, include_items: bool = False
+    ) -> dict[str, Any]:
+        """Classify recorded gaps plus currently open live-lane gaps."""
+        current = reference_ms or now_ms()
+        if (reference_ms is None and self._gap_cache is not None
+                and time.monotonic() - self._gap_cache[0] < 300):
+            cached = self._gap_cache[1]
+            return cached if include_items else {k: v for k, v in cached.items()
+                                                 if k != "items"}
+        with self._gap_lock:
+            tables = {
+                "trades": ("trade_flow_observations", "source_ts_ms"),
+                "oi": ("oi_observations", "source_ts_ms"),
+                "mark": ("mark_price_observations", "source_ts_ms"),
+            }
+            items: list[dict[str, Any]] = []
+            with self.connect(readonly=True) as c:
+                gaps = c.execute(
+                    """SELECT * FROM collection_gaps
+                       ORDER BY start_ms,lane,instrument,end_ms""").fetchall()
+                for gap in gaps:
+                    lane = str(gap["lane"])
+                    table_definition = tables.get(lane)
+                    interior = 0
+                    before_source = after_source = ""
+                    if table_definition:
+                        table, timestamp_column = table_definition
+                        interior = int(c.execute(
+                            f"""SELECT COUNT(*) FROM {table}
+                                WHERE instrument=? AND {timestamp_column}>?
+                                AND {timestamp_column}<?""",
+                            (gap["instrument"], gap["start_ms"], gap["end_ms"]),
+                        ).fetchone()[0])
+                        before = c.execute(
+                            f"""SELECT source FROM {table}
+                                WHERE instrument=? AND {timestamp_column}<=?
+                                ORDER BY {timestamp_column} DESC LIMIT 1""",
+                            (gap["instrument"], gap["start_ms"]),
+                        ).fetchone()
+                        after = c.execute(
+                            f"""SELECT source FROM {table}
+                                WHERE instrument=? AND {timestamp_column}>=?
+                                ORDER BY {timestamp_column} LIMIT 1""",
+                            (gap["instrument"], gap["end_ms"]),
+                        ).fetchone()
+                        before_source = str(before[0]) if before else ""
+                        after_source = str(after[0]) if after else ""
+                    duration = int(gap["end_ms"]) - int(gap["start_ms"])
+                    classification = self.classify_gap(
+                        lane, duration, has_interior=interior > 0,
+                        before_source=before_source, after_source=after_source,
+                        start_ms=int(gap["start_ms"]), reference_ms=current,
+                        resolved=gap["resolved_at_ms"] is not None,
+                    )
+                    items.append({
+                        **dict(gap), "duration_ms": duration,
+                        "raw_or_aggregate": "raw",
+                        "classification": classification,
+                        "severity": "critical" if classification == "CRITICAL_LIVE_GAP"
+                        else "warning" if classification in {
+                            "RECOVERABLE_BACKFILL_GAP", "HISTORICAL_SOURCE_LIMIT"}
+                        else "info",
+                        "official_backfill_eligible": (
+                            classification == "RECOVERABLE_BACKFILL_GAP"
+                            and lane in {"trades", "mark"}),
+                    })
+
+                live_definitions = (
+                    ("trades", "trade_flow_observations", 30_000),
+                    ("oi", "oi_observations", 60_000),
+                    ("mark", "mark_price_observations", 120_000),
+                )
+                for lane, table, threshold in live_definitions:
+                    for instrument in INSTRUMENTS:
+                        latest = c.execute(
+                            f"SELECT MAX(source_ts_ms) FROM {table} WHERE instrument=?",
+                            (instrument,)).fetchone()[0]
+                        if latest is not None and current - int(latest) > threshold:
+                            items.append({
+                                "lane": lane, "instrument": instrument,
+                                "start_ms": int(latest), "end_ms": current,
+                                "duration_ms": current - int(latest),
+                                "reason": "live source is beyond watchdog threshold",
+                                "detected_at_ms": current, "resolved_at_ms": None,
+                                "raw_or_aggregate": "raw",
+                                "classification": "CRITICAL_LIVE_GAP",
+                                "severity": "critical",
+                                "official_backfill_eligible": lane in {"trades", "mark"},
+                                "synthetic_live_gap": True,
+                            })
+            by_class: dict[str, dict[str, int]] = {}
+            for item in items:
+                bucket = by_class.setdefault(
+                    item["classification"], {"count": 0, "total_duration_ms": 0})
+                bucket["count"] += 1
+                bucket["total_duration_ms"] += int(item["duration_ms"])
+            critical = [item for item in items
+                        if item["classification"] == "CRITICAL_LIVE_GAP"]
+            report = {
+                "recorded_gap_count": len(gaps),
+                "synthetic_live_gap_count": sum(
+                    bool(item.get("synthetic_live_gap")) for item in items),
+                "by_classification": by_class,
+                "critical_live_gaps": critical,
+                "oldest_unresolved_critical_gap": (
+                    min(critical, key=lambda item: item["start_ms"]) if critical else None),
+                "official_backfill_eligible_count": sum(
+                    item["official_backfill_eligible"] for item in items),
+                "never_recoverable_count": sum(
+                    item["classification"] in {
+                        "HISTORICAL_SOURCE_LIMIT", "LEGACY_BOUNDARY"}
+                    for item in items),
+                "items": items,
+            }
+            if reference_ms is None:
+                self._gap_cache = (time.monotonic(), report)
+            return report if include_items else {k: v for k, v in report.items()
+                                                 if k != "items"}
 
     @staticmethod
     def _gap_flag(times: list[int], width: int, expected_frequency: int) -> int:
@@ -896,6 +1046,16 @@ class MicrostructureStore:
                     "liquidation_observations", "source_ts_ms", "state='confirmed'"),
             },
         }
+        related_gap_lanes = {
+            "settled_funding": {"funding_settled"},
+            "predicted_funding": {"funding_predicted"},
+            "basis": {"mark", "index"},
+            "cvd": {"trades"},
+            "oi": {"oi"},
+            "cvd_oi": {"trades", "oi"},
+            "funding_oi": {"funding_settled", "oi"},
+            "liquidations": {"liquidations"},
+        }
 
         def status_for(days: float, count: int) -> str:
             if count <= 0 or days < 14:
@@ -915,7 +1075,43 @@ class MicrostructureStore:
         def span_days(start: int | None, end: int | None) -> float:
             return max(0.0, (end - start) / 86_400_000) if start and end else 0.0
 
-        results: dict[str, Any] = {"feature_groups": {}}
+        def merged_gap_duration(
+            group_name: str, instrument: str, start: int | None, end: int | None
+        ) -> int:
+            if start is None or end is None:
+                return 0
+            intervals = []
+            for gap in gap_items:
+                if (gap["instrument"] != instrument
+                        or gap["lane"] not in related_gap_lanes[group_name]
+                        or gap["classification"] in {
+                            "FALSE_POSITIVE", "EXPECTED_EVENT_SPARSE", "RESOLVED"}
+                        or gap.get("synthetic_live_gap")):
+                    continue
+                left, right = max(start, int(gap["start_ms"])), min(end, int(gap["end_ms"]))
+                if left < right:
+                    intervals.append((left, right))
+            total = 0
+            current_interval: tuple[int, int] | None = None
+            for left, right in sorted(intervals):
+                if current_interval is None:
+                    current_interval = (left, right)
+                elif left <= current_interval[1]:
+                    current_interval = (current_interval[0], max(current_interval[1], right))
+                else:
+                    total += current_interval[1] - current_interval[0]
+                    current_interval = (left, right)
+            if current_interval is not None:
+                total += current_interval[1] - current_interval[0]
+            return total
+
+        gap_items = self.gap_report(include_items=True)["items"]
+        results: dict[str, Any] = {
+            "aggregate_policy": (
+                "Aggregate fields use the strict intersection across BTC, ETH and SOL; "
+                "per-instrument rows are authoritative and one instrument never reduces another."),
+            "feature_groups": {},
+        }
         with self.connect(readonly=True) as c:
             source_statistics: dict[
                 tuple[str, str, str], dict[str, tuple[int, int, int]]
@@ -964,6 +1160,10 @@ class MicrostructureStore:
                     source_end = min(ends) if complete else None
                     source_count = min(counts) if complete and counts else 0
                     source_days = span_days(source_start, source_end)
+                    gap_duration_ms = merged_gap_duration(
+                        group_name, instrument, source_start, source_end)
+                    gap_adjusted_days = max(
+                        0.0, source_days - gap_duration_ms / 86_400_000)
 
                     label_times = marks[instrument]
                     label_start = label_times[0] if label_times else None
@@ -1015,7 +1215,11 @@ class MicrostructureStore:
                     instrument_rows[instrument] = {
                         "source_earliest_ms": source_start,
                         "source_latest_ms": source_end,
+                        "source_days": round(source_days, 6),
+                        "source_rows": source_count,
                         "source_usable_days": round(source_days, 6),
+                        "gap_adjusted_usable_days": round(gap_adjusted_days, 6),
+                        "gap_duration_ms": gap_duration_ms,
                         "source_observation_count": source_count,
                         "label_earliest_ms": label_start,
                         "label_latest_ms": label_end,
@@ -1027,6 +1231,29 @@ class MicrostructureStore:
                         "source_data_status": status_for(source_days, source_count),
                         "event_study_status": status_for(overlap_days, event_count),
                     }
+                    instrument_row = instrument_rows[instrument]
+                    source_status = instrument_row["source_data_status"]
+                    event_status = instrument_row["event_study_status"]
+                    if source_count == 0:
+                        blocking_reason = "No genuine source observations"
+                    elif source_status == "EXPLORATORY_ONLY":
+                        blocking_reason = "Source coverage is below 14 days"
+                    elif event_count == 0:
+                        blocking_reason = "No exact confirmed mark-price label pairs overlap"
+                    elif event_status == "EXPLORATORY_ONLY":
+                        blocking_reason = "Exact feature/mark overlap is below 14 days"
+                    else:
+                        blocking_reason = None
+                    instrument_row.update({
+                        "next_source_eligibility_date": next_date(
+                            source_start, source_days),
+                        "next_event_study_eligibility_date": next_date(
+                            overlap_start, overlap_days),
+                        "next_eligibility_date": (
+                            next_date(source_start, source_days)
+                            or next_date(overlap_start, overlap_days)),
+                        "blocking_reason": blocking_reason,
+                    })
 
                 source_starts = [x["source_earliest_ms"] for x in instrument_rows.values()
                                  if x["source_earliest_ms"] is not None]
@@ -1073,6 +1300,9 @@ class MicrostructureStore:
                     "source_earliest_ms": source_start,
                     "source_latest_ms": source_end,
                     "source_usable_days": round(source_days, 6),
+                    "gap_adjusted_usable_days": round(min(
+                        (row["gap_adjusted_usable_days"]
+                         for row in instrument_rows.values()), default=0.0), 6),
                     "source_observation_count": source_count,
                     "label_earliest_ms": label_start,
                     "label_latest_ms": label_end,
@@ -1116,9 +1346,143 @@ class MicrostructureStore:
             aggregation = c.execute(
                 "SELECT last_success_ms FROM collector_health WHERE component='aggregation'"
             ).fetchone()
+            health_by_component = {row["component"]: row for row in health}
+            writer_checkpoint = c.execute(
+                """SELECT metadata_json FROM collection_checkpoints
+                   WHERE lane='writer' AND instrument='live_queue'"""
+            ).fetchone()
+            try:
+                writer_state = json.loads(writer_checkpoint[0]) if writer_checkpoint else {}
+            except (TypeError, json.JSONDecodeError):
+                writer_state = {}
+            trade_pipeline: dict[str, dict[str, Any]] = {}
+            for instrument in INSTRUMENTS:
+                checkpoint = c.execute(
+                    """SELECT last_source_ts_ms,metadata_json,updated_at_ms
+                       FROM collection_checkpoints
+                       WHERE lane='trades_forward' AND instrument=?""",
+                    (instrument,)).fetchone()
+                try:
+                    metadata = json.loads(checkpoint["metadata_json"]) if checkpoint else {}
+                except (TypeError, json.JSONDecodeError):
+                    metadata = {}
+                aggregate_latest = c.execute(
+                    """SELECT MAX(last_source_ts_ms) FROM cvd_aggregates
+                       WHERE instrument=? AND resolution='1m'""",
+                    (instrument,)).fetchone()[0]
+                connection_row = health_by_component.get(f"trades:{instrument}")
+                trade_pipeline[instrument] = {
+                    "connection_state": (
+                        connection_row["status"] if connection_row else "UNKNOWN"),
+                    "connection_updated_at_ms": (
+                        connection_row["updated_at_ms"] if connection_row else None),
+                    "last_received_at_ms": metadata.get("received_at_ms"),
+                    "last_persisted_at_ms": metadata.get("persisted_at_ms"),
+                    "last_persisted_source_ts_ms": (
+                        checkpoint["last_source_ts_ms"] if checkpoint else None),
+                    "last_aggregated_source_ts_ms": aggregate_latest,
+                    "queue_depth": int(writer_state.get("queue_depth") or 0),
+                    "write_latency_ms": writer_state.get("write_latency_ms"),
+                    "reconnect_count": (
+                        int(connection_row["reconnect_count"]) if connection_row else 0),
+                }
+            funding_schedule: dict[str, dict[str, Any]] = {}
+            for instrument in INSTRUMENTS:
+                settlements = [int(row[0]) for row in c.execute(
+                    """SELECT funding_time_ms FROM funding_settled
+                       WHERE instrument=? AND state='confirmed'
+                       ORDER BY funding_time_ms DESC LIMIT 12""",
+                    (instrument,))]
+                schedule_checkpoint = c.execute(
+                    """SELECT metadata_json FROM collection_checkpoints
+                       WHERE lane='funding_schedule' AND instrument=?""",
+                    (instrument,)).fetchone()
+                try:
+                    schedule = json.loads(schedule_checkpoint[0]) if schedule_checkpoint else {}
+                except (TypeError, json.JSONDecodeError):
+                    schedule = {}
+                intervals = [a - b for a, b in zip(settlements, settlements[1:]) if a > b]
+                expected_interval = (
+                    int(statistics.median(intervals)) if intervals else 28_800_000)
+                latest_settlement = settlements[0] if settlements else None
+                previous_official = schedule.get("previous_funding_time_ms")
+                next_expected = (
+                    schedule.get("next_expected_settlement_ms")
+                    or (latest_settlement + expected_interval if latest_settlement else None))
+                overdue = bool(
+                    latest_settlement is not None
+                    and ((previous_official is not None
+                          and latest_settlement < int(previous_official))
+                         or (next_expected is not None
+                             and now_ms() > int(next_expected) + 300_000
+                             and latest_settlement < int(next_expected))))
+                funding_schedule[instrument] = {
+                    "latest_settlement_ms": latest_settlement,
+                    "next_expected_settlement_ms": next_expected,
+                    "expected_interval_ms": expected_interval,
+                    "overdue": overdue,
+                }
+            liquidation_row = health_by_component.get("liquidations")
+            liquidation_message = health_by_component.get("liquidations:message")
+            liquidation_count = int(c.execute(
+                "SELECT COUNT(*) FROM liquidation_observations").fetchone()[0])
+            liquidation_latest = c.execute(
+                "SELECT MAX(source_ts_ms) FROM liquidation_observations").fetchone()[0]
         latest = {lane: {row["instrument"]: row["latest_ms"] for row in rows}
                   for lane, rows in coverage.items()}
         sample = self.sample_status(coverage)
+        current = now_ms()
+        warnings: list[dict[str, Any]] = []
+        for instrument, pipeline in trade_pipeline.items():
+            connection_age = (
+                current - int(pipeline["connection_updated_at_ms"])
+                if pipeline["connection_updated_at_ms"] else None)
+            source_age = (
+                current - int(pipeline["last_persisted_source_ts_ms"])
+                if pipeline["last_persisted_source_ts_ms"] else None)
+            if (pipeline["connection_state"] in {"ERROR", "RECONNECTING", "UNKNOWN"}
+                    or connection_age is None or connection_age > 60_000):
+                warnings.append({
+                    "code": "DISCONNECTED", "severity": "critical",
+                    "component": "trades", "instrument": instrument,
+                    "message": "Trade WebSocket is disconnected or its heartbeat is stale.",
+                })
+            elif source_age is None or source_age > TRADE_LIVE_WARNING_MS:
+                warnings.append({
+                    "code": "LIVE_LANE_DELAYED", "severity": "critical",
+                    "component": "trades", "instrument": instrument,
+                    "message": f"Trade persistence is delayed by {source_age} ms.",
+                })
+        if int(writer_state.get("queue_depth") or 0) > 0:
+            warnings.append({
+                "code": "BACKLOG", "severity": "warning", "component": "writer",
+                "instrument": None,
+                "message": f"Live writer queue depth is {writer_state['queue_depth']}.",
+            })
+        for instrument, schedule in funding_schedule.items():
+            if schedule["overdue"]:
+                warnings.append({
+                    "code": "SETTLEMENT_OVERDUE", "severity": "critical",
+                    "component": "funding_settled", "instrument": instrument,
+                    "message": "Latest official settlement has not been persisted.",
+                })
+        liquidation_connected = bool(
+            liquidation_row
+            and liquidation_row["status"] in {"LIVE", "CONNECTED"}
+            and current - int(liquidation_row["updated_at_ms"]) <= 90_000)
+        if liquidation_connected:
+            warnings.append({
+                "code": "HEALTHY_EVENT_BASED_STREAM", "severity": "info",
+                "component": "liquidations", "instrument": None,
+                "message": "Liquidation stream is connected; event recency is not a health test.",
+            })
+        else:
+            warnings.append({
+                "code": "DISCONNECTED", "severity": "warning",
+                "component": "liquidations", "instrument": None,
+                "message": "Liquidation stream connection heartbeat is stale.",
+            })
+        gaps = self.gap_report()
         result = {
             "service_status": "RUNNING" if any(x["status"] == "LIVE" for x in health) else "INITIALIZED",
             "database_schema_version": MICROSTRUCTURE_SCHEMA_VERSION,
@@ -1127,6 +1491,27 @@ class MicrostructureStore:
             "latest_timestamp_per_source_instrument": latest,
             "source_lag_ms": {x["component"]: x["source_lag_ms"] for x in health},
             "gap_count": gap_count,
+            "gap_summary": gaps,
+            "collector_warnings": warnings,
+            "trade_pipeline": trade_pipeline,
+            "funding_schedule": funding_schedule,
+            "liquidation_health": {
+                "stream_connected": liquidation_connected,
+                "connection_status": (
+                    liquidation_row["status"] if liquidation_row else "UNKNOWN"),
+                "last_heartbeat_ms": (
+                    liquidation_row["last_success_ms"] if liquidation_row else None),
+                "last_message_ms": (
+                    liquidation_message["last_success_ms"]
+                    if liquidation_message else None),
+                "last_genuine_event_ms": liquidation_latest,
+                "event_count": liquidation_count,
+                "reconnect_count": (
+                    int(liquidation_row["reconnect_count"]) if liquidation_row else 0),
+                "completeness_limitation": (
+                    "OKX caps pushes; this is not a complete liquidation ledger."),
+            },
+            "liquidation_events_count": liquidation_count,
             "reconnect_count": sum(x["reconnect_count"] for x in health),
             "failed_request_count": sum(x["failed_request_count"] for x in health),
             "retry_count": sum(x["retry_count"] for x in health),

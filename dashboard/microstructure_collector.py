@@ -26,6 +26,8 @@ REST_BASE = "https://www.okx.com"
 BUSINESS_WS = "wss://ws.okx.com:8443/ws/v5/business"
 PUBLIC_WS = "wss://ws.okx.com:8443/ws/v5/public"
 QUEUE_MAX = 100_000
+TRADE_STALL_SECONDS = 30
+FUNDING_HISTORY_POLL_SECONDS = 300
 
 
 class Collector:
@@ -39,9 +41,47 @@ class Collector:
         self.contract_values: dict[str, float] = {}
         self.counters: dict[str, dict[str, int]] = {
             name: {"reconnect_count": 0, "failed_request_count": 0, "retry_count": 0}
-            for name in ("trades", "liquidations", "rest")
+            for name in ("liquidations", "rest")
         }
+        self.last_received_ms: dict[str, int] = {}
         self.last_prune_ms = 0
+
+    def _counter(self, component: str) -> dict[str, int]:
+        return self.counters.setdefault(
+            component,
+            {"reconnect_count": 0, "failed_request_count": 0, "retry_count": 0},
+        )
+
+    async def _record_health(self, component: str, status: str, **values: Any) -> None:
+        """Health telemetry must never terminate or block a source coroutine."""
+        try:
+            await asyncio.to_thread(
+                self.store.record_health, component, status, **values)
+        except Exception:
+            # The writer/watchdog will refresh the record after a transient lock.
+            return
+
+    async def _supervise(self, component: str, operation: Any) -> None:
+        """Restart one lane without affecting any other instrument or source."""
+        delay = 1.0
+        while not self.stop_event.is_set():
+            try:
+                await operation()
+                if not self.stop_event.is_set():
+                    raise RuntimeError("collector worker returned unexpectedly")
+            except asyncio.CancelledError:
+                raise
+            except Exception as error:
+                state = self._counter(component)
+                state["reconnect_count"] += 1
+                state["retry_count"] += 1
+                await self._record_health(
+                    component, "RECONNECTING",
+                    last_error=f"{type(error).__name__}: {str(error)[:160]}",
+                    **state,
+                )
+                await asyncio.sleep(min(30, delay) + random.uniform(0, 0.25))
+                delay = min(30, delay * 2)
 
     async def run(self) -> None:
         async with aiohttp.ClientSession(
@@ -54,11 +94,23 @@ class Collector:
                 last_error=None)
             tasks = [
                 asyncio.create_task(self._writer(), name="serialized-sqlite-writer"),
-                asyncio.create_task(self._trades(session), name="public-trades"),
-                asyncio.create_task(self._liquidations(), name="public-liquidations"),
-                *(asyncio.create_task(self._rest_instrument(session, instrument),
-                                      name=f"rest-{instrument}") for instrument in INSTRUMENTS),
-                asyncio.create_task(self._maintenance(), name="retention-aggregation"),
+                *(asyncio.create_task(
+                    self._supervise(
+                        f"trades:{instrument}",
+                        lambda i=instrument: self._trade_instrument(i)),
+                    name=f"public-trades-{instrument}")
+                  for instrument in self.contract_values),
+                asyncio.create_task(
+                    self._supervise("liquidations", self._liquidations),
+                    name="public-liquidations"),
+                *(asyncio.create_task(
+                    self._supervise(
+                        f"rest:{instrument}",
+                        lambda i=instrument: self._rest_instrument(session, i)),
+                    name=f"rest-{instrument}") for instrument in INSTRUMENTS),
+                asyncio.create_task(
+                    self._supervise("maintenance", self._maintenance),
+                    name="retention-aggregation"),
             ]
             try:
                 await self.stop_event.wait()
@@ -101,6 +153,7 @@ class Collector:
                 except TimeoutError:
                     break
             try:
+                write_started = time.monotonic()
                 trades = [
                     (item["instrument"], item["payload"],
                      self.contract_values[item["instrument"]], "OKX WS trades-all", None)
@@ -110,10 +163,31 @@ class Collector:
                     self.store.insert_trade_batch(trades)
                     for instrument in {item[0] for item in trades}:
                         timestamps = [int(item[1]["ts"]) for item in trades if item[0] == instrument]
+                        received = [
+                            int(item["received_at_ms"])
+                            for kind, item in batch
+                            if kind == "trade" and item["instrument"] == instrument
+                        ]
+                        persisted_at = now_ms()
+                        self.store.record_health(
+                            f"trades:{instrument}:received", "LIVE",
+                            last_success_ms=max(received),
+                            source_lag_ms=max(0, persisted_at - max(timestamps)),
+                            **self._counter(f"trades:{instrument}"))
+                        self.store.record_health(
+                            f"trades:{instrument}:persisted", "LIVE",
+                            last_success_ms=persisted_at,
+                            source_lag_ms=max(0, persisted_at - max(timestamps)),
+                            **self._counter(f"trades:{instrument}"))
                         self.store.checkpoint(
                             "trades_forward", instrument, cursor=None,
                             last_source_ts_ms=max(timestamps), status="running",
-                            metadata={"batch_size": len(timestamps)})
+                            metadata={
+                                "batch_size": len(timestamps),
+                                "received_at_ms": max(received),
+                                "persisted_at_ms": persisted_at,
+                                "queue_depth": self.queue.qsize(),
+                            })
                 for kind, item in batch:
                     if kind == "trade":
                         continue
@@ -128,6 +202,9 @@ class Collector:
                             source_identity=f"{item['instrument']}:{row['ts']}")
                     elif kind == "funding":
                         self.store.insert_funding(item["instrument"], item["payload"], settled=False)
+                    elif kind == "funding_settled":
+                        self.store.insert_funding(
+                            item["instrument"], item["payload"], settled=True)
                     elif kind in {"mark", "index"}:
                         row = item["payload"]
                         api_instrument = (item["instrument"].removesuffix("-SWAP")
@@ -139,9 +216,26 @@ class Collector:
                     elif kind == "liquidation":
                         self.store.insert_liquidation(item["instrument"], item["payload"])
                     timestamp = int((item.get("payload") or {}).get("ts") or now_ms())
+                    if kind == "funding":
+                        payload = item["payload"]
+                        self.store.checkpoint(
+                            "funding_schedule", item["instrument"], cursor=None,
+                            last_source_ts_ms=int(payload.get("prevFundingTime") or 0) or None,
+                            status=str(payload.get("settState") or "observed"),
+                            metadata={
+                                "previous_funding_time_ms": int(
+                                    payload.get("prevFundingTime") or 0) or None,
+                                "next_expected_settlement_ms": int(
+                                    payload.get("fundingTime") or 0) or None,
+                                "following_expected_settlement_ms": int(
+                                    payload.get("nextFundingTime") or 0) or None,
+                            })
+                    if kind == "funding_settled":
+                        timestamp = int(item["payload"]["fundingTime"])
                     self.store.checkpoint(
                         f"{kind}_forward", item["instrument"], cursor=None,
                         last_source_ts_ms=timestamp, status="running")
+                write_latency_ms = int((time.monotonic() - write_started) * 1000)
             except Exception as error:
                 try:
                     self.store.record_health(
@@ -159,17 +253,27 @@ class Collector:
                 try:
                     self.store.record_health(
                         "writer", "LIVE", last_success_ms=now_ms(),
-                        last_error=None)
+                        last_error=None, source_lag_ms=self.queue.qsize())
+                    self.store.checkpoint(
+                        "writer", "live_queue", cursor=None,
+                        last_source_ts_ms=None, status="running",
+                        metadata={
+                            "queue_depth": self.queue.qsize(),
+                            "write_latency_ms": write_latency_ms,
+                            "batch_size": len(batch),
+                        })
                 except Exception:
                     pass
             finally:
                 for _ in batch:
                     self.queue.task_done()
 
-    async def _trades(self, _session: aiohttp.ClientSession) -> None:
-        args = [{"channel": "trades-all", "instId": instrument}
-                for instrument in self.contract_values]
-        await self._websocket_loop("trades", BUSINESS_WS, args, self._handle_trades)
+    async def _trade_instrument(self, instrument: str) -> None:
+        component = f"trades:{instrument}"
+        await self._websocket_loop(
+            component, BUSINESS_WS,
+            [{"channel": "trades-all", "instId": instrument}],
+            self._handle_trades)
 
     async def _handle_trades(self, message: dict[str, Any]) -> None:
         argument = message.get("arg") or {}
@@ -177,18 +281,15 @@ class Collector:
         if argument.get("channel") != "trades-all" or instrument not in self.contract_values:
             return
         latest = None
+        received_at = now_ms()
         for trade in message.get("data") or []:
-            await self.queue.put(("trade", {"instrument": instrument, "payload": trade}))
+            await self.queue.put(("trade", {
+                "instrument": instrument, "payload": trade,
+                "received_at_ms": received_at,
+            }))
             latest = max(latest or 0, int(trade["ts"]))
         if latest:
-            self.store.record_health(
-                f"trades:{instrument}", "LIVE", last_success_ms=now_ms(),
-                source_lag_ms=max(0, now_ms() - latest),
-                **self.counters["trades"])
-            self.store.record_health(
-                "trades", "LIVE", last_success_ms=now_ms(),
-                source_lag_ms=max(0, now_ms() - latest),
-                **self.counters["trades"])
+            self.last_received_ms[f"trades:{instrument}"] = received_at
 
     async def _liquidations(self) -> None:
         await self._websocket_loop(
@@ -208,8 +309,10 @@ class Collector:
                 payload = {**event, **detail}
                 await self.queue.put(("liquidation", {
                     "instrument": instrument, "payload": payload}))
-        self.store.record_health("liquidations", "LIVE", last_success_ms=now_ms(),
-                                 **self.counters["liquidations"])
+        self.last_received_ms["liquidations:message"] = now_ms()
+        await self._record_health(
+            "liquidations:message", "LIVE", last_success_ms=now_ms(),
+            **self._counter("liquidations"))
 
     async def _websocket_loop(
         self, component: str, url: str, args: list[dict[str, str]], handler: Any
@@ -217,40 +320,57 @@ class Collector:
         delay = 1.0
         while not self.stop_event.is_set():
             delivered = False
+            last_health_update = 0
             try:
                 async with websockets.connect(url, ping_interval=20, ping_timeout=20,
                                               close_timeout=5) as socket:
                     await socket.send(json.dumps({"op": "subscribe", "args": args}))
+                    await self._record_health(
+                        component, "CONNECTED", last_success_ms=now_ms(),
+                        last_error=None, **self._counter(component))
                     while not self.stop_event.is_set():
                         try:
-                            raw = await asyncio.wait_for(socket.recv(), timeout=60)
+                            raw = await asyncio.wait_for(socket.recv(), timeout=15)
                         except TimeoutError:
                             pong = await socket.ping()
                             await asyncio.wait_for(pong, timeout=10)
-                            self.store.record_health(
-                                component, "LIVE", last_success_ms=now_ms(),
-                                **self.counters[component])
+                            if (component.startswith("trades:")
+                                    and now_ms() - self.last_received_ms.get(component, 0)
+                                    > TRADE_STALL_SECONDS * 1000):
+                                raise TimeoutError(
+                                    f"{component} received no trades for "
+                                    f"{TRADE_STALL_SECONDS}s")
+                            await self._record_health(
+                                component, "CONNECTED", last_success_ms=now_ms(),
+                                **self._counter(component))
                             continue
                         message = json.loads(raw)
                         if message.get("event") == "error":
                             raise RuntimeError(str(message.get("msg") or "subscription rejected"))
                         if message.get("event") == "subscribe":
-                            self.store.record_health(
-                                component, "LIVE", last_success_ms=now_ms(),
-                                **self.counters[component])
+                            self.last_received_ms.setdefault(component, now_ms())
+                            await self._record_health(
+                                component, "CONNECTED", last_success_ms=now_ms(),
+                                **self._counter(component))
                             continue
                         await handler(message)
                         delivered = True
                         delay = 1.0
+                        if now_ms() - last_health_update >= 5_000:
+                            await self._record_health(
+                                component, "CONNECTED", last_success_ms=now_ms(),
+                                last_error=None, **self._counter(component))
+                            last_health_update = now_ms()
             except asyncio.CancelledError:
                 raise
             except Exception as error:
-                state = self.counters[component]
+                state = self._counter(component)
                 state["reconnect_count"] += 1
                 state["retry_count"] += 1
-                self.store.record_health(component, "RECONNECTING",
-                                         last_error=f"{type(error).__name__}: {str(error)[:160]}",
-                                         **state)
+                await self._record_health(
+                    component, "RECONNECTING",
+                    last_error=f"{type(error).__name__}: {str(error)[:160]}",
+                    **state)
                 await asyncio.sleep(min(30, delay) + random.uniform(0, 0.25))
                 delay = 1.0 if delivered else min(30, delay * 2)
 
@@ -259,6 +379,7 @@ class Collector:
     ) -> None:
         if instrument not in self.contract_values:
             return
+        last_funding_history_poll = 0
         while not self.stop_event.is_set():
             try:
                 oi = (await self._get(session, "/api/v5/public/open-interest",
@@ -269,19 +390,29 @@ class Collector:
                                         {"instType": "SWAP", "instId": instrument}))[0]
                 index = (await self._get(session, "/api/v5/market/index-tickers",
                                          {"instId": instrument.removesuffix("-SWAP")}))[0]
+                settled_rows: list[dict[str, Any]] = []
+                if now_ms() - last_funding_history_poll >= FUNDING_HISTORY_POLL_SECONDS * 1000:
+                    settled_rows = await self._get(
+                        session, "/api/v5/public/funding-rate-history",
+                        {"instId": instrument, "limit": "20"})
+                    last_funding_history_poll = now_ms()
                 for kind, payload in (("oi", oi), ("funding", funding),
                                       ("mark", mark), ("index", index)):
                     await self.queue.put((kind, {"instrument": instrument, "payload": payload}))
+                for payload in reversed(settled_rows):
+                    await self.queue.put(("funding_settled", {
+                        "instrument": instrument, "payload": payload}))
                 latest = max(int(oi["ts"]), int(mark["ts"]), int(index["ts"]))
-                self.store.record_health(
+                await self._record_health(
                     f"rest:{instrument}", "LIVE", last_success_ms=now_ms(),
-                    source_lag_ms=max(0, now_ms() - latest), **self.counters["rest"])
+                    source_lag_ms=max(0, now_ms() - latest), **self._counter("rest"))
             except asyncio.CancelledError:
                 raise
             except Exception as error:
                 # A SOL failure terminates neither this loop nor BTC/ETH tasks.
-                state = self.counters["rest"]
-                self.store.record_health(
+                state = self._counter("rest")
+                state["failed_request_count"] += 1
+                await self._record_health(
                     f"rest:{instrument}", "ERROR",
                     last_error=f"{type(error).__name__}: {str(error)[:160]}", **state)
             try:
@@ -304,10 +435,10 @@ class Collector:
             except asyncio.CancelledError:
                 raise
             except Exception:
-                self.counters["rest"]["failed_request_count"] += 1
+                self._counter("rest")["failed_request_count"] += 1
                 if attempt == 4:
                     raise
-                self.counters["rest"]["retry_count"] += 1
+                self._counter("rest")["retry_count"] += 1
                 await asyncio.sleep(delay + random.uniform(0, 0.2))
                 delay = min(8, delay * 2)
         return []
@@ -330,6 +461,21 @@ class Collector:
         while not self.stop_event.is_set():
             try:
                 await asyncio.to_thread(self.store.aggregate_recent)
+                with self.store.connect(readonly=True) as connection:
+                    aggregate_latest = {
+                        instrument: connection.execute(
+                            """SELECT MAX(last_source_ts_ms) FROM cvd_aggregates
+                               WHERE instrument=? AND resolution='1m'""",
+                            (instrument,)).fetchone()[0]
+                        for instrument in INSTRUMENTS
+                    }
+                for instrument, source_timestamp in aggregate_latest.items():
+                    if source_timestamp is not None:
+                        await self._record_health(
+                            f"trades:{instrument}:aggregated", "LIVE",
+                            last_success_ms=now_ms(),
+                            source_lag_ms=max(0, now_ms() - int(source_timestamp)),
+                            **self._counter(f"trades:{instrument}"))
                 # Daily pruning is restart-safe and aggregates first.
                 if now_ms() - self.last_prune_ms > 86_400_000:
                     await asyncio.to_thread(self.store.prune_raw)

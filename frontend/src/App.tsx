@@ -1022,7 +1022,7 @@ function Workspace() {
               </div>
               <div className="workspace-chart">
                 <MarketChart key={`${perpetualInstrument(instrument)}:${interval}`} instrument={perpetualInstrument(instrument)} interval={interval} flow={chartFlow} />
-                {paper?.flow?.professional?.available && <div className="flow-pane-labels"><span className="cvd-pane-label">CVD · 逐笔主动成交差</span><span className="oi-pane-label">OI · 永续未平仓量</span></div>}
+                {paper?.flow?.professional?.available && <div className="flow-pane-labels"><span className="cvd-pane-label">CVD（日内累计，UTC 00:00 重置）</span><span className="oi-pane-label">OI · 永续未平仓量</span></div>}
               </div>
               <div className={`flow-status ${flowStatus.toLowerCase()}`}>
                 <b>{t(`flow.status.${flowStatus}` as any)}</b>

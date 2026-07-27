@@ -83,6 +83,7 @@ describe("range-driven flow history", () => {
     expect(older).toEqual({ start: 0, end: 110, maxPoints: 1200, cursor: "cursor-1" });
     const url = historyRequestUrl({ instrument: "BTC-USDT", series: "cvd", ...older! });
     expect(url).toContain("cursor=cursor-1");
+    expect(url).toContain("cvd_mode=UTC_DAILY_RESET");
   });
 
   it("merges pages by timestamp without duplicates and lets server values win", () => {

@@ -1118,6 +1118,7 @@ class Handler(BaseHTTPRequestHandler):
                     end=history_int("end"),
                     max_points=history_int("max_points") or 1200,
                     cursor=query.get("cursor", [None])[0],
+                    cvd_mode=query.get("cvd_mode", ["CONTINUOUS"])[0],
                 ))
             except ValueError as error:
                 self._send({"error": str(error)}, HTTPStatus.BAD_REQUEST)

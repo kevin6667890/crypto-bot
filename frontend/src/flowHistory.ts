@@ -14,6 +14,7 @@ export type FlowCoverage = {
   api_version: string;
   instrument: string;
   series: FlowSeriesName;
+  cvd_mode?: "CONTINUOUS" | "UTC_DAILY_RESET" | null;
   requested_start: number;
   requested_end: number;
   available_start: number | null;
@@ -42,6 +43,7 @@ export type FlowRangeRequest = {
   end: number;
   maxPoints?: number;
   cursor?: string | null;
+  cvdMode?: "CONTINUOUS" | "UTC_DAILY_RESET";
 };
 
 const MEMORY_POINT_LIMIT = 50_000;
@@ -144,6 +146,7 @@ export function historyRequestUrl(request: FlowRangeRequest) {
     max_points: String(request.maxPoints || 1200),
   });
   if (request.cursor) query.set("cursor", request.cursor);
+  if (request.series === "cvd") query.set("cvd_mode", request.cvdMode || "UTC_DAILY_RESET");
   return `${apiBase()}/api/paper/flow/history/v1?${query}`;
 }
 

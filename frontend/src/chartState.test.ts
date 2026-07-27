@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { CHART_POINT_LIMIT, chartCacheKey, formatMillions, loadChartSnapshot, normalizePoints, saveChartSnapshot } from "./chartState";
+import { CHART_CACHE_VERSION, CHART_POINT_LIMIT, chartCacheKey, formatMillions, loadChartSnapshot, normalizePoints, saveChartSnapshot } from "./chartState";
 
 class MemoryStorage implements Storage {
   private values = new Map<string, string>();
@@ -55,7 +55,7 @@ describe("last-known-good chart snapshots", () => {
   it("ignores malformed and incompatible persisted payloads but retains an old valid snapshot", () => {
     memory.setItem(chartCacheKey(btc15), "not-json"); expect(loadChartSnapshot(btc15, isCandle)).toEqual([]);
     memory.setItem(chartCacheKey(btc15), JSON.stringify({ version: 99, savedAt: Date.now(), points: [candle(1)] })); expect(loadChartSnapshot(btc15, isCandle)).toEqual([]);
-    memory.setItem(chartCacheKey(btc15), JSON.stringify({ version: 1, savedAt: 0, points: [candle(1)] })); expect(loadChartSnapshot(btc15, isCandle, Date.now())).toEqual([candle(1)]);
+    memory.setItem(chartCacheKey(btc15), JSON.stringify({ version: CHART_CACHE_VERSION, savedAt: 0, points: [candle(1)] })); expect(loadChartSnapshot(btc15, isCandle, Date.now())).toEqual([candle(1)]);
   });
 });
 

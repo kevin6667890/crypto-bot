@@ -3,6 +3,7 @@ import { AreaData, AreaSeries, CandlestickSeries, ColorType, createChart, IChart
 import { Candle, fetchEthCandles, fetchOlderCandles, generateEquityCurve } from "./data";
 import { useLanguage } from "./i18n";
 import { formatMillions, normalizePoints } from "./chartState";
+import { chartFollowRegistry, LogicalRange, rangeAtLatest } from "./liveFollow";
 import {
   FlowCoverage,
   FlowHistoryPoint,
@@ -159,6 +160,7 @@ function useServerFlowHistory(
   }, [selection, instrument, timeframe, series]);
 
   useEffect(() => {
+    if (series === "cvd") return;
     const retained = retainFallbackHistory(instrument, timeframe, series, fallback);
     if (retained.length) setPoints(retained);
   }, [fallback, selection, instrument, timeframe, series]);
@@ -202,6 +204,9 @@ type MarketSeries = { candles: ISeriesApi<"Candlestick">; ma60: ISeriesApi<"Line
 export function MarketChart({ instrument = "ETH-USDT", interval = "15m", flow }: { instrument?: string; interval?: string; flow?: FlowPaneData }) {
   const { t } = useLanguage();
   const candleSelection = `${instrument}:${interval}`;
+  const [followState, setFollowState] = useState(() => chartFollowRegistry.state(candleSelection));
+  const followStateRef = useRef(followState);
+  followStateRef.current = followState;
   const candleGuard = useRef(new CandleSelectionGuard());
   candleGuard.current.select(instrument, interval);
   const [retainedCandles, setRetainedCandles] = useState<Candle[]>(() => hydrateCandleHistory(instrument, interval));
@@ -218,6 +223,9 @@ export function MarketChart({ instrument = "ETH-USDT", interval = "15m", flow }:
   const seriesRef = useRef<MarketSeries | null>(null);
   const marketChartRef = useRef<IChartApi | null>(null);
   const rangeTimer = useRef(0);
+  const latestCandleTime = useRef<number | null>(null);
+  const programmaticRange = useRef<LogicalRange | null>(null);
+  const applyingData = useRef(false);
   const historyLoadRef = useRef({ cvd: cvdHistory.load, oi: oiHistory.load });
   historyLoadRef.current = { cvd: cvdHistory.load, oi: oiHistory.load };
   const dataRef = useRef({ candles, cvd, oi, interval, cvdCoverage: cvdHistory.coverage, oiCoverage: oiHistory.coverage });
@@ -227,14 +235,32 @@ export function MarketChart({ instrument = "ETH-USDT", interval = "15m", flow }:
     const series = seriesRef.current;
     const data = dataRef.current;
     if (!series || !data.candles.length) return;
-    withPreservedTimeRange(marketChartRef.current?.timeScale(), () => {
-      series.candles.setData(data.candles);
-      const ma60 = movingAverageSeries(data.candles, 60), ma200 = movingAverageSeries(data.candles, 200);
-      series.ma60.setData(ma60);
-      series.ma200.setData(ma200);
-      series.cvd.setData(flowOnCandleTimeline(data.candles, data.cvd, intervalSeconds(data.interval)));
-      series.oi.setData(flowOnCandleTimeline(data.candles, data.oi, intervalSeconds(data.interval)));
-    });
+    const timeScale = marketChartRef.current?.timeScale();
+    const priorRange = timeScale?.getVisibleLogicalRange() as LogicalRange | null;
+    const priorTimeRange = timeScale?.getVisibleRange() ?? null;
+    const newestTime = Number(data.candles[data.candles.length - 1].time);
+    const hadNewTimestamp = latestCandleTime.current !== null && newestTime > latestCandleTime.current;
+    latestCandleTime.current = Math.max(latestCandleTime.current ?? newestTime, newestTime);
+    const ingested = chartFollowRegistry.onData(candleSelection, hadNewTimestamp);
+    if (ingested.mode !== followStateRef.current.mode || ingested.hasNewData !== followStateRef.current.hasNewData) {
+      followStateRef.current = ingested;
+      setFollowState(ingested);
+    }
+    applyingData.current = true;
+    series.candles.setData(data.candles);
+    const ma60 = movingAverageSeries(data.candles, 60), ma200 = movingAverageSeries(data.candles, 200);
+    series.ma60.setData(ma60);
+    series.ma200.setData(ma200);
+    series.cvd.setData(flowOnCandleTimeline(data.candles, data.cvd, intervalSeconds(data.interval)));
+    series.oi.setData(flowOnCandleTimeline(data.candles, data.oi, intervalSeconds(data.interval)));
+    if (timeScale && ingested.mode === "FOLLOWING_LATEST" && priorRange) {
+      const nextRange = rangeAtLatest(priorRange, data.candles.length - 1);
+      programmaticRange.current = nextRange;
+      timeScale.setVisibleLogicalRange(nextRange);
+    } else if (timeScale && priorTimeRange) {
+      timeScale.setVisibleRange(priorTimeRange);
+    }
+    requestAnimationFrame(() => { applyingData.current = false; });
   };
   const { containerRef } = useResponsiveChart((container) => {
     const chart = createChart(container, { ...chartTheme, width: container.clientWidth, height: container.clientHeight });
@@ -250,6 +276,22 @@ export function MarketChart({ instrument = "ETH-USDT", interval = "15m", flow }:
     applyData();
     const initial = visibleRangeFromCandles(dataRef.current.candles);
     if (initial) chart.timeScale().setVisibleRange({ from: initial.start as UTCTimestamp, to: initial.end as UTCTimestamp });
+    chart.timeScale().subscribeVisibleLogicalRangeChange(range => {
+      if (!range) return;
+      if (applyingData.current) return;
+      const logical = { from: Number(range.from), to: Number(range.to) };
+      const expected = programmaticRange.current;
+      if (expected && Math.abs(expected.from - logical.from) < 0.01 && Math.abs(expected.to - logical.to) < 0.01) {
+        programmaticRange.current = null;
+        return;
+      }
+      programmaticRange.current = null;
+      const next = chartFollowRegistry.onVisibleRange(candleSelection, logical, dataRef.current.candles.length - 1);
+      if (next.mode !== followStateRef.current.mode || next.hasNewData !== followStateRef.current.hasNewData) {
+        followStateRef.current = next;
+        setFollowState(next);
+      }
+    });
     chart.timeScale().subscribeVisibleTimeRangeChange(range => {
       if (!range) return;
       window.clearTimeout(rangeTimer.current);
@@ -281,6 +323,10 @@ export function MarketChart({ instrument = "ETH-USDT", interval = "15m", flow }:
   useEffect(() => () => window.clearTimeout(rangeTimer.current), []);
   useEffect(() => {
     setRetainedCandles(hydrateCandleHistory(instrument, interval));
+    const next = chartFollowRegistry.state(candleSelection);
+    followStateRef.current = next;
+    setFollowState(next);
+    latestCandleTime.current = null;
   }, [candleSelection, instrument, interval]);
   useEffect(() => {
     const controller = new AbortController();
@@ -322,9 +368,26 @@ export function MarketChart({ instrument = "ETH-USDT", interval = "15m", flow }:
       loadRef.current = { refresh: () => undefined, older: () => undefined };
     };
   }, [instrument, interval]);
+  const returnToLatest = () => {
+    const timeScale = marketChartRef.current?.timeScale();
+    if (!timeScale || !dataRef.current.candles.length) return;
+    const nextRange = rangeAtLatest(
+      timeScale.getVisibleLogicalRange() as LogicalRange | null,
+      dataRef.current.candles.length - 1,
+    );
+    const next = chartFollowRegistry.follow(candleSelection);
+    followStateRef.current = next;
+    setFollowState(next);
+    programmaticRange.current = nextRange;
+    timeScale.setVisibleLogicalRange(nextRange);
+  };
   return <div className="chart-canvas" ref={containerRef}>
+    {followState.mode === "VIEWING_HISTORY" && <div className="chart-follow-control">
+      {followState.hasNewData && <span>有新数据</span>}
+      <button type="button" onClick={returnToLatest}>回到最新</button>
+    </div>}
     <div className="market-flow-coverage" aria-label={t("flow.historyCoverage")}>
-      <span>CVD · {formatFlowCoverage(cvdHistory.coverage)}</span>
+      <span>CVD（日内累计，UTC 00:00 重置） · {formatFlowCoverage(cvdHistory.coverage)}</span>
       <span>OI · {formatFlowCoverage(oiHistory.coverage)}</span>
     </div>
   </div>;

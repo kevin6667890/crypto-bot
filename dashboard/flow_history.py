@@ -524,9 +524,12 @@ class FlowHistoryStore:
         max_points: int = DEFAULT_MAX_POINTS,
         cursor: str | None = None,
         now: int | None = None,
+        cvd_mode: str = "CONTINUOUS",
     ) -> dict[str, Any]:
         if series not in {"cvd", "oi"}:
             raise ValueError("series must be cvd or oi")
+        if cvd_mode not in {"CONTINUOUS", "UTC_DAILY_RESET"}:
+            raise ValueError("cvd_mode must be CONTINUOUS or UTC_DAILY_RESET")
         if not instrument or len(instrument) > 40:
             raise ValueError("invalid instrument")
         now = int(time.time()) if now is None else int(now)
@@ -550,6 +553,7 @@ class FlowHistoryStore:
                     requested_start,
                     requested_end,
                     max_points,
+                    cvd_mode,
                 )
             raw_table = "flow_trade_buckets" if series == "cvd" else "oi_snapshots"
             raw_bounds = connection.execute(
@@ -607,11 +611,18 @@ class FlowHistoryStore:
                 first_bucket = (
                     points[0]["time"] // AGGREGATE_RESOLUTIONS[0]
                 ) * AGGREGATE_RESOLUTIONS[0]
+                day_start = (points[0]["time"] // 86_400) * 86_400
+                baseline_start = day_start if cvd_mode == "UTC_DAILY_RESET" else 0
                 baseline = connection.execute(
                     """SELECT COALESCE(SUM(delta),0) FROM flow_history_aggregates
                        WHERE instrument=? AND series='cvd' AND resolution_seconds=?
-                         AND bucket_ts<?""",
-                    (instrument, AGGREGATE_RESOLUTIONS[0], first_bucket),
+                         AND bucket_ts>=? AND bucket_ts<?""",
+                    (
+                        instrument,
+                        AGGREGATE_RESOLUTIONS[0],
+                        baseline_start,
+                        first_bucket,
+                    ),
                 ).fetchone()[0]
                 if resolution < AGGREGATE_RESOLUTIONS[0]:
                     baseline += connection.execute(
@@ -625,7 +636,12 @@ class FlowHistoryStore:
                         ),
                     ).fetchone()[0]
                 cumulative = float(baseline or 0)
+                active_day = day_start
                 for point in points:
+                    point_day = (point["time"] // 86_400) * 86_400
+                    if cvd_mode == "UTC_DAILY_RESET" and point_day != active_day:
+                        active_day = point_day
+                        cumulative = 0.0
                     cumulative += float(point["delta"])
                     point["value"] = round(cumulative, 2)
 
@@ -652,6 +668,7 @@ class FlowHistoryStore:
             "api_version": HISTORY_API_VERSION,
             "instrument": instrument,
             "series": series,
+            "cvd_mode": cvd_mode if series == "cvd" else None,
             "requested_start": requested_start,
             "requested_end": requested_end,
             "available_start": available_start,
@@ -795,12 +812,14 @@ class FlowHistoryStore:
         requested_start: int,
         requested_end: int,
         max_points: int,
+        cvd_mode: str = "CONTINUOUS",
     ) -> dict[str, Any]:
         del max_points
         return {
             "api_version": HISTORY_API_VERSION,
             "instrument": instrument,
             "series": series,
+            "cvd_mode": cvd_mode if series == "cvd" else None,
             "requested_start": requested_start,
             "requested_end": requested_end,
             "available_start": None,

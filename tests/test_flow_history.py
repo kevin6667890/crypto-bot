@@ -309,3 +309,98 @@ def test_versioned_contract_includes_complete_coverage_metadata(tmp_path):
         "source",
         "retention_policy_version",
     } <= response.keys()
+
+
+def test_cvd_utc_daily_reset_partial_page_and_raw_storage_unchanged(tmp_path):
+    path = tmp_path / "daily.db"
+    midnight = 1_800_057_600
+    connection = sqlite3.connect(path)
+    connection.executescript(
+        """CREATE TABLE flow_trade_buckets (
+            instrument TEXT NOT NULL,ts INTEGER NOT NULL,buy_notional REAL NOT NULL,
+            sell_notional REAL NOT NULL,trade_count INTEGER NOT NULL,
+            PRIMARY KEY(instrument,ts));
+        CREATE TABLE oi_snapshots (
+            instrument TEXT NOT NULL,ts INTEGER NOT NULL,oi REAL NOT NULL,source TEXT NOT NULL,
+            PRIMARY KEY(instrument,ts));
+        CREATE TABLE flow_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,created_at TEXT NOT NULL,oi REAL,cvd REAL,
+            instrument TEXT,trade_count INTEGER,window_seconds INTEGER,last_trade_ts INTEGER);"""
+    )
+    for timestamp, delta in (
+        (midnight - 120, 7), (midnight - 60, 11), (midnight, 13),
+        (midnight + 60, 17), (midnight + 120, 19),
+    ):
+        connection.execute(
+            "INSERT INTO flow_trade_buckets VALUES(?,?,?,?,?)",
+            ("BTC-USDT", timestamp, delta, 0, 1),
+        )
+    for timestamp, oi in (
+        (midnight - 60, 1_000_000),
+        (midnight, 1_000_250),
+        (midnight + 60, 999_900),
+    ):
+        connection.execute(
+            "INSERT INTO oi_snapshots VALUES(?,?,?,?)",
+            ("BTC-USDT", timestamp, oi, "test"),
+        )
+    connection.commit()
+    raw_before = connection.execute(
+        "SELECT * FROM flow_trade_buckets ORDER BY ts"
+    ).fetchall()
+    connection.close()
+    store = FlowHistoryStore(path)
+    store.initialize()
+    store.backfill()
+
+    full = store.query(
+        "BTC-USDT", "cvd", start=midnight - 120, end=midnight + 120,
+        max_points=100, now=midnight + 120, cvd_mode="UTC_DAILY_RESET",
+    )
+    assert full["cvd_mode"] == "UTC_DAILY_RESET"
+    assert [point["value"] for point in full["points"]] == [7, 18, 13, 30, 49]
+    partial = store.query(
+        "BTC-USDT", "cvd", start=midnight + 120, end=midnight + 120,
+        max_points=100, now=midnight + 120, cvd_mode="UTC_DAILY_RESET",
+    )
+    assert partial["points"][0]["value"] == 49
+    assert partial["points"][0]["delta"] == 19
+    with sqlite3.connect(path) as check:
+        assert check.execute(
+            "SELECT * FROM flow_trade_buckets ORDER BY ts"
+        ).fetchall() == raw_before
+
+
+def test_utc_not_browser_local_midnight_missing_buckets_and_oi_continuity(tmp_path):
+    path = tmp_path / "boundary.db"
+    midnight = 1_800_057_600
+    store = seed_database(path, now=midnight + 60)
+    cvd = store.query(
+        "BTC-USDT", "cvd", start=midnight - 8 * 3600, end=midnight + 60,
+        max_points=1000, now=midnight + 60, cvd_mode="UTC_DAILY_RESET",
+    )
+    points = {point["time"]: point for point in cvd["points"]}
+    local_midnight = midnight - 8 * 3600
+    assert points[local_midnight]["value"] > points[local_midnight]["delta"]
+    assert points[midnight]["value"] == points[midnight]["delta"]
+
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            "DELETE FROM flow_trade_buckets WHERE instrument='BTC-USDT' AND ts=?",
+            (midnight - 120,),
+        )
+        connection.commit()
+    store.backfill(force=True)
+    missing = store.query(
+        "BTC-USDT", "cvd", start=midnight - 180, end=midnight + 60,
+        max_points=1000, now=midnight + 60, cvd_mode="UTC_DAILY_RESET",
+    )
+    assert midnight - 120 not in [point["time"] for point in missing["points"]]
+
+    oi = store.query(
+        "BTC-USDT", "oi", start=midnight - 60, end=midnight + 60,
+        max_points=1000, now=midnight + 60,
+    )
+    boundary = next(point for point in oi["points"] if point["time"] == midnight)
+    assert boundary["value"] != 0
+    assert oi["cvd_mode"] is None

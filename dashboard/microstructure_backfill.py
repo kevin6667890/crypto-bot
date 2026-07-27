@@ -14,6 +14,8 @@ from .microstructure import INSTRUMENTS, MicrostructureStore, now_ms
 
 
 OKX_BASE = "https://www.okx.com"
+BACKFILL_WRITE_BATCH_SIZE = 50
+BACKFILL_RATE_SECONDS = 0.20
 
 
 class PublicOKXClient:
@@ -55,6 +57,42 @@ class OfficialBackfill:
             self.store.initialize()
         self.contract_values: dict[str, float] = {}
 
+    def _live_collection_has_priority(self) -> bool:
+        """Return true while the live writer is backlogged or trade persistence is stale."""
+        with self.store.connect(readonly=True) as connection:
+            writer = connection.execute(
+                """SELECT metadata_json,updated_at_ms FROM collection_checkpoints
+                   WHERE lane='writer' AND instrument='live_queue'"""
+            ).fetchone()
+            stale_trade = connection.execute(
+                """SELECT 1 FROM collector_health
+                   WHERE component LIKE 'trades:%:persisted'
+                   AND (status!='LIVE' OR source_lag_ms>5000)
+                   LIMIT 1"""
+            ).fetchone()
+        if stale_trade is not None:
+            return True
+        if writer is None or now_ms() - int(writer["updated_at_ms"]) > 60_000:
+            # No active live collector is using this database.
+            return False
+        try:
+            metadata = json.loads(writer["metadata_json"])
+        except (TypeError, json.JSONDecodeError):
+            metadata = {}
+        return (
+            int(metadata.get("queue_depth") or 0) > 0
+            or int(metadata.get("write_latency_ms") or 0) > 1000
+        )
+
+    def _wait_for_live_capacity(self, max_wait_seconds: float = 2.0) -> bool:
+        """Bound the wait and let callers preserve their cursor when live is busy."""
+        deadline = time.monotonic() + max_wait_seconds
+        while self._live_collection_has_priority():
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(0.05)
+        return True
+
     def contract_value(self, instrument: str) -> float:
         if instrument not in self.contract_values:
             rows = self.client.get_public(
@@ -94,6 +132,9 @@ class OfficialBackfill:
         database_retries = 0
         contract_value = self.contract_value(instrument)
         while pages < max_pages:
+            if not self._wait_for_live_capacity():
+                terminal_status = "LIVE_COLLECTION_PRIORITY_PAUSE"
+                break
             params: dict[str, Any] = {"instId": instrument, "limit": 100}
             if cursor:
                 params["after"] = cursor
@@ -114,15 +155,28 @@ class OfficialBackfill:
                  "OKX GET /api/v5/market/history-trades", None)
                 for row in rows
             ]
-            for database_attempt in range(5):
-                try:
-                    page_inserted = self.store.insert_trade_batch(batch)
+            page_inserted = 0
+            processed = 0
+            for offset in range(0, len(batch), BACKFILL_WRITE_BATCH_SIZE):
+                if not self._wait_for_live_capacity():
+                    terminal_status = "LIVE_COLLECTION_PRIORITY_PAUSE"
                     break
-                except sqlite3.OperationalError as error:
-                    if "locked" not in str(error).lower() or database_attempt == 4:
-                        raise
-                    database_retries += 1
-                    time.sleep(min(30, 2 ** (database_attempt + 1)))
+                bounded_batch = batch[offset:offset + BACKFILL_WRITE_BATCH_SIZE]
+                for database_attempt in range(5):
+                    try:
+                        page_inserted += self.store.insert_trade_batch(bounded_batch)
+                        processed += len(bounded_batch)
+                        break
+                    except sqlite3.OperationalError as error:
+                        if "locked" not in str(error).lower() or database_attempt == 4:
+                            raise
+                        database_retries += 1
+                        time.sleep(min(5, 2 ** database_attempt))
+                time.sleep(BACKFILL_RATE_SECONDS)
+            if terminal_status == "LIVE_COLLECTION_PRIORITY_PAUSE":
+                inserted += page_inserted
+                duplicates += processed - page_inserted
+                break
             inserted += page_inserted
             duplicates += len(rows) - page_inserted
             for row in rows:
@@ -144,7 +198,7 @@ class OfficialBackfill:
                                             "inserted": inserted,
                                             "duplicates": duplicates,
                                             "cursor_before": cursor_before})
-            time.sleep(0.12)
+            time.sleep(BACKFILL_RATE_SECONDS)
         if pages == max_pages and terminal_status == "BATCH_LIMIT_REACHED":
             status = "BATCH_LIMIT_REACHED"
         else:
@@ -189,6 +243,8 @@ class OfficialBackfill:
         earliest = latest = None
         exhausted = False
         while pages < max_pages:
+            if not self._wait_for_live_capacity():
+                break
             params: dict[str, Any] = {"instId": instrument, "limit": 400}
             if cursor:
                 params["after"] = cursor
@@ -197,11 +253,19 @@ class OfficialBackfill:
                 exhausted = True
                 break
             pages += 1
-            for row in rows:
+            complete_page = True
+            for row_number, row in enumerate(rows, 1):
+                if not self._wait_for_live_capacity():
+                    complete_page = False
+                    break
                 inserted += int(self.store.insert_funding(instrument, row, settled=True))
                 timestamp = int(row["fundingTime"])
                 earliest = timestamp if earliest is None else min(earliest, timestamp)
                 latest = timestamp if latest is None else max(latest, timestamp)
+                if row_number % BACKFILL_WRITE_BATCH_SIZE == 0:
+                    time.sleep(BACKFILL_RATE_SECONDS)
+            if not complete_page:
+                break
             new_cursor = str(min(int(row["fundingTime"]) for row in rows))
             if new_cursor == cursor:
                 exhausted = True
@@ -210,8 +274,10 @@ class OfficialBackfill:
             self.store.checkpoint("funding_settled", instrument, cursor=cursor,
                                   last_source_ts_ms=earliest, status="running",
                                   metadata={"pages": pages, "inserted": inserted})
-            time.sleep(0.11)
-        status = "complete" if exhausted else "limited_batch"
+            time.sleep(BACKFILL_RATE_SECONDS)
+        status = ("complete" if exhausted else
+                  "live_priority_pause" if self._live_collection_has_priority()
+                  else "limited_batch")
         self.store.checkpoint("funding_settled", instrument, cursor=cursor,
                               last_source_ts_ms=earliest, status=status,
                               metadata={"pages": pages, "inserted": inserted})
@@ -235,6 +301,8 @@ class OfficialBackfill:
         earliest = latest = None
         exhausted = False
         while pages < max_pages:
+            if not self._wait_for_live_capacity():
+                break
             params: dict[str, Any] = {"instId": api_instrument, "bar": "1m", "limit": 100}
             if cursor:
                 params["after"] = cursor
@@ -243,13 +311,23 @@ class OfficialBackfill:
                 exhausted = True
                 break
             pages += 1
-            inserted += self.store.insert_price_batch(kind, [
+            price_rows = [
                 (api_instrument if kind == "index" else instrument,
                  int(row[0]), float(row[4]), float(row[1]), float(row[2]),
                  float(row[3]), str(row[5]) == "1",
                  f"{api_instrument}:1m:{int(row[0])}")
                 for row in rows
-            ])
+            ]
+            complete_page = True
+            for offset in range(0, len(price_rows), BACKFILL_WRITE_BATCH_SIZE):
+                if not self._wait_for_live_capacity():
+                    complete_page = False
+                    break
+                inserted += self.store.insert_price_batch(
+                    kind, price_rows[offset:offset + BACKFILL_WRITE_BATCH_SIZE])
+                time.sleep(BACKFILL_RATE_SECONDS)
+            if not complete_page:
+                break
             for row in rows:
                 timestamp = int(row[0])
                 earliest = timestamp if earliest is None else min(earliest, timestamp)
@@ -262,8 +340,10 @@ class OfficialBackfill:
             self.store.checkpoint(kind, instrument, cursor=cursor,
                                   last_source_ts_ms=earliest, status="running",
                                   metadata={"pages": pages, "inserted": inserted})
-            time.sleep(0.11)
-        status = "complete" if exhausted else "limited_batch"
+            time.sleep(BACKFILL_RATE_SECONDS)
+        status = ("complete" if exhausted else
+                  "live_priority_pause" if self._live_collection_has_priority()
+                  else "limited_batch")
         self.store.checkpoint(kind, instrument, cursor=cursor, last_source_ts_ms=earliest,
                               status=status, metadata={"pages": pages, "inserted": inserted})
         self._coverage(kind, f"OKX GET {path}", earliest, latest, pages, status)

@@ -1134,6 +1134,10 @@ class Handler(BaseHTTPRequestHandler):
             self._send(MICROSTRUCTURE.coverage())
         elif parsed.path == "/api/research/microstructure/eligibility":
             self._send(MICROSTRUCTURE.per_feature_eligibility())
+        elif parsed.path == "/api/research/microstructure/gaps":
+            self._send(MICROSTRUCTURE.gap_report(include_items=False))
+        elif parsed.path == "/api/research/microstructure/validation":
+            self._send(SourceSpecificEventStudy.latest_summary(MICROSTRUCTURE))
         elif parsed.path == "/api/research/microstructure/charts/funding":
             instrument = query.get("instrument", ["BTC-USDT-SWAP"])[0]
             limit = min(int(query.get("limit", ["500"])[0]), 2000)

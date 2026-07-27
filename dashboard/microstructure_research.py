@@ -13,7 +13,9 @@ All outputs are labelled ``exploratory_only = True``.
 from __future__ import annotations
 
 import json
+import hashlib
 import math
+import random
 import statistics
 import uuid
 from bisect import bisect_left, bisect_right
@@ -102,6 +104,44 @@ def _monotonicity(quantile_returns: list[dict[str, Any]]) -> float | None:
     return (2 * ascending - total) / total
 
 
+DISCLAIMER = "VALIDATION RESEARCH ONLY — NOT A TRADING SIGNAL"
+RESEARCH_SEGMENT = "RESEARCH_CALIBRATION"
+VALIDATION_SEGMENT = "LATER_VALIDATION"
+
+
+def _correlation_p_value(correlation: float | None, count: int) -> float | None:
+    """Two-sided Fisher-z normal diagnostic without a significance claim."""
+    if correlation is None or count < 5:
+        return None
+    bounded = max(-0.999999, min(0.999999, correlation))
+    z_value = abs(math.atanh(bounded)) * math.sqrt(count - 3)
+    return math.erfc(z_value / math.sqrt(2))
+
+
+def _bootstrap_ic(
+    features: list[float], returns: list[float], *, rank: bool, seed: int,
+    repetitions: int = 200,
+) -> list[float] | None:
+    if len(features) < 30:
+        return None
+    rng = random.Random(seed)
+    estimates = []
+    for _ in range(repetitions):
+        indices = [rng.randrange(len(features)) for _ in features]
+        left = [features[index] for index in indices]
+        right = [returns[index] for index in indices]
+        value = _spearman(left, right) if rank else _pearson(left, right)
+        if value is not None:
+            estimates.append(value)
+    if len(estimates) < 20:
+        return None
+    estimates.sort()
+    return [
+        round(estimates[int(0.025 * (len(estimates) - 1))], 6),
+        round(estimates[int(0.975 * (len(estimates) - 1))], 6),
+    ]
+
+
 class SourceSpecificEventStudy:
     """Event studies using only source-specific features where coverage permits.
 
@@ -136,8 +176,17 @@ class SourceSpecificEventStudy:
         return result
 
     def _forward_return(self, mark_prices: dict[int, float],
-                        decision_ms: int, horizon_ms: int) -> float | None:
+                        decision_ms: int, horizon_ms: int,
+                        max_label_ms: int | None = None) -> float | None:
         """Find mark price at decision+horizon and calculate return."""
+        details = self._forward_return_details(
+            mark_prices, decision_ms, horizon_ms, max_label_ms=max_label_ms)
+        return details[0] if details is not None else None
+
+    def _forward_return_details(
+        self, mark_prices: dict[int, float], decision_ms: int, horizon_ms: int,
+        *, max_label_ms: int | None = None,
+    ) -> tuple[float, int] | None:
         if not mark_prices:
             return None
         timestamps = self._mark_timestamp_cache.setdefault(
@@ -149,49 +198,145 @@ class SourceSpecificEventStudy:
             return None
         base_ms = timestamps[base_position]
         forward_ms = timestamps[target_position]
+        if max_label_ms is not None and forward_ms > max_label_ms:
+            return None
         if decision_ms - base_ms > 60_000 or forward_ms - target_ms > 60_000:
             return None
         base_price = mark_prices[base_ms]
         if base_price == 0:
             return None
-        return (mark_prices[forward_ms] - base_price) / base_price
+        return (mark_prices[forward_ms] - base_price) / base_price, forward_ms
+
+    def _regime(self, mark_prices: dict[int, float], decision_ms: int) -> str:
+        timestamps = self._mark_timestamp_cache.setdefault(
+            id(mark_prices), list(mark_prices))
+        current_position = bisect_right(timestamps, decision_ms) - 1
+        prior_position = bisect_right(timestamps, decision_ms - 86_400_000) - 1
+        if current_position < 0 or prior_position < 0:
+            return "UNCLASSIFIED"
+        prior = mark_prices[timestamps[prior_position]]
+        change = mark_prices[timestamps[current_position]] / prior - 1 if prior else 0.0
+        if change > 0.005:
+            return "UP_24H"
+        if change < -0.005:
+            return "DOWN_24H"
+        return "FLAT_24H"
+
+    @staticmethod
+    def _segment_metrics(
+        feature_name: str, horizon: str,
+        events: list[tuple[int, float, float, int, str]],
+    ) -> dict[str, Any]:
+        n = len(events)
+        if n < 10:
+            return {"event_count": n, "insufficient_sample": True}
+        features = [event[1] for event in events]
+        returns = [event[2] for event in events]
+        pearson_ic = _pearson(features, returns)
+        spearman_ic = _spearman(features, returns)
+        quantiles = _quantile_split(features, returns)
+        subperiod_ics = []
+        for index in range(3):
+            subset = events[index * n // 3:(index + 1) * n // 3]
+            value = _spearman(
+                [event[1] for event in subset],
+                [event[2] for event in subset])
+            subperiod_ics.append(value)
+        non_null_subperiods = [value for value in subperiod_ics if value is not None]
+        reference_sign = 0 if spearman_ic in (None, 0) else (1 if spearman_ic > 0 else -1)
+        sign_consistency = (
+            sum((1 if value > 0 else -1 if value < 0 else 0) == reference_sign
+                for value in non_null_subperiods) / len(non_null_subperiods)
+            if non_null_subperiods and reference_sign else 0.0)
+        dispersion = (
+            statistics.pstdev(non_null_subperiods)
+            if len(non_null_subperiods) > 1 else 0.0)
+        absolute_sum = sum(abs(value) for value in returns)
+        regimes: dict[str, int] = {}
+        for event in events:
+            regimes[event[4]] = regimes.get(event[4], 0) + 1
+        seed = int(hashlib.sha256(
+            f"{feature_name}:{horizon}:{events[0][0]}:{n}".encode()
+        ).hexdigest()[:16], 16)
+        return {
+            "event_count": n,
+            "event_earliest_ms": events[0][0],
+            "event_latest_ms": events[-1][0],
+            "label_latest_ms": max(event[3] for event in events),
+            "pearson_ic": round(pearson_ic, 6) if pearson_ic is not None else None,
+            "spearman_ic": round(spearman_ic, 6) if spearman_ic is not None else None,
+            "pearson_p_value_diagnostic": _correlation_p_value(pearson_ic, n),
+            "spearman_p_value_diagnostic": _correlation_p_value(spearman_ic, n),
+            "pearson_bootstrap_95_ci": _bootstrap_ic(
+                features, returns, rank=False, seed=seed),
+            "spearman_bootstrap_95_ci": _bootstrap_ic(
+                features, returns, rank=True, seed=seed + 1),
+            "quantile_returns": quantiles,
+            "monotonicity": _monotonicity(quantiles),
+            "mean_return": statistics.mean(returns),
+            "median_return": statistics.median(returns),
+            "return_std": statistics.stdev(returns) if n > 1 else 0.0,
+            "sign_consistency": round(sign_consistency, 6),
+            "temporal_stability": {
+                "subperiod_spearman_ic": subperiod_ics,
+                "ic_dispersion": dispersion,
+            },
+            "concentration": (
+                max(abs(value) for value in returns) / absolute_sum
+                if absolute_sum else 0.0),
+            "regime_distribution": regimes,
+        }
 
     def _study_features(self, feature_name: str, observations: list[tuple[int, float]],
                         mark_prices: dict[int, float],
                         instrument: str) -> dict[str, Any]:
-        """Run event study on a single feature across all horizons."""
+        """Run causal chronological research/later-validation segments."""
         results: dict[str, Any] = {}
+        overlapping_timestamps = [
+            timestamp for timestamp, value in observations
+            if math.isfinite(value)
+            and self._forward_return(mark_prices, timestamp, HORIZONS["15m"]) is not None
+        ]
+        if len(overlapping_timestamps) < 2:
+            partition_boundary = None
+        else:
+            partition_boundary = overlapping_timestamps[
+                max(0, int(len(overlapping_timestamps) * 0.70) - 1)]
         for horizon_label, horizon_ms in HORIZONS.items():
-            features_vals: list[float] = []
-            returns_vals: list[float] = []
+            events: list[tuple[int, float, float, int, str]] = []
             for ts_ms, fval in observations:
-                fwd = self._forward_return(mark_prices, ts_ms, horizon_ms)
-                if fwd is not None and math.isfinite(fval):
-                    features_vals.append(fval)
-                    returns_vals.append(fwd)
-            n = len(features_vals)
-            if n < 10:
-                results[horizon_label] = {
-                    "event_count": n, "insufficient_sample": True
-                }
-                continue
-            quantiles = _quantile_split(features_vals, returns_vals)
-            mono = _monotonicity(quantiles)
-            pearson_ic = _pearson(features_vals, returns_vals)
-            spearman_ic = _spearman(features_vals, returns_vals)
+                details = self._forward_return_details(mark_prices, ts_ms, horizon_ms)
+                if details is not None and math.isfinite(fval):
+                    events.append((
+                        ts_ms, fval, details[0], details[1],
+                        self._regime(mark_prices, ts_ms)))
+            research_events = [
+                event for event in events
+                if partition_boundary is not None
+                and event[0] <= partition_boundary
+                and event[3] <= partition_boundary]
+            validation_events = [
+                event for event in events
+                if partition_boundary is not None and event[0] > partition_boundary]
+            overall = self._segment_metrics(feature_name, horizon_label, events)
             results[horizon_label] = {
-                "event_count": n,
-                "pearson_ic": round(pearson_ic, 6) if pearson_ic is not None else None,
-                "spearman_ic": round(spearman_ic, 6) if spearman_ic is not None else None,
-                "monotonicity": round(mono, 4) if mono is not None else None,
-                "quantile_returns": quantiles,
-                "mean_return": round(statistics.mean(returns_vals), 8),
-                "return_std": round(statistics.stdev(returns_vals), 8) if n > 1 else 0.0,
+                **overall,
+                "partition_boundary_ms": partition_boundary,
+                "segments": {
+                    RESEARCH_SEGMENT: self._segment_metrics(
+                        feature_name, f"{horizon_label}:{RESEARCH_SEGMENT}",
+                        research_events),
+                    VALIDATION_SEGMENT: self._segment_metrics(
+                        feature_name, f"{horizon_label}:{VALIDATION_SEGMENT}",
+                        validation_events),
+                },
+                "partition_policy": "first 70% calibration; later 30% validation",
+                "segments_overlap": False,
+                "completed_oot_claim": False,
             }
-            # Persist to event_study_results
             self._save_result(feature_name, horizon_label,
                               {**results[horizon_label], "instrument": instrument},
-                              n)
+                              len(events))
         return results
 
     def _save_result(self, feature_name: str, horizon: str,
@@ -205,6 +350,97 @@ class SourceSpecificEventStudy:
                 (self.report_id, feature_name, horizon,
                  json.dumps(payload), event_count, now_ms()),
             )
+
+    @staticmethod
+    def _apply_multiple_testing(feature_results: dict[str, dict[str, Any]]) -> None:
+        tests = []
+        for feature, horizons in feature_results.items():
+            for horizon, result in horizons.items():
+                for segment, metrics in result.get("segments", {}).items():
+                    value = metrics.get("spearman_p_value_diagnostic")
+                    if value is not None:
+                        tests.append((feature, horizon, segment, float(value)))
+        test_count = max(1, len(tests))
+        for feature, horizon, segment, value in tests:
+            metrics = feature_results[feature][horizon]["segments"][segment]
+            metrics["multiple_testing"] = {
+                "method": "Bonferroni diagnostic",
+                "family_test_count": test_count,
+                "adjusted_p_value": min(1.0, value * test_count),
+                "can_promote_feature": False,
+            }
+
+    @staticmethod
+    def _redundancy(
+        features: dict[str, list[tuple[int, float]]]
+    ) -> list[dict[str, Any]]:
+        findings = []
+        names = sorted(features)
+        for left_index, left_name in enumerate(names):
+            left = dict(features[left_name])
+            for right_name in names[left_index + 1:]:
+                right = dict(features[right_name])
+                overlap = sorted(set(left) & set(right))
+                left_values = [left[timestamp] for timestamp in overlap]
+                right_values = [right[timestamp] for timestamp in overlap]
+                pearson = _pearson(left_values, right_values)
+                spearman = _spearman(left_values, right_values)
+                findings.append({
+                    "left": left_name, "right": right_name,
+                    "overlapping_event_count": len(overlap),
+                    "overlapping_event_identity": "exact source timestamp intersection",
+                    "pearson_correlation": pearson,
+                    "rank_correlation": spearman,
+                    "duplicated_transform": bool(
+                        (pearson is not None and abs(pearson) >= 0.95)
+                        or (spearman is not None and abs(spearman) >= 0.95)),
+                })
+        return findings
+
+    @staticmethod
+    def _classifications(
+        feature_results: dict[str, dict[str, Any]],
+        redundancy: list[dict[str, Any]],
+    ) -> dict[str, str]:
+        redundant = {
+            name for finding in redundancy if finding["duplicated_transform"]
+            for name in (finding["left"], finding["right"])
+        }
+        classifications = {}
+        for feature, horizons in feature_results.items():
+            validation = [
+                result.get("segments", {}).get(VALIDATION_SEGMENT, {})
+                for result in horizons.values()
+            ]
+            adequate = [item for item in validation if item.get("event_count", 0) >= 30]
+            if len(adequate) < max(1, len(horizons) // 2):
+                classification = "INSUFFICIENT_SAMPLE"
+            elif feature in redundant:
+                classification = "REDUNDANT"
+            else:
+                significant = [
+                    item for item in adequate
+                    if item.get("multiple_testing", {}).get("adjusted_p_value", 1) <= 0.05
+                ]
+                signs = [
+                    1 if item.get("spearman_ic", 0) > 0 else -1
+                    if item.get("spearman_ic", 0) < 0 else 0
+                    for item in adequate
+                ]
+                dominant = max((signs.count(-1), signs.count(1)))
+                consistency = dominant / len(signs) if signs else 0.0
+                median_ic = statistics.median(
+                    abs(float(item.get("spearman_ic") or 0)) for item in adequate)
+                if len(significant) >= 3 and consistency >= 0.7:
+                    classification = "VALIDATION_PROMISING"
+                elif consistency < 0.6:
+                    classification = "UNSTABLE"
+                elif median_ic < 0.03:
+                    classification = "NO_DESCRIPTIVE_RELATIONSHIP"
+                else:
+                    classification = "CONTINUE_COLLECTING"
+            classifications[feature] = classification
+        return classifications
 
     # ------------------------------------------------------------------
     # Funding study
@@ -264,15 +500,30 @@ class SourceSpecificEventStudy:
                 inst_results[feat_name] = self._study_features(
                     f"{feat_name}_{instrument}", observations, mark, instrument
                 )
-            results_by_instrument[instrument] = inst_results
+            self._apply_multiple_testing(inst_results)
+            redundancy = self._redundancy(features)
+            results_by_instrument[instrument] = {
+                "features": inst_results,
+                "redundancy": redundancy,
+                "feature_classifications": self._classifications(
+                    inst_results, redundancy),
+                "economic_interpretation": (
+                    "Funding cost can plausibly affect positioning and later mark returns; "
+                    "sign and horizon survival are reported descriptively, not selected."),
+                "eligibility": group.get("instruments", {}).get(instrument),
+            }
 
         return {
             "exploratory_only": True,
+            "disclaimer": DISCLAIMER,
             "study_type": "funding_settled",
             "report_id": self.report_id,
             "coverage_days": group.get("gap_adjusted_sample_days", 0),
             "source_data_status": group.get("source_data_status"),
             "event_study_status": group.get("event_study_status"),
+            "chronological_segments": [RESEARCH_SEGMENT, VALIDATION_SEGMENT],
+            "completed_oot_claim": False,
+            "oot_status": "NOT_CREATED",
             "instruments": results_by_instrument,
         }
 
@@ -285,30 +536,48 @@ class SourceSpecificEventStudy:
         instrument = normalize_swap_instrument(instrument)
         with self.store.connect(readonly=True) as c:
             rows = c.execute(
-                """SELECT bucket_ms, last_basis_pct, expansion
+                """SELECT bucket_ms,last_basis,last_basis_pct,expansion
                    FROM basis_aggregates
                    WHERE instrument=? AND resolution='1H'
                    ORDER BY bucket_ms""",
                 (instrument,),
             ).fetchall()
+            funding_rows = c.execute(
+                """SELECT funding_time_ms,funding_rate FROM funding_settled
+                   WHERE instrument=? AND state='confirmed'
+                   ORDER BY funding_time_ms""", (instrument,)).fetchall()
         if len(rows) < 10:
             return {}
 
         features: dict[str, list[tuple[int, float]]] = {
             "basis_level": [],
             "basis_zscore": [],
+            "basis_change": [],
             "basis_expansion_contraction": [],
+            "basis_absolute": [],
+            "basis_percentage": [],
+            "basis_funding_adjusted": [],
         }
         values = [float(r["last_basis_pct"]) for r in rows]
         timestamps = [int(r["bucket_ms"]) for r in rows]
+        funding_times = [int(row["funding_time_ms"]) for row in funding_rows]
+        funding_values = [float(row["funding_rate"]) for row in funding_rows]
 
         for i in range(1, len(rows)):
             ts = timestamps[i]
             val = values[i]
             features["basis_level"].append((ts, val))
+            features["basis_absolute"].append((ts, float(rows[i]["last_basis"])))
+            features["basis_percentage"].append((ts, val))
+            features["basis_change"].append((ts, val - values[i - 1]))
             features["basis_expansion_contraction"].append(
                 (ts, float(rows[i]["expansion"]))
             )
+            funding_position = bisect_right(funding_times, ts) - 1
+            if (funding_position >= 0
+                    and ts - funding_times[funding_position] <= 28_800_000):
+                features["basis_funding_adjusted"].append(
+                    (ts, val - funding_values[funding_position]))
             # Rolling z-score with last 24 observations (24 hours at 1H)
             window = values[max(0, i - 23):i + 1]
             if len(window) >= 5:
@@ -325,7 +594,7 @@ class SourceSpecificEventStudy:
         group = elig.get("feature_groups", {}).get("basis", {})
 
         results_by_instrument: dict[str, dict[str, Any]] = {}
-        for instrument in INSTRUMENTS:
+        for instrument in ("BTC-USDT-SWAP",):
             mark = self._mark_prices(instrument)
             if not mark:
                 continue
@@ -337,15 +606,47 @@ class SourceSpecificEventStudy:
                 inst_results[feat_name] = self._study_features(
                     f"{feat_name}_{instrument}", observations, mark, instrument
                 )
-            results_by_instrument[instrument] = inst_results
+            self._apply_multiple_testing(inst_results)
+            redundancy = self._redundancy(features)
+            results_by_instrument[instrument] = {
+                "features": inst_results,
+                "redundancy": redundancy,
+                "feature_classifications": self._classifications(
+                    inst_results, redundancy),
+                "economic_interpretation": (
+                    "Perpetual-versus-index basis can plausibly reflect carry and positioning; "
+                    "later-segment sign survival is required for any promising label."),
+                "eligibility": group.get("instruments", {}).get(instrument),
+                "exact_source_label_overlap": {
+                    "source_earliest_ms": group.get("instruments", {}).get(
+                        instrument, {}).get("source_earliest_ms"),
+                    "source_latest_ms": group.get("instruments", {}).get(
+                        instrument, {}).get("source_latest_ms"),
+                    "label_earliest_ms": group.get("instruments", {}).get(
+                        instrument, {}).get("label_earliest_ms"),
+                    "label_latest_ms": group.get("instruments", {}).get(
+                        instrument, {}).get("label_latest_ms"),
+                    "overlap_earliest_ms": group.get("instruments", {}).get(
+                        instrument, {}).get("overlap_earliest_ms"),
+                    "overlap_latest_ms": group.get("instruments", {}).get(
+                        instrument, {}).get("overlap_latest_ms"),
+                },
+            }
 
         return {
             "exploratory_only": True,
+            "disclaimer": DISCLAIMER,
             "study_type": "basis",
             "report_id": self.report_id,
             "coverage_days": group.get("gap_adjusted_sample_days", 0),
             "source_data_status": group.get("source_data_status"),
             "event_study_status": group.get("event_study_status"),
+            "inclusion_policy": (
+                "BTC only; ETH and SOL remain excluded until each reaches "
+                f"{MINIMUM_SAMPLE_DAYS} genuine overlapping days."),
+            "chronological_segments": [RESEARCH_SEGMENT, VALIDATION_SEGMENT],
+            "completed_oot_claim": False,
+            "oot_status": "NOT_CREATED",
             "instruments": results_by_instrument,
         }
 
@@ -423,9 +724,16 @@ class SourceSpecificEventStudy:
         elig = self.store.per_feature_eligibility()
         results: dict[str, Any] = {
             "exploratory_only": True,
+            "disclaimer": DISCLAIMER,
             "report_id": self.report_id,
             "report_version": MICROSTRUCTURE_REPORT_VERSION,
             "eligibility_snapshot": elig,
+            "chronological_partition_policy": (
+                "Actual overlapping events split 70% research/calibration and "
+                "30% later validation; calibration labels cannot cross the boundary."),
+            "completed_oot_claim": False,
+            "oot_status": "NOT_CREATED",
+            "multiple_testing_can_promote_features": False,
             "studies": {},
         }
 
@@ -434,4 +742,30 @@ class SourceSpecificEventStudy:
         results["studies"]["funding_basis_interaction"] = \
             self.run_funding_basis_interaction()
 
+        with self.store.connect() as connection:
+            connection.execute(
+                """INSERT OR REPLACE INTO research_manifests
+                   (manifest_id,manifest_type,version,status,payload_json,created_at_ms)
+                   VALUES(?,?,?,?,?,?)""",
+                (self.report_id, "bounded_microstructure_validation",
+                 MICROSTRUCTURE_REPORT_VERSION, "VALIDATION_RESEARCH_ONLY",
+                 json.dumps(results), now_ms()))
         return results
+
+    @staticmethod
+    def latest_summary(store: MicrostructureStore) -> dict[str, Any]:
+        with store.connect(readonly=True) as connection:
+            row = connection.execute(
+                """SELECT payload_json,created_at_ms FROM research_manifests
+                   WHERE manifest_type='bounded_microstructure_validation'
+                   ORDER BY created_at_ms DESC LIMIT 1"""
+            ).fetchone()
+        if row is None:
+            return {
+                "available": False, "disclaimer": DISCLAIMER,
+                "completed_oot_claim": False, "oot_status": "NOT_CREATED",
+            }
+        result = json.loads(row["payload_json"])
+        result["available"] = True
+        result["created_at_ms"] = int(row["created_at_ms"])
+        return result

@@ -1507,7 +1507,8 @@ class FactorAutoResearch:
         source_results: dict[str, dict[str, int]] = {}
         for family in (
             "funding-only", "basis-only", "funding-x-price-context",
-            "basis-x-price-context", "funding-x-basis"):
+            "basis-x-price-context", "funding-x-basis",
+            "price-context-only"):
             source_results[family] = {
                 "fully_evaluated": sum(
                     record["source_family"] == family

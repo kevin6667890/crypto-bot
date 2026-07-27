@@ -692,6 +692,7 @@ def _native_metrics(
     ts, x, y = timestamps[valid], scores[valid], labels[valid]
     count = int(x.size)
     if count < MIN_EVENTS:
+        nonoverlap = deterministic_non_overlapping_indices(ts, horizon_ms)
         return ({
             "status": "INSUFFICIENT_SAMPLE",
             "event_count": count,
@@ -703,10 +704,8 @@ def _native_metrics(
             "block_bootstrap_confidence_interval": None,
             "effective_sample_size": float(count),
             "formal_p_value": 1.0,
-            "non_overlapping_count": int(
-                deterministic_non_overlapping_indices(
-                    ts, horizon_ms).size),
-        }, np.asarray([], dtype=np.int64))
+            "non_overlapping_count": int(nonoverlap.size),
+        }, nonoverlap)
     pearson, _ = _correlation_influence(x, y, rank=False)
     spearman, influence = _correlation_influence(x, y, rank=True)
     lag = horizon_hac_lag(horizon_ms, ts)

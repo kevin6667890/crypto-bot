@@ -16,7 +16,8 @@ inference uses source-native events:
 Each result reports dense rows, source events, factor-value changes,
 non-overlapping labels, effective observations, duplicated exposure duration,
 and the unchanged-source rate. Forward-filled funding rows do not create
-independent events.
+independent events. Native and non-overlapping counts remain explicit when
+the sample is below the minimum required for formal inference.
 
 For every horizon, Phase 6G calculates deterministic non-overlapping outcomes,
 Newey-West errors with lag `ceil(horizon / native spacing) - 1`, and a

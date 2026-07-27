@@ -44,7 +44,9 @@ class Collector:
             for name in ("liquidations", "rest")
         }
         self.last_received_ms: dict[str, int] = {}
-        self.last_prune_ms = 0
+        # Restart-time full-history pruning previously starved live persistence.
+        # Existing aggregates make it safe to wait for the normal daily cycle.
+        self.last_prune_ms = now_ms()
 
     def _counter(self, component: str) -> dict[str, int]:
         return self.counters.setdefault(
@@ -160,7 +162,7 @@ class Collector:
                     for kind, item in batch if kind == "trade"
                 ]
                 if trades:
-                    self.store.insert_trade_batch(trades)
+                    await asyncio.to_thread(self.store.insert_trade_batch, trades)
                     for instrument in {item[0] for item in trades}:
                         timestamps = [int(item[1]["ts"]) for item in trades if item[0] == instrument]
                         received = [
@@ -169,17 +171,18 @@ class Collector:
                             if kind == "trade" and item["instrument"] == instrument
                         ]
                         persisted_at = now_ms()
-                        self.store.record_health(
+                        await self._record_health(
                             f"trades:{instrument}:received", "LIVE",
                             last_success_ms=max(received),
                             source_lag_ms=max(0, persisted_at - max(timestamps)),
                             **self._counter(f"trades:{instrument}"))
-                        self.store.record_health(
+                        await self._record_health(
                             f"trades:{instrument}:persisted", "LIVE",
                             last_success_ms=persisted_at,
                             source_lag_ms=max(0, persisted_at - max(timestamps)),
                             **self._counter(f"trades:{instrument}"))
-                        self.store.checkpoint(
+                        await asyncio.to_thread(
+                            self.store.checkpoint,
                             "trades_forward", instrument, cursor=None,
                             last_source_ts_ms=max(timestamps), status="running",
                             metadata={
@@ -193,7 +196,8 @@ class Collector:
                         continue
                     if kind == "oi":
                         row = item["payload"]
-                        self.store.insert_oi(
+                        await asyncio.to_thread(
+                            self.store.insert_oi,
                             item["instrument"], int(row["ts"]),
                             oi_contracts=float(row["oi"]) if row.get("oi") else None,
                             oi_currency=float(row["oiCcy"]) if row.get("oiCcy") else None,
@@ -201,24 +205,31 @@ class Collector:
                             source="OKX GET /api/v5/public/open-interest",
                             source_identity=f"{item['instrument']}:{row['ts']}")
                     elif kind == "funding":
-                        self.store.insert_funding(item["instrument"], item["payload"], settled=False)
+                        await asyncio.to_thread(
+                            self.store.insert_funding, item["instrument"],
+                            item["payload"], settled=False)
                     elif kind == "funding_settled":
-                        self.store.insert_funding(
-                            item["instrument"], item["payload"], settled=True)
+                        await asyncio.to_thread(
+                            self.store.insert_funding, item["instrument"],
+                            item["payload"], settled=True)
                     elif kind in {"mark", "index"}:
                         row = item["payload"]
                         api_instrument = (item["instrument"].removesuffix("-SWAP")
                                           if kind == "index" else item["instrument"])
                         value_key = "idxPx" if kind == "index" else "markPx"
-                        self.store.insert_price(
+                        await asyncio.to_thread(
+                            self.store.insert_price,
                             kind, api_instrument, int(row["ts"]), float(row[value_key]),
                             source_identity=f"{api_instrument}:snapshot:{row['ts']}")
                     elif kind == "liquidation":
-                        self.store.insert_liquidation(item["instrument"], item["payload"])
+                        await asyncio.to_thread(
+                            self.store.insert_liquidation,
+                            item["instrument"], item["payload"])
                     timestamp = int((item.get("payload") or {}).get("ts") or now_ms())
                     if kind == "funding":
                         payload = item["payload"]
-                        self.store.checkpoint(
+                        await asyncio.to_thread(
+                            self.store.checkpoint,
                             "funding_schedule", item["instrument"], cursor=None,
                             last_source_ts_ms=int(payload.get("prevFundingTime") or 0) or None,
                             status=str(payload.get("settState") or "observed"),
@@ -232,17 +243,15 @@ class Collector:
                             })
                     if kind == "funding_settled":
                         timestamp = int(item["payload"]["fundingTime"])
-                    self.store.checkpoint(
+                    await asyncio.to_thread(
+                        self.store.checkpoint,
                         f"{kind}_forward", item["instrument"], cursor=None,
                         last_source_ts_ms=timestamp, status="running")
                 write_latency_ms = int((time.monotonic() - write_started) * 1000)
             except Exception as error:
-                try:
-                    self.store.record_health(
-                        "writer", "ERROR",
-                        last_error=f"{type(error).__name__}: {str(error)[:160]}")
-                except Exception:
-                    pass
+                await self._record_health(
+                    "writer", "ERROR",
+                    last_error=f"{type(error).__name__}: {str(error)[:160]}")
                 # The deterministic identities make a replay safe.  Do not
                 # discard observations merely because another maintenance
                 # transaction briefly held SQLite's single writer lock.
@@ -251,10 +260,11 @@ class Collector:
                 await asyncio.sleep(1)
             else:
                 try:
-                    self.store.record_health(
+                    await self._record_health(
                         "writer", "LIVE", last_success_ms=now_ms(),
                         last_error=None, source_lag_ms=self.queue.qsize())
-                    self.store.checkpoint(
+                    await asyncio.to_thread(
+                        self.store.checkpoint,
                         "writer", "live_queue", cursor=None,
                         last_source_ts_ms=None, status="running",
                         metadata={
@@ -478,7 +488,8 @@ class Collector:
                             **self._counter(f"trades:{instrument}"))
                 # Daily pruning is restart-safe and aggregates first.
                 if now_ms() - self.last_prune_ms > 86_400_000:
-                    await asyncio.to_thread(self.store.prune_raw)
+                    await asyncio.to_thread(
+                        self.store.prune_raw, aggregate_before=False)
                     self.last_prune_ms = now_ms()
             except Exception as error:
                 self.store.record_health("maintenance", "ERROR",

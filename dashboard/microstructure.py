@@ -863,10 +863,13 @@ class MicrostructureStore:
                gap_flag=excluded.gap_flag,source_version=excluded.source_version""", values)
         return len(values)
 
-    def prune_raw(self, timestamp_ms: int | None = None) -> dict[str, int]:
+    def prune_raw(
+        self, timestamp_ms: int | None = None, *, aggregate_before: bool = True
+    ) -> dict[str, int]:
         cutoff = (timestamp_ms or now_ms()) - RAW_RETENTION_MS
         liquidation_cutoff = (timestamp_ms or now_ms()) - LIQUIDATION_RETENTION_MS
-        self.aggregate_all()
+        if aggregate_before:
+            self.aggregate_all()
         result: dict[str, int] = {}
         with self.connect() as c:
             for table in ("trade_flow_observations", "oi_observations",

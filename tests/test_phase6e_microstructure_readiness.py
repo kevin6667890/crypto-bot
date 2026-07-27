@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -83,6 +85,43 @@ def test_backfill_uses_bounded_batches_and_cannot_monopolize_writer(
     assert result["inserted"] == 100
     assert max(sizes) <= BACKFILL_WRITE_BATCH_SIZE
     assert len(sizes) == 2
+
+
+def test_sqlite_wait_does_not_block_websocket_event_loop(
+    store: MicrostructureStore, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    collector = Collector(store)
+    collector.contract_values["BTC-USDT-SWAP"] = 0.01
+    original = store.insert_trade_batch
+    started = threading.Event()
+    finished = threading.Event()
+
+    def slow_insert(items):
+        started.set()
+        time.sleep(0.15)
+        result = original(items)
+        finished.set()
+        return result
+
+    monkeypatch.setattr(store, "insert_trade_batch", slow_insert)
+
+    async def scenario() -> bool:
+        writer = asyncio.create_task(collector._writer())
+        await collector.queue.put(("trade", {
+            "instrument": "BTC-USDT-SWAP",
+            "payload": {
+                "tradeId": "slow", "px": "100", "sz": "1",
+                "side": "buy", "ts": str(now_ms())},
+            "received_at_ms": now_ms(),
+        }))
+        await asyncio.sleep(0.25)
+        event_loop_advanced_while_sqlite_waited = started.is_set() and not finished.is_set()
+        await collector.queue.join()
+        writer.cancel()
+        await asyncio.gather(writer, return_exceptions=True)
+        return event_loop_advanced_while_sqlite_waited
+
+    assert asyncio.run(scenario()) is True
 
 
 def test_stalled_trade_lane_supervision_is_instrument_local(

@@ -21,10 +21,9 @@ describe("market chart native price-axis UI", () => {
     expect(styles).not.toContain(".chart-follow-control");
   });
 
-  it("creates official axis-only PriceLines and keeps the right scale wide enough", () => {
-    expect(charts).toContain("createPriceLine");
-    expect(charts).toContain("lineVisible: false");
-    expect(charts).toContain("axisLabelVisible: false");
+  it("attaches official price-axis primitives and keeps the right scale wide enough", () => {
+    expect(charts).toContain("PriceAxisLabelPrimitive");
+    expect(charts).toContain("attachPrimitive");
     expect(charts).toContain("minimumWidth: PRICE_AXIS_MINIMUM_WIDTH");
     for (const title of ["K线", "EMA20", "MA60", "MA200"]) expect(charts).toContain(`name: "${title}"`);
   });

@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AreaData, AreaSeries, CandlestickSeries, ColorType, createChart, IChartApi, IPriceLine, ISeriesApi, LineSeries, UTCTimestamp, WhitespaceData } from "lightweight-charts";
+import { AreaData, AreaSeries, CandlestickSeries, ColorType, createChart, IChartApi, ISeriesApi, LineSeries, UTCTimestamp, WhitespaceData } from "lightweight-charts";
 import { Candle, fetchEthCandles, fetchOlderCandles, generateEquityCurve } from "./data";
 import { useLanguage } from "./i18n";
 import { formatMillions, normalizePoints } from "./chartState";
 import { chartFollowRegistry, RangeChangeSource, synchronizeLiveViewport } from "./liveFollow";
-import { PriceLabelSource, updateNativePriceAxisLabels } from "./priceLabels";
+import { NativePriceAxisLabel, PriceLabelSource, updateNativePriceAxisLabels } from "./priceLabels";
+import { PriceAxisLabelPrimitive } from "./priceAxisLabelPrimitive";
 import {
   FlowCoverage,
   FlowHistoryPoint,
@@ -250,7 +251,7 @@ export function MarketChart({ instrument = "ETH-USDT", interval = "15m", flow }:
   const crosshairTimestamp = useRef<number | null>(null);
   const rangeChangeSource = useRef(new RangeChangeSource());
   const priceSourcesRef = useRef<PriceLabelSource[]>([]);
-  const priceAxisLabelsRef = useRef<Record<PriceSeriesId, IPriceLine> | null>(null);
+  const priceAxisLabelsRef = useRef<Record<PriceSeriesId, NativePriceAxisLabel> | null>(null);
   const historyLoadRef = useRef({ cvd: cvdHistory.load, oi: oiHistory.load });
   historyLoadRef.current = { cvd: cvdHistory.load, oi: oiHistory.load };
   const dataRef = useRef({ candles, cvd, oi, interval, cvdCoverage: cvdHistory.coverage, oiCoverage: oiHistory.coverage });
@@ -343,17 +344,13 @@ export function MarketChart({ instrument = "ETH-USDT", interval = "15m", flow }:
       cvd: chart.addSeries(AreaSeries, { lineColor: "#7c3aed", topColor: "rgba(124,58,237,.22)", bottomColor: "rgba(124,58,237,.02)", lineWidth: 2, priceLineVisible: false, lastValueVisible: true, priceFormat: { type: "custom", formatter: formatMillions } }, 1),
       oi: chart.addSeries(AreaSeries, { lineColor: "#0ea5e9", topColor: "rgba(14,165,233,.20)", bottomColor: "rgba(14,165,233,.02)", lineWidth: 2, priceLineVisible: false, lastValueVisible: true, priceFormat: { type: "custom", formatter: formatMillions } }, 2),
     };
-    priceAxisLabelsRef.current = Object.fromEntries(PRICE_SERIES_CONFIG.map(config => [
-      config.id,
-      seriesRef.current![config.id].createPriceLine({
-        price: 0,
-        color: config.color,
-        axisLabelColor: config.color,
-        lineVisible: false,
-        axisLabelVisible: false,
-        title: config.name,
-      }),
-    ])) as Record<PriceSeriesId, IPriceLine>;
+    const priceAxisLabels = {} as Record<PriceSeriesId, NativePriceAxisLabel>;
+    PRICE_SERIES_CONFIG.forEach(config => {
+      const primitive = new PriceAxisLabelPrimitive({ title: config.name, color: config.color });
+      seriesRef.current![config.id].attachPrimitive(primitive);
+      priceAxisLabels[config.id] = primitive;
+    });
+    priceAxisLabelsRef.current = priceAxisLabels;
     seriesRef.current.cvd.createPriceLine({ price: 0, color: "rgba(71,84,103,.45)", lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: "0.00M" });
     applyData();
     const initial = visibleRangeFromCandles(dataRef.current.candles);

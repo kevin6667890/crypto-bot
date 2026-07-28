@@ -33,6 +33,10 @@ LIQUIDATION_RETENTION_MS = 180 * 86_400_000
 FORMAL_SAMPLE_DAYS = 90
 MINIMUM_SAMPLE_DAYS = 14
 TRADE_LIVE_WARNING_MS = 30_000
+SQLITE_BUSY_TIMEOUT_MS = 5_000
+SQLITE_CACHE_KIB = 8_192
+WAL_CHECKPOINT_BYTES = 32 * 1024 * 1024
+LIVE_AGGREGATION_LOOKBACK_MS = 10 * 60_000
 
 
 def now_ms() -> int:
@@ -107,17 +111,54 @@ class MicrostructureStore:
         self._coverage_lock = threading.Lock()
         self._gap_cache: tuple[float, dict[str, Any]] | None = None
         self._gap_lock = threading.Lock()
+        self._bound_connection = threading.local()
+        self._operational_lock = threading.Lock()
+        self._operational_metrics: dict[str, Any] = {
+            "writer_queue_depth": 0,
+            "writer_batch_size": 0,
+            "writer_rows": 0,
+            "writer_transactions_total": 0,
+            "writer_rows_total": 0,
+            "last_transaction_at_ms": None,
+            "write_latency_ms": None,
+            "busy_retry_count": 0,
+            "wal_size_bytes": 0,
+            "last_checkpoint_duration_ms": None,
+            "last_checkpoint_result": None,
+            "last_maintenance_duration_ms": None,
+            "maintenance_paused_reason": None,
+            "received_timestamp_by_instrument": {},
+            "persisted_timestamp_by_instrument": {},
+            "live_lag_ms_by_instrument": {},
+            "aggregated_timestamp_by_instrument": {},
+        }
 
-    @contextmanager
-    def connect(self, *, readonly: bool = False) -> Iterator[sqlite3.Connection]:
+    def _open_connection(
+        self, *, readonly: bool = False, check_same_thread: bool = True
+    ) -> sqlite3.Connection:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         target = f"file:{self.path}?mode=ro" if readonly else str(self.path)
-        connection = sqlite3.connect(target, uri=readonly, timeout=30)
+        connection = sqlite3.connect(
+            target, uri=readonly, timeout=SQLITE_BUSY_TIMEOUT_MS / 1000,
+            check_same_thread=check_same_thread)
         connection.row_factory = sqlite3.Row
-        connection.execute("PRAGMA busy_timeout=30000")
+        connection.execute(f"PRAGMA busy_timeout={SQLITE_BUSY_TIMEOUT_MS}")
+        connection.execute(f"PRAGMA cache_size=-{SQLITE_CACHE_KIB}")
+        connection.execute("PRAGMA temp_store=MEMORY")
         if not readonly:
             connection.execute("PRAGMA journal_mode=WAL")
             connection.execute("PRAGMA synchronous=NORMAL")
+            # The persistent live writer owns bounded PASSIVE checkpoints.
+            connection.execute("PRAGMA wal_autocheckpoint=0")
+        return connection
+
+    @contextmanager
+    def connect(self, *, readonly: bool = False) -> Iterator[sqlite3.Connection]:
+        bound = getattr(self._bound_connection, "value", None)
+        if bound is not None and not readonly:
+            yield bound
+            return
+        connection = self._open_connection(readonly=readonly)
         try:
             yield connection
             if not readonly:
@@ -128,6 +169,20 @@ class MicrostructureStore:
             raise
         finally:
             connection.close()
+
+    def live_writer(self) -> "MicrostructureLiveWriter":
+        return MicrostructureLiveWriter(self)
+
+    def update_operational_metrics(self, **values: Any) -> None:
+        with self._operational_lock:
+            self._operational_metrics.update(values)
+
+    def operational_metrics(self) -> dict[str, Any]:
+        with self._operational_lock:
+            result = dict(self._operational_metrics)
+        wal = Path(f"{self.path}-wal")
+        result["wal_size_bytes"] = wal.stat().st_size if wal.exists() else 0
+        return result
 
     def initialize(self) -> None:
         with self.connect() as c:
@@ -236,9 +291,12 @@ class MicrostructureStore:
                 "cvd_aggregates", "oi_aggregates", "basis_aggregates",
             )
             for table in counted_tables:
-                c.execute(
-                    f"""INSERT OR IGNORE INTO table_row_counts
-                        SELECT ?,COUNT(*) FROM {table}""", (table,))
+                if c.execute(
+                    "SELECT 1 FROM table_row_counts WHERE table_name=?", (table,)
+                ).fetchone() is None:
+                    c.execute(
+                        f"INSERT INTO table_row_counts VALUES(?,(SELECT COUNT(*) FROM {table}))",
+                        (table,))
                 c.execute(
                     f"""CREATE TRIGGER IF NOT EXISTS count_{table}_insert
                         AFTER INSERT ON {table} BEGIN
@@ -506,12 +564,12 @@ class MicrostructureStore:
     def aggregate_recent(self, timestamp_ms: int | None = None) -> dict[str, int]:
         """Refresh buckets that can still receive live observations.
 
-        The largest durable bucket is one day, so starting at the current UTC
-        day boundary includes every bucket that live collection can change.
-        Historical backfills continue to call ``aggregate_all`` explicitly.
+        The one-minute aggregate is refreshed from a bounded raw window. Larger
+        buckets are then rebuilt from at most 1,440 minute rows, rather than
+        repeatedly scanning millions of current-day trades.
         """
         current = timestamp_ms or now_ms()
-        return self._aggregate_since((current // RESOLUTIONS["1D"]) * RESOLUTIONS["1D"])
+        return self._aggregate_since(current - LIVE_AGGREGATION_LOOKBACK_MS)
 
     def _aggregate_since(self, since_ms: int | None) -> dict[str, int]:
         counts = {"cvd": 0, "oi": 0, "basis": 0}
@@ -738,11 +796,20 @@ class MicrostructureStore:
         parameters: tuple[Any, ...] = (width, width, instrument)
         if start_ms is not None:
             parameters += (start_ms,)
-        rows = c.execute(
-            """SELECT (source_ts_ms / ?) * ? bucket,source_ts_ms,side,notional
-               FROM trade_flow_observations WHERE instrument=? AND state='confirmed'
-               """ + time_filter + """
-               ORDER BY source_ts_ms,source_identity""", parameters).fetchall()
+        if resolution == "1m":
+            rows = c.execute(
+                """SELECT (source_ts_ms / ?) * ? bucket,source_ts_ms,side,notional
+                   FROM trade_flow_observations WHERE instrument=? AND state='confirmed'
+                   """ + time_filter + """
+                   ORDER BY source_ts_ms,source_identity""", parameters).fetchall()
+        else:
+            rows = c.execute(
+                """SELECT (bucket_ms / ?) * ? bucket,first_source_ts_ms source_ts_ms,
+                          buy_notional,sell_notional,observation_count,last_source_ts_ms
+                          ,gap_flag
+                   FROM cvd_aggregates WHERE instrument=? AND resolution='1m'
+                   """ + (" AND bucket_ms>=?" if start_ms is not None else "") + """
+                   ORDER BY bucket_ms""", parameters).fetchall()
         grouped: dict[int, list[sqlite3.Row]] = {}
         for row in rows:
             grouped.setdefault(int(row["bucket"]), []).append(row)
@@ -756,13 +823,33 @@ class MicrostructureStore:
             cumulative = float(prior[0]) if prior else 0.0
         values = []
         for bucket, items in sorted(grouped.items()):
-            buy = sum(float(x["notional"]) for x in items if x["side"] == "buy")
-            sell = sum(float(x["notional"]) for x in items if x["side"] == "sell")
+            if resolution == "1m":
+                buy = sum(float(x["notional"]) for x in items if x["side"] == "buy")
+                sell = sum(float(x["notional"]) for x in items if x["side"] == "sell")
+                count = len(items)
+            else:
+                buy = sum(float(x["buy_notional"]) for x in items)
+                sell = sum(float(x["sell_notional"]) for x in items)
+                count = sum(int(x["observation_count"]) for x in items)
             cumulative += buy - sell
-            times = [int(x["source_ts_ms"]) for x in items]
+            times = [
+                value for x in items
+                for value in (
+                    int(x["source_ts_ms"]),
+                    int(x["last_source_ts_ms"]) if resolution != "1m"
+                    else int(x["source_ts_ms"]),
+                )
+            ]
             values.append((instrument, resolution, bucket, buy, sell, buy - sell, cumulative,
-                           len(items), min(times), max(times),
-                           self._gap_flag(times, width, 1_000), MICROSTRUCTURE_SOURCE_VERSION))
+                           count, min(times), max(times),
+                           (self._gap_flag(times, width, 1_000)
+                            if resolution == "1m" else int(
+                                any(int(x["gap_flag"]) for x in items)
+                                or any(
+                                    int(b["source_ts_ms"]) - int(a["source_ts_ms"])
+                                    > RESOLUTIONS["1m"] * 2
+                                    for a, b in zip(items, items[1:])))),
+                           MICROSTRUCTURE_SOURCE_VERSION))
         c.executemany(
             """INSERT INTO cvd_aggregates VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
                ON CONFLICT(instrument,resolution,bucket_ms) DO UPDATE SET
@@ -782,25 +869,56 @@ class MicrostructureStore:
         parameters: tuple[Any, ...] = (width, width, instrument)
         if start_ms is not None:
             parameters += (start_ms,)
-        rows = c.execute(
-            """SELECT (source_ts_ms / ?) * ? bucket,source_ts_ms,
-                      COALESCE(oi_usd,oi_currency,oi_contracts) value
-               FROM oi_observations WHERE instrument=? AND state='confirmed'
-               AND COALESCE(oi_usd,oi_currency,oi_contracts) IS NOT NULL
-               """ + time_filter + """
-               ORDER BY source_ts_ms,source_identity""", parameters).fetchall()
+        if resolution == "1m":
+            rows = c.execute(
+                """SELECT (source_ts_ms / ?) * ? bucket,source_ts_ms,
+                          COALESCE(oi_usd,oi_currency,oi_contracts) value
+                   FROM oi_observations WHERE instrument=? AND state='confirmed'
+                   AND COALESCE(oi_usd,oi_currency,oi_contracts) IS NOT NULL
+                   """ + time_filter + """
+                   ORDER BY source_ts_ms,source_identity""", parameters).fetchall()
+        else:
+            rows = c.execute(
+                """SELECT (bucket_ms / ?) * ? bucket,first_source_ts_ms source_ts_ms,
+                          first_value,last_value,min_value,max_value,observation_count,
+                          last_source_ts_ms,gap_flag
+                   FROM oi_aggregates WHERE instrument=? AND resolution='1m'
+                   """ + (" AND bucket_ms>=?" if start_ms is not None else "") + """
+                   ORDER BY bucket_ms""", parameters).fetchall()
         grouped: dict[int, list[sqlite3.Row]] = {}
         for row in rows:
             grouped.setdefault(int(row["bucket"]), []).append(row)
         values = []
         for bucket, items in sorted(grouped.items()):
-            series = [float(x["value"]) for x in items]
-            times = [int(x["source_ts_ms"]) for x in items]
-            change = series[-1] - series[0]
-            pct = change / series[0] if series[0] else None
-            values.append((instrument, resolution, bucket, series[0], series[-1], min(series),
-                           max(series), change, pct, len(series), min(times), max(times),
-                           self._gap_flag(times, width, 15_000), MICROSTRUCTURE_SOURCE_VERSION))
+            if resolution == "1m":
+                first = float(items[0]["value"])
+                last = float(items[-1]["value"])
+                minimum = min(float(x["value"]) for x in items)
+                maximum = max(float(x["value"]) for x in items)
+                count = len(items)
+                times = [int(x["source_ts_ms"]) for x in items]
+            else:
+                first = float(items[0]["first_value"])
+                last = float(items[-1]["last_value"])
+                minimum = min(float(x["min_value"]) for x in items)
+                maximum = max(float(x["max_value"]) for x in items)
+                count = sum(int(x["observation_count"]) for x in items)
+                times = [
+                    value for x in items
+                    for value in (int(x["source_ts_ms"]), int(x["last_source_ts_ms"]))
+                ]
+            change = last - first
+            pct = change / first if first else None
+            values.append((instrument, resolution, bucket, first, last, minimum,
+                           maximum, change, pct, count, min(times), max(times),
+                           (self._gap_flag(times, width, 15_000)
+                            if resolution == "1m" else int(
+                                any(int(x["gap_flag"]) for x in items)
+                                or any(
+                                    int(b["source_ts_ms"]) - int(a["source_ts_ms"])
+                                    > RESOLUTIONS["1m"] * 2
+                                    for a, b in zip(items, items[1:])))),
+                           MICROSTRUCTURE_SOURCE_VERSION))
         c.executemany(
             """INSERT INTO oi_aggregates VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)
                ON CONFLICT(instrument,resolution,bucket_ms) DO UPDATE SET
@@ -893,6 +1011,29 @@ class MicrostructureStore:
                       (liquidation_cutoff,))
             result["liquidation_observations"] = (
                 before - self._counted_rows(c, "liquidation_observations"))
+        return result
+
+    def prune_raw_bounded(
+        self, timestamp_ms: int | None = None, *, maximum_rows: int = 500
+    ) -> dict[str, int]:
+        """Delete at most one small expired batch; never scan or lock all history."""
+        cutoff = (timestamp_ms or now_ms()) - RAW_RETENTION_MS
+        liquidation_cutoff = (timestamp_ms or now_ms()) - LIQUIDATION_RETENTION_MS
+        result: dict[str, int] = {}
+        with self.connect() as c:
+            for table in ("trade_flow_observations", "oi_observations",
+                          "mark_price_observations", "index_price_observations",
+                          "liquidation_observations"):
+                limit = max(0, maximum_rows - sum(result.values()))
+                if not limit:
+                    break
+                table_cutoff = liquidation_cutoff if table == "liquidation_observations" else cutoff
+                cursor = c.execute(
+                    f"""DELETE FROM {table} WHERE rowid IN (
+                        SELECT rowid FROM {table} WHERE source_ts_ms<?
+                        ORDER BY source_ts_ms LIMIT ?)""",
+                    (table_cutoff, limit))
+                result[table] = max(0, cursor.rowcount)
         return result
 
     def coverage(self) -> dict[str, Any]:
@@ -1549,7 +1690,67 @@ class MicrostructureStore:
             "database_schema_version": MICROSTRUCTURE_SCHEMA_VERSION,
             "database_exists": self.path.exists(),
             "database_size_bytes": self.path.stat().st_size if self.path.exists() else 0,
+            **self.operational_metrics(),
         }
+
+
+class MicrostructureLiveWriter:
+    """One persistent connection for all live collector transactions."""
+
+    def __init__(self, store: MicrostructureStore) -> None:
+        self.store = store
+        self.connection = store._open_connection(
+            readonly=False, check_same_thread=False)
+        self.lock = threading.Lock()
+        self.last_checkpoint_at = 0.0
+        self.busy_retries = 0
+
+    def transaction(self, operation: Any, *, retries: int = 3) -> Any:
+        for attempt in range(retries + 1):
+            try:
+                with self.lock:
+                    self.store._bound_connection.value = self.connection
+                    try:
+                        self.connection.execute("BEGIN")
+                        result = operation()
+                        self.connection.commit()
+                        return result
+                    except Exception:
+                        self.connection.rollback()
+                        raise
+                    finally:
+                        self.store._bound_connection.value = None
+            except sqlite3.OperationalError as error:
+                if "locked" not in str(error).lower() or attempt == retries:
+                    raise
+                self.busy_retries += 1
+                self.store.update_operational_metrics(
+                    busy_retry_count=self.busy_retries)
+                time.sleep(0.05 * (attempt + 1))
+        raise RuntimeError("unreachable")
+
+    def passive_checkpoint(self, *, queue_depth: int) -> bool:
+        wal = Path(f"{self.store.path}-wal")
+        wal_size = wal.stat().st_size if wal.exists() else 0
+        self.store.update_operational_metrics(wal_size_bytes=wal_size)
+        if (queue_depth or wal_size < WAL_CHECKPOINT_BYTES
+                or time.monotonic() - self.last_checkpoint_at < 30):
+            return False
+        started = time.monotonic()
+        with self.lock:
+            result = tuple(self.connection.execute(
+                "PRAGMA wal_checkpoint(PASSIVE)").fetchone())
+        duration = int((time.monotonic() - started) * 1000)
+        self.last_checkpoint_at = time.monotonic()
+        self.store.update_operational_metrics(
+            last_checkpoint_duration_ms=duration,
+            last_checkpoint_result=result,
+            wal_size_bytes=wal.stat().st_size if wal.exists() else 0)
+        return True
+
+    def close(self) -> None:
+        with self.lock:
+            self.connection.close()
 
 
 class MicrostructureMigration:

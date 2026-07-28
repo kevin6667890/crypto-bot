@@ -20,7 +20,6 @@ export type NativePriceAxisLabelOptions = {
   axisLabelColor: string;
   lineVisible: false;
   axisLabelVisible: boolean;
-  title: string;
 };
 
 export type NativePriceAxisLabel = {
@@ -57,8 +56,37 @@ export function updateNativePriceAxisLabels(
       axisLabelColor: source.color,
       lineVisible: false,
       axisLabelVisible: !!value,
-      title: source.name,
     });
   });
   return [...exact.values()];
+}
+
+export function latestValues(
+  sources: PriceLabelSource[],
+): PriceLabelValue[] {
+  return sources.flatMap(source => {
+    const point = [...source.values].reverse().find(item => Number.isFinite(item.value));
+    return point
+      ? [{ id: source.id, name: source.name, color: source.color, value: point.value }]
+      : [];
+  });
+}
+
+/** Restores each axis label to that series' own latest confirmed value. */
+export function updateLatestNativePriceAxisLabels(
+  sources: PriceLabelSource[],
+  labels: Record<string, NativePriceAxisLabel>,
+) {
+  const latest = new Map(latestValues(sources).map(value => [value.id, value]));
+  sources.forEach(source => {
+    const value = latest.get(source.id);
+    labels[source.id]?.applyOptions({
+      price: value?.value ?? 0,
+      color: source.color,
+      axisLabelColor: source.color,
+      lineVisible: false,
+      axisLabelVisible: !!value,
+    });
+  });
+  return [...latest.values()];
 }

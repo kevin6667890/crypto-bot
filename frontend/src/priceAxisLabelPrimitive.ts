@@ -17,17 +17,15 @@ export class PriceAxisLabelPrimitive implements ISeriesPrimitive<Time> {
   private requestUpdate: () => void = () => undefined;
   private price = 0;
   private color: string;
-  private title: string;
   private isVisible = false;
   private readonly view: ISeriesPrimitiveAxisView;
   private readonly views: readonly ISeriesPrimitiveAxisView[];
 
-  constructor({ title, color }: { title: string; color: string }) {
-    this.title = title;
+  constructor({ color }: { color: string }) {
     this.color = color;
     this.view = {
       coordinate: () => Number(this.series?.priceToCoordinate(this.price) ?? -10_000),
-      text: () => `${this.title} ${this.series?.priceFormatter().format(this.price) ?? this.price.toFixed(2)}`,
+      text: () => this.series?.priceFormatter().format(this.price) ?? this.price.toFixed(2),
       textColor: () => "#ffffff",
       backColor: () => this.color,
       visible: () => this.isVisible,
@@ -53,7 +51,6 @@ export class PriceAxisLabelPrimitive implements ISeriesPrimitive<Time> {
   applyOptions(options: NativePriceAxisLabelOptions) {
     this.price = options.price;
     this.color = options.axisLabelColor;
-    this.title = options.title;
     this.isVisible = options.axisLabelVisible;
     this.requestUpdate();
   }

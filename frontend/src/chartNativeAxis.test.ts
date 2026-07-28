@@ -3,6 +3,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 const charts = readFileSync(new URL("./charts.tsx", import.meta.url), "utf8");
+const primitive = readFileSync(new URL("./priceAxisLabelPrimitive.ts", import.meta.url), "utf8");
 const styles = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
 
 describe("market chart native price-axis UI", () => {
@@ -21,10 +22,13 @@ describe("market chart native price-axis UI", () => {
     expect(styles).not.toContain(".chart-follow-control");
   });
 
-  it("attaches official price-axis primitives and keeps the right scale wide enough", () => {
+  it("attaches numeric-only price-axis primitives to price, CVD, and OI series", () => {
     expect(charts).toContain("PriceAxisLabelPrimitive");
     expect(charts).toContain("attachPrimitive");
     expect(charts).toContain("minimumWidth: PRICE_AXIS_MINIMUM_WIDTH");
-    for (const title of ["K线", "EMA20", "MA60", "MA200"]) expect(charts).toContain(`name: "${title}"`);
+    expect(primitive).toContain("priceFormatter().format(this.price)");
+    expect(primitive).not.toContain("this.title");
+    expect(charts).toContain("FLOW_SERIES_CONFIG");
+    expect(charts).toContain("lastValueVisible: false");
   });
 });

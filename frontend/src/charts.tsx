@@ -3,7 +3,8 @@ import { AreaData, AreaSeries, CandlestickSeries, ColorType, createChart, IChart
 import { Candle, fetchEthCandles, fetchOlderCandles, generateEquityCurve } from "./data";
 import { useLanguage } from "./i18n";
 import { formatMillions, normalizePoints } from "./chartState";
-import { chartFollowRegistry, LogicalRange, rangeAtLatest } from "./liveFollow";
+import { chartFollowRegistry, RangeChangeSource, synchronizeLiveViewport } from "./liveFollow";
+import { arrangePriceLabels, exactValuesAtTimestamp, formatChartPrice, PriceLabelSource, PositionedPriceLabel } from "./priceLabels";
 import {
   FlowCoverage,
   FlowHistoryPoint,
@@ -22,6 +23,7 @@ import {
 } from "./flowHistory";
 import {
   CandleSelectionGuard,
+  exponentialMovingAverageSeries,
   flowOnCandleTimeline,
   hydrateCandleHistory,
   movingAverageSeries,
@@ -199,12 +201,28 @@ function gapAware(
   return result;
 }
 
-type MarketSeries = { candles: ISeriesApi<"Candlestick">; ma60: ISeriesApi<"Line">; ma200: ISeriesApi<"Line">; cvd: ISeriesApi<"Area">; oi: ISeriesApi<"Area"> };
+const PRICE_SERIES_CONFIG = [
+  { id: "candles", name: "K线", color: "#00b37e" },
+  { id: "ema20", name: "EMA20", color: "#2563eb" },
+  { id: "ma60", name: "MA60", color: "#f59e0b" },
+  { id: "ma200", name: "MA200", color: "#7c3aed" },
+] as const;
+
+type PriceSeriesId = typeof PRICE_SERIES_CONFIG[number]["id"];
+type MarketSeries = {
+  candles: ISeriesApi<"Candlestick">;
+  ema20: ISeriesApi<"Line">;
+  ma60: ISeriesApi<"Line">;
+  ma200: ISeriesApi<"Line">;
+  cvd: ISeriesApi<"Area">;
+  oi: ISeriesApi<"Area">;
+};
 
 export function MarketChart({ instrument = "ETH-USDT", interval = "15m", flow }: { instrument?: string; interval?: string; flow?: FlowPaneData }) {
   const { t } = useLanguage();
   const candleSelection = `${instrument}:${interval}`;
-  const [followState, setFollowState] = useState(() => chartFollowRegistry.state(candleSelection));
+  const [followState, setFollowState] = useState(() => chartFollowRegistry.follow(candleSelection));
+  const [priceLabels, setPriceLabels] = useState<PositionedPriceLabel[]>([]);
   const followStateRef = useRef(followState);
   followStateRef.current = followState;
   const candleGuard = useRef(new CandleSelectionGuard());
@@ -223,20 +241,61 @@ export function MarketChart({ instrument = "ETH-USDT", interval = "15m", flow }:
   const seriesRef = useRef<MarketSeries | null>(null);
   const marketChartRef = useRef<IChartApi | null>(null);
   const rangeTimer = useRef(0);
+  const interactionTimer = useRef(0);
+  const internalRangeFrame = useRef(0);
+  const internalRangeToken = useRef(0);
+  const internalRangeActive = useRef(false);
   const latestCandleTime = useRef<number | null>(null);
-  const programmaticRange = useRef<LogicalRange | null>(null);
-  const applyingData = useRef(false);
+  const crosshairTimestamp = useRef<number | null>(null);
+  const rangeChangeSource = useRef(new RangeChangeSource());
+  const priceSourcesRef = useRef<PriceLabelSource[]>([]);
   const historyLoadRef = useRef({ cvd: cvdHistory.load, oi: oiHistory.load });
   historyLoadRef.current = { cvd: cvdHistory.load, oi: oiHistory.load };
   const dataRef = useRef({ candles, cvd, oi, interval, cvdCoverage: cvdHistory.coverage, oiCoverage: oiHistory.coverage });
   dataRef.current = { candles, cvd, oi, interval, cvdCoverage: cvdHistory.coverage, oiCoverage: oiHistory.coverage };
 
+  const endInternalRangeUpdate = (token = internalRangeToken.current) => {
+    if (token !== internalRangeToken.current || !internalRangeActive.current) return;
+    internalRangeActive.current = false;
+    rangeChangeSource.current.endInternal();
+  };
+  const scrollToLatest = () => {
+    const timeScale = marketChartRef.current?.timeScale();
+    if (!timeScale || !dataRef.current.candles.length) return;
+    const token = ++internalRangeToken.current;
+    if (!internalRangeActive.current) {
+      internalRangeActive.current = true;
+      rangeChangeSource.current.beginInternal();
+    }
+    synchronizeLiveViewport(timeScale, "FOLLOWING_LATEST", null);
+    window.cancelAnimationFrame(internalRangeFrame.current);
+    internalRangeFrame.current = window.requestAnimationFrame(() => {
+      internalRangeFrame.current = window.requestAnimationFrame(() => endInternalRangeUpdate(token));
+    });
+  };
+  const updatePriceLabels = (timestamp?: number) => {
+    const series = seriesRef.current;
+    const chart = marketChartRef.current;
+    const candleData = dataRef.current.candles;
+    if (!series || !chart || !candleData.length) return;
+    const target = timestamp ?? Number(candleData[candleData.length - 1].time);
+    const candle = candleData.find(point => Number(point.time) === target);
+    const values = exactValuesAtTimestamp(target, priceSourcesRef.current)
+      .map(label => label.id === "candles" && candle
+        ? { ...label, color: candle.close >= candle.open ? "#00b37e" : "#f6465d" }
+        : label);
+    const paneHeight = chart.panes()[0]?.getHeight() || Math.round((containerRef.current?.clientHeight || 500) * .6);
+    const positioned = arrangePriceLabels(values.flatMap((label, order) => {
+      const coordinate = series[label.id as PriceSeriesId].priceToCoordinate(label.value);
+      return coordinate === null ? [] : [{ ...label, coordinate, order }];
+    }), 21, 11, Math.max(11, paneHeight - 11));
+    setPriceLabels(positioned);
+  };
   const applyData = () => {
     const series = seriesRef.current;
     const data = dataRef.current;
     if (!series || !data.candles.length) return;
     const timeScale = marketChartRef.current?.timeScale();
-    const priorRange = timeScale?.getVisibleLogicalRange() as LogicalRange | null;
     const priorTimeRange = timeScale?.getVisibleRange() ?? null;
     const newestTime = Number(data.candles[data.candles.length - 1].time);
     const hadNewTimestamp = latestCandleTime.current !== null && newestTime > latestCandleTime.current;
@@ -246,51 +305,70 @@ export function MarketChart({ instrument = "ETH-USDT", interval = "15m", flow }:
       followStateRef.current = ingested;
       setFollowState(ingested);
     }
-    applyingData.current = true;
     series.candles.setData(data.candles);
+    const ema20 = exponentialMovingAverageSeries(data.candles, 20);
     const ma60 = movingAverageSeries(data.candles, 60), ma200 = movingAverageSeries(data.candles, 200);
+    series.ema20.setData(ema20);
     series.ma60.setData(ma60);
     series.ma200.setData(ma200);
     series.cvd.setData(flowOnCandleTimeline(data.candles, data.cvd, intervalSeconds(data.interval)));
     series.oi.setData(flowOnCandleTimeline(data.candles, data.oi, intervalSeconds(data.interval)));
-    if (timeScale && ingested.mode === "FOLLOWING_LATEST" && priorRange) {
-      const nextRange = rangeAtLatest(priorRange, data.candles.length - 1);
-      programmaticRange.current = nextRange;
-      timeScale.setVisibleLogicalRange(nextRange);
+    priceSourcesRef.current = PRICE_SERIES_CONFIG.map(config => ({
+      ...config,
+      values: config.id === "candles"
+        ? data.candles.map(candle => ({ time: Number(candle.time), value: candle.close }))
+        : config.id === "ema20" ? ema20 : config.id === "ma60" ? ma60 : ma200,
+    }));
+    if (timeScale && ingested.mode === "FOLLOWING_LATEST") {
+      scrollToLatest();
     } else if (timeScale && priorTimeRange) {
-      timeScale.setVisibleRange(priorTimeRange);
+      rangeChangeSource.current.beginInternal();
+      synchronizeLiveViewport(timeScale, ingested.mode, priorTimeRange);
+      rangeChangeSource.current.endInternal();
     }
-    requestAnimationFrame(() => { applyingData.current = false; });
+    updatePriceLabels(crosshairTimestamp.current ?? undefined);
   };
   const { containerRef } = useResponsiveChart((container) => {
-    const chart = createChart(container, { ...chartTheme, width: container.clientWidth, height: container.clientHeight });
+    const chart = createChart(container, {
+      ...chartTheme,
+      width: container.clientWidth,
+      height: container.clientHeight,
+      crosshair: {
+        ...chartTheme.crosshair,
+        horzLine: { ...chartTheme.crosshair.horzLine, labelVisible: false },
+      },
+    });
     marketChartRef.current = chart;
     seriesRef.current = {
-      candles: chart.addSeries(CandlestickSeries, { upColor: "#00b37e", downColor: "#f6465d", borderUpColor: "#00b37e", borderDownColor: "#f6465d", wickUpColor: "#00b37e", wickDownColor: "#f6465d" }),
-      ma60: chart.addSeries(LineSeries, { color: "#f59e0b", lineWidth: 2, priceLineVisible: false }),
-      ma200: chart.addSeries(LineSeries, { color: "#7c3aed", lineWidth: 2, priceLineVisible: false }),
+      candles: chart.addSeries(CandlestickSeries, { upColor: "#00b37e", downColor: "#f6465d", borderUpColor: "#00b37e", borderDownColor: "#f6465d", wickUpColor: "#00b37e", wickDownColor: "#f6465d", lastValueVisible: false, priceLineVisible: false }),
+      ema20: chart.addSeries(LineSeries, { color: PRICE_SERIES_CONFIG[1].color, lineWidth: 2, priceLineVisible: false, lastValueVisible: false }),
+      ma60: chart.addSeries(LineSeries, { color: PRICE_SERIES_CONFIG[2].color, lineWidth: 2, priceLineVisible: false, lastValueVisible: false }),
+      ma200: chart.addSeries(LineSeries, { color: PRICE_SERIES_CONFIG[3].color, lineWidth: 2, priceLineVisible: false, lastValueVisible: false }),
       cvd: chart.addSeries(AreaSeries, { lineColor: "#7c3aed", topColor: "rgba(124,58,237,.22)", bottomColor: "rgba(124,58,237,.02)", lineWidth: 2, priceLineVisible: false, lastValueVisible: true, priceFormat: { type: "custom", formatter: formatMillions } }, 1),
       oi: chart.addSeries(AreaSeries, { lineColor: "#0ea5e9", topColor: "rgba(14,165,233,.20)", bottomColor: "rgba(14,165,233,.02)", lineWidth: 2, priceLineVisible: false, lastValueVisible: true, priceFormat: { type: "custom", formatter: formatMillions } }, 2),
     };
     seriesRef.current.cvd.createPriceLine({ price: 0, color: "rgba(71,84,103,.45)", lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: "0.00M" });
     applyData();
     const initial = visibleRangeFromCandles(dataRef.current.candles);
-    if (initial) chart.timeScale().setVisibleRange({ from: initial.start as UTCTimestamp, to: initial.end as UTCTimestamp });
+    if (initial) {
+      rangeChangeSource.current.beginInternal();
+      chart.timeScale().setVisibleRange({ from: initial.start as UTCTimestamp, to: initial.end as UTCTimestamp });
+      rangeChangeSource.current.endInternal();
+      scrollToLatest();
+    }
     chart.timeScale().subscribeVisibleLogicalRangeChange(range => {
       if (!range) return;
-      if (applyingData.current) return;
+      if (!rangeChangeSource.current.shouldApplyVisibleRange()) return;
       const logical = { from: Number(range.from), to: Number(range.to) };
-      const expected = programmaticRange.current;
-      if (expected && Math.abs(expected.from - logical.from) < 0.01 && Math.abs(expected.to - logical.to) < 0.01) {
-        programmaticRange.current = null;
-        return;
-      }
-      programmaticRange.current = null;
       const next = chartFollowRegistry.onVisibleRange(candleSelection, logical, dataRef.current.candles.length - 1);
       if (next.mode !== followStateRef.current.mode || next.hasNewData !== followStateRef.current.hasNewData) {
         followStateRef.current = next;
         setFollowState(next);
       }
+    });
+    chart.subscribeCrosshairMove(param => {
+      crosshairTimestamp.current = typeof param.time === "number" ? Number(param.time) : null;
+      updatePriceLabels(crosshairTimestamp.current ?? undefined);
     });
     chart.timeScale().subscribeVisibleTimeRangeChange(range => {
       if (!range) return;
@@ -312,7 +390,11 @@ export function MarketChart({ instrument = "ETH-USDT", interval = "15m", flow }:
     });
     chart.panes()[0]?.setStretchFactor(3); chart.panes()[1]?.setStretchFactor(1); chart.panes()[2]?.setStretchFactor(1);
     return chart;
-  }, () => { applyData(); loadRef.current.refresh(); });
+  }, () => {
+    applyData();
+    loadRef.current.refresh();
+    if (followStateRef.current.mode === "FOLLOWING_LATEST") requestAnimationFrame(scrollToLatest);
+  });
   useEffect(() => { applyData(); }, [candles, cvd, oi, interval, cvdHistory.coverage, oiHistory.coverage]);
   useEffect(() => {
     const range = visibleRangeFromCandles(candles);
@@ -320,10 +402,15 @@ export function MarketChart({ instrument = "ETH-USDT", interval = "15m", flow }:
     void cvdHistory.load({ ...range, maxPoints: 1200 });
     void oiHistory.load({ ...range, maxPoints: 1200 });
   }, [candles, instrument, interval, cvdHistory.load, oiHistory.load]);
-  useEffect(() => () => window.clearTimeout(rangeTimer.current), []);
+  useEffect(() => () => {
+    window.clearTimeout(rangeTimer.current);
+    window.clearTimeout(interactionTimer.current);
+    window.cancelAnimationFrame(internalRangeFrame.current);
+    endInternalRangeUpdate();
+  }, []);
   useEffect(() => {
     setRetainedCandles(hydrateCandleHistory(instrument, interval));
-    const next = chartFollowRegistry.state(candleSelection);
+    const next = chartFollowRegistry.follow(candleSelection);
     followStateRef.current = next;
     setFollowState(next);
     latestCandleTime.current = null;
@@ -369,19 +456,49 @@ export function MarketChart({ instrument = "ETH-USDT", interval = "15m", flow }:
     };
   }, [instrument, interval]);
   const returnToLatest = () => {
-    const timeScale = marketChartRef.current?.timeScale();
-    if (!timeScale || !dataRef.current.candles.length) return;
-    const nextRange = rangeAtLatest(
-      timeScale.getVisibleLogicalRange() as LogicalRange | null,
-      dataRef.current.candles.length - 1,
-    );
+    if (!marketChartRef.current || !dataRef.current.candles.length) return;
     const next = chartFollowRegistry.follow(candleSelection);
     followStateRef.current = next;
     setFollowState(next);
-    programmaticRange.current = nextRange;
-    timeScale.setVisibleLogicalRange(nextRange);
+    scrollToLatest();
   };
-  return <div className="chart-canvas" ref={containerRef}>
+  const beginUserInteraction = () => {
+    endInternalRangeUpdate();
+    window.clearTimeout(interactionTimer.current);
+    rangeChangeSource.current.beginUser();
+  };
+  const endUserInteraction = () => {
+    window.clearTimeout(interactionTimer.current);
+    interactionTimer.current = window.setTimeout(() => rangeChangeSource.current.endUser(), 80);
+  };
+  const handleWheel = () => {
+    beginUserInteraction();
+    interactionTimer.current = window.setTimeout(() => rangeChangeSource.current.endUser(), 180);
+  };
+  return <div
+    className="chart-canvas"
+    ref={containerRef}
+    onPointerDown={beginUserInteraction}
+    onPointerUp={endUserInteraction}
+    onPointerCancel={endUserInteraction}
+    onWheel={handleWheel}
+    onMouseLeave={() => {
+      crosshairTimestamp.current = null;
+      endUserInteraction();
+      updatePriceLabels();
+    }}
+  >
+    <div className="price-label-layer" aria-label="当前时间点价格">
+      {priceLabels.map(label => <div
+        className="multi-price-label"
+        data-series={label.id}
+        key={label.id}
+        style={{ "--series-color": label.color, top: `${label.top}px` } as React.CSSProperties}
+      >
+        <span>{label.name}</span>
+        <b>{formatChartPrice(label.value)}</b>
+      </div>)}
+    </div>
     {followState.mode === "VIEWING_HISTORY" && <div className="chart-follow-control">
       {followState.hasNewData && <span>有新数据</span>}
       <button type="button" onClick={returnToLatest}>回到最新</button>

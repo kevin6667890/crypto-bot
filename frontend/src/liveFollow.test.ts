@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ChartFollowRegistry, isAtLatestEdge, rangeAtLatest } from "./liveFollow";
+import { ChartFollowRegistry, isAtLatestEdge, RangeChangeSource, rangeAtLatest, synchronizeLiveViewport } from "./liveFollow";
 import { mergeCandlePages, flowOnCandleTimeline } from "./candleHistory";
 import { mergeHistoryPoints } from "./flowHistory";
 import { Candle } from "./data";
@@ -58,5 +58,37 @@ describe("chart live follow", () => {
     const projected = flowOnCandleTimeline(candles, dense, 3600);
     expect(projected).toHaveLength(candles.length);
     expect(projected.map(point => point.time)).toEqual([0, 3600]);
+  });
+
+  it("ignores programmatic range callbacks but accepts real user interaction", () => {
+    const source = new RangeChangeSource();
+    source.beginInternal();
+    expect(source.shouldApplyVisibleRange()).toBe(false);
+    source.beginUser();
+    expect(source.shouldApplyVisibleRange()).toBe(false);
+    source.endInternal();
+    expect(source.shouldApplyVisibleRange()).toBe(true);
+    source.endUser();
+    expect(source.shouldApplyVisibleRange()).toBe(false);
+  });
+
+  it("scrolls every following refresh and preserves the historical viewport", () => {
+    let visible = { from: 40, to: 99 };
+    let scrolls = 0;
+    let fitCalls = 0;
+    const width = () => visible.to - visible.from;
+    const scale = {
+      scrollToRealTime: () => { scrolls += 1; visible = { from: visible.from + 1, to: visible.to + 1 }; },
+      setVisibleRange: (range: typeof visible) => { visible = range; },
+      fitContent: () => { fitCalls += 1; },
+    };
+    const initialWidth = width();
+    synchronizeLiveViewport(scale, "FOLLOWING_LATEST", null);
+    synchronizeLiveViewport(scale, "FOLLOWING_LATEST", null);
+    expect(scrolls).toBe(2);
+    expect(width()).toBe(initialWidth);
+    expect(fitCalls).toBe(0);
+    synchronizeLiveViewport(scale, "VIEWING_HISTORY", { from: 10, to: 30 });
+    expect(visible).toEqual({ from: 10, to: 30 });
   });
 });

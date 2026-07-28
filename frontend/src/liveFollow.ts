@@ -60,3 +60,48 @@ export class ChartFollowRegistry {
 }
 
 export const chartFollowRegistry = new ChartFollowRegistry();
+
+/**
+ * Visible-range callbacks are observational. They may change follow state only
+ * while a real pointer, touch, or wheel interaction is in progress; chart API
+ * calls produce the same callbacks and must never pause the live chart.
+ */
+export class RangeChangeSource {
+  private internalDepth = 0;
+  private userActive = false;
+
+  beginInternal() {
+    this.internalDepth += 1;
+  }
+
+  endInternal() {
+    this.internalDepth = Math.max(0, this.internalDepth - 1);
+  }
+
+  beginUser() {
+    this.userActive = true;
+  }
+
+  endUser() {
+    this.userActive = false;
+  }
+
+  shouldApplyVisibleRange() {
+    return this.userActive && this.internalDepth === 0;
+  }
+}
+
+export function synchronizeLiveViewport<T>(
+  timeScale: {
+    scrollToRealTime(): void;
+    setVisibleRange(range: T): void;
+  },
+  mode: FollowMode,
+  historicalRange: T | null,
+) {
+  if (mode === "FOLLOWING_LATEST") {
+    timeScale.scrollToRealTime();
+  } else if (historicalRange) {
+    timeScale.setVisibleRange(historicalRange);
+  }
+}

@@ -7,6 +7,7 @@ import {
   hydrateCandleHistory,
   mergeCandlePages,
   movingAverageSeries,
+  exponentialMovingAverageSeries,
   olderCandlePageRequest,
   retainCandlePage,
   withPreservedTimeRange,
@@ -162,5 +163,12 @@ describe("candle master timeline", () => {
       fitContent: () => { throw new Error("fitContent must not run"); },
     };
     expect(() => withPreservedTimeRange(scale, () => undefined)).not.toThrow();
+  });
+
+  it("seeds EMA from the exact period and emits only causal candle timestamps", () => {
+    const candles = Array.from({ length: 5 }, (_, index) => candle(index + 1, index + 1));
+    const ema = exponentialMovingAverageSeries(candles, 3);
+    expect(ema.map(point => Number(point.time))).toEqual([3, 4, 5]);
+    expect(ema.map(point => point.value)).toEqual([2, 3, 4]);
   });
 });

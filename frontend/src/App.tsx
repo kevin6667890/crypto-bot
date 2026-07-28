@@ -1033,6 +1033,9 @@ function Workspace() {
               </div>
               <div className="chart-legend">
                 <span>
+                  <i className="ema20" /> EMA20
+                </span>
+                <span>
                   <i className="ma60" /> MA60
                 </span>
                 <span>

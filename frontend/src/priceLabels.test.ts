@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { arrangePriceLabels, exactValuesAtTimestamp, formatChartPrice, PriceLabelSource } from "./priceLabels";
+import { exactValuesAtTimestamp, NativePriceAxisLabelOptions, PriceLabelSource, updateNativePriceAxisLabels } from "./priceLabels";
 
 const sources: PriceLabelSource[] = [
   { id: "candles", name: "K线", color: "#00b37e", values: [{ time: 10, value: 1881.99 }, { time: 20, value: 1882.5 }] },
@@ -22,19 +22,31 @@ describe("multi-series price labels", () => {
     expect(exactValuesAtTimestamp(10, sources).some(label => label.id === "ma200")).toBe(false);
   });
 
-  it("separates close prices deterministically without changing their values", () => {
-    const arranged = arrangePriceLabels([
-      { id: "candles", name: "K线", color: "#00b37e", value: 100, coordinate: 50, order: 0 },
-      { id: "ema20", name: "EMA20", color: "#2563eb", value: 100.01, coordinate: 52, order: 1 },
-      { id: "ma60", name: "MA60", color: "#f59e0b", value: 100.02, coordinate: 51, order: 2 },
-    ], 21, 10, 100);
-    expect(arranged.map(label => label.value)).toEqual([100, 100.01, 100.02]);
-    const sortedTops = arranged.map(label => label.top).sort((a, b) => a - b);
-    expect(sortedTops[1] - sortedTops[0]).toBeGreaterThanOrEqual(21);
-    expect(sortedTops[2] - sortedTops[1]).toBeGreaterThanOrEqual(21);
+  it("updates four native price-axis labels with exact names, colors, and values", () => {
+    const applied = new Map<string, NativePriceAxisLabelOptions>();
+    const labels = Object.fromEntries(sources.map(source => [
+      source.id,
+      { applyOptions: (options: NativePriceAxisLabelOptions) => applied.set(source.id, options) },
+    ]));
+    updateNativePriceAxisLabels(20, sources, labels);
+    expect(applied.get("candles")).toMatchObject({ price: 1882.5, title: "K线", color: "#00b37e", lineVisible: false, axisLabelVisible: true });
+    expect(applied.get("ema20")).toMatchObject({ price: 1885, title: "EMA20", color: "#2563eb", lineVisible: false, axisLabelVisible: true });
+    expect(applied.get("ma60")).toMatchObject({ title: "MA60", color: "#f59e0b", axisLabelVisible: false });
+    expect(applied.get("ma200")).toMatchObject({ price: 1883.08, title: "MA200", color: "#7c3aed", axisLabelVisible: true });
+    expect([...applied.values()].every(options => options.axisLabelColor === options.color)).toBe(true);
   });
 
-  it("formats using the chart's two-decimal instrument convention", () => {
-    expect(formatChartPrice(1881.9)).toBe("1,881.90");
+  it("restores every available latest value when the mouse leaves", () => {
+    const latestSources = sources.map(source => source.id === "ma60"
+      ? { ...source, values: [...source.values, { time: 20, value: 1884 }] }
+      : source);
+    const applied: NativePriceAxisLabelOptions[] = [];
+    const labels = Object.fromEntries(latestSources.map(source => [
+      source.id,
+      { applyOptions: (options: NativePriceAxisLabelOptions) => applied.push(options) },
+    ]));
+    const values = updateNativePriceAxisLabels(20, latestSources, labels);
+    expect(values.map(value => value.id)).toEqual(["candles", "ema20", "ma60", "ma200"]);
+    expect(applied.every(options => options.axisLabelVisible)).toBe(true);
   });
 });

@@ -27,6 +27,7 @@ import {
 import PortfolioResearch from "./PortfolioResearch";
 import ReconciliationPanel from "./ReconciliationPanel";
 import ValidationWorkspace from "./validation/ValidationWorkspace";
+import ResearchTerminology from "./ResearchTerminology";
 import ShadowExperiments from "./shadow/ShadowExperiments";
 import StrategyLifecycle from "./lifecycle/StrategyLifecycle";
 import OptimizationLab from "./optimization/OptimizationLab";
@@ -630,6 +631,7 @@ export default function StrategyResearch() {
           </button>
         </div>
       </section>
+      <ResearchTerminology />
       {(error || validationError) && (
         <div className="research-alert error">{error || validationError}</div>
       )}

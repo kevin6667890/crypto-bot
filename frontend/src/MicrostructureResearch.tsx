@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { ColorType, createChart, IChartApi, ISeriesApi, LineSeries, UTCTimestamp } from "lightweight-charts";
 import { useAsyncResource, type AsyncPhase } from "./asyncResource";
 import { useLanguage } from "./i18n";
+import ResearchTerminology from "./ResearchTerminology";
 
 interface HealthResponse {
   service_status: string;
@@ -426,6 +427,7 @@ export default function MicrostructureResearch() {
       </section>
 
       <section className="micro-section">
+        <ResearchTerminology compact />
         <div className="micro-section-head">
           <div><span className="eyebrow">{copy.collection}</span><h2>{copy.collection}</h2></div>
           <div className="micro-tabs" role="tablist" aria-label={copy.collection}>

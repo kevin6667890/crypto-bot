@@ -1,0 +1,183 @@
+{
+  "openapi": "3.0.3",
+  "info": { "title": "Crypto-Bot read-only dashboard API", "version": "1.0.0" },
+  "servers": [{ "url": "/" }],
+  "paths": {
+    "/api/operations/summary": {
+      "get": { "operationId": "getOperationsSummary", "responses": { "200": { "description": "Public operations summary", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OperationsSummary" } } } } } }
+    },
+    "/api/operations/trends": {
+      "get": {
+        "operationId": "getOperationsTrends",
+        "parameters": [{ "name": "window", "in": "query", "schema": { "type": "string", "enum": ["1h", "6h", "24h"], "default": "24h" } }],
+        "responses": { "200": { "description": "Minute-bucketed local trend history", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/OperationsTrends" } } } } }
+      }
+    },
+    "/api/research/microstructure/health": {
+      "get": { "operationId": "getMicrostructureHealth", "responses": { "200": { "description": "Read-only health summary", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MicrostructureHealth" } } } } } }
+    },
+    "/api/research/microstructure/coverage": {
+      "get": { "operationId": "getMicrostructureCoverage", "responses": { "200": { "description": "Coverage summary", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/CoverageSummary" } } } } } }
+    },
+    "/api/research/microstructure/eligibility": {
+      "get": { "operationId": "getMicrostructureEligibility", "responses": { "200": { "description": "Eligibility summary", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/EligibilitySummary" } } } } } }
+    },
+    "/api/paper/flow/history/v1": {
+      "get": {
+        "operationId": "getFlowHistory",
+        "parameters": [
+          { "name": "instrument", "in": "query", "required": true, "schema": { "type": "string" } },
+          { "name": "series", "in": "query", "required": true, "schema": { "type": "string", "enum": ["cvd", "oi"] } },
+          { "name": "start", "in": "query", "schema": { "$ref": "#/components/schemas/UnixSeconds" } },
+          { "name": "end", "in": "query", "schema": { "$ref": "#/components/schemas/UnixSeconds" } }
+        ],
+        "responses": { "200": { "description": "Flow history contract; the array field is points, never data", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/FlowHistoryResponse" } } } } }
+      }
+    },
+    "/api/data-coverage": {
+      "get": { "operationId": "getDataCoverage", "responses": { "200": { "description": "Research data coverage", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DataCoverageResponse" } } } } } }
+    }
+  },
+  "components": {
+    "schemas": {
+      "UnixSeconds": { "type": "integer", "format": "int64", "description": "Unix timestamp in whole seconds.", "x-time-unit": "seconds" },
+      "UnixMilliseconds": { "type": "integer", "format": "int64", "description": "Unix timestamp in whole milliseconds.", "x-time-unit": "milliseconds" },
+      "IsoTimestamp": { "type": "string", "format": "date-time", "description": "RFC 3339 UTC timestamp." },
+      "OperationsSummary": {
+        "type": "object",
+        "required": ["generated_at", "service", "frontend", "paper_api", "collector", "query_plane", "database", "wal_size_bytes", "maintenance", "scheduler", "tasks", "warning_count", "system"],
+        "properties": {
+          "generated_at": { "$ref": "#/components/schemas/IsoTimestamp" },
+          "service": { "type": "object", "required": ["status", "version", "git_commit", "uptime_seconds"], "properties": { "status": { "type": "string" }, "version": { "type": "string" }, "git_commit": { "type": "string" }, "uptime_seconds": { "type": "number" } } },
+          "frontend": { "type": "object", "required": ["status"], "properties": { "status": { "type": "string" } } },
+          "paper_api": { "type": "object", "required": ["status", "collector_freshness"], "properties": { "status": { "type": "string" }, "collector_freshness": { "type": "object", "additionalProperties": { "type": "object", "required": ["status"], "properties": { "updated_at": { "allOf": [{ "$ref": "#/components/schemas/IsoTimestamp" }], "nullable": true }, "age_seconds": { "type": "number", "nullable": true }, "status": { "type": "string" } } } } } },
+          "collector": { "type": "object", "required": ["status", "queue_depth"], "properties": { "status": { "type": "string" }, "queue_depth": { "type": "integer" }, "last_success_data_time": { "allOf": [{ "$ref": "#/components/schemas/IsoTimestamp" }], "nullable": true }, "write_latency_ms": { "type": "number", "nullable": true } }, "additionalProperties": true },
+          "query_plane": { "type": "object", "required": ["status", "components"], "properties": { "status": { "type": "string" }, "components": { "type": "object", "additionalProperties": { "type": "string" } } } },
+          "database": { "type": "object", "required": ["status", "quick_status", "logical_size_bytes", "microstructure_logical_size_bytes"], "properties": { "status": { "type": "string" }, "quick_status": { "type": "string" }, "logical_size_bytes": { "type": "integer" }, "microstructure_logical_size_bytes": { "type": "integer" } } },
+          "wal_size_bytes": { "type": "integer" },
+          "maintenance": { "type": "object", "required": ["status", "telemetry_available"], "properties": { "status": { "type": "string" }, "telemetry_available": { "type": "boolean" }, "last_duration_ms": { "type": "number", "nullable": true }, "checkpoint_duration_ms": { "type": "number", "nullable": true }, "paused_reason": { "type": "string", "nullable": true } }, "additionalProperties": true },
+          "scheduler": { "type": "object", "required": ["running"], "properties": { "running": { "type": "boolean" }, "last_cycle_completed_at": { "allOf": [{ "$ref": "#/components/schemas/IsoTimestamp" }], "nullable": true }, "last_cycle_duration_ms": { "type": "number", "nullable": true } } },
+          "tasks": { "type": "object", "required": ["current_count", "queued_count", "recent_completed"], "properties": { "current_count": { "type": "integer" }, "queued_count": { "type": "integer" }, "recent_completed": { "type": "array", "items": { "type": "object", "required": ["id", "job_type", "status"], "properties": { "id": { "type": "integer" }, "job_type": { "type": "string" }, "status": { "type": "string" }, "completed_at": { "allOf": [{ "$ref": "#/components/schemas/IsoTimestamp" }], "nullable": true } } } } } },
+          "warning_count": { "type": "integer" },
+          "system": { "type": "object", "required": ["disk_percent"], "properties": { "disk_percent": { "type": "number" }, "memory_percent": { "type": "number", "nullable": true } } }
+        }
+      },
+      "TrendPoint": {
+        "type": "object",
+        "required": ["timestamp", "service_state", "anomaly"],
+        "properties": {
+          "timestamp": { "$ref": "#/components/schemas/UnixSeconds" },
+          "health_latency_ms": { "type": "number", "nullable": true },
+          "coverage_latency_ms": { "type": "number", "nullable": true },
+          "eligibility_latency_ms": { "type": "number", "nullable": true },
+          "wal_size_bytes": { "type": "integer", "nullable": true },
+          "maintenance_duration_ms": { "type": "number", "nullable": true },
+          "checkpoint_duration_ms": { "type": "number", "nullable": true },
+          "queue_depth": { "type": "integer", "nullable": true },
+          "live_lag_seconds": { "type": "number", "nullable": true },
+          "iowait_percent": { "type": "number", "nullable": true },
+          "critical_gap_count": { "type": "integer", "nullable": true },
+          "service_state": { "type": "string" },
+          "anomaly": { "type": "boolean" }
+        }
+      },
+      "OperationsTrends": {
+        "type": "object", "required": ["enabled", "window", "points"],
+        "properties": {
+          "enabled": { "type": "boolean" },
+          "window": { "type": "string", "enum": ["1h", "6h", "24h"] },
+          "points": { "type": "array", "items": { "$ref": "#/components/schemas/TrendPoint" } },
+          "latency": { "type": "object", "properties": { "p50_ms": { "type": "number", "nullable": true }, "p95_ms": { "type": "number", "nullable": true } } }
+        }
+      },
+      "MicrostructureHealth": { "type": "object", "required": ["service_status"], "properties": { "service_status": { "type": "string" }, "live_lag_seconds": { "type": "number", "nullable": true }, "critical_gap_count": { "type": "integer", "nullable": true } }, "additionalProperties": true },
+      "CoverageRow": { "type": "object", "required": ["instrument", "rows"], "properties": { "instrument": { "type": "string" }, "earliest_ms": { "allOf": [{ "$ref": "#/components/schemas/UnixMilliseconds" }], "nullable": true }, "latest_ms": { "allOf": [{ "$ref": "#/components/schemas/UnixMilliseconds" }], "nullable": true }, "rows": { "type": "integer" } }, "additionalProperties": true },
+      "CoverageSummary": {
+        "type": "object",
+        "properties": {
+          "trades": { "type": "array", "items": { "$ref": "#/components/schemas/CoverageRow" } },
+          "oi": { "type": "array", "items": { "$ref": "#/components/schemas/CoverageRow" } },
+          "funding_settled": { "type": "array", "items": { "$ref": "#/components/schemas/CoverageRow" } },
+          "funding_predicted": { "type": "array", "items": { "$ref": "#/components/schemas/CoverageRow" } },
+          "mark": { "type": "array", "items": { "$ref": "#/components/schemas/CoverageRow" } },
+          "index": { "type": "array", "items": { "$ref": "#/components/schemas/CoverageRow" } },
+          "liquidations": { "type": "array", "items": { "$ref": "#/components/schemas/CoverageRow" } },
+          "_snapshot": { "type": "object", "properties": { "generated_at": { "type": "string", "nullable": true }, "data_as_of": { "type": "string", "nullable": true }, "stale_seconds": { "type": "number", "nullable": true }, "refreshing": { "type": "boolean" } }, "additionalProperties": true }
+        }
+      },
+      "EligibilityInstrument": {
+        "type": "object",
+        "required": ["source_days", "source_rows", "gap_adjusted_usable_days", "overlap_usable_days", "event_count", "source_data_status", "event_study_status"],
+        "properties": {
+          "source_days": { "type": "number" },
+          "source_rows": { "type": "integer" },
+          "gap_adjusted_usable_days": { "type": "number" },
+          "label_earliest_ms": { "allOf": [{ "$ref": "#/components/schemas/UnixMilliseconds" }], "nullable": true },
+          "label_latest_ms": { "allOf": [{ "$ref": "#/components/schemas/UnixMilliseconds" }], "nullable": true },
+          "overlap_usable_days": { "type": "number" },
+          "event_count": { "type": "integer" },
+          "source_data_status": { "type": "string" },
+          "event_study_status": { "type": "string" },
+          "next_eligibility_date": { "type": "string", "nullable": true },
+          "blocking_reason": { "type": "string", "nullable": true }
+        },
+        "additionalProperties": true
+      },
+      "EligibilityFeatureGroup": {
+        "type": "object",
+        "required": ["features", "instruments", "source_usable_days", "gap_adjusted_usable_days", "source_observation_count", "overlap_usable_days", "event_count", "source_data_status", "event_study_status", "usable_days", "gap_adjusted_sample_days", "status"],
+        "properties": {
+          "features": { "type": "array", "items": { "type": "string" } },
+          "instruments": { "type": "object", "additionalProperties": { "$ref": "#/components/schemas/EligibilityInstrument" } },
+          "source_usable_days": { "type": "number" },
+          "gap_adjusted_usable_days": { "type": "number" },
+          "source_observation_count": { "type": "integer" },
+          "overlap_usable_days": { "type": "number" },
+          "event_count": { "type": "integer" },
+          "source_data_status": { "type": "string" },
+          "event_study_status": { "type": "string" },
+          "usable_days": { "type": "number" },
+          "gap_adjusted_sample_days": { "type": "number" },
+          "status": { "type": "string" },
+          "blocking_reason": { "type": "string", "nullable": true },
+          "next_eligibility_date": { "type": "string", "nullable": true }
+        },
+        "additionalProperties": true
+      },
+      "EligibilitySummary": { "type": "object", "required": ["feature_groups"], "properties": { "_snapshot": { "type": "object", "nullable": true, "additionalProperties": true }, "aggregate_policy": { "type": "string", "nullable": true }, "feature_groups": { "type": "object", "additionalProperties": { "$ref": "#/components/schemas/EligibilityFeatureGroup" } } } },
+      "FlowHistoryPoint": { "type": "object", "required": ["time", "value"], "properties": { "time": { "$ref": "#/components/schemas/UnixSeconds" }, "value": { "type": "number" }, "delta": { "type": "number", "nullable": true }, "trades": { "type": "integer", "nullable": true }, "min": { "type": "number", "nullable": true }, "max": { "type": "number", "nullable": true }, "observation_count": { "type": "integer", "nullable": true } } },
+      "FlowHistoryResponse": {
+        "type": "object",
+        "required": ["api_version", "instrument", "series", "requested_start", "requested_end", "available_start", "available_end", "latest_timestamp", "raw_row_count", "returned_point_count", "resolution", "resolution_seconds", "stale", "has_history", "has_more_before", "has_more_after", "next_before_cursor", "source", "retention_policy_version", "has_gaps", "gap_count", "fallback", "points"],
+        "properties": {
+          "api_version": { "type": "string" },
+          "instrument": { "type": "string" },
+          "series": { "type": "string", "enum": ["cvd", "oi"] },
+          "cvd_mode": { "type": "string", "enum": ["CONTINUOUS", "UTC_DAILY_RESET"], "nullable": true },
+          "requested_start": { "$ref": "#/components/schemas/UnixSeconds" },
+          "requested_end": { "$ref": "#/components/schemas/UnixSeconds" },
+          "available_start": { "allOf": [{ "$ref": "#/components/schemas/UnixSeconds" }], "nullable": true },
+          "available_end": { "allOf": [{ "$ref": "#/components/schemas/UnixSeconds" }], "nullable": true },
+          "latest_timestamp": { "allOf": [{ "$ref": "#/components/schemas/UnixSeconds" }], "nullable": true },
+          "raw_row_count": { "type": "integer" },
+          "returned_point_count": { "type": "integer" },
+          "resolution": { "type": "string", "nullable": true },
+          "resolution_seconds": { "type": "integer", "nullable": true },
+          "stale": { "type": "boolean" },
+          "has_history": { "type": "boolean" },
+          "has_more_before": { "type": "boolean" },
+          "has_more_after": { "type": "boolean" },
+          "next_before_cursor": { "type": "string", "nullable": true },
+          "source": { "type": "string" },
+          "retention_policy_version": { "type": "string" },
+          "has_gaps": { "type": "boolean" },
+          "gap_count": { "type": "integer" },
+          "fallback": { "type": "boolean" },
+          "points": { "type": "array", "items": { "$ref": "#/components/schemas/FlowHistoryPoint" } }
+        }
+      },
+      "DataCoverageItem": { "type": "object", "required": ["instrument", "timeframe", "rows", "first_ts", "last_ts"], "properties": { "instrument": { "type": "string" }, "timeframe": { "type": "string" }, "rows": { "type": "integer" }, "first_ts": { "allOf": [{ "$ref": "#/components/schemas/UnixSeconds" }], "nullable": true }, "last_ts": { "allOf": [{ "$ref": "#/components/schemas/UnixSeconds" }], "nullable": true } } },
+      "DataCoverageResponse": { "type": "object", "required": ["items"], "properties": { "items": { "type": "array", "items": { "$ref": "#/components/schemas/DataCoverageItem" } } } }
+    }
+  }
+}

@@ -1,41 +1,10 @@
 import { ChartCacheKey, loadChartSnapshot, saveChartSnapshot } from "./chartState";
+import type { components } from "./api/generated";
 
-export type FlowSeriesName = "cvd" | "oi";
-export type FlowHistoryPoint = {
-  time: number;
-  value: number;
-  delta?: number;
-  trades?: number;
-  min?: number;
-  max?: number;
-  observation_count?: number;
-};
-export type FlowCoverage = {
-  api_version: string;
-  instrument: string;
-  series: FlowSeriesName;
-  cvd_mode?: "CONTINUOUS" | "UTC_DAILY_RESET" | null;
-  requested_start: number;
-  requested_end: number;
-  available_start: number | null;
-  available_end: number | null;
-  latest_timestamp: number | null;
-  raw_row_count: number;
-  returned_point_count: number;
-  resolution: string | null;
-  resolution_seconds: number | null;
-  stale: boolean;
-  has_history: boolean;
-  has_more_before: boolean;
-  has_more_after: boolean;
-  next_before_cursor: string | null;
-  source: string;
-  retention_policy_version: string;
-  has_gaps: boolean;
-  gap_count: number;
-  fallback: boolean;
-};
-export type FlowHistoryResponse = FlowCoverage & { points: FlowHistoryPoint[] };
+export type FlowSeriesName = components["schemas"]["FlowHistoryResponse"]["series"];
+export type FlowHistoryPoint = components["schemas"]["FlowHistoryPoint"];
+export type FlowHistoryResponse = components["schemas"]["FlowHistoryResponse"];
+export type FlowCoverage = Omit<FlowHistoryResponse, "points">;
 export type FlowRangeRequest = {
   instrument: string;
   series: FlowSeriesName;

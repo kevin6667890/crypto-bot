@@ -20,6 +20,10 @@ export type AsyncResource<T> = {
 type CachedValue = { data: unknown; dataAsOf?: string };
 const cache = new Map<string, CachedValue>();
 
+export function clearAsyncResourceCacheForTests() {
+  cache.clear();
+}
+
 export function initialPhase(hasCachedValue: boolean): AsyncPhase {
   return hasCachedValue ? "STALE_LAST_SUCCESS" : "LOADING";
 }
@@ -154,4 +158,3 @@ export function useAsyncResource<T>(
 
   return { ...state, refresh };
 }
-

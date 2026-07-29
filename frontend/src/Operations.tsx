@@ -1,8 +1,10 @@
 import { Activity, AlertTriangle, Database, RefreshCw } from "lucide-react";
 import { useAsyncResource, type AsyncPhase } from "./asyncResource";
+import type { components } from "./api/generated";
 import { useLanguage } from "./i18n";
+import OperationsTrends from "./OperationsTrends";
 
-type OperationsSummary = {
+type OperationsSummaryContract = {
   generated_at: string;
   service: {
     status: string;
@@ -64,6 +66,7 @@ type OperationsSummary = {
   warning_count: number;
   system: { disk_percent: number; memory_percent?: number };
 };
+type OperationsSummary = components["schemas"]["OperationsSummary"] & OperationsSummaryContract;
 
 const paperApiBase = (
   window.__PAPER_API_URL__ || import.meta.env.VITE_PAPER_API_URL || ""
@@ -225,6 +228,7 @@ export default function Operations() {
           ))}
         </section>
       </div>
+      <OperationsTrends />
     </main>
   );
 }

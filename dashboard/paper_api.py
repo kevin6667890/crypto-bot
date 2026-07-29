@@ -46,6 +46,7 @@ try:
     from volume_profile import calculate_trade_volume_profile, calculate_volume_profile
     from microstructure import MicrostructureStore
     from microstructure_research import SourceSpecificEventStudy
+    from operations_trends import read_operations_trends
 except ImportError:
     from .research_service import ResearchService
     from .strategy_rules import StrategyParameters, calculate_indicators, validate_parameters
@@ -65,6 +66,7 @@ except ImportError:
     from .volume_profile import calculate_trade_volume_profile, calculate_volume_profile
     from .microstructure import MicrostructureStore
     from .microstructure_research import SourceSpecificEventStudy
+    from .operations_trends import read_operations_trends
 
 try:
     from dotenv import load_dotenv
@@ -1272,6 +1274,8 @@ class Handler(BaseHTTPRequestHandler):
         elif parsed.path == "/api/health": self._send(HEALTH.payload(False))
         elif parsed.path == "/api/operations/summary":
             self._send(public_operations_summary())
+        elif parsed.path == "/api/operations/trends":
+            self._send(read_operations_trends(query.get("window", ["24h"])[0]))
         elif parsed.path == "/api/research/microstructure/health":
             self._send(MICROSTRUCTURE.health_summary())
         elif parsed.path == "/api/research/microstructure/coverage":

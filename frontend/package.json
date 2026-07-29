@@ -6,7 +6,10 @@
   "scripts": {
     "dev": "vite --host 127.0.0.1",
     "prebuild": "node scripts/normalize-source.mjs",
-    "build": "tsc --noEmit && vite build && node scripts/normalize-dist.mjs",
+    "build": "tsc --noEmit && vite build && node scripts/normalize-dist.mjs && npm run bundle:check",
+    "bundle:check": "node scripts/check-bundle-budget.mjs",
+    "api:generate": "node scripts/api-generate.mjs",
+    "api:check": "node scripts/api-check.mjs",
     "test": "vitest run",
     "preview": "vite preview --host 127.0.0.1"
   },
@@ -23,6 +26,7 @@
   "devDependencies": {
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
+    "openapi-typescript": "^7.8.0",
     "vitest": "^3.2.7"
   }
 }

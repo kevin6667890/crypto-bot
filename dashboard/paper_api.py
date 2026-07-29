@@ -1176,6 +1176,9 @@ def public_operations_summary() -> dict[str, Any]:
             "checkpoint_result": (
                 collector_runtime.get("last_checkpoint_result")
                 if collector_runtime else None),
+            "checkpoint_mode": (
+                collector_runtime.get("last_checkpoint_mode")
+                if collector_runtime else None),
         },
         "scheduler": {
             "running": bool(SERVICE.scheduler_running),

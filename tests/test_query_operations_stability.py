@@ -163,6 +163,7 @@ def test_wal_limit_and_checkpoint_stay_out_of_live_queue(tmp_path):
         assert writer.passive_checkpoint(queue_depth=1) is False
         source = inspect.getsource(writer.passive_checkpoint).upper()
         assert "PASSIVE" in source
+        assert "RESTART" in source
         assert "TRUNCATE" not in source
         assert "BUSY_TIMEOUT=0" in source
     finally:

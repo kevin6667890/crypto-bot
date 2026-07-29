@@ -137,6 +137,7 @@ class MicrostructureStore:
             "wal_size_bytes": 0,
             "last_checkpoint_duration_ms": None,
             "last_checkpoint_result": None,
+            "last_checkpoint_mode": None,
             "last_maintenance_duration_ms": None,
             "maintenance_paused_reason": None,
             "received_timestamp_by_instrument": {},
@@ -2328,11 +2329,20 @@ class MicrostructureLiveWriter:
             connection.execute("PRAGMA busy_timeout=0")
             result = tuple(connection.execute(
                 "PRAGMA wal_checkpoint(PASSIVE)").fetchone())
+            mode = "PASSIVE"
+            if (wal_size >= WAL_JOURNAL_SIZE_LIMIT_BYTES
+                    and result[0] == 0 and result[1] == result[2]):
+                restart = tuple(connection.execute(
+                    "PRAGMA wal_checkpoint(RESTART)").fetchone())
+                if restart[0] == 0:
+                    result = restart
+                    mode = "RESTART"
         duration = int((time.monotonic() - started) * 1000)
         self.last_checkpoint_at = time.monotonic()
         self.store.update_operational_metrics(
             last_checkpoint_duration_ms=duration,
             last_checkpoint_result=result,
+            last_checkpoint_mode=mode,
             wal_size_bytes=wal.stat().st_size if wal.exists() else 0)
         return True
 

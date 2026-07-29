@@ -9,7 +9,11 @@ from dashboard.discovery_robustness_service import DiscoveryRobustnessService
 
 START='/api/discovery/robustness/runs'
 
-def handler(path, body=b'{}', authorization=None):
+@pytest.fixture(autouse=True)
+def configured_admin(monkeypatch):
+ monkeypatch.setenv('ADMIN_TOKEN','test-admin')
+
+def handler(path, body=b'{}', authorization='Bearer test-admin'):
  captured=[]; raw=body if isinstance(body,bytes) else json.dumps(body).encode()
  item=object.__new__(paper_api.Handler); item.path=path; item.headers={'Content-Length':str(len(raw))}; item.rfile=BytesIO(raw); item.client_address=('127.0.0.1',4321)
  if authorization: item.headers['Authorization']=authorization

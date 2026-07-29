@@ -13,7 +13,12 @@ from dashboard.discovery_ablation_service import DiscoveryAblationService
 START = '/api/discovery/ablation/runs'
 
 
-def handler(path, body=b'{}', authorization=None):
+@pytest.fixture(autouse=True)
+def configured_admin(monkeypatch):
+    monkeypatch.setenv("ADMIN_TOKEN", "test-admin")
+
+
+def handler(path, body=b'{}', authorization="Bearer test-admin"):
     captured = []
     raw = body if isinstance(body, bytes) else json.dumps(body).encode()
     item = object.__new__(paper_api.Handler)

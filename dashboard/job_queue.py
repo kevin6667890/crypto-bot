@@ -6,6 +6,7 @@ import hashlib
 import json
 import threading
 import time
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
@@ -30,11 +31,19 @@ class JobQueue:
         self.worker = threading.Thread(target=self._loop, daemon=True, name="research-job-worker")
         if autostart: self.worker.start()
 
+    @contextmanager
     def connect(self):
         conn = self.sqlite3.connect(self.db_path, timeout=30)
         conn.row_factory = self.sqlite3.Row
         conn.execute("PRAGMA busy_timeout=30000"); conn.execute("PRAGMA journal_mode=WAL")
-        return conn
+        try:
+            yield conn
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
 
     def _init_db(self) -> None:
         with self.connect() as conn:

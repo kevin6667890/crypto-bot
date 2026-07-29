@@ -6,6 +6,10 @@ import pytest
 from dashboard.discovery_service import DiscoveryService
 import dashboard.paper_api as paper_api
 
+@pytest.fixture(autouse=True)
+def configured_admin(monkeypatch):
+    monkeypatch.setenv("ADMIN_TOKEN", "test-admin")
+
 def payload():
     return {"instrument":"SOL-USDT","timeframe":"4H","execution_assumptions":{},"templates":["TREND_BREAKOUT"],"trial_budget":1,"seed":1}
 
@@ -28,7 +32,10 @@ def post_route(monkeypatch, body, start):
     captured=[]
     handler=object.__new__(paper_api.Handler)
     raw=body if isinstance(body,bytes) else __import__('json').dumps(body).encode()
-    handler.path='/api/discovery/runs'; handler.headers={'Content-Length':str(len(raw))}
+    handler.path='/api/discovery/runs'; handler.headers={
+        'Content-Length':str(len(raw)),
+        'Authorization':'Bearer test-admin',
+    }
     handler.rfile=BytesIO(raw); handler.client_address=('127.0.0.1',0)
     handler._send=lambda payload,status=200: captured.append((payload,int(status)))
     monkeypatch.setattr(paper_api,'RESEARCH',SimpleNamespace(discovery=SimpleNamespace(start=start)))

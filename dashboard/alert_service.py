@@ -1,6 +1,7 @@
 """Persistent deduplicated in-app alerts."""
 from __future__ import annotations
 import sqlite3
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -9,8 +10,19 @@ import json
 def now(): return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
 class AlertService:
     def __init__(self, db_path: Path): self.db_path=Path(db_path); self._init()
+    @contextmanager
     def connect(self):
-        c=sqlite3.connect(self.db_path,timeout=30); c.row_factory=sqlite3.Row; c.execute("PRAGMA busy_timeout=30000"); return c
+        c=sqlite3.connect(self.db_path,timeout=30)
+        c.row_factory=sqlite3.Row
+        c.execute("PRAGMA busy_timeout=30000")
+        try:
+            yield c
+            c.commit()
+        except Exception:
+            c.rollback()
+            raise
+        finally:
+            c.close()
     def _init(self):
         with self.connect() as c:
             c.execute("""CREATE TABLE IF NOT EXISTS system_alerts(id INTEGER PRIMARY KEY AUTOINCREMENT, alert_key TEXT NOT NULL UNIQUE,

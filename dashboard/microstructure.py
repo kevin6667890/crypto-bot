@@ -36,7 +36,19 @@ TRADE_LIVE_WARNING_MS = 30_000
 SQLITE_BUSY_TIMEOUT_MS = 5_000
 SQLITE_CACHE_KIB = 8_192
 WAL_CHECKPOINT_BYTES = 32 * 1024 * 1024
+WAL_JOURNAL_SIZE_LIMIT_BYTES = 128 * 1024 * 1024
 LIVE_AGGREGATION_LOOKBACK_MS = 10 * 60_000
+SUMMARY_BOOTSTRAP_ROWS = 10_000
+
+SUMMARY_TABLES = {
+    "trades": "trade_flow_observations",
+    "oi": "oi_observations",
+    "funding_settled": "funding_settled",
+    "funding_predicted": "funding_predicted",
+    "mark": "mark_price_observations",
+    "index": "index_price_observations",
+    "liquidations": "liquidation_observations",
+}
 
 
 def now_ms() -> int:
@@ -148,6 +160,8 @@ class MicrostructureStore:
         if not readonly:
             connection.execute("PRAGMA journal_mode=WAL")
             connection.execute("PRAGMA synchronous=NORMAL")
+            connection.execute(
+                f"PRAGMA journal_size_limit={WAL_JOURNAL_SIZE_LIMIT_BYTES}")
             # The persistent live writer owns bounded PASSIVE checkpoints.
             connection.execute("PRAGMA wal_autocheckpoint=0")
         return connection
@@ -183,6 +197,131 @@ class MicrostructureStore:
         wal = Path(f"{self.path}-wal")
         result["wal_size_bytes"] = wal.stat().st_size if wal.exists() else 0
         return result
+
+    def bootstrap_summary_slice(
+        self, *, maximum_rows: int = SUMMARY_BOOTSTRAP_ROWS
+    ) -> dict[str, Any]:
+        """Advance one restart-safe source summary cursor by a bounded batch."""
+        with self.connect() as c:
+            summary = c.execute(
+                """SELECT * FROM source_runtime_summary WHERE refreshing=1
+                   ORDER BY lane,instrument LIMIT 1""").fetchone()
+            if summary is None:
+                return {"complete": True, "rows": 0}
+            lane, instrument = str(summary["lane"]), str(summary["instrument"])
+            table = SUMMARY_TABLES[lane]
+            rows = c.execute(
+                f"""SELECT rowid,source_ts_ms FROM {table}
+                    WHERE instrument=? AND rowid>? AND rowid<=?
+                    ORDER BY rowid LIMIT ?""",
+                (instrument, int(summary["bootstrap_cursor"]),
+                 int(summary["bootstrap_high_water"]), maximum_rows),
+            ).fetchall()
+            timestamp = now_ms()
+            if rows:
+                cursor = int(rows[-1]["rowid"])
+                batch_earliest = min(int(row["source_ts_ms"]) for row in rows)
+                batch_latest = max(int(row["source_ts_ms"]) for row in rows)
+                c.execute(
+                    """UPDATE source_runtime_summary SET
+                       row_count=row_count+?,
+                       earliest_ms=CASE WHEN earliest_ms IS NULL OR ?<earliest_ms
+                         THEN ? ELSE earliest_ms END,
+                       latest_ms=CASE WHEN latest_ms IS NULL OR ?>latest_ms
+                         THEN ? ELSE latest_ms END,
+                       bootstrap_cursor=?,generated_at_ms=?,data_as_of_ms=?
+                       WHERE lane=? AND instrument=?""",
+                    (len(rows), batch_earliest, batch_earliest,
+                     batch_latest, batch_latest, cursor, timestamp,
+                     batch_latest, lane, instrument))
+                return {
+                    "complete": False, "lane": lane, "instrument": instrument,
+                    "rows": len(rows), "cursor": cursor,
+                }
+            c.execute(
+                """UPDATE source_runtime_summary SET refreshing=0,
+                   generated_at_ms=?,data_as_of_ms=latest_ms
+                   WHERE lane=? AND instrument=?""",
+                (timestamp, lane, instrument))
+            return {
+                "complete": False, "lane": lane, "instrument": instrument,
+                "rows": 0, "cursor": int(summary["bootstrap_cursor"]),
+                "lane_complete": True,
+            }
+
+    def put_runtime_snapshot(
+        self, key: str, payload: dict[str, Any], *,
+        data_as_of_ms: int | None = None, refreshing: bool = False,
+        source: str = "collector_low_priority",
+    ) -> None:
+        with self.connect() as c:
+            c.execute(
+                """INSERT INTO runtime_snapshots VALUES(?,?,?,?,?,?)
+                   ON CONFLICT(snapshot_key) DO UPDATE SET
+                   payload_json=excluded.payload_json,
+                   generated_at_ms=excluded.generated_at_ms,
+                   data_as_of_ms=excluded.data_as_of_ms,
+                   refreshing=excluded.refreshing,source=excluded.source""",
+                (key, json.dumps(payload, sort_keys=True), now_ms(),
+                 data_as_of_ms, int(refreshing), source))
+
+    def get_runtime_snapshot(self, key: str) -> dict[str, Any] | None:
+        if not self.path.exists():
+            return None
+        with self.connect(readonly=True) as c:
+            row = c.execute(
+                "SELECT * FROM runtime_snapshots WHERE snapshot_key=?", (key,)
+            ).fetchone()
+        if row is None:
+            return None
+        result = json.loads(row["payload_json"])
+        generated = int(row["generated_at_ms"])
+        result["_snapshot"] = {
+            "generated_at": utc_iso(generated),
+            "data_as_of": (
+                utc_iso(int(row["data_as_of_ms"]))
+                if row["data_as_of_ms"] is not None else None),
+            "stale_seconds": max(0, (now_ms() - generated) // 1000),
+            "source": row["source"],
+            "refreshing": bool(row["refreshing"]),
+        }
+        return result
+
+    def refresh_runtime_snapshot_slice(
+        self, *, wall_clock_seconds: float = 1.5
+    ) -> dict[str, Any]:
+        """Refresh at most one persisted query result outside the live hot path."""
+        gap_snapshot = self.get_runtime_snapshot("gap_summary")
+        gap_stale = (
+            gap_snapshot is None
+            or int(gap_snapshot["_snapshot"]["stale_seconds"] or 0) >= 300)
+        if gap_stale:
+            report = self.gap_report(
+                include_items=False, wall_clock_seconds=wall_clock_seconds)
+            data_as_of = max((
+                int(item["end_ms"])
+                for item in report.get("critical_live_gaps", [])
+            ), default=now_ms())
+            self.put_runtime_snapshot(
+                "gap_summary", report, data_as_of_ms=data_as_of)
+            return {"snapshot": "gap_summary", "refreshed": True}
+        eligibility = self.get_runtime_snapshot("feature_eligibility")
+        eligibility_stale = (
+            eligibility is None
+            or int(eligibility["_snapshot"]["stale_seconds"] or 0) >= 21_600)
+        if eligibility_stale:
+            result = self._calculate_feature_eligibility(
+                wall_clock_seconds=wall_clock_seconds)
+            latest = max((
+                int(row["source_latest_ms"])
+                for group in result["feature_groups"].values()
+                for row in group["instruments"].values()
+                if row["source_latest_ms"] is not None
+            ), default=now_ms())
+            self.put_runtime_snapshot(
+                "feature_eligibility", result, data_as_of_ms=latest)
+            return {"snapshot": "feature_eligibility", "refreshed": True}
+        return {"snapshot": None, "refreshed": False}
 
     def initialize(self) -> None:
         with self.connect() as c:
@@ -282,6 +421,20 @@ class MicrostructureStore:
                     created_at_ms INTEGER NOT NULL);
                 CREATE TABLE IF NOT EXISTS table_row_counts(
                     table_name TEXT PRIMARY KEY, row_count INTEGER NOT NULL);
+                CREATE TABLE IF NOT EXISTS source_runtime_summary(
+                    lane TEXT NOT NULL, instrument TEXT NOT NULL,
+                    row_count INTEGER NOT NULL DEFAULT 0,
+                    earliest_ms INTEGER, latest_ms INTEGER,
+                    generated_at_ms INTEGER NOT NULL, data_as_of_ms INTEGER,
+                    refreshing INTEGER NOT NULL DEFAULT 1,
+                    bootstrap_cursor INTEGER NOT NULL DEFAULT 0,
+                    bootstrap_high_water INTEGER NOT NULL DEFAULT 0,
+                    PRIMARY KEY(lane,instrument));
+                CREATE TABLE IF NOT EXISTS runtime_snapshots(
+                    snapshot_key TEXT PRIMARY KEY, payload_json TEXT NOT NULL,
+                    generated_at_ms INTEGER NOT NULL, data_as_of_ms INTEGER,
+                    refreshing INTEGER NOT NULL DEFAULT 0,
+                    source TEXT NOT NULL);
                 """
             )
             counted_tables = (
@@ -307,6 +460,52 @@ class MicrostructureStore:
                         AFTER DELETE ON {table} BEGIN
                         UPDATE table_row_counts SET row_count=row_count-1
                         WHERE table_name='{table}'; END""")
+            for lane, table in SUMMARY_TABLES.items():
+                instruments = (
+                    tuple(item.removesuffix("-SWAP") for item in INSTRUMENTS)
+                    if lane == "index" else INSTRUMENTS)
+                for instrument in instruments:
+                    c.execute(
+                        f"""INSERT OR IGNORE INTO source_runtime_summary(
+                            lane,instrument,row_count,earliest_ms,latest_ms,
+                            generated_at_ms,data_as_of_ms,refreshing,
+                            bootstrap_cursor,bootstrap_high_water)
+                            SELECT ?,?,0,
+                              (SELECT source_ts_ms FROM {table}
+                               WHERE instrument=? ORDER BY source_ts_ms LIMIT 1),
+                              (SELECT source_ts_ms FROM {table}
+                               WHERE instrument=? ORDER BY source_ts_ms DESC LIMIT 1),
+                              ?,NULL,1,0,COALESCE(MAX(rowid),0)
+                            FROM {table}""",
+                        (lane, instrument, instrument, instrument, now_ms()))
+                c.execute(
+                    f"""CREATE TRIGGER IF NOT EXISTS summary_{table}_insert
+                        AFTER INSERT ON {table} BEGIN
+                        UPDATE source_runtime_summary SET
+                          row_count=row_count+
+                            CASE WHEN NEW.rowid>bootstrap_high_water THEN 1 ELSE 0 END,
+                          earliest_ms=CASE WHEN earliest_ms IS NULL
+                            OR NEW.source_ts_ms<earliest_ms
+                            THEN NEW.source_ts_ms ELSE earliest_ms END,
+                          latest_ms=CASE WHEN latest_ms IS NULL
+                            OR NEW.source_ts_ms>latest_ms
+                            THEN NEW.source_ts_ms ELSE latest_ms END,
+                          generated_at_ms=NEW.ingested_at_ms,
+                          data_as_of_ms=CASE WHEN data_as_of_ms IS NULL
+                            OR NEW.source_ts_ms>data_as_of_ms
+                            THEN NEW.source_ts_ms ELSE data_as_of_ms END
+                        WHERE lane='{lane}' AND instrument=NEW.instrument;
+                        END""")
+                c.execute(
+                    f"""CREATE TRIGGER IF NOT EXISTS summary_{table}_delete
+                        AFTER DELETE ON {table} BEGIN
+                        UPDATE source_runtime_summary SET
+                          row_count=MAX(0,row_count-
+                            CASE WHEN OLD.rowid<=bootstrap_cursor
+                              OR OLD.rowid>bootstrap_high_water THEN 1 ELSE 0 END),
+                          generated_at_ms={now_ms()}
+                        WHERE lane='{lane}' AND instrument=OLD.instrument;
+                        END""")
             c.execute(
                 """INSERT OR IGNORE INTO schema_metadata VALUES(?,?,?,?,?)""",
                 (MICROSTRUCTURE_SCHEMA_VERSION, MICROSTRUCTURE_SOURCE_VERSION,
@@ -571,6 +770,76 @@ class MicrostructureStore:
         current = timestamp_ms or now_ms()
         return self._aggregate_since(current - LIVE_AGGREGATION_LOOKBACK_MS)
 
+    def maintenance_slice(
+        self, *, wall_clock_seconds: float = 1.5,
+        timestamp_ms: int | None = None,
+        pause_requested: Any | None = None,
+    ) -> dict[str, Any]:
+        """Run one resumable aggregation/summary unit with a hard SQL deadline."""
+        current = timestamp_ms or now_ms()
+        tasks = [
+            (kind, instrument, resolution)
+            for instrument in INSTRUMENTS
+            for resolution in RESOLUTIONS
+            for kind in ("cvd", "oi", "basis")
+        ]
+        tasks.extend(("gaps", instrument, "recent") for instrument in INSTRUMENTS)
+        with self.connect() as c:
+            checkpoint = c.execute(
+                """SELECT cursor FROM collection_checkpoints
+                   WHERE lane='maintenance_cursor' AND instrument='aggregate'"""
+            ).fetchone()
+            position = int(checkpoint["cursor"] or 0) if checkpoint else 0
+            kind, instrument, resolution = tasks[position % len(tasks)]
+            deadline = time.monotonic() + max(0.05, wall_clock_seconds)
+            c.set_progress_handler(
+                lambda: int(
+                    time.monotonic() >= deadline
+                    or bool(pause_requested and pause_requested())), 2_000)
+            try:
+                if kind == "gaps":
+                    self._detect_gaps(
+                        c, instrument, current - LIVE_AGGREGATION_LOOKBACK_MS)
+                    rows = 0
+                else:
+                    width = RESOLUTIONS[resolution]
+                    since = (
+                        current - 2 * RESOLUTIONS["1m"]
+                        if resolution == "1m" else current - width)
+                    operation = {
+                        "cvd": self._aggregate_cvd,
+                        "oi": self._aggregate_oi,
+                        "basis": self._aggregate_basis,
+                    }[kind]
+                    rows = operation(
+                        c, instrument, resolution, width, since)
+            finally:
+                c.set_progress_handler(None, 0)
+            next_position = (position + 1) % len(tasks)
+            c.execute(
+                """INSERT INTO collection_checkpoints VALUES(?,?,?,?,?,?,?)
+                   ON CONFLICT(lane,instrument) DO UPDATE SET
+                   cursor=excluded.cursor,
+                   last_source_ts_ms=excluded.last_source_ts_ms,
+                   status=excluded.status,
+                   metadata_json=excluded.metadata_json,
+                   updated_at_ms=excluded.updated_at_ms""",
+                ("maintenance_cursor", "aggregate", str(next_position),
+                 current, "running", json.dumps({
+                     "last_kind": kind, "last_instrument": instrument,
+                     "last_resolution": resolution, "rows": rows,
+                     "wall_clock_limit_ms": int(wall_clock_seconds * 1000),
+                 }, sort_keys=True), now_ms()))
+            if position % len(tasks) == len(tasks) - 1:
+                self.record_health(
+                    "aggregation", "LIVE", last_success_ms=now_ms(),
+                    source_lag_ms=0)
+            return {
+                "cursor": next_position, "kind": kind,
+                "instrument": instrument, "resolution": resolution,
+                "rows": rows,
+            }
+
     def _aggregate_since(self, since_ms: int | None) -> dict[str, int]:
         counts = {"cvd": 0, "oi": 0, "basis": 0}
         with self.connect() as c:
@@ -650,10 +919,17 @@ class MicrostructureStore:
         return "RECOVERABLE_BACKFILL_GAP"
 
     def gap_report(
-        self, *, reference_ms: int | None = None, include_items: bool = False
+        self, *, reference_ms: int | None = None, include_items: bool = False,
+        wall_clock_seconds: float | None = None,
     ) -> dict[str, Any]:
         """Classify recorded gaps plus currently open live-lane gaps."""
         current = reference_ms or now_ms()
+        deadline = (
+            time.monotonic() + wall_clock_seconds
+            if wall_clock_seconds is not None else None)
+        def check_deadline() -> None:
+            if deadline is not None and time.monotonic() >= deadline:
+                raise TimeoutError("gap snapshot wall-clock budget exhausted")
         if (reference_ms is None and self._gap_cache is not None
                 and time.monotonic() - self._gap_cache[0] < 300):
             cached = self._gap_cache[1]
@@ -667,12 +943,16 @@ class MicrostructureStore:
             }
             items: list[dict[str, Any]] = []
             with self.connect(readonly=True) as c:
+                if deadline is not None:
+                    c.set_progress_handler(
+                        lambda: int(time.monotonic() >= deadline), 2_000)
                 gaps = c.execute(
                     """SELECT * FROM collection_gaps
                        ORDER BY start_ms,lane,instrument,end_ms""").fetchall()
                 boundary_sources: dict[tuple[str, str, int], str] = {}
                 for lane, (table, timestamp_column) in tables.items():
                     for instrument in INSTRUMENTS:
+                        check_deadline()
                         timestamps = sorted({
                             int(value)
                             for gap in gaps if gap["lane"] == lane
@@ -693,6 +973,7 @@ class MicrostructureStore:
                                 boundary_sources[(
                                     lane, instrument, int(row[0]))] = str(row[1])
                 for gap in gaps:
+                    check_deadline()
                     lane = str(gap["lane"])
                     table_definition = tables.get(lane)
                     interior = 0
@@ -735,6 +1016,7 @@ class MicrostructureStore:
                 )
                 for lane, table, threshold in live_definitions:
                     for instrument in INSTRUMENTS:
+                        check_deadline()
                         latest = c.execute(
                             f"SELECT MAX(source_ts_ms) FROM {table} WHERE instrument=?",
                             (instrument,)).fetchone()[0]
@@ -1037,16 +1319,51 @@ class MicrostructureStore:
         return result
 
     def coverage(self) -> dict[str, Any]:
-        if (self._coverage_cache is not None
-                and time.monotonic() - self._coverage_cache[0] < 300):
-            return self._coverage_cache[1]
-        with self._coverage_lock:
-            if (self._coverage_cache is not None
-                    and time.monotonic() - self._coverage_cache[0] < 300):
-                return self._coverage_cache[1]
-            result = self._calculate_coverage()
-            self._coverage_cache = (time.monotonic(), result)
-            return result
+        """Return the small persisted source summary; never scan raw history."""
+        started = time.monotonic()
+        result: dict[str, Any] = {lane: [] for lane in SUMMARY_TABLES}
+        connect_started = time.monotonic()
+        with self.connect(readonly=True) as c:
+            connected = time.monotonic()
+            rows = c.execute(
+                """SELECT lane,instrument,row_count,earliest_ms,latest_ms,
+                          generated_at_ms,data_as_of_ms,refreshing
+                   FROM source_runtime_summary ORDER BY lane,instrument"""
+            ).fetchall()
+            sql_finished = time.monotonic()
+        for row in rows:
+            result[str(row["lane"])].append({
+                "instrument": row["instrument"],
+                "rows": int(row["row_count"]),
+                "earliest_ms": row["earliest_ms"],
+                "latest_ms": row["latest_ms"],
+                "refreshing": bool(row["refreshing"]),
+            })
+        generated = max(
+            (int(row["generated_at_ms"]) for row in rows), default=now_ms())
+        data_as_of = max(
+            (int(row["data_as_of_ms"]) for row in rows
+             if row["data_as_of_ms"] is not None), default=None)
+        result["_snapshot"] = {
+            "generated_at": utc_iso(generated),
+            "data_as_of": utc_iso(data_as_of) if data_as_of is not None else None,
+            "stale_seconds": max(0, (now_ms() - generated) // 1000),
+            "source": "collector_runtime_summary",
+            "refreshing": any(bool(row["refreshing"]) for row in rows),
+        }
+        result["_query_profile"] = {
+            "database_connection_wait_ms":
+                round((connected - connect_started) * 1000, 3),
+            "sql_execution_ms":
+                round((sql_finished - connected) * 1000, 3),
+            "result_mapping_ms":
+                round((time.monotonic() - sql_finished) * 1000, 3),
+            "total_ms": round((time.monotonic() - started) * 1000, 3),
+            "rows_read": len(rows),
+            "query_plan": "source_runtime_summary primary-key scan",
+            "full_history_scan": False,
+        }
+        return result
 
     def _calculate_coverage(self) -> dict[str, Any]:
         tables = {
@@ -1066,27 +1383,14 @@ class MicrostructureStore:
         return result
 
     def _health_coverage(self) -> dict[str, Any]:
-        tables = {
-            "trades": "trade_flow_observations", "oi": "oi_observations",
-            "funding_settled": "funding_settled", "funding_predicted": "funding_predicted",
-            "mark": "mark_price_observations", "index": "index_price_observations",
-            "liquidations": "liquidation_observations",
+        coverage = self.coverage()
+        return {
+            lane: [
+                {key: row[key] for key in ("instrument", "earliest_ms", "latest_ms")}
+                for row in coverage[lane] if row["latest_ms"] is not None
+            ]
+            for lane in SUMMARY_TABLES
         }
-        result: dict[str, list[dict[str, Any]]] = {}
-        with self.connect(readonly=True) as c:
-            for lane, table in tables.items():
-                instruments = ([item.removesuffix("-SWAP") for item in INSTRUMENTS]
-                               if lane == "index" else list(INSTRUMENTS))
-                result[lane] = []
-                for instrument in instruments:
-                    row = c.execute(
-                        f"""SELECT MIN(source_ts_ms),MAX(source_ts_ms)
-                            FROM {table} WHERE instrument=?""", (instrument,)).fetchone()
-                    if row[1] is not None:
-                        result[lane].append({
-                            "instrument": instrument, "earliest_ms": int(row[0]),
-                            "latest_ms": int(row[1])})
-        return result
 
     def sample_status(self, coverage: dict[str, Any] | None = None) -> dict[str, Any]:
         coverage = coverage or self.coverage()
@@ -1145,9 +1449,18 @@ class MicrostructureStore:
             self._eligibility_cache = (time.monotonic(), result)
             return result
 
-    def _calculate_feature_eligibility(self) -> dict[str, Any]:
+    def _calculate_feature_eligibility(
+        self, *, wall_clock_seconds: float | None = None
+    ) -> dict[str, Any]:
         """Compute the uncached eligibility snapshot."""
         from bisect import bisect_left, bisect_right
+        deadline = (
+            time.monotonic() + wall_clock_seconds
+            if wall_clock_seconds is not None else None)
+        def check_deadline() -> None:
+            if deadline is not None and time.monotonic() >= deadline:
+                raise TimeoutError(
+                    "eligibility snapshot wall-clock budget exhausted")
 
         feature_groups = {
             "settled_funding": {
@@ -1260,7 +1573,11 @@ class MicrostructureStore:
                 total += current_interval[1] - current_interval[0]
             return total
 
-        gap_items = self.gap_report(include_items=True)["items"]
+        gap_items = self.gap_report(
+            include_items=True,
+            wall_clock_seconds=(
+                max(0.05, deadline - time.monotonic())
+                if deadline is not None else None))["items"]
         results: dict[str, Any] = {
             "aggregate_policy": (
                 "Aggregate fields use the strict intersection across BTC, ETH and SOL; "
@@ -1268,6 +1585,9 @@ class MicrostructureStore:
             "feature_groups": {},
         }
         with self.connect(readonly=True) as c:
+            if deadline is not None:
+                c.set_progress_handler(
+                    lambda: int(time.monotonic() >= deadline), 2_000)
             source_statistics: dict[
                 tuple[str, str, str], dict[str, tuple[int, int, int]]
             ] = {}
@@ -1277,14 +1597,26 @@ class MicrostructureStore:
                 for source in definition["sources"]
             }
             for table, timestamp_column, predicate in source_definitions:
+                check_deadline()
                 statistics_by_instrument = {}
                 for instrument in INSTRUMENTS:
-                    row = c.execute(
-                        f"""SELECT MIN({timestamp_column}) earliest,
-                                   MAX({timestamp_column}) latest,COUNT(*) rows
-                            FROM {table}
-                            WHERE instrument=? AND {predicate}""",
-                        (instrument,)).fetchone()
+                    summary_lane = next((
+                        lane for lane, summary_table in SUMMARY_TABLES.items()
+                        if summary_table == table), None)
+                    if summary_lane is not None and predicate == "1=1":
+                        row = c.execute(
+                            """SELECT earliest_ms earliest,latest_ms latest,
+                                      row_count rows
+                               FROM source_runtime_summary
+                               WHERE lane=? AND instrument=?""",
+                            (summary_lane, instrument)).fetchone()
+                    else:
+                        row = c.execute(
+                            f"""SELECT MIN({timestamp_column}) earliest,
+                                       MAX({timestamp_column}) latest,COUNT(*) rows
+                                FROM {table}
+                                WHERE instrument=? AND {predicate}""",
+                            (instrument,)).fetchone()
                     if row["earliest"] is not None:
                         statistics_by_instrument[instrument] = (
                             int(row["earliest"]), int(row["latest"]), int(row["rows"]))
@@ -1294,6 +1626,7 @@ class MicrostructureStore:
             marks: dict[str, list[int]] = {}
             mark_counts: dict[str, int] = {}
             for instrument in INSTRUMENTS:
+                check_deadline()
                 values = [int(row[0]) for row in c.execute(
                     """SELECT source_ts_ms FROM mark_price_observations
                        WHERE instrument=? AND state='confirmed'
@@ -1302,8 +1635,10 @@ class MicrostructureStore:
                 mark_counts[instrument] = len(values)
 
             for group_name, definition in feature_groups.items():
+                check_deadline()
                 instrument_rows: dict[str, dict[str, Any]] = {}
                 for instrument in INSTRUMENTS:
+                    check_deadline()
                     starts: list[int] = []
                     ends: list[int] = []
                     counts: list[int] = []
@@ -1362,7 +1697,9 @@ class MicrostructureStore:
                     # decision and forward mark labels no more than one minute
                     # away from their requested timestamps.
                     event_count = 0
-                    for value in event_times:
+                    for index, value in enumerate(event_times):
+                        if index % 500 == 0:
+                            check_deadline()
                         base_pos = bisect_right(label_times, value) - 1
                         target = value + HORIZONS["15m"]
                         target_pos = bisect_left(label_times, target)
@@ -1484,6 +1821,222 @@ class MicrostructureStore:
                     "next_eligibility_date": next_date(source_start, source_days),
                 }
         return results
+
+    def eligibility_summary(self) -> dict[str, Any]:
+        snapshot = self.get_runtime_snapshot("feature_eligibility")
+        if snapshot is not None:
+            return snapshot
+        return {
+            "aggregate_policy": "Persisted eligibility is being refreshed.",
+            "feature_groups": {},
+            "_snapshot": {
+                "generated_at": None, "data_as_of": None, "stale_seconds": None,
+                "source": "collector_low_priority", "refreshing": True,
+            },
+        }
+
+    def gaps_summary(self) -> dict[str, Any]:
+        snapshot = self.get_runtime_snapshot("gap_summary")
+        if snapshot is not None:
+            return snapshot
+        return {
+            "recorded_gap_count": None,
+            "synthetic_live_gap_count": None,
+            "by_classification": {},
+            "critical_live_gaps": [],
+            "_snapshot": {
+                "generated_at": None, "data_as_of": None, "stale_seconds": None,
+                "source": "collector_low_priority", "refreshing": True,
+            },
+        }
+
+    def health_summary(self) -> dict[str, Any]:
+        """Constant-time split data/query plane health for HTTP callers."""
+        if not self.path.exists():
+            return {
+                "service_status": "UNAVAILABLE",
+                "data_plane_status": {"status": "UNAVAILABLE"},
+                "query_plane_status": {"status": "UNAVAILABLE"},
+            }
+        coverage = self.coverage()
+        current = now_ms()
+        with self.connect(readonly=True) as c:
+            health_rows = [dict(row) for row in c.execute(
+                "SELECT * FROM collector_health ORDER BY component")]
+            counts = {row["table_name"]: int(row["row_count"]) for row in c.execute(
+                "SELECT table_name,row_count FROM table_row_counts")}
+            writer = c.execute(
+                """SELECT metadata_json,updated_at_ms FROM collection_checkpoints
+                   WHERE lane='writer' AND instrument='live_queue'"""
+            ).fetchone()
+            maintenance_cursor = c.execute(
+                """SELECT metadata_json,updated_at_ms FROM collection_checkpoints
+                   WHERE lane='maintenance_cursor' AND instrument='aggregate'"""
+            ).fetchone()
+            funding_checkpoints = {
+                row["instrument"]: dict(row) for row in c.execute(
+                    """SELECT instrument,metadata_json,updated_at_ms
+                       FROM collection_checkpoints
+                       WHERE lane='funding_schedule'""")
+            }
+        try:
+            writer_state = json.loads(writer["metadata_json"]) if writer else {}
+        except (TypeError, json.JSONDecodeError):
+            writer_state = {}
+        latest = {
+            lane: {row["instrument"]: row["latest_ms"] for row in coverage[lane]}
+            for lane in SUMMARY_TABLES
+        }
+        freshness = {
+            lane: {
+                instrument: (
+                    max(0, current - int(timestamp))
+                    if timestamp is not None else None)
+                for instrument, timestamp in instruments.items()
+            }
+            for lane, instruments in latest.items()
+        }
+        required_latest = [
+            timestamp for lane in ("trades", "oi", "mark", "index")
+            for timestamp in latest[lane].values() if timestamp is not None
+        ]
+        collector_advancing = bool(
+            required_latest and min(required_latest) >= current - 180_000)
+        starts = [
+            int(row["earliest_ms"]) for lane in ("trades", "oi", "mark", "index")
+            for row in coverage[lane] if row["earliest_ms"] is not None]
+        ends = [
+            int(row["latest_ms"]) for lane in ("trades", "oi", "mark", "index")
+            for row in coverage[lane] if row["latest_ms"] is not None]
+        sample_days = max(
+            0.0, (min(ends) - max(starts)) / 86_400_000
+        ) if starts and ends and min(ends) >= max(starts) else 0.0
+        sample_status = (
+            "EXPLORATORY_ONLY" if sample_days < 14
+            else "MINIMUM_SAMPLE_REACHED" if sample_days < 30
+            else "VALIDATION_READY" if sample_days < 60
+            else "FORMAL_RESEARCH_READY")
+        funding_schedule: dict[str, Any] = {}
+        for instrument in INSTRUMENTS:
+            checkpoint_row = funding_checkpoints.get(instrument)
+            try:
+                schedule = json.loads(
+                    checkpoint_row["metadata_json"]) if checkpoint_row else {}
+            except (TypeError, json.JSONDecodeError):
+                schedule = {}
+            latest_settlement = next((
+                row["latest_ms"] for row in coverage["funding_settled"]
+                if row["instrument"] == instrument), None)
+            next_expected = schedule.get("next_expected_settlement_ms")
+            funding_schedule[instrument] = {
+                "latest_settlement_ms": latest_settlement,
+                "next_expected_settlement_ms": next_expected,
+                "overdue": bool(
+                    latest_settlement is not None and next_expected is not None
+                    and current > int(next_expected) + 300_000
+                    and int(latest_settlement) < int(next_expected)),
+            }
+        eligibility = self.get_runtime_snapshot("feature_eligibility")
+        gaps = self.get_runtime_snapshot("gap_summary")
+        query_components = {
+            "health_api": "AVAILABLE",
+            "coverage_api": "REFRESHING" if coverage["_snapshot"]["refreshing"]
+            else "AVAILABLE",
+            "eligibility_api": "AVAILABLE" if eligibility else "REFRESHING",
+            "gaps_api": "AVAILABLE" if gaps else "REFRESHING",
+            "validation_api": "AVAILABLE",
+            "operations_summary_api": "AVAILABLE",
+        }
+        result = {
+            "service_status": "RUNNING" if collector_advancing else "DEGRADED",
+            "database_schema_version": MICROSTRUCTURE_SCHEMA_VERSION,
+            "source_version": MICROSTRUCTURE_SOURCE_VERSION,
+            "feature_version": MICROSTRUCTURE_FEATURE_VERSION,
+            "data_plane_status": {
+                "status": "RUNNING" if collector_advancing else "STALE",
+                "sources": freshness,
+                "raw_persistence": "RUNNING" if collector_advancing else "STALE",
+                "aggregation": next((
+                    row["status"] for row in health_rows
+                    if row["component"] == "aggregation"), "UNKNOWN"),
+                "queue_depth": int(writer_state.get("queue_depth") or 0),
+                "writer": next((
+                    row["status"] for row in health_rows
+                    if row["component"] == "writer"), "UNKNOWN"),
+                "last_success_data_time": coverage["_snapshot"]["data_as_of"],
+            },
+            "query_plane_status": {
+                "status": (
+                    "REFRESHING" if "REFRESHING" in query_components.values()
+                    else "AVAILABLE"),
+                "components": query_components,
+            },
+            "latest_timestamp_per_source_instrument": latest,
+            "source_lag_ms": freshness,
+            "gap_summary": (
+                gaps if gaps is not None else self.gaps_summary()),
+            "gap_count": (
+                gaps.get("recorded_gap_count") if gaps is not None else None),
+            "raw_rows": sum(counts.get(table, 0) for table in (
+                "trade_flow_observations", "oi_observations",
+                "mark_price_observations", "index_price_observations",
+                "funding_settled", "funding_predicted",
+                "liquidation_observations")),
+            "aggregate_rows": sum(counts.get(table, 0) for table in (
+                "cvd_aggregates", "oi_aggregates", "basis_aggregates")),
+            "database_size_bytes": self.path.stat().st_size,
+            "wal_size_bytes": (
+                Path(f"{self.path}-wal").stat().st_size
+                if Path(f"{self.path}-wal").exists() else 0),
+            "wal_journal_size_limit_bytes": WAL_JOURNAL_SIZE_LIMIT_BYTES,
+            "coverage_snapshot": coverage["_snapshot"],
+            "eligibility_snapshot": (
+                eligibility["_snapshot"] if eligibility else
+                self.eligibility_summary()["_snapshot"]),
+            "collector_health": health_rows,
+            "sample_days": round(sample_days, 6),
+            "sample_status": sample_status,
+            "funding_schedule": funding_schedule,
+            "liquidation_health": {
+                "stream_connected": next((
+                    row["status"] in {"LIVE", "CONNECTED"}
+                    and current - int(row["updated_at_ms"]) <= 90_000
+                    for row in health_rows
+                    if row["component"] == "liquidations"), False),
+                "connection_status": next((
+                    row["status"] for row in health_rows
+                    if row["component"] == "liquidations"), "INITIALIZING"),
+            },
+            "maintenance_status": (
+                "RUNNING" if maintenance_cursor
+                and current - int(maintenance_cursor["updated_at_ms"]) < 120_000
+                else "INITIALIZING"),
+        }
+        return result
+
+    def operations_summary(self) -> dict[str, Any]:
+        health = self.health_summary()
+        writer = health["data_plane_status"]
+        return {
+            "collector": {
+                "status": writer["status"],
+                "freshness": health["source_lag_ms"],
+                "last_success_data_time": writer["last_success_data_time"],
+                "queue_depth": writer["queue_depth"],
+                "writer": writer["writer"],
+                "aggregation": writer["aggregation"],
+            },
+            "query_plane": health["query_plane_status"],
+            "wal_size_bytes": health["wal_size_bytes"],
+            "database_size_bytes": health["database_size_bytes"],
+            "database_quick_status": (
+                (self.get_runtime_snapshot("database_quick_status") or {})
+                .get("status", "not_recently_checked")),
+            "maintenance": {
+                "status": health["maintenance_status"],
+            },
+            "coverage_snapshot": health["coverage_snapshot"],
+        }
 
     def health(self, *, include_eligibility: bool = True) -> dict[str, Any]:
         if not self.path.exists():

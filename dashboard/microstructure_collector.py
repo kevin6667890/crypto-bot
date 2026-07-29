@@ -84,6 +84,7 @@ class Collector:
         # Restart-time full-history pruning previously starved live persistence.
         # Existing aggregates make it safe to wait for the normal daily cycle.
         self.last_prune_ms = now_ms()
+        self.maintenance_phase = 0
 
     def _counter(self, component: str) -> dict[str, int]:
         return self.counters.setdefault(
@@ -534,12 +535,30 @@ class Collector:
                         maintenance_paused_reason="live_queue_not_empty")
                     raise RuntimeError("maintenance deferred for live collection")
                 started = time.monotonic()
-                await asyncio.to_thread(
-                    self.db_writer.transaction, self.store.aggregate_recent)
+                if self.maintenance_phase % 2 == 0:
+                    result = await asyncio.to_thread(
+                        self.db_writer.transaction,
+                        self.store.bootstrap_summary_slice)
+                    if result.get("complete") and not self.queue.qsize():
+                        result = await asyncio.to_thread(
+                            self.db_writer.transaction,
+                            lambda: self.store.refresh_runtime_snapshot_slice(
+                                wall_clock_seconds=1.5))
+                else:
+                    result = await asyncio.to_thread(
+                        self.db_writer.transaction,
+                        lambda: self.store.maintenance_slice(
+                            wall_clock_seconds=1.5,
+                            pause_requested=lambda: self.queue.qsize() > 0))
+                self.maintenance_phase += 1
                 duration = int((time.monotonic() - started) * 1000)
                 self.store.update_operational_metrics(
                     last_maintenance_duration_ms=duration,
-                    maintenance_paused_reason=None)
+                    maintenance_paused_reason=None,
+                    maintenance_cursor=result)
+                if duration > 2_000:
+                    raise TimeoutError(
+                        f"maintenance wall-clock limit exceeded: {duration} ms")
                 with self.store.connect(readonly=True) as connection:
                     aggregate_latest = {
                         instrument: connection.execute(
@@ -574,7 +593,7 @@ class Collector:
                         "maintenance", "ERROR",
                         last_error=f"{type(error).__name__}: {str(error)[:160]}")
             try:
-                await asyncio.wait_for(self.stop_event.wait(), timeout=300)
+                await asyncio.wait_for(self.stop_event.wait(), timeout=1)
             except TimeoutError:
                 pass
 

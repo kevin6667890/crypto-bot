@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ColorType, createChart, IChartApi, ISeriesApi, LineSeries, UTCTimestamp } from "lightweight-charts";
+import { useAsyncResource, type AsyncPhase } from "./asyncResource";
 import { useLanguage } from "./i18n";
 
 interface HealthResponse {
@@ -10,6 +11,11 @@ interface HealthResponse {
   aggregate_rows: number;
   sample_status: string;
   next_eligibility?: string;
+  data_plane_status?: {
+    status: string;
+    last_success_data_time?: string;
+  };
+  query_plane_status?: { status: string };
   collector_warnings?: Array<{
     code: string; severity: string; component: string; instrument?: string | null; message: string;
   }>;
@@ -44,6 +50,12 @@ interface CoverageResponse {
   mark?: CoverageItem[];
   index?: CoverageItem[];
   liquidations?: CoverageItem[];
+  _snapshot?: {
+    generated_at?: string;
+    data_as_of?: string;
+    stale_seconds?: number;
+    refreshing?: boolean;
+  };
 }
 
 interface FeatureGroup {
@@ -74,6 +86,12 @@ interface FeatureGroup {
 
 interface EligibilityResponse {
   feature_groups: Record<string, FeatureGroup>;
+  _snapshot?: {
+    generated_at?: string;
+    data_as_of?: string;
+    stale_seconds?: number;
+    refreshing?: boolean;
+  };
 }
 
 interface ChartPoint {
@@ -112,9 +130,10 @@ interface ValidationResponse {
 
 type Instrument = "BTC-USDT-SWAP" | "ETH-USDT-SWAP" | "SOL-USDT-SWAP";
 type ResearchChart = "funding" | "basis" | "cvd" | "oi";
+type CoverageSource = Exclude<keyof CoverageResponse, "_snapshot">;
 
 const INSTRUMENTS: Instrument[] = ["BTC-USDT-SWAP", "ETH-USDT-SWAP", "SOL-USDT-SWAP"];
-const SOURCE_ORDER: Array<keyof CoverageResponse> = ["trades", "oi", "funding_predicted", "mark", "index", "liquidations"];
+const SOURCE_ORDER: CoverageSource[] = ["trades", "oi", "funding_predicted", "mark", "index", "liquidations"];
 const CHARTS: ResearchChart[] = ["funding", "basis", "cvd", "oi"];
 
 const chartTheme = {
@@ -266,46 +285,63 @@ export default function MicrostructureResearch() {
     warnings: zh ? "采集提示与来源限制" : "Collector notes and source limits",
   };
 
-  const [health, setHealth] = useState<HealthResponse | null>(null);
-  const [coverage, setCoverage] = useState<CoverageResponse | null>(null);
-  const [eligibility, setEligibility] = useState<EligibilityResponse | null>(null);
-  const [validation, setValidation] = useState<ValidationResponse | null>(null);
+  const healthResource = useAsyncResource<HealthResponse>(
+    "microstructure-health", "/api/research/microstructure/health",
+    { intervalMs: 60_000, timeoutMs: 5_000 },
+  );
+  const coverageResource = useAsyncResource<CoverageResponse>(
+    "microstructure-coverage", "/api/research/microstructure/coverage",
+    { intervalMs: 60_000, timeoutMs: 5_000 },
+  );
+  const eligibilityResource = useAsyncResource<EligibilityResponse>(
+    "microstructure-eligibility", "/api/research/microstructure/eligibility",
+    { intervalMs: 60_000, timeoutMs: 5_000 },
+  );
+  const validationResource = useAsyncResource<ValidationResponse>(
+    "microstructure-validation", "/api/research/microstructure/validation",
+    { intervalMs: 60_000, timeoutMs: 5_000 },
+  );
+  const health = healthResource.data;
+  const coverage = coverageResource.data;
+  const eligibility = eligibilityResource.data;
+  const validation = validationResource.data;
   const [instrument, setInstrument] = useState<Instrument>("BTC-USDT-SWAP");
   const [activeChart, setActiveChart] = useState<ResearchChart>("funding");
   const [chartData, setChartData] = useState<Record<ResearchChart, ChartPoint[]>>({
     funding: [], basis: [], cvd: [], oi: [],
   });
 
-  const fetchAll = useCallback(async () => {
-    const load = async <T,>(url: string, apply: (payload: T) => void) => {
+  useEffect(() => {
+    const controller = new AbortController();
+    const load = async (chart: ResearchChart) => {
       try {
-        const response = await fetch(url);
-        if (response.ok) apply(await response.json());
+        const response = await fetch(
+          `/api/research/microstructure/charts/${chart}?instrument=${instrument}&limit=500`,
+          { signal: controller.signal, cache: "no-store" },
+        );
+        if (!response.ok) return;
+        const payload = await response.json() as ChartResponse;
+        if (controller.signal.aborted) return;
+        const points = payload.points || (payload.data || []).map(
+          point => ({ ...point, time: point.time * 1000 }));
+        setChartData(current => ({ ...current, [chart]: points }));
       } catch (error) {
-        console.error(`Microstructure API error: ${url}`, error);
+        if (!controller.signal.aborted)
+          console.error(`Microstructure chart API error: ${chart}`, error);
       }
     };
-    const applyChart = (key: ResearchChart) => (payload: ChartResponse) => {
-      const points = payload.points || (payload.data || []).map(point => ({ ...point, time: point.time * 1000 }));
-      setChartData(current => ({ ...current, [key]: points }));
-    };
-    await Promise.all([
-      load<HealthResponse>("/api/research/microstructure/health", setHealth),
-      load<CoverageResponse>("/api/research/microstructure/coverage", setCoverage),
-      load<EligibilityResponse>("/api/research/microstructure/eligibility", setEligibility),
-      load<ValidationResponse>("/api/research/microstructure/validation", setValidation),
-      ...CHARTS.map(chart => load<ChartResponse>(
-        `/api/research/microstructure/charts/${chart}?instrument=${instrument}&limit=500`,
-        applyChart(chart),
-      )),
-    ]);
+    CHARTS.forEach(chart => void load(chart));
+    return () => controller.abort();
   }, [instrument]);
 
-  useEffect(() => {
-    void fetchAll();
-    const timer = window.setInterval(fetchAll, 60_000);
-    return () => window.clearInterval(timer);
-  }, [fetchAll]);
+  const resourceText = (phase: AsyncPhase, error?: string) => {
+    if (phase === "LOADING") return "加载中";
+    if (phase === "STALE_LAST_SUCCESS") return "显示上次成功数据 · 更新中";
+    if (phase === "UNAVAILABLE") return `暂时无法获取${error ? ` · ${error}` : ""}`;
+    if (phase === "NO_DATA") return "暂无数据";
+    if (phase === "PERMISSION_REQUIRED") return "需要管理员权限";
+    return "";
+  };
 
   const statusClass = (status = "") => {
     const value = status.toUpperCase();
@@ -324,8 +360,12 @@ export default function MicrostructureResearch() {
     [copy.historical, classificationCount(/HISTOR|SOURCE|LIMIT/i), "historical"],
     [copy.legacy, classificationCount(/LEGACY|BOUNDARY/i), "legacy"],
   ] as const;
-  const selectedCoverage = (source: keyof CoverageResponse) =>
-    coverage?.[source]?.find(item => item.instrument === instrument);
+  const selectedCoverage = (source: CoverageSource) => {
+    const expected = source === "index"
+      ? instrument.replace(/-SWAP$/, "")
+      : instrument;
+    return coverage?.[source]?.find(item => item.instrument === expected);
+  };
   const fundingSchedule = health?.funding_schedule?.[instrument];
   const fundingValidation = validation?.studies?.funding?.instruments?.[instrument];
   const basisValidation = validation?.studies?.basis?.instruments?.["BTC-USDT-SWAP"];
@@ -335,6 +375,22 @@ export default function MicrostructureResearch() {
   return (
     <div className="microstructure-workspace" id="microstructure">
       <div className="micro-disclaimer">{t("micro.disclaimer")}</div>
+      <div className="micro-resource-states" aria-live="polite">
+        {([
+          ["Health", healthResource],
+          ["Coverage", coverageResource],
+          ["Eligibility", eligibilityResource],
+          ["Validation", validationResource],
+        ] as const).map(([name, resource]) => {
+          const text = resourceText(resource.phase, resource.errorType);
+          return text ? (
+            <span key={name} data-state={resource.phase}>
+              {name}：{text}
+              {resource.dataAsOf ? ` · ${resource.dataAsOf}` : ""}
+            </span>
+          ) : null;
+        })}
+      </div>
 
       <section className="micro-section micro-overview">
         <div className="micro-section-head">
@@ -411,8 +467,8 @@ export default function MicrostructureResearch() {
                 <span>{copy.source}</span><span>{t("micro.instrument")}</span><span>{copy.earliest}</span>
                 <span>{copy.latest}</span><span>{copy.rows}</span><span>{copy.state}</span>
               </div>
-              {coverage && Object.entries(coverage).flatMap(([source, items]) =>
-                (items as CoverageItem[]).map(item => {
+              {coverage && SOURCE_ORDER.flatMap(source =>
+                (coverage[source] || []).map(item => {
                   const schedule = health?.funding_schedule?.[item.instrument];
                   const state = source === "funding_settled"
                     ? schedule?.overdue ? "OVERDUE" : copy.onSchedule

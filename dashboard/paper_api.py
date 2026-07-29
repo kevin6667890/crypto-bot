@@ -10,6 +10,7 @@ import math
 import os
 import queue
 import random
+import shutil
 import sqlite3
 import threading
 import time
@@ -1069,12 +1070,106 @@ MICROSTRUCTURE = MicrostructureStore(
 LIMITER = RateLimiter()
 LOGGER = configure_logging(ROOT)
 
+def public_operations_summary() -> dict[str, Any]:
+    """Small, read-only and deliberately non-sensitive public status payload."""
+    jobs = RESEARCH.jobs.list(30)
+    alerts = ALERTS.list(100)
+    active = [
+        job for job in jobs
+        if job["status"] in {"QUEUED", "RUNNING", "CANCEL_REQUESTED"}]
+    completed = [
+        {
+            "id": job["id"], "job_type": job["job_type"],
+            "status": job["status"], "completed_at": job.get("completed_at"),
+        }
+        for job in jobs if job["status"] in {
+            "COMPLETED", "FAILED", "CANCELLED", "INTERRUPTED"}
+    ][:5]
+    microstructure = MICROSTRUCTURE.operations_summary()
+    now = datetime.now(timezone.utc)
+    paper_freshness: dict[str, Any] = {}
+    for instrument, analysis in SERVICE.last_analysis.items():
+        updated = analysis.get("updated_at")
+        age = None
+        try:
+            age = (now - datetime.fromisoformat(updated)).total_seconds()
+        except (TypeError, ValueError):
+            pass
+        paper_freshness[instrument] = {
+            "updated_at": updated, "age_seconds": age,
+            "status": "fresh" if age is not None and age < 180 else "stale",
+        }
+    disk = shutil.disk_usage(ROOT)
+    memory_percent = None
+    try:
+        values = {
+            line.split(":")[0]: int(line.split()[1]) * 1024
+            for line in Path("/proc/meminfo").read_text().splitlines()
+            if ":" in line}
+        memory_percent = round(
+            (values["MemTotal"] - values.get("MemAvailable", 0))
+            / values["MemTotal"] * 100, 1)
+    except (OSError, KeyError, ZeroDivisionError):
+        pass
+    return {
+        "generated_at": now.replace(microsecond=0).isoformat(),
+        "service": {
+            "status": (
+                "RUNNING" if not SERVICE.flow_collectors.shutting_down
+                else "STOPPING"),
+            "version": "4.3.0", "git_commit": HEALTH._commit(),
+            "uptime_seconds": int(time.time() - SERVICE._started_at),
+        },
+        "frontend": {"status": "RUNNING"},
+        "paper_api": {
+            "status": (
+                "RUNNING" if not SERVICE.flow_collectors.shutting_down
+                else "STOPPING"),
+            "collector_freshness": paper_freshness,
+        },
+        "collector": microstructure["collector"],
+        "query_plane": microstructure["query_plane"],
+        "database": {
+            "status": "ok" if DB_PATH.exists() else "unavailable",
+            "quick_status": HEALTH.integrity_status,
+            "logical_size_bytes": (
+                DB_PATH.stat().st_size if DB_PATH.exists() else 0),
+            "microstructure_logical_size_bytes":
+                microstructure["database_size_bytes"],
+        },
+        "wal_size_bytes": microstructure["wal_size_bytes"],
+        "maintenance": microstructure["maintenance"],
+        "scheduler": {
+            "running": bool(SERVICE.scheduler_running),
+            "last_cycle_completed_at": SERVICE.last_cycle_completed_at,
+            "last_cycle_duration_ms": SERVICE.last_cycle_duration_ms,
+        },
+        "tasks": {
+            "current_count": len(active),
+            "queued_count": sum(job["status"] == "QUEUED" for job in active),
+            "recent_completed": completed,
+        },
+        "warning_count": sum(
+            alert["status"] == "open" for alert in alerts),
+        "coverage_snapshot": microstructure["coverage_snapshot"],
+        "system": {
+            "disk_percent": round(disk.used / disk.total * 100, 1),
+            "memory_percent": memory_percent,
+        },
+    }
+
 
 class Handler(BaseHTTPRequestHandler):
     def _send(self, payload: Any, status: int = HTTPStatus.OK) -> None:
+        serialization_started = time.monotonic()
         body = json.dumps(payload).encode()
+        serialization_ms = (time.monotonic() - serialization_started) * 1000
         self.send_response(status)
-        for key, value in (("Content-Type", "application/json"), ("Cache-Control","no-store"), ("X-Content-Type-Options","nosniff"), ("Content-Length", str(len(body)))):
+        request_started = getattr(self, "_request_started", serialization_started)
+        server_timing = (
+            f"app;dur={(time.monotonic() - request_started) * 1000:.3f}, "
+            f"serialize;dur={serialization_ms:.3f}")
+        for key, value in (("Content-Type", "application/json"), ("Cache-Control","no-store"), ("X-Content-Type-Options","nosniff"), ("Content-Length", str(len(body))), ("Server-Timing", server_timing)):
             self.send_header(key, value)
         self.end_headers(); self.wfile.write(body)
 
@@ -1089,7 +1184,11 @@ class Handler(BaseHTTPRequestHandler):
 
     def _admin(self)->bool:
         configured=os.getenv("ADMIN_TOKEN","")
-        if not configured:return True
+        if not configured:
+            self._send(
+                {"error":"Administrative operations are disabled until ADMIN_TOKEN is configured."},
+                HTTPStatus.SERVICE_UNAVAILABLE)
+            return False
         supplied=self.headers.get("Authorization","").removeprefix("Bearer ")
         if hmac.compare_digest(configured,supplied):return True
         self._send({"error":"Admin authorization required."},HTTPStatus.UNAUTHORIZED); return False
@@ -1102,6 +1201,7 @@ class Handler(BaseHTTPRequestHandler):
         except (UnicodeDecodeError,json.JSONDecodeError):self._send({"error":"Invalid JSON body"},HTTPStatus.BAD_REQUEST); return None
 
     def do_GET(self) -> None:  # noqa: N802
+        self._request_started = time.monotonic()
         parsed, query = urlparse(self.path), parse_qs(urlparse(self.path).query)
         instrument = query.get("instrument", ["ETH-USDT"])[0]
         if parsed.path == "/api/status": self._send(SERVICE.status(instrument))
@@ -1129,14 +1229,16 @@ class Handler(BaseHTTPRequestHandler):
             bins = max(18, min(42, int(query_float("bins") or 32)))
             self._send(SERVICE.vpvr_profile(instrument, query.get("interval", ["15m"])[0], bins, query_float("price_low"), query_float("price_high")))
         elif parsed.path == "/api/health": self._send(HEALTH.payload(False))
+        elif parsed.path == "/api/operations/summary":
+            self._send(public_operations_summary())
         elif parsed.path == "/api/research/microstructure/health":
-            self._send(MICROSTRUCTURE.health(include_eligibility=False))
+            self._send(MICROSTRUCTURE.health_summary())
         elif parsed.path == "/api/research/microstructure/coverage":
             self._send(MICROSTRUCTURE.coverage())
         elif parsed.path == "/api/research/microstructure/eligibility":
-            self._send(MICROSTRUCTURE.per_feature_eligibility())
+            self._send(MICROSTRUCTURE.eligibility_summary())
         elif parsed.path == "/api/research/microstructure/gaps":
-            self._send(MICROSTRUCTURE.gap_report(include_items=False))
+            self._send(MICROSTRUCTURE.gaps_summary())
         elif parsed.path == "/api/research/microstructure/validation":
             self._send(SourceSpecificEventStudy.latest_summary(MICROSTRUCTURE))
         elif parsed.path == "/api/research/microstructure/charts/funding":

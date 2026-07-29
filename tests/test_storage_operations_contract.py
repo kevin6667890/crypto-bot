@@ -15,6 +15,13 @@ def test_compose_bounds_logs_without_changing_database_mount() -> None:
     assert "volume prune" not in compose
 
 
+def test_frontend_image_packages_the_verified_versioned_dist() -> None:
+    dockerfile = (ROOT / "frontend" / "Dockerfile").read_text(encoding="utf-8")
+    assert "COPY frontend/dist/" in dockerfile
+    assert "npm ci" not in dockerfile
+    assert "npm run build" not in dockerfile
+
+
 def test_operations_page_exposes_storage_without_delete_controls() -> None:
     source = (ROOT / "frontend" / "src" / "Operations.tsx").read_text(
         encoding="utf-8"

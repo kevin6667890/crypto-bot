@@ -47,6 +47,13 @@ try:
     from microstructure import MicrostructureStore
     from microstructure_research import SourceSpecificEventStudy
     from operations_trends import read_operations_trends
+    from snapshot_storage import (
+        ANALYSIS_SNAPSHOT_STORAGE_VERSION,
+        ensure_snapshot_v2_schema,
+        snapshot_payload_for_reader,
+        write_compact_snapshot,
+    )
+    from storage_guard import storage_operations_summary
 except ImportError:
     from .research_service import ResearchService
     from .strategy_rules import StrategyParameters, calculate_indicators, validate_parameters
@@ -67,6 +74,13 @@ except ImportError:
     from .microstructure import MicrostructureStore
     from .microstructure_research import SourceSpecificEventStudy
     from .operations_trends import read_operations_trends
+    from .snapshot_storage import (
+        ANALYSIS_SNAPSHOT_STORAGE_VERSION,
+        ensure_snapshot_v2_schema,
+        snapshot_payload_for_reader,
+        write_compact_snapshot,
+    )
+    from .storage_guard import storage_operations_summary
 
 try:
     from dotenv import load_dotenv
@@ -341,6 +355,7 @@ class PaperService:
                 instrument TEXT NOT NULL, ts INTEGER NOT NULL, oi REAL NOT NULL,
                 source TEXT NOT NULL, PRIMARY KEY(instrument, ts))""")
             self._ensure_column(conn, "analysis_snapshots", "instrument", "TEXT")
+            ensure_snapshot_v2_schema(conn)
             self._ensure_column(conn, "ai_briefs", "instrument", "TEXT")
             self._ensure_column(conn, "flow_snapshots", "instrument", "TEXT")
             for column, declaration in (("trade_count", "INTEGER"), ("window_seconds", "INTEGER"), ("last_trade_ts", "INTEGER")):
@@ -676,7 +691,13 @@ class PaperService:
         distance_pct=(float(execution["close"])-float(ind15["ema"]))/float(ind15["ema"])*100 if ind15.get("ema") else None
         analysis={**decision,"price":round(float(execution["close"]),4),"ema20":ind15["ema"],"rsi14":ind15["rsi"],"atr14":ind15["atr"],"volume_ratio":ind15["volume_ratio"],"distance_ema20_pct":distance_pct,"timeframes":{"15m":{"trend":decision["bias"],"ma60":ind15["fast_ma"],"ma200":ind15["slow_ma"],"ema20_slope_pct":0},**frames},"flow":flow,"vpvr":vpvr,"conditions":[{"label":x["label"],"value":x["detail"],"pass":x["status"]=="pass"} for x in decision["contributions"]],"updated_at":now_iso()}
         with self._connect() as conn:
-            conn.execute("INSERT INTO analysis_snapshots(created_at,instrument,payload) VALUES(?,?,?)",(analysis["updated_at"],instrument,json.dumps(analysis)))
+            write_compact_snapshot(
+                conn,
+                created_at=analysis["updated_at"],
+                instrument=instrument,
+                analysis=analysis,
+                code_commit=os.getenv("GIT_COMMIT", "unknown"),
+            )
             # Setup records remain compatible with older consumers; every live
             # evaluation is durably stored below and is never hidden by a setup
             # identity collision.
@@ -1034,13 +1055,13 @@ class PaperService:
         with self._connect() as conn:
             if not at:
                 rows = conn.execute("SELECT id,created_at,payload FROM analysis_snapshots WHERE instrument=? ORDER BY id DESC LIMIT 96", (instrument,)).fetchall()
-                return {"items": [{"id": row["id"], "created_at": row["created_at"], "analysis": json.loads(row["payload"])} for row in rows]}
+                return {"items": [{"id": row["id"], "created_at": row["created_at"], "analysis": snapshot_payload_for_reader(row["payload"])} for row in rows]}
             row = conn.execute("SELECT id,created_at,payload FROM analysis_snapshots WHERE instrument=? AND created_at<=? ORDER BY created_at DESC LIMIT 1", (instrument, at)).fetchone()
             if not row: return {"error": "No replay snapshot is available yet."}
             epoch = int(datetime.fromisoformat(row["created_at"]).timestamp())
             candles = [dict(item) for item in conn.execute("SELECT ts as time,open,high,low,close,volume FROM market_candles WHERE instrument=? AND bar='15m' AND ts<=? ORDER BY ts DESC LIMIT 120", (instrument, epoch))]
             event = conn.execute("SELECT event_type,message FROM event_logs WHERE instrument=? AND created_at>=? ORDER BY created_at LIMIT 1", (instrument, row["created_at"])).fetchone()
-        return {"id": row["id"], "created_at": row["created_at"], "analysis": json.loads(row["payload"]), "candles": list(reversed(candles)), "outcome": dict(event) if event else None}
+        return {"id": row["id"], "created_at": row["created_at"], "analysis": snapshot_payload_for_reader(row["payload"]), "candles": list(reversed(candles)), "outcome": dict(event) if event else None}
 
     def chat(self, question: str, instrument: str) -> dict[str, str]:
         question = question.strip()[:500]
@@ -1127,6 +1148,14 @@ def public_operations_summary() -> dict[str, Any]:
             / values["MemTotal"] * 100, 1)
     except (OSError, KeyError, ZeroDivisionError):
         pass
+    storage = storage_operations_summary(
+        ROOT,
+        DB_PATH,
+        Path(os.getenv(
+            "MICROSTRUCTURE_DB_PATH",
+            ROOT / "data_cache" / "market_microstructure.db",
+        )),
+    )
     return {
         "generated_at": now.replace(microsecond=0).isoformat(),
         "service": {
@@ -1195,8 +1224,12 @@ def public_operations_summary() -> dict[str, Any]:
         "warning_count": sum(
             alert["status"] == "open" for alert in alerts),
         "coverage_snapshot": microstructure["coverage_snapshot"],
+        "storage": storage,
         "system": {
             "disk_percent": round(disk.used / disk.total * 100, 1),
+            "disk_total_bytes": disk.total,
+            "disk_used_bytes": disk.used,
+            "disk_free_bytes": disk.free,
             "memory_percent": memory_percent,
         },
     }

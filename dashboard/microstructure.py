@@ -444,6 +444,17 @@ class MicrostructureStore:
                     generated_at_ms INTEGER NOT NULL, data_as_of_ms INTEGER,
                     refreshing INTEGER NOT NULL DEFAULT 0,
                     source TEXT NOT NULL);
+                CREATE TABLE IF NOT EXISTS microstructure_archive_manifest(
+                    archive_id TEXT PRIMARY KEY,lane TEXT NOT NULL,
+                    instrument TEXT NOT NULL,start_ms INTEGER NOT NULL,
+                    end_ms INTEGER NOT NULL,row_count INTEGER NOT NULL,
+                    archive_sha256 TEXT NOT NULL,manifest_sha256 TEXT NOT NULL,
+                    aggregate_reconciliation TEXT NOT NULL,
+                    gap_status TEXT NOT NULL,status TEXT NOT NULL,
+                    offhost_ack_json TEXT,updated_at_ms INTEGER NOT NULL);
+                CREATE INDEX IF NOT EXISTS idx_archive_coverage
+                    ON microstructure_archive_manifest(
+                        lane,instrument,status,start_ms,end_ms);
                 """
             )
             counted_tables = (
@@ -958,6 +969,27 @@ class MicrostructureStore:
                 gaps = c.execute(
                     """SELECT * FROM collection_gaps
                        ORDER BY start_ms,lane,instrument,end_ms""").fetchall()
+                archive_intervals = {
+                    (str(row["lane"]), str(row["instrument"])): []
+                    for row in c.execute(
+                        """SELECT lane,instrument,start_ms,end_ms
+                           FROM microstructure_archive_manifest
+                           WHERE status='ARCHIVED_CONFIRMED'
+                             AND aggregate_reconciliation='PASS'
+                             AND gap_status='PASS'"""
+                    )
+                }
+                for row in c.execute(
+                    """SELECT lane,instrument,start_ms,end_ms
+                       FROM microstructure_archive_manifest
+                       WHERE status='ARCHIVED_CONFIRMED'
+                         AND aggregate_reconciliation='PASS'
+                         AND gap_status='PASS'
+                       ORDER BY lane,instrument,start_ms"""
+                ):
+                    archive_intervals.setdefault(
+                        (str(row["lane"]), str(row["instrument"])), []
+                    ).append((int(row["start_ms"]), int(row["end_ms"])))
                 boundary_sources: dict[tuple[str, str, int], str] = {}
                 for lane, (table, timestamp_column) in tables.items():
                     for instrument in INSTRUMENTS:
@@ -999,11 +1031,22 @@ class MicrostructureStore:
                     after_source = boundary_sources.get(
                         (lane, str(gap["instrument"]), int(gap["end_ms"])), "")
                     duration = int(gap["end_ms"]) - int(gap["start_ms"])
-                    classification = self.classify_gap(
-                        lane, duration, has_interior=interior > 0,
-                        before_source=before_source, after_source=after_source,
-                        start_ms=int(gap["start_ms"]), reference_ms=current,
-                        resolved=gap["resolved_at_ms"] is not None,
+                    archived = any(
+                        left <= int(gap["start_ms"])
+                        and right >= int(gap["end_ms"])
+                        for left, right in archive_intervals.get(
+                            (lane, str(gap["instrument"])), []
+                        )
+                    )
+                    classification = (
+                        "ARCHIVED_CONFIRMED"
+                        if archived
+                        else self.classify_gap(
+                            lane, duration, has_interior=interior > 0,
+                            before_source=before_source, after_source=after_source,
+                            start_ms=int(gap["start_ms"]), reference_ms=current,
+                            resolved=gap["resolved_at_ms"] is not None,
+                        )
                     )
                     items.append({
                         **dict(gap), "duration_ms": duration,
@@ -1339,13 +1382,42 @@ class MicrostructureStore:
                           generated_at_ms,data_as_of_ms,refreshing
                    FROM source_runtime_summary ORDER BY lane,instrument"""
             ).fetchall()
+            archived_rows = c.execute(
+                """SELECT lane,instrument,MIN(start_ms) earliest_ms,
+                          MAX(end_ms) latest_ms,SUM(row_count) row_count,
+                          MAX(updated_at_ms) updated_at_ms
+                   FROM microstructure_archive_manifest
+                   WHERE status='ARCHIVED_CONFIRMED'
+                     AND aggregate_reconciliation='PASS'
+                     AND gap_status='PASS'
+                   GROUP BY lane,instrument"""
+            ).fetchall()
             sql_finished = time.monotonic()
+        archived = {
+            (str(row["lane"]), str(row["instrument"])): row
+            for row in archived_rows
+        }
         for row in rows:
+            archive = archived.get((str(row["lane"]), str(row["instrument"])))
+            hot_earliest = row["earliest_ms"]
+            archive_earliest = archive["earliest_ms"] if archive else None
+            earliest_candidates = [
+                int(value) for value in (hot_earliest, archive_earliest)
+                if value is not None
+            ]
             result[str(row["lane"])].append({
                 "instrument": row["instrument"],
-                "rows": int(row["row_count"]),
-                "earliest_ms": row["earliest_ms"],
+                "rows": int(row["row_count"])
+                + (int(archive["row_count"]) if archive else 0),
+                "hot_rows": int(row["row_count"]),
+                "archived_rows": int(archive["row_count"]) if archive else 0,
+                "earliest_ms": min(earliest_candidates)
+                if earliest_candidates else None,
                 "latest_ms": row["latest_ms"],
+                "hot_earliest_ms": hot_earliest,
+                "archive_earliest_ms": archive_earliest,
+                "archive_latest_ms": archive["latest_ms"] if archive else None,
+                "archive_status": "ARCHIVED_CONFIRMED" if archive else None,
                 "refreshing": bool(row["refreshing"]),
             })
         generated = max(
@@ -1368,8 +1440,11 @@ class MicrostructureStore:
             "result_mapping_ms":
                 round((time.monotonic() - sql_finished) * 1000, 3),
             "total_ms": round((time.monotonic() - started) * 1000, 3),
-            "rows_read": len(rows),
-            "query_plan": "source_runtime_summary primary-key scan",
+            "rows_read": len(rows) + len(archived_rows),
+            "query_plan": (
+                "source_runtime_summary primary-key scan + "
+                "confirmed archive manifest aggregate"
+            ),
             "full_history_scan": False,
         }
         return result
@@ -1562,7 +1637,8 @@ class MicrostructureStore:
                 if (gap["instrument"] != instrument
                         or gap["lane"] not in related_gap_lanes[group_name]
                         or gap["classification"] in {
-                            "FALSE_POSITIVE", "EXPECTED_EVENT_SPARSE", "RESOLVED"}
+                            "FALSE_POSITIVE", "EXPECTED_EVENT_SPARSE", "RESOLVED",
+                            "ARCHIVED_CONFIRMED"}
                         or gap.get("synthetic_live_gap")):
                     continue
                 left, right = max(start, int(gap["start_ms"])), min(end, int(gap["end_ms"]))

@@ -612,38 +612,48 @@ class FlowHistoryStore:
                     points[0]["time"] // AGGREGATE_RESOLUTIONS[0]
                 ) * AGGREGATE_RESOLUTIONS[0]
                 day_start = (points[0]["time"] // 86_400) * 86_400
-                baseline_start = day_start if cvd_mode == "UTC_DAILY_RESET" else 0
-                baseline = connection.execute(
-                    """SELECT COALESCE(SUM(delta),0) FROM flow_history_aggregates
-                       WHERE instrument=? AND series='cvd' AND resolution_seconds=?
-                         AND bucket_ts>=? AND bucket_ts<?""",
-                    (
+                if cvd_mode == "UTC_DAILY_RESET":
+                    # Build a partial-page baseline from exactly the same
+                    # resolution and rounded deltas returned to clients.
+                    baseline_points = self._query_points(
+                        connection,
                         instrument,
-                        AGGREGATE_RESOLUTIONS[0],
-                        baseline_start,
-                        first_bucket,
-                    ),
-                ).fetchone()[0]
-                if resolution < AGGREGATE_RESOLUTIONS[0]:
-                    baseline += connection.execute(
-                        """SELECT COALESCE(SUM(buy_notional-sell_notional),0)
-                           FROM flow_trade_buckets
-                           WHERE instrument=? AND ts>=? AND ts<?""",
-                        (
-                            instrument,
-                            first_bucket,
-                            max(first_bucket, requested_start),
-                        ),
+                        series,
+                        day_start,
+                        points[0]["time"] - 1,
+                        resolution,
+                    )
+                    cumulative_cents = sum(
+                        int(round(float(point["delta"]) * 100))
+                        for point in baseline_points
+                    )
+                else:
+                    baseline = connection.execute(
+                        """SELECT COALESCE(SUM(delta),0) FROM flow_history_aggregates
+                           WHERE instrument=? AND series='cvd' AND resolution_seconds=?
+                             AND bucket_ts>=0 AND bucket_ts<?""",
+                        (instrument, AGGREGATE_RESOLUTIONS[0], first_bucket),
                     ).fetchone()[0]
-                cumulative = float(baseline or 0)
+                    if resolution < AGGREGATE_RESOLUTIONS[0]:
+                        baseline += connection.execute(
+                            """SELECT COALESCE(SUM(buy_notional-sell_notional),0)
+                               FROM flow_trade_buckets
+                               WHERE instrument=? AND ts>=? AND ts<?""",
+                            (
+                                instrument,
+                                first_bucket,
+                                max(first_bucket, requested_start),
+                            ),
+                        ).fetchone()[0]
+                    cumulative_cents = int(round(float(baseline or 0) * 100))
                 active_day = day_start
                 for point in points:
                     point_day = (point["time"] // 86_400) * 86_400
                     if cvd_mode == "UTC_DAILY_RESET" and point_day != active_day:
                         active_day = point_day
-                        cumulative = 0.0
-                    cumulative += float(point["delta"])
-                    point["value"] = round(cumulative, 2)
+                        cumulative_cents = 0
+                    cumulative_cents += int(round(float(point["delta"]) * 100))
+                    point["value"] = cumulative_cents / 100
 
         interval = resolution
         gaps = [

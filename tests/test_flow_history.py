@@ -371,6 +371,54 @@ def test_cvd_utc_daily_reset_partial_page_and_raw_storage_unchanged(tmp_path):
         ).fetchall() == raw_before
 
 
+def test_cvd_utc_daily_reset_decimal_pagination_is_exact(tmp_path):
+    path = tmp_path / "daily-decimals.db"
+    midnight = 1_800_057_600
+    connection = sqlite3.connect(path)
+    connection.executescript(
+        """CREATE TABLE flow_trade_buckets (
+            instrument TEXT NOT NULL,ts INTEGER NOT NULL,buy_notional REAL NOT NULL,
+            sell_notional REAL NOT NULL,trade_count INTEGER NOT NULL,
+            PRIMARY KEY(instrument,ts));
+        CREATE TABLE oi_snapshots (
+            instrument TEXT NOT NULL,ts INTEGER NOT NULL,oi REAL NOT NULL,source TEXT NOT NULL,
+            PRIMARY KEY(instrument,ts));
+        CREATE TABLE flow_snapshots (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,created_at TEXT NOT NULL,oi REAL,cvd REAL,
+            instrument TEXT,trade_count INTEGER,window_seconds INTEGER,last_trade_ts INTEGER);"""
+    )
+    deltas = (100.004, 200.005, -50.006, 740_541.617, 250_150.003)
+    for offset, delta in enumerate(deltas):
+        connection.execute(
+            """INSERT INTO flow_trade_buckets
+               (instrument,ts,buy_notional,sell_notional,trade_count)
+               VALUES('BTC-USDT',?,?,?,1)""",
+            (
+                midnight + offset * 60,
+                max(delta, 0),
+                max(-delta, 0),
+            ),
+        )
+    connection.commit()
+    connection.close()
+    store = FlowHistoryStore(path)
+    store.initialize()
+    store.backfill()
+
+    full = store.query(
+        "BTC-USDT", "cvd", start=midnight, end=midnight + 240,
+        max_points=100, now=midnight + 240, cvd_mode="UTC_DAILY_RESET",
+    )
+    partial = store.query(
+        "BTC-USDT", "cvd", start=midnight + 180, end=midnight + 240,
+        max_points=100, now=midnight + 240, cvd_mode="UTC_DAILY_RESET",
+    )
+    full_by_time = {point["time"]: point for point in full["points"]}
+    assert partial["points"]
+    for point in partial["points"]:
+        assert point == full_by_time[point["time"]]
+
+
 def test_utc_not_browser_local_midnight_missing_buckets_and_oi_continuity(tmp_path):
     path = tmp_path / "boundary.db"
     midnight = 1_800_057_600

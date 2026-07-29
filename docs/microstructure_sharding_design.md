@@ -36,7 +36,7 @@ C。
 
 统计来源仅为：
 
-`C:\crypto-bot-offhost-backups\2026-07-28_030605Z\market_microstructure.db`
+`offline-backup/market_microstructure.db`
 
 - manifest 创建时间：2026-07-28T04:07:32Z。
 - 文件大小：2,416,603,136 bytes（2.251 GiB）。
@@ -46,7 +46,7 @@ C。
 - `PRAGMA quick_check`：`ok`。
 - 所有 SQL 连接均使用 `file:...?mode=ro&immutable=1`。
 - 表行数优先读取库内维护的 `table_row_counts`；source、时间覆盖和最近日增长
-  才读取相应离机表/索引。未连接 `/opt/crypto-bot` 或任何生产地址。
+  才读取相应离机表/索引。未连接任何生产部署目录或生产地址。
 - 当前 Python SQLite 未编译 `dbstat`，空间统计通过只读解析 sqlite_master
   root page、B-tree child page 和 overflow page 得出。589,991 个文件页中
   589,990 个被归属；剩余 1 页是 SQLite lock-byte page，不是遗漏对象。

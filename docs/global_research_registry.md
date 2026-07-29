@@ -91,9 +91,9 @@ ledgers/reports, and print accounting:
 
 ```powershell
 python scripts/audit_global_research_trials.py `
-  --artifact 6A=C:\research\phase6a-report.json `
-  --artifact 6F=C:\research\phase6f-ledger.db `
-  --artifact 6G=C:\research\phase6g-audit.db
+  --artifact 6A=fixtures/research/phase6a-report.json `
+  --artifact 6F=fixtures/research/phase6f-ledger.db `
+  --artifact 6G=fixtures/research/phase6g-audit.db
 ```
 
 New phases must provide a stable run identity, dataset identity and snapshot

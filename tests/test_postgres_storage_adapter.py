@@ -216,7 +216,7 @@ def test_postgres_fixture_upsert_partition_range_and_coverage():
 
 
 def test_module_does_not_connect_or_read_production_configuration(monkeypatch):
-    monkeypatch.setenv("DATABASE_URL", "postgresql://production.example/prod")
+    monkeypatch.setenv("DATABASE_URL", "intentionally-invalid-production-dsn")
     assert PostgresTradeStorageAdapter.__init__
     assert "DATABASE_URL" not in SCHEMA_SQL_PATH.read_text(encoding="utf-8")
 

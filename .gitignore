@@ -2,6 +2,7 @@
 *.pkl
 *.db
 logs/
+.runtime/
 data_cache/
 __pycache__/
 .venv/

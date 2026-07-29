@@ -15,13 +15,9 @@ import {
   Zap,
 } from "lucide-react";
 import { motion } from "framer-motion";
-import { CSSProperties, useEffect, useMemo, useRef, useState } from "react";
+import { Component, CSSProperties, lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { EquityChart, FlowChart, MarketChart, ReplayChart } from "./charts";
 import { formatMillions } from "./chartState";
-import StrategyResearch from "./StrategyResearch";
-import DiscoveryLab from "./DiscoveryLab";
-import Operations from "./Operations";
-import MicrostructureResearch from "./MicrostructureResearch";
 import { useLanguage } from "./i18n";
 import {
   demoSnapshot,
@@ -47,6 +43,38 @@ import {
   strategyComparison,
   strategyEvolution,
 } from "./data";
+
+const StrategyResearchRoute = lazy(() => import("./routes/StrategyResearchRoute"));
+const MicrostructureResearch = lazy(() => import("./MicrostructureResearch"));
+const Operations = lazy(() => import("./Operations"));
+
+type RouteErrorBoundaryProps = { name: string; children: React.ReactNode };
+type RouteErrorBoundaryState = { failed: boolean };
+
+export class RouteErrorBoundary extends Component<RouteErrorBoundaryProps, RouteErrorBoundaryState> {
+  state: RouteErrorBoundaryState = { failed: false };
+
+  static getDerivedStateFromError(): RouteErrorBoundaryState {
+    return { failed: true };
+  }
+
+  render() {
+    if (this.state.failed) {
+      return <div className="route-error" role="alert">UNAVAILABLE · {this.props.name}</div>;
+    }
+    return this.props.children;
+  }
+}
+
+function DeferredRoute({ name, children }: { name: string; children: React.ReactNode }) {
+  return (
+    <RouteErrorBoundary name={name}>
+      <Suspense fallback={<div className="route-loading" role="status">LOADING · {name}</div>}>
+        {children}
+      </Suspense>
+    </RouteErrorBoundary>
+  );
+}
 
 function formatSigned(value: number, suffix = "") {
   return `${value >= 0 ? "+" : ""}${value.toFixed(2)}${suffix}`;
@@ -662,6 +690,7 @@ function Workspace() {
   const [activePage, setActivePage] = useState<
     "market" | "research" | "microstructure" | "operations"
   >("market");
+  const [visitedPages, setVisitedPages] = useState(() => new Set(["market"]));
   const [question, setQuestion] = useState("");
   const [chatAnswer, setChatAnswer] = useState("");
   const [chatLoading, setChatLoading] = useState(false);
@@ -669,6 +698,10 @@ function Workspace() {
   const [replayDetail, setReplayDetail] = useState<ReplayDetail | null>(null);
   const [replayLoading, setReplayLoading] = useState(false);
   const paperRequest = useRef(0);
+  const selectPage = (page: "market" | "research" | "microstructure" | "operations") => {
+    setVisitedPages((current) => new Set(current).add(page));
+    setActivePage(page);
+  };
 
   async function refresh() {
     const request = ++paperRequest.current;
@@ -826,25 +859,25 @@ function Workspace() {
           <div className="page-switch">
             <button
               className={activePage === "market" ? "active" : ""}
-              onClick={() => setActivePage("market")}
+              onClick={() => selectPage("market")}
             >
               {t("nav.market")}
             </button>
             <button
               className={activePage === "research" ? "active" : ""}
-              onClick={() => setActivePage("research")}
+              onClick={() => selectPage("research")}
             >
               {t("nav.research")}
             </button>
             <button
               className={activePage === "microstructure" ? "active" : ""}
-              onClick={() => setActivePage("microstructure")}
+              onClick={() => selectPage("microstructure")}
             >
               {t("nav.microstructure")}
             </button>
             <button
               className={activePage === "operations" ? "active" : ""}
-              onClick={() => setActivePage("operations")}
+              onClick={() => selectPage("operations")}
             >
               {t("nav.operations")}
             </button>
@@ -911,7 +944,7 @@ function Workspace() {
         </div>
       </header>
 
-      {activePage === "market" ? (
+      <div hidden={activePage !== "market"} data-route="market">
         <div className="workspace-grid">
           <aside className="watchlist-panel">
             <div className="section-title">
@@ -1562,12 +1595,21 @@ function Workspace() {
             </div>
           </aside>
         </div>
-      ) : activePage === "research" ? (
-        <><StrategyResearch /><DiscoveryLab /></>
-      ) : activePage === "microstructure" ? (
-        <MicrostructureResearch />
-      ) : (
-        <Operations />
+      </div>
+      {visitedPages.has("research") && (
+        <div hidden={activePage !== "research"} data-route="research">
+          <DeferredRoute name="Strategy Research"><StrategyResearchRoute /></DeferredRoute>
+        </div>
+      )}
+      {visitedPages.has("microstructure") && (
+        <div hidden={activePage !== "microstructure"} data-route="microstructure">
+          <DeferredRoute name="Microstructure"><MicrostructureResearch /></DeferredRoute>
+        </div>
+      )}
+      {visitedPages.has("operations") && (
+        <div hidden={activePage !== "operations"} data-route="operations">
+          <DeferredRoute name="Operations"><Operations /></DeferredRoute>
+        </div>
       )}
       {settingsOpen && (
         <div

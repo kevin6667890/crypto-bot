@@ -39,7 +39,7 @@ Cron example:
 
 ```text
 # enabled=false
-# 17 1 * * * cd /opt/crypto-bot && python scripts/check_microstructure_research_readiness.py --database /srv/offline/microstructure.db --output-json /srv/artifacts/readiness.json
+# 17 1 * * * cd <repo-root> && python scripts/check_microstructure_research_readiness.py --database <offline-db> --output-json <artifact-dir>/readiness.json
 ```
 
 Systemd example:
@@ -51,8 +51,8 @@ Description=Read-only microstructure research readiness check
 
 [Service]
 Type=oneshot
-WorkingDirectory=/opt/crypto-bot
-ExecStart=/usr/bin/python scripts/check_microstructure_research_readiness.py --database /srv/offline/microstructure.db --output-json /srv/artifacts/readiness.json
+WorkingDirectory=<repo-root>
+ExecStart=python scripts/check_microstructure_research_readiness.py --database <offline-db> --output-json <artifact-dir>/readiness.json
 
 # No [Install] section: this example cannot be enabled as supplied.
 ```

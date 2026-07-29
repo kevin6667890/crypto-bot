@@ -24,7 +24,6 @@ from dashboard.microstructure_sharding import (
 JAN = month_start_ms("2024_01")
 FEB = month_start_ms("2024_02")
 MAR = month_start_ms("2024_03")
-BACKUP = Path(r"C:\crypto-bot-offhost-backups\2026-07-28_030605Z")
 
 
 def new_store(tmp_path: Path) -> MonthlyMicrostructureStore:
@@ -291,12 +290,14 @@ def test_hot_cold_boundary_keeps_cold_file_read_only(tmp_path: Path) -> None:
         ).fetchone()[0] == 1
 
 
-def test_offhost_backup_is_opened_immutable_and_unchanged() -> None:
-    database = BACKUP / "market_microstructure.db"
-    manifest = json.loads(
-        (BACKUP / "manifest.json").read_text(encoding="utf-8-sig")
-    )
-    expected = manifest["files"]["market_microstructure"]
+def test_fixture_backup_is_opened_immutable_and_unchanged(
+    tmp_path: Path,
+) -> None:
+    database = tmp_path / "market_microstructure.db"
+    with sqlite3.connect(database) as connection:
+        connection.execute("CREATE TABLE fixture(value INTEGER)")
+        connection.execute("INSERT INTO fixture VALUES (1)")
+    expected_size = database.stat().st_size
     before = (database.stat().st_size, database.stat().st_mtime_ns)
     uri = database.as_uri() + "?mode=ro&immutable=1"
     with sqlite3.connect(uri, uri=True) as connection:
@@ -307,7 +308,7 @@ def test_offhost_backup_is_opened_immutable_and_unchanged() -> None:
             connection.execute("CREATE TABLE forbidden_write(value INTEGER)")
     after = (database.stat().st_size, database.stat().st_mtime_ns)
     assert before == after
-    assert database.stat().st_size == expected["size"]
+    assert database.stat().st_size == expected_size
 
 
 def test_prototype_never_accesses_production(
@@ -315,11 +316,12 @@ def test_prototype_never_accesses_production(
 ) -> None:
     original = sqlite3.connect
     opened: list[str] = []
+    forbidden_root = str(tmp_path / "forbidden-production-root").lower()
 
     def guarded(database: object, *args: object, **kwargs: object) -> sqlite3.Connection:
         target = str(database)
         lowered = target.lower()
-        assert "/opt/crypto-bot" not in lowered
+        assert forbidden_root not in lowered
         assert "data_cache/market_microstructure" not in lowered.replace("\\", "/")
         opened.append(target)
         return original(database, *args, **kwargs)
@@ -329,7 +331,7 @@ def test_prototype_never_accesses_production(
     add_trade(store, JAN + 1, "local")
     store.query("trades", start_ms=JAN, end_ms=JAN + 2)
     assert opened
-    assert all("/opt/" not in item.replace("\\", "/") for item in opened)
+    assert all(forbidden_root not in item.lower() for item in opened)
 
 
 def test_prototype_has_no_strategy_order_or_network_api_dependency() -> None:

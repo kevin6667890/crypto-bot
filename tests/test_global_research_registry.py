@@ -348,3 +348,55 @@ def test_phase6f_sqlite_import_keeps_all_terminal_rows(tmp_path: Path) -> None:
     assert result[0].trials_imported == 2
     assert {row["trial_status"] for row in registry.trials()} == {
         "STRUCTURALLY_INVALID", "BUDGET_TRUNCATED"}
+
+
+def test_phase6f_real_report_nested_membership_import_is_idempotent(
+    tmp_path: Path,
+) -> None:
+    ledger = tmp_path / "phase6f-real-shape.db"
+    with sqlite3.connect(ledger) as connection:
+        connection.executescript(
+            """CREATE TABLE factor_runs(
+                 run_id TEXT,ledger_version TEXT,dataset_identity TEXT,
+                 dataset_sha256 TEXT,seed INTEGER,workers INTEGER,stage TEXT,
+                 status TEXT,eligibility_snapshot_json TEXT,policy_json TEXT,
+                 created_at TEXT,updated_at TEXT,report_json TEXT);
+               CREATE TABLE factor_trials(
+                 trial_id TEXT,run_id TEXT,sequence INTEGER,
+                 factor_identity TEXT,canonical_expression TEXT,
+                 expression_ast TEXT,source_versions TEXT,
+                 dataset_identity TEXT,instrument TEXT,horizon TEXT,
+                 chronological_segment TEXT,parameter_values TEXT,
+                 feature_timestamps TEXT,evaluation_version TEXT,
+                 trial_family TEXT,parent_expressions TEXT,
+                 structural_status TEXT,status TEXT,rejection_reason TEXT,
+                 classification TEXT,complexity INTEGER,created_at TEXT,
+                 updated_at TEXT);""")
+        report = {
+            "generation": {
+                "selection_validation": 120,
+                "locked_verification": 34,
+                "correlation_clusters": 175,
+            },
+            "multiple_testing": {"effective_trial_count": 175},
+        }
+        connection.execute(
+            "INSERT INTO factor_runs VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            ("real-run", "ledger-v1", "dataset-1", "a" * 64, 1, 1,
+             "DONE", "COMPLETED", "{}", "{}", "old", "new",
+             json.dumps(report)))
+        connection.execute(
+            "INSERT INTO factor_trials VALUES(" + ",".join("?" * 23) + ")",
+            ("trial-1", "real-run", 1, "factor-1", '{"op":"x"}', "{}",
+             "{}", "dataset-1", "BTC-USDT", "1H", "DISCOVERY", "{}",
+             "{}", "e", "generated", "[]", "VALID", "CLASSIFIED", None,
+             "RETAIN_DIAGNOSTIC_ONLY", 1, "old", "new"))
+    registry = GlobalResearchRegistry(tmp_path / "registry.db")
+    first = registry.import_sqlite(ledger)
+    second = registry.import_sqlite(ledger)
+    run = registry.runs()[0]
+    assert first[0].trials_imported == 1
+    assert second[0].idempotent is True
+    assert run["selection_count"] == 120
+    assert run["locked_count"] == 34
+    assert run["effective_cluster_count"] == 175

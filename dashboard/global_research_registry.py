@@ -703,6 +703,16 @@ class GlobalResearchRegistry:
                                     "correlation_clusters"):
                                 if key in multiple:
                                     metadata.setdefault(key, multiple[key])
+                        generation = saved_report.get("generation")
+                        if isinstance(generation, Mapping):
+                            if "selection_validation" in generation:
+                                metadata.setdefault(
+                                    "selection_trial_count",
+                                    generation["selection_validation"])
+                            if "locked_verification" in generation:
+                                metadata.setdefault(
+                                    "locked_trial_count",
+                                    generation["locked_verification"])
                     trials = [
                         dict(item) for item in connection.execute(
                             "SELECT * FROM factor_trials WHERE run_id=? ORDER BY sequence",

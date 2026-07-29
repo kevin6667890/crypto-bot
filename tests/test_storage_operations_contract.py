@@ -17,7 +17,9 @@ def test_compose_bounds_logs_without_changing_database_mount() -> None:
 
 def test_frontend_image_packages_the_verified_versioned_dist() -> None:
     dockerfile = (ROOT / "frontend" / "Dockerfile").read_text(encoding="utf-8")
+    dockerignore = (ROOT / ".dockerignore").read_text(encoding="utf-8")
     assert "COPY frontend/dist/" in dockerfile
+    assert "frontend/dist/" not in dockerignore
     assert "npm ci" not in dockerfile
     assert "npm run build" not in dockerfile
 

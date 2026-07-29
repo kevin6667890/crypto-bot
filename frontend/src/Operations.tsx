@@ -64,7 +64,42 @@ type OperationsSummaryContract = {
     }>;
   };
   warning_count: number;
-  system: { disk_percent: number; memory_percent?: number };
+  storage: {
+    root: {
+      total_bytes: number;
+      used_bytes: number;
+      free_bytes: number;
+      usage_percent: number;
+    };
+    paper_database_bytes: number;
+    microstructure_database_bytes: number;
+    snapshot_bytes_per_day?: number | null;
+    raw_trades_bytes_per_day?: number | null;
+    snapshot_mode: string;
+    raw_retention_status: string;
+    last_archive?: string | null;
+    last_offhost_ack?: string | null;
+    archive_backlog?: number | null;
+    prune_backlog?: number | null;
+    projection: {
+      status: string;
+      window?: string | null;
+      to_85_percent?: number | null;
+      to_90_percent?: number | null;
+    };
+    protection: {
+      level: "NORMAL" | "WARNING" | "CRITICAL" | "EMERGENCY";
+      optional_artifacts_allowed: boolean;
+      core_ledger_allowed: boolean;
+    };
+  };
+  system: {
+    disk_percent: number;
+    disk_total_bytes?: number;
+    disk_used_bytes?: number;
+    disk_free_bytes?: number;
+    memory_percent?: number;
+  };
 };
 type OperationsSummary = components["schemas"]["OperationsSummary"] & OperationsSummaryContract;
 
@@ -200,6 +235,36 @@ export default function Operations() {
           <p>Paper DB：<b>{formatBytes(summary?.database.logical_size_bytes)}</b></p>
           <p>Microstructure DB：<b>{formatBytes(summary?.database.microstructure_logical_size_bytes)}</b></p>
           <p>WAL：<b>{formatBytes(summary?.wal_size_bytes)}</b></p>
+        </section>
+
+        <section className="operations-card storage-lifecycle-card">
+          <div className="operations-title">
+            <Database size={17} />
+            <h2>存储生命周期</h2>
+            <span className={`status-pill ${(summary?.storage?.protection.level || "").toLowerCase()}`}>
+              {summary?.storage?.protection.level ?? "INSUFFICIENT_HISTORY"}
+            </span>
+          </div>
+          <p>Root usage: <b>{summary?.storage ? `${summary.storage.root.usage_percent}%` : "—"}</b></p>
+          <p>Root free: <b>{formatBytes(summary?.storage?.root.free_bytes)}</b></p>
+          <p>Paper DB: <b>{formatBytes(summary?.storage?.paper_database_bytes)}</b></p>
+          <p>Microstructure DB: <b>{formatBytes(summary?.storage?.microstructure_database_bytes)}</b></p>
+          <p>Snapshot mode: <b>{summary?.storage?.snapshot_mode ?? "—"}</b></p>
+          <p>Snapshot growth: <b>{formatBytes(summary?.storage?.snapshot_bytes_per_day ?? undefined)}/day</b></p>
+          <p>Raw hot retention: <b>{summary?.storage?.raw_retention_status ?? "—"}</b></p>
+          <p>Archive backlog: <b>{summary?.storage?.archive_backlog ?? "—"}</b></p>
+          <p>Prune backlog: <b>{summary?.storage?.prune_backlog ?? "—"}</b></p>
+          <p>Last archive: <b>{summary?.storage?.last_archive ?? "—"}</b></p>
+          <p>Last off-host ACK: <b>{summary?.storage?.last_offhost_ack ?? "—"}</b></p>
+          {summary?.storage?.projection.status === "AVAILABLE" ? (
+            <>
+              <p>Projected days to 85%: <b>{summary.storage.projection.to_85_percent?.toFixed(1) ?? "—"}</b></p>
+              <p>Projected days to 90%: <b>{summary.storage.projection.to_90_percent?.toFixed(1) ?? "—"}</b></p>
+              <small>Window: {summary.storage.projection.window ?? "unspecified"} · low / median / high scenarios</small>
+            </>
+          ) : (
+            <p data-storage-projection="insufficient">{"INSUFFICIENT_HISTORY"}</p>
+          )}
         </section>
 
         <section className="operations-card">

@@ -202,6 +202,40 @@ export interface components {
                 }[];
             };
             warning_count: number;
+            storage: {
+                root: {
+                    total_bytes: number;
+                    used_bytes: number;
+                    free_bytes: number;
+                    usage_percent: number;
+                };
+                paper_database_bytes: number;
+                microstructure_database_bytes: number;
+                snapshot_bytes_per_day?: number | null;
+                raw_trades_bytes_per_day?: number | null;
+                snapshot_mode: string;
+                raw_retention_status: string;
+                last_archive?: string | null;
+                last_offhost_ack?: string | null;
+                archive_backlog?: number | null;
+                prune_backlog?: number | null;
+                projection: {
+                    status: string;
+                    window?: string | null;
+                    to_85_percent?: number | null;
+                    to_90_percent?: number | null;
+                } & {
+                    [key: string]: unknown;
+                };
+                protection: {
+                    /** @enum {string} */
+                    level: "NORMAL" | "WARNING" | "CRITICAL" | "EMERGENCY";
+                    core_ledger_allowed: boolean;
+                    optional_artifacts_allowed: boolean;
+                } & {
+                    [key: string]: unknown;
+                };
+            };
             system: {
                 disk_percent: number;
                 memory_percent?: number | null;

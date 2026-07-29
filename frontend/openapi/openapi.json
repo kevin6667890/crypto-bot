@@ -45,7 +45,7 @@
       "IsoTimestamp": { "type": "string", "format": "date-time", "description": "RFC 3339 UTC timestamp." },
       "OperationsSummary": {
         "type": "object",
-        "required": ["generated_at", "service", "frontend", "paper_api", "collector", "query_plane", "database", "wal_size_bytes", "maintenance", "scheduler", "tasks", "warning_count", "system"],
+        "required": ["generated_at", "service", "frontend", "paper_api", "collector", "query_plane", "database", "wal_size_bytes", "maintenance", "scheduler", "tasks", "warning_count", "storage", "system"],
         "properties": {
           "generated_at": { "$ref": "#/components/schemas/IsoTimestamp" },
           "service": { "type": "object", "required": ["status", "version", "git_commit", "uptime_seconds"], "properties": { "status": { "type": "string" }, "version": { "type": "string" }, "git_commit": { "type": "string" }, "uptime_seconds": { "type": "number" } } },
@@ -59,6 +59,34 @@
           "scheduler": { "type": "object", "required": ["running"], "properties": { "running": { "type": "boolean" }, "last_cycle_completed_at": { "allOf": [{ "$ref": "#/components/schemas/IsoTimestamp" }], "nullable": true }, "last_cycle_duration_ms": { "type": "number", "nullable": true } } },
           "tasks": { "type": "object", "required": ["current_count", "queued_count", "recent_completed"], "properties": { "current_count": { "type": "integer" }, "queued_count": { "type": "integer" }, "recent_completed": { "type": "array", "items": { "type": "object", "required": ["id", "job_type", "status"], "properties": { "id": { "type": "integer" }, "job_type": { "type": "string" }, "status": { "type": "string" }, "completed_at": { "allOf": [{ "$ref": "#/components/schemas/IsoTimestamp" }], "nullable": true } } } } } },
           "warning_count": { "type": "integer" },
+          "storage": {
+            "type": "object",
+            "required": ["root", "paper_database_bytes", "microstructure_database_bytes", "snapshot_mode", "raw_retention_status", "projection", "protection"],
+            "properties": {
+              "root": {
+                "type": "object",
+                "required": ["total_bytes", "used_bytes", "free_bytes", "usage_percent"],
+                "properties": {
+                  "total_bytes": { "type": "integer" },
+                  "used_bytes": { "type": "integer" },
+                  "free_bytes": { "type": "integer" },
+                  "usage_percent": { "type": "number" }
+                }
+              },
+              "paper_database_bytes": { "type": "integer" },
+              "microstructure_database_bytes": { "type": "integer" },
+              "snapshot_bytes_per_day": { "type": "number", "nullable": true },
+              "raw_trades_bytes_per_day": { "type": "number", "nullable": true },
+              "snapshot_mode": { "type": "string" },
+              "raw_retention_status": { "type": "string" },
+              "last_archive": { "type": "string", "nullable": true },
+              "last_offhost_ack": { "type": "string", "nullable": true },
+              "archive_backlog": { "type": "integer", "nullable": true },
+              "prune_backlog": { "type": "integer", "nullable": true },
+              "projection": { "type": "object", "required": ["status"], "properties": { "status": { "type": "string" }, "window": { "type": "string", "nullable": true }, "to_85_percent": { "type": "number", "nullable": true }, "to_90_percent": { "type": "number", "nullable": true } }, "additionalProperties": true },
+              "protection": { "type": "object", "required": ["level", "core_ledger_allowed", "optional_artifacts_allowed"], "properties": { "level": { "type": "string", "enum": ["NORMAL", "WARNING", "CRITICAL", "EMERGENCY"] }, "core_ledger_allowed": { "type": "boolean" }, "optional_artifacts_allowed": { "type": "boolean" } }, "additionalProperties": true }
+            }
+          },
           "system": { "type": "object", "required": ["disk_percent"], "properties": { "disk_percent": { "type": "number" }, "memory_percent": { "type": "number", "nullable": true } } }
         }
       },

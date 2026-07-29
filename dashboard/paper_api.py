@@ -1086,6 +1086,20 @@ def public_operations_summary() -> dict[str, Any]:
             "COMPLETED", "FAILED", "CANCELLED", "INTERRUPTED"}
     ][:5]
     microstructure = MICROSTRUCTURE.operations_summary()
+    collector_runtime = None
+    try:
+        with urlopen(
+            os.getenv(
+                "MICROSTRUCTURE_COLLECTOR_HEALTH_URL",
+                "http://microstructure-collector:8770/health",
+            ),
+            timeout=0.5,
+        ) as response:
+            collector_runtime = json.loads(response.read())
+    except (OSError, TimeoutError, ValueError, json.JSONDecodeError):
+        # Database-backed freshness remains authoritative when the internal
+        # liveness socket is briefly unavailable.
+        pass
     now = datetime.now(timezone.utc)
     paper_freshness: dict[str, Any] = {}
     for instrument, analysis in SERVICE.last_analysis.items():
@@ -1127,7 +1141,16 @@ def public_operations_summary() -> dict[str, Any]:
                 else "STOPPING"),
             "collector_freshness": paper_freshness,
         },
-        "collector": microstructure["collector"],
+        "collector": {
+            **microstructure["collector"],
+            **({
+                "status": collector_runtime.get("service_status", "RUNNING"),
+                "queue_depth": collector_runtime.get("writer_queue_depth", 0),
+                "write_latency_ms": collector_runtime.get("write_latency_ms"),
+                "batch_size": collector_runtime.get("writer_batch_size"),
+                "busy_retry_count": collector_runtime.get("busy_retry_count"),
+            } if collector_runtime else {}),
+        },
         "query_plane": microstructure["query_plane"],
         "database": {
             "status": "ok" if DB_PATH.exists() else "unavailable",
@@ -1138,7 +1161,22 @@ def public_operations_summary() -> dict[str, Any]:
                 microstructure["database_size_bytes"],
         },
         "wal_size_bytes": microstructure["wal_size_bytes"],
-        "maintenance": microstructure["maintenance"],
+        "maintenance": {
+            **microstructure["maintenance"],
+            "telemetry_available": collector_runtime is not None,
+            "last_duration_ms": (
+                collector_runtime.get("last_maintenance_duration_ms")
+                if collector_runtime else None),
+            "paused_reason": (
+                collector_runtime.get("maintenance_paused_reason")
+                if collector_runtime else None),
+            "checkpoint_duration_ms": (
+                collector_runtime.get("last_checkpoint_duration_ms")
+                if collector_runtime else None),
+            "checkpoint_result": (
+                collector_runtime.get("last_checkpoint_result")
+                if collector_runtime else None),
+        },
         "scheduler": {
             "running": bool(SERVICE.scheduler_running),
             "last_cycle_completed_at": SERVICE.last_cycle_completed_at,

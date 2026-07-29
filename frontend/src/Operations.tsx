@@ -37,7 +37,14 @@ type OperationsSummary = {
     microstructure_logical_size_bytes: number;
   };
   wal_size_bytes: number;
-  maintenance: { status: string };
+  maintenance: {
+    status: string;
+    telemetry_available: boolean;
+    last_duration_ms?: number;
+    paused_reason?: string;
+    checkpoint_duration_ms?: number;
+    checkpoint_result?: number[];
+  };
   scheduler: {
     running: boolean;
     last_cycle_completed_at?: string;
@@ -197,6 +204,8 @@ export default function Operations() {
             <h2>{t("operations.runtimeStatus")}</h2>
           </div>
           <p>Maintenance：<b>{summary?.maintenance.status ?? "加载中"}</b></p>
+          <p>Maintenance 切片：<b>{summary?.maintenance.last_duration_ms !== undefined && summary?.maintenance.last_duration_ms !== null ? `${summary.maintenance.last_duration_ms} ms` : "暂时无法获取"}</b></p>
+          <p>Checkpoint：<b>{summary?.maintenance.checkpoint_duration_ms !== undefined && summary?.maintenance.checkpoint_duration_ms !== null ? `${summary.maintenance.checkpoint_duration_ms} ms` : "暂时无法获取"}</b></p>
           <p>Scheduler：<b>{summary ? (summary.scheduler.running ? "RUNNING" : "STOPPED") : "加载中"}</b></p>
           <p>最近周期：<b>{summary?.scheduler.last_cycle_completed_at ?? "暂无数据"}</b></p>
           <p>周期耗时：<b>{summary?.scheduler.last_cycle_duration_ms !== undefined ? `${summary.scheduler.last_cycle_duration_ms} ms` : "暂无数据"}</b></p>

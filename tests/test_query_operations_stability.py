@@ -223,6 +223,23 @@ def test_short_lived_job_and_alert_connections_are_closed(tmp_path):
 
 
 def test_public_operations_payload_has_no_sensitive_keys(monkeypatch):
+    class CollectorResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def read(self):
+            return json.dumps({
+                "service_status": "RUNNING",
+                "writer_queue_depth": 0,
+                "last_maintenance_duration_ms": 17,
+                "last_checkpoint_duration_ms": 23,
+                "last_checkpoint_result": [0, 10, 10],
+            }).encode()
+
+    monkeypatch.setattr(paper_api, "urlopen", lambda *_args, **_kwargs: CollectorResponse())
     monkeypatch.setattr(
         paper_api.MICROSTRUCTURE,
         "operations_summary",
@@ -235,6 +252,8 @@ def test_public_operations_payload_has_no_sensitive_keys(monkeypatch):
             "coverage_snapshot": {},
         })
     payload = paper_api.public_operations_summary()
+    assert payload["maintenance"]["last_duration_ms"] == 17
+    assert payload["collector"]["status"] == "RUNNING"
     serialized = json.dumps(payload).lower()
     for forbidden in (
         "credential", "password", "admin_token", "ssh", "environment",

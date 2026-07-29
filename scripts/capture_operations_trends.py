@@ -78,15 +78,6 @@ def nested_number(payload: dict[str, Any] | None, *paths: tuple[str, ...]) -> fl
     return None
 
 
-def local_iowait() -> float | None:
-    try:
-        import psutil  # type: ignore
-        value = getattr(psutil.cpu_times_percent(interval=None), "iowait", None)
-        return float(value) if value is not None else None
-    except (ImportError, AttributeError, OSError):
-        return None
-
-
 def capture_sample(
     connection: sqlite3.Connection,
     *,
@@ -141,7 +132,13 @@ def capture_sample(
             nested_number(operations, ("maintenance", "checkpoint_duration_ms")),
             nested_number(operations, ("collector", "queue_depth")),
             nested_number(health, ("live_lag_seconds",), ("collector", "live_lag_seconds")),
-            local_iowait(), int(critical_gap) if critical_gap is not None else None,
+            nested_number(
+                operations,
+                ("iowait_percent",),
+                ("system", "iowait_percent"),
+                ("host", "iowait_percent"),
+            ),
+            int(critical_gap) if critical_gap is not None else None,
             service_state,
         ),
     )

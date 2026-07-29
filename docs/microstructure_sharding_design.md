@@ -2,7 +2,8 @@
 
 ## 结论
 
-推荐 C：热库 + 只读冷月分片 + 中心库。当前月 raw 写入
+**最终建议：先准备、达到阈值后实施。** 目标架构采用 C：热库、只读冷月分片
+与中心库。当前月 raw 写入
 `market_microstructure_YYYY_MM.db`；已完成月份 checkpoint 后以 immutable
 方式只读；aggregates、gaps、coverage summary、checkpoints、manifest 状态放在
 中心库。迟到数据写入中心 late-arrival overlay，查询时与目标冷月合并；冷库
@@ -14,7 +15,7 @@
 
 ## 三种方案比较
 
-| 维度 | A 单 SQLite 持续增长 | B 每月独立 SQLite | C 热库 + 冷分片（推荐） |
+| 维度 | A 单 SQLite 持续增长 | B 每月独立 SQLite | C 热库 + 冷分片（目标架构） |
 |---|---|---|---|
 | 写入 | 最简单，单 WAL | 每月切换 writer | 当前月单 writer |
 | raw | 单文件 | 每月独立 | 当前月 hot、历史 cold |
@@ -51,8 +52,8 @@ C。
   root page、B-tree child page 和 overflow page 得出。589,991 个文件页中
   589,990 个被归属；剩余 1 页是 SQLite lock-byte page，不是遗漏对象。
 
-备份内 schema 来自 `production_sha=40aa74e...`，只用于容量画像；本分支代码
-基线是 `bc7da264...`。两者用途不同，未把备份 schema 写回当前代码。
+备份内 schema 来自 `production_sha=40aa74e...`，只用于容量画像；本轮验收代码
+基线是 `675d334...`。两者用途不同，未把备份 schema 写回当前代码。
 
 ## 表与索引空间
 
@@ -87,7 +88,7 @@ research manifests、gaps/checkpoints 和 schema 元数据等。trades 表加索
 因此容量治理首先应处理 trade raw；仅拆 funding 或 liquidation 几乎不改变
 总体风险。
 
-## 日增长与 30/90/180 天容量
+## 日增长与 30/90/180/365 天容量
 
 离机库的最近七个完整 UTC 日窗口存在两个无数据日、部分日以及历史回填突发，
 不能把七日简单平均称为稳定生产速率。容量预算采用最近完整活跃日
@@ -117,9 +118,15 @@ trade 的六个有数据日均值约 907k rows/day，明显低于 7 月 27 日�
 | 30 天 | 35.90 GB | 38.32 GB | raw 约 35.85 GB/月 |
 | 90 天 | 107.71 GB | 110.13 GB | 约 3 个 cold/hot 月 |
 | 180 天 | 215.43 GB | 217.85 GB | 约 6 个 cold/hot 月 |
+| 365 天 | 436.84 GB | 439.26 GB | 约 12 个 cold/hot 月 |
 
 实际 retention 会删除或归档 raw 时，总在线容量可低于线性 180 日值。中心
 aggregates 的高水位约 1.73 MB/day，不应跟随 raw 月片重复。
+
+若 40 GB 系统盘还要容纳应用、WAL 和安全余量，按 30% 空闲上限计算，当前
+microstructure 单库在 1.197 GB/day 高水位下约 **21 天**触及 28 GB；仅按
+六个有数据日约 907k trades/day 的中位预算，窗口更长但仍不足以支持 90 天在线
+raw。分片不会减少总字节，只能缩小单文件、备份和恢复故障域。
 
 ## 推荐目录
 
@@ -371,8 +378,18 @@ SQLite 文件的“伪事务”宣称原子性。更安全的是短暂停写 + d
 - 当前高水位约 1.2 GB/day 持续一至两周。
 
 当前备份中 trades 已占约 89.5%，且保守线性 90 日约 110 GB，架构方向值得
-实施；但应先解释 7 月 27 日突增是稳定 live rate、回填，还是重复采集，避免用
-分片掩盖 ingestion 缺陷。
+准备；但应先解释 7 月 27 日突增是稳定 live rate、回填，还是重复采集，避免用
+分片掩盖 ingestion 缺陷。只有满足以下任一量化条件并完成 14–30 天观测后才实施：
+
+- `market_microstructure.db` ≥20 GB，或按最近 14 天 p75 预测 30 天内达到 40 GB；
+- 7 日平均 raw 增长 ≥0.75 GB/day，且已排除回填/重复采集；
+- 一致备份 ≥30 分钟或恢复演练 ≥60 分钟；
+- checkpoint/maintenance p95 ≥5 秒并影响 collector，或 WAL 反复触及 128 MiB；
+- 最近 1–3 月 raw 查询占比 ≥80%，长历史请求可由 aggregates 服务。
+
+当前 2.416 GB 单库尚未达到容量阈值，真实 raw 只覆盖 2026-07，无法用这份备份
+验证 OI 跨月连续。因此本轮不建议直接生产切片；先完成数据盘、观测指标、真实
+typed-row shadow build 和恢复演练。
 
 ## 何时不应该实施
 

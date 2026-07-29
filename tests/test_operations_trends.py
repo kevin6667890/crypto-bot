@@ -22,6 +22,7 @@ def replies():
                 "checkpoint_duration_ms": 4.5,
             },
             "collector": {"queue_depth": 3},
+            "system": {"iowait_percent": 2.0},
         }, 10.0),
         "health": ({
             "live_lag_seconds": 7,
@@ -39,7 +40,6 @@ def install_replies(monkeypatch: pytest.MonkeyPatch, values=None) -> None:
         lambda _base, path, _timeout: payloads[
             next(name for name, endpoint in capture.ENDPOINTS.items()
                  if endpoint == path)])
-    monkeypatch.setattr(capture, "local_iowait", lambda: 2.0)
 
 
 def test_capture_is_minute_idempotent(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -83,6 +83,29 @@ def test_partial_query_failure_does_not_claim_collector_stopped(
             "SELECT service_state FROM operations_trends").fetchone()[0]
     assert state == "PARTIAL_QUERY_FAILURE"
     assert state != "STOPPED"
+
+
+def test_iowait_comes_only_from_remote_operations_payload(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    values = replies()
+    values["operations"][0]["system"]["iowait_percent"] = 9.5
+    install_replies(monkeypatch, values)
+    with sqlite3.connect(tmp_path / "trends.db") as connection:
+        capture.capture_sample(
+            connection, base_url="http://localhost", now=1_800_000_000)
+        remote_value = connection.execute(
+            "SELECT iowait_percent FROM operations_trends").fetchone()[0]
+    assert remote_value == 9.5
+
+    values["operations"][0].pop("system")
+    with sqlite3.connect(tmp_path / "trends.db") as connection:
+        capture.capture_sample(
+            connection, base_url="http://localhost", now=1_800_000_060)
+        missing_value = connection.execute(
+            """SELECT iowait_percent FROM operations_trends
+               ORDER BY minute_ts DESC LIMIT 1""").fetchone()[0]
+    assert missing_value is None
 
 
 def test_request_timeout_is_bounded_and_credentials_are_rejected(

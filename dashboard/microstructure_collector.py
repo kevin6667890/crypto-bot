@@ -149,6 +149,8 @@ class Collector:
                 asyncio.create_task(
                     self._supervise("maintenance", self._maintenance),
                     name="retention-aggregation"),
+                asyncio.create_task(
+                    self._checkpoint_worker(), name="passive-checkpoint"),
             ]
             try:
                 await self.stop_event.wait()
@@ -214,9 +216,6 @@ class Collector:
                         last_transaction_at_ms=now_ms(),
                         write_latency_ms=write_latency_ms,
                         maintenance_paused_reason=None)
-                    await asyncio.to_thread(
-                        self.db_writer.passive_checkpoint,
-                        queue_depth=self.queue.qsize())
                 except Exception as error:
                     self.pending_health["writer"] = (
                         "ERROR", {"last_error":
@@ -230,6 +229,24 @@ class Collector:
         finally:
             if self.db_writer is not None:
                 await asyncio.to_thread(self.db_writer.close)
+
+    async def _checkpoint_worker(self) -> None:
+        """Checkpoint independently so live batch persistence never awaits it."""
+        while not self.stop_event.is_set():
+            try:
+                await asyncio.wait_for(self.stop_event.wait(), timeout=5)
+            except TimeoutError:
+                pass
+            if self.stop_event.is_set() or self.db_writer is None:
+                continue
+            try:
+                await asyncio.to_thread(
+                    self.db_writer.passive_checkpoint,
+                    queue_depth=self.queue.qsize())
+            except Exception as error:
+                await self._record_health(
+                    "checkpoint", "DEFERRED",
+                    last_error=f"{type(error).__name__}: {str(error)[:160]}")
 
     def _persist_batch(
         self, batch: list[tuple[str, dict[str, Any]]],
@@ -535,21 +552,26 @@ class Collector:
                         maintenance_paused_reason="live_queue_not_empty")
                     raise RuntimeError("maintenance deferred for live collection")
                 started = time.monotonic()
-                if self.maintenance_phase % 2 == 0:
+                phase = self.maintenance_phase % 3
+                if phase == 0:
                     result = await asyncio.to_thread(
-                        self.db_writer.transaction,
+                        self.db_writer.try_transaction,
                         self.store.bootstrap_summary_slice)
-                    if result.get("complete") and not self.queue.qsize():
-                        result = await asyncio.to_thread(
-                            self.db_writer.transaction,
-                            lambda: self.store.refresh_runtime_snapshot_slice(
-                                wall_clock_seconds=1.5))
+                elif phase == 1:
+                    result = await asyncio.to_thread(
+                        self.db_writer.try_transaction,
+                        lambda: self.store.maintenance_slice(
+                            wall_clock_seconds=1.25,
+                            pause_requested=lambda: self.queue.qsize() > 0))
                 else:
                     result = await asyncio.to_thread(
-                        self.db_writer.transaction,
-                        lambda: self.store.maintenance_slice(
-                            wall_clock_seconds=1.5,
-                            pause_requested=lambda: self.queue.qsize() > 0))
+                        self.db_writer.try_transaction,
+                        lambda: self.store.refresh_runtime_snapshot_slice(
+                            wall_clock_seconds=1.25))
+                if result is None:
+                    self.store.update_operational_metrics(
+                        maintenance_paused_reason="live_writer_busy")
+                    raise RuntimeError("maintenance deferred for live writer")
                 self.maintenance_phase += 1
                 duration = int((time.monotonic() - started) * 1000)
                 self.store.update_operational_metrics(
@@ -582,10 +604,10 @@ class Collector:
                     })
                 # Retention work is one small, restart-safe transaction.
                 if now_ms() - self.last_prune_ms > 86_400_000:
-                    await asyncio.to_thread(
-                        self.db_writer.transaction,
+                    pruned = await asyncio.to_thread(
+                        self.db_writer.try_transaction,
                         lambda: self.store.prune_raw_bounded(maximum_rows=500))
-                    if not self.queue.qsize():
+                    if pruned is not None and not self.queue.qsize():
                         self.last_prune_ms = now_ms()
             except Exception as error:
                 if not str(error).startswith("maintenance deferred"):

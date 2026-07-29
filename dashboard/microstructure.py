@@ -2282,6 +2282,25 @@ class MicrostructureLiveWriter:
                 time.sleep(0.05 * (attempt + 1))
         raise RuntimeError("unreachable")
 
+    def try_transaction(self, operation: Any) -> Any | None:
+        """Run low-priority work only when the live writer lock is idle."""
+        if not self.lock.acquire(blocking=False):
+            return None
+        try:
+            self.store._bound_connection.value = self.connection
+            try:
+                self.connection.execute("BEGIN")
+                result = operation()
+                self.connection.commit()
+                return result
+            except Exception:
+                self.connection.rollback()
+                raise
+            finally:
+                self.store._bound_connection.value = None
+        finally:
+            self.lock.release()
+
     def passive_checkpoint(self, *, queue_depth: int) -> bool:
         wal = Path(f"{self.store.path}-wal")
         wal_size = wal.stat().st_size if wal.exists() else 0
@@ -2290,8 +2309,11 @@ class MicrostructureLiveWriter:
                 or time.monotonic() - self.last_checkpoint_at < 30):
             return False
         started = time.monotonic()
-        with self.lock:
-            result = tuple(self.connection.execute(
+        # A dedicated zero-wait connection keeps checkpoint I/O outside the
+        # serialized live writer and never queues a live transaction behind it.
+        with self.store.connect() as connection:
+            connection.execute("PRAGMA busy_timeout=0")
+            result = tuple(connection.execute(
                 "PRAGMA wal_checkpoint(PASSIVE)").fetchone())
         duration = int((time.monotonic() - started) * 1000)
         self.last_checkpoint_at = time.monotonic()

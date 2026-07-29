@@ -140,7 +140,23 @@ def test_wal_limit_and_checkpoint_stay_out_of_live_queue(tmp_path):
         source = inspect.getsource(writer.passive_checkpoint).upper()
         assert "PASSIVE" in source
         assert "TRUNCATE" not in source
+        assert "BUSY_TIMEOUT=0" in source
     finally:
+        writer.close()
+
+
+def test_low_priority_transaction_never_waits_for_live_writer(tmp_path):
+    store = MicrostructureStore(tmp_path / "micro.db")
+    store.initialize()
+    writer = store.live_writer()
+    try:
+        assert writer.lock.acquire(blocking=False)
+        started = time.monotonic()
+        assert writer.try_transaction(lambda: {"unexpected": True}) is None
+        assert time.monotonic() - started < 0.05
+    finally:
+        if writer.lock.locked():
+            writer.lock.release()
         writer.close()
 
 

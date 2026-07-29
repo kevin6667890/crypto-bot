@@ -177,6 +177,8 @@ def test_low_priority_transaction_never_waits_for_live_writer(tmp_path):
         started = time.monotonic()
         assert writer.try_transaction(lambda: {"unexpected": True}) is None
         assert time.monotonic() - started < 0.05
+        source = inspect.getsource(writer.try_transaction).replace(" ", "")
+        assert "PRAGMAbusy_timeout=50" in source
     finally:
         if writer.lock.locked():
             writer.lock.release()

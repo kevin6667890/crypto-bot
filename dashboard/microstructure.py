@@ -38,7 +38,7 @@ SQLITE_CACHE_KIB = 8_192
 WAL_CHECKPOINT_BYTES = 32 * 1024 * 1024
 WAL_JOURNAL_SIZE_LIMIT_BYTES = 128 * 1024 * 1024
 LIVE_AGGREGATION_LOOKBACK_MS = 10 * 60_000
-SUMMARY_BOOTSTRAP_ROWS = 10_000
+SUMMARY_BOOTSTRAP_ROWS = 1_000
 
 SUMMARY_TABLES = {
     "trades": "trade_flow_observations",
@@ -2297,6 +2297,9 @@ class MicrostructureLiveWriter:
         try:
             self.store._bound_connection.value = self.connection
             try:
+                # A checkpoint or short reader must defer maintenance rather
+                # than consume the live connection's normal five-second wait.
+                self.connection.execute("PRAGMA busy_timeout=50")
                 self.connection.execute("BEGIN")
                 result = operation()
                 self.connection.commit()
@@ -2305,6 +2308,8 @@ class MicrostructureLiveWriter:
                 self.connection.rollback()
                 raise
             finally:
+                self.connection.execute(
+                    f"PRAGMA busy_timeout={SQLITE_BUSY_TIMEOUT_MS}")
                 self.store._bound_connection.value = None
         finally:
             self.lock.release()

@@ -1,10 +1,10 @@
 # Crypto-Bot 存储架构评估
 
-评估基线：`bc7da264a578277efe0328bc24ecbadcf810d82f`
+评估基线：`675d334273cdb97d366d35ce74670c715114efa8`
 
-评估分支：`agent/postgres-storage-evaluation`
+验收分支：`agent/real-research-infrastructure-validation`
 
-数据来源：`C:/crypto-bot-offhost-backups/2026-07-28_030605Z/` 的离机备份
+数据来源：用户提供的仓库外离机备份；仓库和本文不记录机器绝对路径。
 
 备份生成时间：2026-07-28 04:07:32 UTC
 
@@ -30,7 +30,14 @@ partition pruning 有价值，但只有迁移 PostgreSQL 后才值得采用。Ti
 
 - 没有连接生产；没有读取生产 DSN；没有调用策略、交易或订单 API。
 - 两份备份均通过 SQLite `mode=ro&immutable=1` 打开，备份文件未写入。
-- manifest 已记录两库 `quick_check=ok`、checkpoint 后 WAL 为 0。
+- 2026-07-29 重新计算的 SHA-256 与 manifest 完全一致：
+  `market_microstructure.db` 为
+  `09c96e7a15fa9d2a55e0a394a9780242190a7229d8549d289a416a2f621965ca`，
+  `paper_trades.db` 为
+  `7fdbe32b3496e52451f338dd265c1fd3d28a487cf2bef32e2a5ae827ba83b724`。
+- 两库在 `query_only=ON` 下重新执行 `quick_check` 均为 `ok`；本机只读耗时分别
+  约 59.9 秒和 39.0 秒，文件大小与修改时间保持不变。manifest 记录 checkpoint
+  后 WAL 为 0。
 - 表/索引空间通过只读解析 SQLite 4 KiB B-tree 和 overflow page 归属计算；
   两库 freelist 均为 0。行数与日分布从备份的时间列/覆盖索引计算。
 - 日增字节不是两个连续快照之差，而是“对象实际分配字节/现有行数 × 当日新增
@@ -98,6 +105,11 @@ partition pruning 有价值，但只有迁移 PostgreSQL 后才值得采用。Ti
 模型未计 PostgreSQL MVCC/WAL、临时排序、备份副本和 20–30% 运维余量。硬件
 不能只按 335 GB 配置。
 
+若系统盘仅有 40 GB 可用于这两库，按五日平均 897.7 MB/日，扣除当前
+7.70 GB 后约 36 天写满；按观测高位 1.552 GB/日约 21 天写满。若必须保留
+30% 空闲，安全窗口仅约 **13–23 天**。因此独立数据盘属于近期容量前置条件，
+而不是等数据库迁移时再处理的优化项。
+
 ### 查询并发需求
 
 当前 API 是无硬性线程上限的 `ThreadingHTTPServer`，同时还有 dashboard
@@ -123,24 +135,42 @@ batch 300。硬件、缓存和 9.7 MB fixture 与生产数据规模不同，结�
 PostgreSQL 集成测试安全 skip。迁移决策前应在目标硬件按 7 天真实分布复放，
 测 COPY、steady write、8/16 reader、checkpoint、VACUUM 和备份恢复。
 
+### PostgreSQL 容量与资源预算（非实测）
+
+当前 SQLite 对象页为 7.70 GB。由于 PostgreSQL tuple/header、MVCC、free-space
+map、索引 fill factor 和膨胀，未压缩稳态数据库应先按 SQLite 的
+**1.2–1.8 倍，即约 9.2–13.9 GB** 预算。首次 COPY/建索引期间还应另外预留：
+
+- 8–16 GB 导入 WAL（取决于 checkpoint、full-page write、归档与压缩）；
+- 7.7–15.4 GB staging、排序和校验工作区；
+- 至少一份 9–14 GB 可恢复备份。
+
+因此当前数据量的 PostgreSQL 影子 PoC 也应准备 **至少 40–50 GB 独立可用空间**；
+生产按一年线性模型、30% 空闲和一份备份配置时，仍建议 1 TB NVMe。以上是容量
+边界，不是本机 PostgreSQL benchmark；Docker/Podman 不可用，本轮没有启动容器。
+
+当前观测写入平均约 16 rows/s，事务上限 300 rows/150 ms；读并发按 4 个持续、
+8 个短时、16 个保护峰值规划。SQLite checkpoint 目标 32 MiB、WAL 上限
+128 MiB；一致备份实际暂停到传输完成约 58 分钟、到 manifest 完成约 61 分钟。
+PostgreSQL PoC 必须分别测 steady WAL、checkpoint 长尾、autovacuum、备份和恢复，
+不能从平均写 QPS推断维护窗口。
+
 ## 方案比较
 
-| 维度 | 优化 SQLite | SQLite + 独立数据盘 | PostgreSQL 单机 | PostgreSQL 月分区 | TimescaleDB（可选） |
-| --- | --- | --- | --- | --- | --- |
-| 写吞吐 | 单 writer 很强；当前 300 行 batch 合适 | 延迟抖动和 fsync 竞争更低 | 多 session，但同一 hot index/WAL 仍会竞争 | 与单机相近，跨月落点可分散 index | 与 PG 相近；压缩会增加后台 CPU |
-| 批量写 | `executemany` + 单事务简单 | 同左，目标盘 fsync 更稳定 | COPY/临时表 merge 最强 | COPY 必须保证目标月已创建 | COPY + hypertable API |
-| 并发 reader | WAL 可并发读，但单文件 cache/I/O 争用 | I/O 改善，锁语义不变 | MVCC、连接池和查询治理明显更好 | 加 partition pruning | 同 PG，时间查询工具更丰富 |
-| WAL | 已为 WAL、NORMAL、8 MiB cache、32 MiB checkpoint、128 MiB limit | WAL 与系统盘隔离；仍需同一文件系统保证语义 | WAL 归档/PITR 成熟，写放大和磁盘预算更高 | 每月 index 较小，WAL 不会消失 | 同 PG，后台任务也产 WAL |
-| 范围查询 | `(instrument,time)` index 有效 | 同左，随机读更快 | B-tree/BRIN 可选，planner 更强 | 时间条件可 prune 月份 | hypertable 自动 chunk pruning |
-| 聚合 | 单进程计算足够；大聚合会抢 writer I/O | 降低争用但 CPU 不变 | parallel aggregate/materialized view | 月局部聚合、归档更清楚 | continuous aggregate 可用但非必需 |
-| 备份/恢复 | 文件快照简单；一致 checkpoint/暂停窗口较长 | 快照/复制更快，仍是整文件 | pg_basebackup、WAL、逻辑导出、PITR | 分区归档灵活 | 需同时验证扩展版本 |
-| 运维复杂度 | 最低 | 低，增加挂载/监控 | 中高：角色、升级、VACUUM、连接、WAL | 更高：预建/归档/分区维护 | 最高，增加扩展兼容矩阵 |
-| 内存 | 最适合 1.6 GB | 同左 | 1.6 GB 可勉强启动但不适合本负载/迁移 | catalog/partition 增加少量开销 | 后台 worker 和压缩更不适合小内存 |
-| CPU | SQL 单线程路径较多 | 基本不变 | planner、并行查询、VACUUM 增加 CPU | pruning 可降低范围查询 CPU | 压缩/continuous aggregate 增加 CPU |
-| 磁盘 | 当前约 7.7 GB；大 payload 是根因 | 首选 1 TB；数据与备份分离 | heap+index+WAL 通常更大 | 删除整月几乎即时，长期治理更好 | 压缩可能回收历史空间 |
-| 故障恢复 | 文件复制/回放 WAL；单文件损坏影响大 | 盘故障仍需异机备份 | crash recovery、PITR 较完整 | 单月逻辑损坏/重建边界更清楚 | 依赖 PG + 扩展恢复流程 |
-| 迁移风险 | 无迁移 | 路径/权限/挂载风险低，可快速回退 | 类型、NULL、时序、UPSERT 和应用 SQL 风险高 | 再增加路由和唯一约束风险 | 再增加扩展锁定和升级风险 |
-| 回滚难度 | 最低 | 低，改回已保留路径 | 中高，切换后的新写需反向同步 | 高，需跨分区校验/回放 | 最高 |
+| 维度 | 优化 SQLite | SQLite + 独立数据盘 | SQLite 月度分片 | PostgreSQL 单机 | PostgreSQL 月分区 | TimescaleDB（可选） |
+| --- | --- | --- | --- | --- | --- | --- |
+| 写吞吐 | 单 writer 很强；300 行 batch 合适 | fsync 抖动更低 | hot 月仍是单 writer | 多 session；hot index/WAL 仍会竞争 | 与单机相近 | 与 PG 相近；压缩增加 CPU |
+| 批量写 | `executemany` + 单事务 | 同左 | 当前月事务简单；跨文件不原子 | COPY/staging merge 最强 | COPY 前须预建目标月 | COPY + hypertable API |
+| 并发 reader | WAL 可并发读；单文件 I/O 争用 | I/O 改善，锁语义不变 | 月间隔离，但 fan-out 占连接/文件句柄 | MVCC、连接池和查询治理更好 | 加 partition pruning | 同 PG，时间工具更丰富 |
+| WAL | 32 MiB checkpoint、128 MiB limit | WAL 与系统盘隔离 | hot 月有 WAL；cold immutable | 归档/PITR 成熟，写放大更高 | 小月索引不消除 WAL | 后台任务也产 WAL |
+| 范围查询 | `(instrument,time)` index 有效 | 同左，随机读更快 | 按月 fan-out、归并 cursor | B-tree/BRIN，planner 更强 | 时间条件 prune 月份 | 自动 chunk pruning |
+| 聚合 | 大聚合会抢 writer I/O | 降低 I/O 争用，CPU 不变 | 中心 aggregate 避免扫描全部 cold 月 | parallel aggregate/materialized view | 月局部聚合清楚 | continuous aggregate 可选 |
+| 备份/恢复 | 整文件；暂停窗口较长 | 复制更快，仍是整文件 | hot 小、cold 可增量；manifest 更复杂 | basebackup、WAL、逻辑导出、PITR | 分区归档灵活 | 还需验证扩展版本 |
+| 运维复杂度 | 最低 | 低 | 中：切月、manifest、late overlay、句柄 | 中高：角色、VACUUM、连接、WAL | 高：再加分区维护 | 最高 |
+| 内存/CPU | 最适合小主机 | 基本不变 | fan-out 与 merge 增加少量资源 | 建议 8–16 GB；维护增加 CPU | catalog/pruning 增加开销 | 后台 worker/压缩开销最高 |
+| 磁盘 | 当前 7.7 GB；payload 是根因 | 首选 1 TB；数据/备份分离 | 不减少总量，只缩小故障域 | heap+index+WAL 通常更大 | 删除整月快，长期治理较好 | 压缩可能回收历史空间 |
+| 故障恢复 | 单文件损坏影响大 | 盘故障仍需异机备份 | 单月边界更小；中心 manifest 是新风险 | crash recovery/PITR 完整 | 单月重建边界清楚 | 依赖 PG + 扩展流程 |
+| 迁移/回滚 | 无迁移；最低 | 路径切换风险低，可快速回退 | 需 shadow build；保留旧库可回退 | 类型/时序/UPSERT 风险高；回滚中高 | 再加路由、唯一约束；回滚高 | 扩展锁定；回滚最高 |
 
 ### 方案判断
 
@@ -150,12 +180,15 @@ PostgreSQL 集成测试安全 skip。迁移决策前应在目标硬件按 7 天�
 2. **SQLite + 独立数据盘：立即优先。** 它直接缩短 fsync/备份时间，隔离系统盘
    I/O，迁移风险和回滚成本最低。升级前先验证挂载失败时服务拒绝回落到系统盘，
    避免静默写错路径。
-3. **PostgreSQL 单机：保留为下一阶段。** 当并发 reader、备份窗口或维护锁
+3. **SQLite 月度分片：先准备、达到量化阈值后实施。** 当前 microstructure
+   单库仅 2.416 GB，分片不会修复 payload 重复或降低总容量；触发条件和恢复流程
+   见 `microstructure_sharding_design.md`。
+4. **PostgreSQL 单机：保留为下一阶段。** 当并发 reader、备份窗口或维护锁
    成为主要矛盾时价值明显；当前不能部署在 1.6 GB 主机。
-4. **PostgreSQL 月分区：若迁移则采用。** 对时间范围、90/180 日 retention、
+5. **PostgreSQL 月分区：若迁移则采用。** 对时间范围、90/180 日 retention、
    detach/archive/drop 有意义。预建当前月和下月；缺分区应显式失败，不设
    DEFAULT 分区隐藏路由错误。
-5. **TimescaleDB：只做可选 PoC。** 只有压缩率或 continuous aggregate 的实测
+6. **TimescaleDB：只做可选 PoC。** 只有压缩率或 continuous aggregate 的实测
    收益覆盖扩展运维成本时采用；基础 schema 和 adapter 不依赖它。
 
 ## 推荐硬件

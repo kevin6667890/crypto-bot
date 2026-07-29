@@ -1409,6 +1409,10 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
+        if parsed.path not in {
+            "/api/chat", "/api/compare", "/api/optimization/compare",
+        } and not self._admin():
+            return
         payload=self._body()
         if payload is None:return
         if parsed.path == "/api/cycle": self._send(SERVICE.cycle())
@@ -1545,6 +1549,7 @@ class Handler(BaseHTTPRequestHandler):
             try:self._send({"acknowledged":ALERTS.acknowledge(int(parsed.path.split("/")[3]))})
             except ValueError:self._send({"error":"Invalid alert id"},HTTPStatus.BAD_REQUEST)
         elif parsed.path.startswith("/api/strategies/") and parsed.path.endswith("/duplicate"):
+            if not self._admin():return
             try: self._send(RESEARCH.duplicate_strategy(int(parsed.path.strip("/").split("/")[2])), HTTPStatus.CREATED)
             except (ValueError, sqlite3.IntegrityError) as error: self._send({"error": str(error)}, HTTPStatus.BAD_REQUEST)
         else: self._send({"error": "Not found"}, HTTPStatus.NOT_FOUND)

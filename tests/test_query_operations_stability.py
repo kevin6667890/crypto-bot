@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+import io
 import json
 import sqlite3
 import time
@@ -273,6 +274,22 @@ def test_admin_actions_are_closed_when_token_is_not_configured(
     handler._send = lambda body, status=200: captured.append((body, int(status)))
     assert handler._admin() is False
     assert captured[-1][1] == 503
+
+
+def test_unauthenticated_cycle_is_rejected_before_business_logic(monkeypatch):
+    monkeypatch.delenv("ADMIN_TOKEN", raising=False)
+    called = []
+    monkeypatch.setattr(
+        paper_api.SERVICE, "cycle", lambda: called.append(True))
+    handler = object.__new__(paper_api.Handler)
+    handler.path = "/api/cycle"
+    handler.headers = {"Content-Length": "0"}
+    handler.rfile = io.BytesIO()
+    captured: list[tuple[dict, int]] = []
+    handler._send = lambda body, status=200: captured.append((body, int(status)))
+    handler.do_POST()
+    assert captured[-1][1] == 503
+    assert called == []
 
 
 def test_query_stability_code_has_no_strategy_or_order_calls():

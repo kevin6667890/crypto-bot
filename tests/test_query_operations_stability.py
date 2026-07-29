@@ -90,6 +90,29 @@ def test_coverage_marks_partial_bootstrap_as_refreshing(tmp_path):
         if row["instrument"] == "BTC-USDT-SWAP")["refreshing"] is False
 
 
+def test_summary_bootstrap_bounds_scanned_rowid_range_when_lane_is_sparse(tmp_path):
+    store = MicrostructureStore(tmp_path / "sparse.db")
+    store.initialize()
+    with store.connect() as connection:
+        connection.execute(
+            """INSERT INTO trade_flow_observations
+               (rowid,source,source_version,instrument,source_ts_ms,ingested_at_ms,
+                resolution,state,source_identity,uniqueness_key,trade_id,side,
+                price,size,contract_value,notional)
+               VALUES(10000000,'test','v1','ETH-USDT-SWAP',1,1,'trade',
+                      'confirmed','sparse','sparse','sparse','buy',1,1,1,1)""")
+        connection.execute(
+            "UPDATE source_runtime_summary SET refreshing=0")
+        connection.execute(
+            """UPDATE source_runtime_summary SET refreshing=1,
+               bootstrap_cursor=0,bootstrap_high_water=10000000,row_count=0
+               WHERE lane='trades' AND instrument='BTC-USDT-SWAP'""")
+    result = store.bootstrap_summary_slice(maximum_rows=100)
+    assert result["rows"] == 0
+    assert result["cursor"] == 100
+    assert result["lane_complete"] is False
+
+
 def test_eligibility_default_reads_persisted_snapshot(tmp_path, monkeypatch):
     store = MicrostructureStore(tmp_path / "micro.db")
     store.initialize()

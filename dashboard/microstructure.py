@@ -210,16 +210,20 @@ class MicrostructureStore:
                 return {"complete": True, "rows": 0}
             lane, instrument = str(summary["lane"]), str(summary["instrument"])
             table = SUMMARY_TABLES[lane]
+            cursor_before = int(summary["bootstrap_cursor"])
+            high_water = int(summary["bootstrap_high_water"])
+            # Bound the physical rowid range, not only the number of matching
+            # rows.  LIMIT alone could scan an entire sparse instrument/table
+            # lane before returning zero rows.
+            cursor_after = min(high_water, cursor_before + maximum_rows)
             rows = c.execute(
                 f"""SELECT rowid,source_ts_ms FROM {table}
-                    WHERE instrument=? AND rowid>? AND rowid<=?
-                    ORDER BY rowid LIMIT ?""",
-                (instrument, int(summary["bootstrap_cursor"]),
-                 int(summary["bootstrap_high_water"]), maximum_rows),
+                    WHERE rowid>? AND rowid<=? AND instrument=?
+                    ORDER BY rowid""",
+                (cursor_before, cursor_after, instrument),
             ).fetchall()
             timestamp = now_ms()
             if rows:
-                cursor = int(rows[-1]["rowid"])
                 batch_earliest = min(int(row["source_ts_ms"]) for row in rows)
                 batch_latest = max(int(row["source_ts_ms"]) for row in rows)
                 c.execute(
@@ -230,23 +234,27 @@ class MicrostructureStore:
                        latest_ms=CASE WHEN latest_ms IS NULL OR ?>latest_ms
                          THEN ? ELSE latest_ms END,
                        bootstrap_cursor=?,generated_at_ms=?,data_as_of_ms=?
-                       WHERE lane=? AND instrument=?""",
+                    WHERE lane=? AND instrument=?""",
                     (len(rows), batch_earliest, batch_earliest,
-                     batch_latest, batch_latest, cursor, timestamp,
+                     batch_latest, batch_latest, cursor_after, timestamp,
                      batch_latest, lane, instrument))
-                return {
-                    "complete": False, "lane": lane, "instrument": instrument,
-                    "rows": len(rows), "cursor": cursor,
-                }
-            c.execute(
-                """UPDATE source_runtime_summary SET refreshing=0,
-                   generated_at_ms=?,data_as_of_ms=latest_ms
-                   WHERE lane=? AND instrument=?""",
-                (timestamp, lane, instrument))
+            else:
+                c.execute(
+                    """UPDATE source_runtime_summary SET bootstrap_cursor=?,
+                       generated_at_ms=?
+                       WHERE lane=? AND instrument=?""",
+                    (cursor_after, timestamp, lane, instrument))
+            lane_complete = cursor_after >= high_water
+            if lane_complete:
+                c.execute(
+                    """UPDATE source_runtime_summary SET refreshing=0,
+                       generated_at_ms=?,data_as_of_ms=latest_ms
+                       WHERE lane=? AND instrument=?""",
+                    (timestamp, lane, instrument))
             return {
                 "complete": False, "lane": lane, "instrument": instrument,
-                "rows": 0, "cursor": int(summary["bootstrap_cursor"]),
-                "lane_complete": True,
+                "rows": len(rows), "cursor": cursor_after,
+                "lane_complete": lane_complete,
             }
 
     def put_runtime_snapshot(

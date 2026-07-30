@@ -13,6 +13,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from dashboard.microstructure_lifecycle import (  # noqa: E402
+    load_raw_trade_manifest,
     prune_archived_raw_trades,
 )
 
@@ -34,7 +35,7 @@ def main() -> int:
     args = parser.parse_args()
     if args.max_rows <= 0 or args.max_rows > 100_000:
         parser.error("--max-rows must be between 1 and 100000")
-    manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
+    manifest = load_raw_trade_manifest(args.manifest)
     ack = json.loads(args.offhost_ack.read_text(encoding="utf-8"))
     if args.resume and args.checkpoint and args.checkpoint.exists():
         saved = json.loads(args.checkpoint.read_text(encoding="utf-8"))

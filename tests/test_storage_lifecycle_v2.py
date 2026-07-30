@@ -14,6 +14,7 @@ from dashboard.microstructure_lifecycle import (
     MicrostructureLifecycleError,
     archive_raw_trade_day,
     build_offhost_ack,
+    load_raw_trade_manifest,
     prune_archived_raw_trades,
     verify_offhost_ack,
     verify_raw_trade_archive,
@@ -348,6 +349,25 @@ def test_raw_archive_is_sorted_complete_reconciled_and_restorable(
     archive = tmp_path / "archive" / report["archive_file"]
     manifest = tmp_path / "archive" / report["manifest_file"]
     assert verify_raw_trade_archive(archive, manifest)["row_count"] == 6
+
+
+def test_disk_manifest_hash_matches_the_offhost_ack(tmp_path: Path) -> None:
+    source = _micro_database(tmp_path / "micro.db")
+    report = archive_raw_trade_day(
+        source, tmp_path / "archive",
+        instrument="BTC-USDT-SWAP", utc_day="2020-01-01",
+    )
+    manifest = load_raw_trade_manifest(
+        tmp_path / "archive" / report["manifest_file"]
+    )
+    ack = build_offhost_ack(
+        {**manifest, "verification": report["verification"]}
+    )
+
+    dry_run = prune_archived_raw_trades(source, manifest, ack)
+
+    assert dry_run["apply"] is False
+    assert dry_run["deleted_rows"] == 0
 
 
 def test_prune_requires_verified_ack_reconciliation_gap_and_cold_window(

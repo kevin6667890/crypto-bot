@@ -20,6 +20,7 @@ from dashboard.microstructure_lifecycle import (  # noqa: E402
     build_offhost_ack,
     canonical_json,
     file_sha256,
+    load_raw_trade_manifest,
     verify_raw_trade_archive,
 )
 
@@ -169,9 +170,7 @@ def main() -> int:
                 if attempt == args.retries:
                     raise
                 time.sleep(min(2 ** attempt, 10))
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    manifest["manifest_file"] = manifest_path.name
-    manifest["manifest_sha256"] = file_sha256(manifest_path)
+    manifest = load_raw_trade_manifest(manifest_path)
     verification = verify_raw_trade_archive(archive, manifest_path)
     manifest["verification"] = verification
     if file_sha256(archive) != manifest["archive_sha256"]:

@@ -41,6 +41,14 @@ def file_sha256(path: Path | str) -> str:
     return digest.hexdigest()
 
 
+def load_raw_trade_manifest(path: Path | str) -> dict[str, Any]:
+    manifest_path = Path(path).resolve()
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    manifest["manifest_file"] = manifest_path.name
+    manifest["manifest_sha256"] = file_sha256(manifest_path)
+    return manifest
+
+
 def utc_day_bounds(day: str) -> tuple[int, int]:
     try:
         start = datetime.strptime(day, "%Y-%m-%d").replace(tzinfo=timezone.utc)

@@ -44,8 +44,11 @@ def main() -> None:
     parser.add_argument("--diagnose", action="store_true")
     parser.add_argument("--rebuild-aggregates", action="store_true")
     parser.add_argument("--official-backfill", action="store_true")
+    parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--verify", action="store_true")
     parser.add_argument("--apply", action="store_true")
+    parser.add_argument("--offline-backup-path", type=Path)
+    parser.add_argument("--offline-backup-sha256", type=str)
     parser.add_argument("--output-manifest", type=Path)
     parser.add_argument("--max-rows", type=int, default=10_000)
     parser.add_argument("--checkpoint", type=Path)
@@ -54,8 +57,11 @@ def main() -> None:
     args = parser.parse_args()
     if args.max_rows < 1:
         parser.error("--max-rows must be positive")
-    if args.apply and not active_lock(args.maintenance_lock):
-        parser.error("--apply requires an ACTIVE JSON --maintenance-lock")
+    if args.apply:
+        if not active_lock(args.maintenance_lock):
+            parser.error("--apply requires an ACTIVE JSON --maintenance-lock")
+        if not args.offline_backup_path or not args.offline_backup_sha256:
+            parser.error("--apply requires --offline-backup-path and --offline-backup-sha256")
 
     start_ms, end_ms = timestamp_ms(args.start), timestamp_ms(args.end)
     if args.resume and args.checkpoint and args.checkpoint.is_file():

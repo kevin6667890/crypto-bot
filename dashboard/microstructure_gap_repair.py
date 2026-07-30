@@ -100,19 +100,23 @@ class AggregateGapRepair:
                    GROUP BY bucket ORDER BY bucket""",
                 (instrument, start_ms, end_ms),
             ).fetchall()
+            day_start = (start_ms // 86400000) * 86400000
             prior = connection.execute(
                 """SELECT cumulative_anchored FROM cvd_aggregates
-                   WHERE instrument=? AND resolution='1m' AND bucket_ms<?
+                   WHERE instrument=? AND resolution='1m' AND bucket_ms<? AND bucket_ms>=?
                    ORDER BY bucket_ms DESC LIMIT 1""",
-                (instrument, start_ms),
+                (instrument, start_ms, day_start),
             ).fetchone()
             cumulative = float(prior[0]) if prior else 0.0
             values = []
             for row in rows:
+                bucket_ms = int(row["bucket"])
+                if bucket_ms % 86400000 == 0:
+                    cumulative = 0.0
                 buy, sell = float(row["buy"]), float(row["sell"])
                 cumulative += buy - sell
                 values.append((
-                    instrument, "1m", int(row["bucket"]), buy, sell, buy - sell,
+                    instrument, "1m", bucket_ms, buy, sell, buy - sell,
                     cumulative, int(row["observations"]), int(row["first_ts"]),
                     int(row["last_ts"]), 0, MICROSTRUCTURE_SOURCE_VERSION,
                 ))
@@ -350,15 +354,18 @@ class AggregateGapRepair:
             and len(rows) == expected_children
         ]
         if source == "cvd":
+            day_start = (start_ms // 86400000) * 86400000
             prior = connection.execute(
                 """SELECT cumulative_anchored FROM cvd_aggregates
-                   WHERE instrument=? AND resolution=? AND bucket_ms<?
+                   WHERE instrument=? AND resolution=? AND bucket_ms<? AND bucket_ms>=?
                    ORDER BY bucket_ms DESC LIMIT 1""",
-                (instrument, resolution, start_ms),
+                (instrument, resolution, start_ms, day_start),
             ).fetchone()
             cumulative = float(prior[0]) if prior else 0.0
             result = []
             for bucket, rows in complete:
+                if bucket % 86400000 == 0:
+                    cumulative = 0.0
                 buy = sum(float(row[3]) for row in rows)
                 sell = sum(float(row[4]) for row in rows)
                 cumulative += buy - sell

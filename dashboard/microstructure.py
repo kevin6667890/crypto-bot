@@ -823,16 +823,28 @@ class MicrostructureStore:
                     rows = 0
                 else:
                     width = RESOLUTIONS[resolution]
-                    since = (
-                        current - LIVE_AGGREGATION_LOOKBACK_MS
-                        if resolution == "1m" else current - width)
+                    # Fix collector gap lag by aggregating from the last recorded aggregate
+                    latest = c.execute(
+                        f"SELECT MAX(bucket_ms) FROM {kind}_aggregates WHERE instrument=? AND resolution=?",
+                        (instrument, resolution)
+                    ).fetchone()[0]
+                    
+                    if latest is not None:
+                        since = int(latest)
+                        # Process max 500 buckets per batch to prevent long transactions
+                        end_ms = min(current, since + 500 * width)
+                    else:
+                        since = (current - LIVE_AGGREGATION_LOOKBACK_MS
+                                 if resolution == "1m" else current - width)
+                        end_ms = current
+                        
                     operation = {
                         "cvd": self._aggregate_cvd,
                         "oi": self._aggregate_oi,
                         "basis": self._aggregate_basis,
                     }[kind]
                     rows = operation(
-                        c, instrument, resolution, width, since)
+                        c, instrument, resolution, width, since, end_ms)
             finally:
                 c.set_progress_handler(None, 0)
             next_position = (position + 1) % len(tasks)
@@ -1123,13 +1135,17 @@ class MicrostructureStore:
 
     def _aggregate_cvd(self, c: sqlite3.Connection, instrument: str,
                        resolution: str, width: int,
-                       since_ms: int | None = None) -> int:
+                       since_ms: int | None = None, end_ms: int | None = None) -> int:
         start_ms = ((since_ms // width) * width
                     if since_ms is not None else None)
-        time_filter = " AND source_ts_ms>=?" if start_ms is not None else ""
+        time_filter = ""
         parameters: tuple[Any, ...] = (width, width, instrument)
         if start_ms is not None:
+            time_filter += " AND source_ts_ms>=?"
             parameters += (start_ms,)
+        if end_ms is not None:
+            time_filter += " AND source_ts_ms<?"
+            parameters += (end_ms,)
         if resolution == "1m":
             rows = c.execute(
                 """SELECT (source_ts_ms / ?) * ? bucket,source_ts_ms,side,notional
@@ -1137,26 +1153,38 @@ class MicrostructureStore:
                    """ + time_filter + """
                    ORDER BY source_ts_ms,source_identity""", parameters).fetchall()
         else:
+            time_filter_agg = ""
+            parameters_agg: tuple[Any, ...] = (width, width, instrument)
+            if start_ms is not None:
+                time_filter_agg += " AND bucket_ms>=?"
+                parameters_agg += (start_ms,)
+            if end_ms is not None:
+                time_filter_agg += " AND bucket_ms<?"
+                parameters_agg += (end_ms,)
             rows = c.execute(
                 """SELECT (bucket_ms / ?) * ? bucket,first_source_ts_ms source_ts_ms,
                           buy_notional,sell_notional,observation_count,last_source_ts_ms
                           ,gap_flag
                    FROM cvd_aggregates WHERE instrument=? AND resolution='1m'
-                   """ + (" AND bucket_ms>=?" if start_ms is not None else "") + """
-                   ORDER BY bucket_ms""", parameters).fetchall()
+                   """ + time_filter_agg + """
+                   ORDER BY bucket_ms""", parameters_agg).fetchall()
         grouped: dict[int, list[sqlite3.Row]] = {}
         for row in rows:
             grouped.setdefault(int(row["bucket"]), []).append(row)
         cumulative = 0.0
         if grouped:
+            first_bucket = min(grouped)
+            day_start = (first_bucket // 86400000) * 86400000
             prior = c.execute(
                 """SELECT cumulative_anchored FROM cvd_aggregates
-                   WHERE instrument=? AND resolution=? AND bucket_ms<?
+                   WHERE instrument=? AND resolution=? AND bucket_ms<? AND bucket_ms>=?
                    ORDER BY bucket_ms DESC LIMIT 1""",
-                (instrument, resolution, min(grouped))).fetchone()
+                (instrument, resolution, first_bucket, day_start)).fetchone()
             cumulative = float(prior[0]) if prior else 0.0
         values = []
         for bucket, items in sorted(grouped.items()):
+            if bucket % 86400000 == 0:
+                cumulative = 0.0
             if resolution == "1m":
                 buy = sum(float(x["notional"]) for x in items if x["side"] == "buy")
                 sell = sum(float(x["notional"]) for x in items if x["side"] == "sell")
@@ -1196,13 +1224,17 @@ class MicrostructureStore:
 
     def _aggregate_oi(self, c: sqlite3.Connection, instrument: str,
                       resolution: str, width: int,
-                      since_ms: int | None = None) -> int:
+                      since_ms: int | None = None, end_ms: int | None = None) -> int:
         start_ms = ((since_ms // width) * width
                     if since_ms is not None else None)
-        time_filter = " AND source_ts_ms>=?" if start_ms is not None else ""
+        time_filter = ""
         parameters: tuple[Any, ...] = (width, width, instrument)
         if start_ms is not None:
+            time_filter += " AND source_ts_ms>=?"
             parameters += (start_ms,)
+        if end_ms is not None:
+            time_filter += " AND source_ts_ms<?"
+            parameters += (end_ms,)
         if resolution == "1m":
             rows = c.execute(
                 """SELECT (source_ts_ms / ?) * ? bucket,source_ts_ms,
@@ -1212,13 +1244,21 @@ class MicrostructureStore:
                    """ + time_filter + """
                    ORDER BY source_ts_ms,source_identity""", parameters).fetchall()
         else:
+            time_filter_agg = ""
+            parameters_agg: tuple[Any, ...] = (width, width, instrument)
+            if start_ms is not None:
+                time_filter_agg += " AND bucket_ms>=?"
+                parameters_agg += (start_ms,)
+            if end_ms is not None:
+                time_filter_agg += " AND bucket_ms<?"
+                parameters_agg += (end_ms,)
             rows = c.execute(
                 """SELECT (bucket_ms / ?) * ? bucket,first_source_ts_ms source_ts_ms,
                           first_value,last_value,min_value,max_value,observation_count,
                           last_source_ts_ms,gap_flag
                    FROM oi_aggregates WHERE instrument=? AND resolution='1m'
-                   """ + (" AND bucket_ms>=?" if start_ms is not None else "") + """
-                   ORDER BY bucket_ms""", parameters).fetchall()
+                   """ + time_filter_agg + """
+                   ORDER BY bucket_ms""", parameters_agg).fetchall()
         grouped: dict[int, list[sqlite3.Row]] = {}
         for row in rows:
             grouped.setdefault(int(row["bucket"]), []).append(row)
@@ -1266,14 +1306,18 @@ class MicrostructureStore:
 
     def _aggregate_basis(self, c: sqlite3.Connection, instrument: str,
                          resolution: str, width: int,
-                         since_ms: int | None = None) -> int:
+                         since_ms: int | None = None, end_ms: int | None = None) -> int:
         index_instrument = instrument.removesuffix("-SWAP")
         start_ms = ((since_ms // width) * width
                     if since_ms is not None else None)
-        mark_filter = " AND source_ts_ms>=?" if start_ms is not None else ""
+        mark_filter = ""
         mark_parameters: tuple[Any, ...] = (instrument,)
         if start_ms is not None:
+            mark_filter += " AND source_ts_ms>=?"
             mark_parameters += (start_ms,)
+        if end_ms is not None:
+            mark_filter += " AND source_ts_ms<?"
+            mark_parameters += (end_ms,)
         marks = c.execute(
             """SELECT source_ts_ms,close FROM mark_price_observations
                WHERE instrument=? AND state='confirmed'""" + mark_filter + """
@@ -1286,6 +1330,9 @@ class MicrostructureStore:
                 (SELECT MAX(source_ts_ms) FROM index_price_observations
                  WHERE instrument=? AND state='confirmed' AND source_ts_ms<=?), ?)"""
             index_parameters += (index_instrument, start_ms, start_ms)
+        if end_ms is not None:
+            index_filter += " AND source_ts_ms<?"
+            index_parameters += (end_ms,)
         indices = c.execute(
             """SELECT source_ts_ms,close FROM index_price_observations
                WHERE instrument=? AND state='confirmed'""" + index_filter + """

@@ -1286,21 +1286,54 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/api/status": self._send(SERVICE.status(instrument))
         elif parsed.path == "/api/paper/flow/health": self._send(SERVICE.flow_health())
         elif parsed.path == "/api/paper/flow/history/v1":
+            req_start = time.monotonic()
             try:
                 def history_int(name: str) -> int | None:
                     return int(query[name][0]) if name in query else None
+                
+                max_points_req = history_int("max_points")
+                if max_points_req is not None and max_points_req > 500:
+                    raise ValueError("max_points exceeds maximum allowed limit (500). Please paginate.")
+                max_points_resolved = max_points_req or 500
 
-                self._send(CANONICAL_FLOW_HISTORY.query(
+                result = CANONICAL_FLOW_HISTORY.query(
                     instrument,
                     query.get("series", ["cvd"])[0],
                     start=history_int("start"),
                     end=history_int("end"),
-                    max_points=history_int("max_points") or 1200,
+                    max_points=max_points_resolved,
                     cursor=query.get("cursor", [None])[0],
                     cvd_mode=query.get("cvd_mode", ["CONTINUOUS"])[0],
-                ))
+                )
+                
+                self._send(result)
+                
+                # Telemetry
+                LOGGER.info(
+                    "flow_history_api telemetry: query_duration_ms=%.1f returned_points=%d "
+                    "requested_buckets=%d gap_count=%d aggregate_available=%s "
+                    "source='%s' cancelled=False",
+                    (time.monotonic() - req_start) * 1000,
+                    result.get("returned_point_count", 0),
+                    max_points_resolved,
+                    result.get("gap_count", 0),
+                    result.get("aggregate_available", False),
+                    result.get("source", "unknown")
+                )
+                
             except ValueError as error:
                 self._send({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+            except Exception as e:
+                # Includes BrokenPipeError / ConnectionAbortedError for cancelled requests
+                LOGGER.warning(
+                    "flow_history_api telemetry: query_duration_ms=%.1f returned_points=0 "
+                    "requested_buckets=%s gap_count=0 aggregate_available=False "
+                    "source='unknown' cancelled=True error='%s'",
+                    (time.monotonic() - req_start) * 1000,
+                    query.get("max_points", ["500"])[0],
+                    str(e)
+                )
+                raise
         elif parsed.path == "/api/vpvr":
             def query_float(name: str) -> float | None:
                 try: return float(query[name][0]) if name in query else None

@@ -1,5 +1,7 @@
 services:
   crypto-bot:
+    profiles:
+      - ultimate-bot
     build: .
     env_file: .env
     volumes:

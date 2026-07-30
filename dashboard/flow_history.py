@@ -219,17 +219,22 @@ class CanonicalFlowHistoryStore:
                       AND source_ts_ms>=? AND source_ts_ms<=?""",
                 (canonical, requested_start * 1000, effective_end * 1000),
             ).fetchone()[0])
-            rows = connection.execute(
-                f"""SELECT * FROM {aggregate_table}
-                    WHERE instrument=? AND resolution='1m'
-                      AND bucket_ms>=? AND bucket_ms<=?
-                    ORDER BY bucket_ms""",
-                (
-                    canonical,
-                    minute_query_start * 1000,
-                    (query_end + resolution) * 1000 - 1,
-                ),
-            ).fetchall()
+            try:
+                rows = connection.execute(
+                    f"""SELECT * FROM {aggregate_table}
+                        WHERE instrument=? AND resolution='1m'
+                          AND bucket_ms>=? AND bucket_ms<=?
+                        ORDER BY bucket_ms""",
+                    (
+                        canonical,
+                        minute_query_start * 1000,
+                        (query_end + resolution) * 1000 - 1,
+                    ),
+                ).fetchall()
+            except sqlite3.OperationalError:
+                # Aggregate table not yet created; all minutes will appear as
+                # AGGREGATION_GAP (raw exists) or RAW_SOURCE_GAP.
+                rows = []
             minute_rows = {
                 int(row["bucket_ms"]) // 1000: row for row in rows
             }

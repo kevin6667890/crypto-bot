@@ -5,6 +5,10 @@ import { FlowHistoryPoint } from "./flowHistory";
 
 const MEMORY_POINT_LIMIT = 50_000;
 const memory = new Map<string, Candle[]>();
+type FlowProjectionPoint = Pick<FlowHistoryPoint, "time"> & {
+  value?: number | null;
+  status?: FlowHistoryPoint["status"];
+};
 
 export type CandlePage = {
   instrument: string;
@@ -136,7 +140,7 @@ export function exponentialMovingAverageSeries(candles: Candle[], period: number
  */
 export function flowOnCandleTimeline(
   candles: Candle[],
-  points: FlowHistoryPoint[],
+  points: FlowProjectionPoint[],
   timeframeSeconds: number,
 ): Array<{ time: UTCTimestamp; value: number } | WhitespaceData<UTCTimestamp>> {
   const sorted = [...points].sort((a, b) => a.time - b.time);
@@ -145,13 +149,13 @@ export function flowOnCandleTimeline(
     const start = Number(candle.time);
     const end = start + timeframeSeconds;
     while (pointIndex < sorted.length && sorted[pointIndex].time < start) pointIndex += 1;
-    let latest: FlowHistoryPoint | undefined;
+    let latest: FlowProjectionPoint | undefined;
     while (pointIndex < sorted.length && sorted[pointIndex].time < end) {
       latest = sorted[pointIndex];
       pointIndex += 1;
     }
-    return latest
-      ? { time: candle.time, value: latest.value }
+    return latest && latest.status !== "WHITESPACE" && Number.isFinite(latest.value)
+      ? { time: candle.time, value: Number(latest.value) }
       : { time: candle.time };
   });
 }

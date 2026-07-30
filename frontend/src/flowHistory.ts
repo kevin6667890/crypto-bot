@@ -2,8 +2,17 @@ import { ChartCacheKey, loadChartSnapshot, saveChartSnapshot } from "./chartStat
 import type { components } from "./api/generated";
 
 export type FlowSeriesName = components["schemas"]["FlowHistoryResponse"]["series"];
-export type FlowHistoryPoint = components["schemas"]["FlowHistoryPoint"];
-export type FlowHistoryResponse = components["schemas"]["FlowHistoryResponse"];
+type ContractFlowHistoryPoint = components["schemas"]["FlowHistoryPoint"];
+export type FlowHistoryPoint =
+  Omit<ContractFlowHistoryPoint, "status" | "source_complete" | "partial_after_gap">
+  & Partial<Pick<
+    ContractFlowHistoryPoint,
+    "status" | "source_complete" | "partial_after_gap"
+  >>;
+type ContractFlowHistoryResponse = components["schemas"]["FlowHistoryResponse"];
+export type FlowHistoryResponse =
+  Omit<ContractFlowHistoryResponse, "points">
+  & { points: FlowHistoryPoint[] };
 export type FlowCoverage = Omit<FlowHistoryResponse, "points">;
 export type FlowRangeRequest = {
   instrument: string;
@@ -22,7 +31,10 @@ const inflight = new Map<string, Promise<FlowHistoryResponse>>();
 
 const validPoint = (point: unknown): point is FlowHistoryPoint => {
   const row = point as FlowHistoryPoint;
-  return !!row && Number.isFinite(row.time) && Number.isFinite(row.value);
+  if (!row || !Number.isFinite(row.time)) return false;
+  if (row.status === "WHITESPACE") return row.value === undefined || row.value === null;
+  // Accept old cached points as VALID during the one-time contract upgrade.
+  return Number.isFinite(row.value);
 };
 
 export function flowHistoryKey(instrument: string, timeframe: string, series: FlowSeriesName) {
@@ -44,6 +56,25 @@ export function mergeHistoryPoints(
     for (const point of incoming) if (validPoint(point)) byTime.set(point.time, point);
   }
   return [...byTime.values()].sort((a, b) => a.time - b.time).slice(-limit);
+}
+
+export function flowStatusAtCandle(
+  candleTime: number,
+  timeframeSeconds: number,
+  points: FlowHistoryPoint[],
+) {
+  const matches = points.filter(point =>
+    point.time >= candleTime && point.time < candleTime + timeframeSeconds
+  );
+  const point = matches[matches.length - 1];
+  if (!point || point.status === "WHITESPACE" || !Number.isFinite(point.value)) {
+    return { status: "WHITESPACE" as const, value: null, partial: false };
+  }
+  return {
+    status: point.status || "VALID",
+    value: Number(point.value),
+    partial: point.status === "PARTIAL_AFTER_GAP" || point.partial_after_gap,
+  };
 }
 
 function localKey(instrument: string, timeframe: string, series: FlowSeriesName): ChartCacheKey {

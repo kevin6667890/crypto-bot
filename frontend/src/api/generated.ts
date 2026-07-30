@@ -344,12 +344,17 @@ export interface components {
         };
         FlowHistoryPoint: {
             time: components["schemas"]["UnixSeconds"];
-            value: number;
+            value?: number | null;
             delta?: number | null;
             trades?: number | null;
             min?: number | null;
             max?: number | null;
             observation_count?: number | null;
+            /** @enum {string} */
+            status: "VALID" | "WHITESPACE" | "PARTIAL_AFTER_GAP" | "ARCHIVED_CONFIRMED";
+            gap_reason?: string | null;
+            source_complete: boolean;
+            partial_after_gap: boolean;
         };
         FlowHistoryResponse: {
             api_version: string;

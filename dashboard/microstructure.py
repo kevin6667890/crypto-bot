@@ -824,7 +824,7 @@ class MicrostructureStore:
                 else:
                     width = RESOLUTIONS[resolution]
                     since = (
-                        current - 2 * RESOLUTIONS["1m"]
+                        current - LIVE_AGGREGATION_LOOKBACK_MS
                         if resolution == "1m" else current - width)
                     operation = {
                         "cvd": self._aggregate_cvd,
@@ -1176,9 +1176,9 @@ class MicrostructureStore:
             ]
             values.append((instrument, resolution, bucket, buy, sell, buy - sell, cumulative,
                            count, min(times), max(times),
-                           (self._gap_flag(times, width, 1_000)
-                            if resolution == "1m" else int(
-                                any(int(x["gap_flag"]) for x in items)
+                           (0 if resolution == "1m" else int(
+                                len(items) < width // RESOLUTIONS["1m"]
+                                or any(int(x["gap_flag"]) for x in items)
                                 or any(
                                     int(b["source_ts_ms"]) - int(a["source_ts_ms"])
                                     > RESOLUTIONS["1m"] * 2
@@ -1245,9 +1245,9 @@ class MicrostructureStore:
             pct = change / first if first else None
             values.append((instrument, resolution, bucket, first, last, minimum,
                            maximum, change, pct, count, min(times), max(times),
-                           (self._gap_flag(times, width, 15_000)
-                            if resolution == "1m" else int(
-                                any(int(x["gap_flag"]) for x in items)
+                           (0 if resolution == "1m" else int(
+                                len(items) < width // RESOLUTIONS["1m"]
+                                or any(int(x["gap_flag"]) for x in items)
                                 or any(
                                     int(b["source_ts_ms"]) - int(a["source_ts_ms"])
                                     > RESOLUTIONS["1m"] * 2

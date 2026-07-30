@@ -13,6 +13,7 @@ import {
   FlowSelectionGuard,
   FlowSeriesName,
   formatFlowCoverage,
+  flowStatusAtCandle,
   hydrateFlowHistory,
   olderPageRequest,
   persistedFlowInstrument,
@@ -197,7 +198,11 @@ function gapAware(
     if (previous && point.time - previous.time > resolutionSeconds * 1.5) {
       result.push({ time: (previous.time + resolutionSeconds) as UTCTimestamp });
     }
-    result.push({ time: point.time as UTCTimestamp, value: point.value });
+    result.push(
+      point.status === "WHITESPACE" || !Number.isFinite(point.value)
+        ? { time: point.time as UTCTimestamp }
+        : { time: point.time as UTCTimestamp, value: Number(point.value) },
+    );
   });
   return result;
 }
@@ -254,6 +259,10 @@ export function MarketChart({ instrument = "ETH-USDT", interval = "15m", flow }:
   const internalRangeActive = useRef(false);
   const latestCandleTime = useRef<number | null>(null);
   const crosshairTimestamp = useRef<number | null>(null);
+  const [crosshairFlow, setCrosshairFlow] = useState<{
+    cvd: ReturnType<typeof flowStatusAtCandle>;
+    oi: ReturnType<typeof flowStatusAtCandle>;
+  } | null>(null);
   const rangeChangeSource = useRef(new RangeChangeSource());
   const priceSourcesRef = useRef<PriceLabelSource[]>([]);
   const axisLabelsRef = useRef<Record<AxisSeriesId, NativePriceAxisLabel> | null>(null);
@@ -322,8 +331,8 @@ export function MarketChart({ instrument = "ETH-USDT", interval = "15m", flow }:
       values: config.id === "candles"
         ? data.candles.map(candle => ({ time: Number(candle.time), value: candle.close }))
         : config.id === "ema20" ? ema20 : config.id === "ma60" ? ma60 : ma200,
-      ...(config.id === "cvd" ? { values: projectedCvd.flatMap(point => "value" in point ? [{ time: Number(point.time), value: point.value }] : []) } : {}),
-      ...(config.id === "oi" ? { values: projectedOi.flatMap(point => "value" in point ? [{ time: Number(point.time), value: point.value }] : []) } : {}),
+      ...(config.id === "cvd" ? { values: projectedCvd.flatMap(point => "value" in point && Number.isFinite(point.value) ? [{ time: Number(point.time), value: Number(point.value) }] : []) } : {}),
+      ...(config.id === "oi" ? { values: projectedOi.flatMap(point => "value" in point && Number.isFinite(point.value) ? [{ time: Number(point.time), value: Number(point.value) }] : []) } : {}),
     }));
     if (timeScale && ingested.mode === "FOLLOWING_LATEST") {
       scrollToLatest();
@@ -382,6 +391,18 @@ export function MarketChart({ instrument = "ETH-USDT", interval = "15m", flow }:
     });
     chart.subscribeCrosshairMove(param => {
       crosshairTimestamp.current = typeof param.time === "number" ? Number(param.time) : null;
+      setCrosshairFlow(crosshairTimestamp.current === null ? null : {
+        cvd: flowStatusAtCandle(
+          crosshairTimestamp.current,
+          intervalSeconds(dataRef.current.interval),
+          dataRef.current.cvd,
+        ),
+        oi: flowStatusAtCandle(
+          crosshairTimestamp.current,
+          intervalSeconds(dataRef.current.interval),
+          dataRef.current.oi,
+        ),
+      });
       updateAxisLabels(crosshairTimestamp.current ?? undefined);
     });
     chart.timeScale().subscribeVisibleTimeRangeChange(range => {
@@ -482,6 +503,9 @@ export function MarketChart({ instrument = "ETH-USDT", interval = "15m", flow }:
     beginUserInteraction();
     interactionTimer.current = window.setTimeout(() => rangeChangeSource.current.endUser(), 180);
   };
+  const latestCvdPartial = [...cvd].reverse().find(point =>
+    point.status !== "WHITESPACE" && Number.isFinite(point.value)
+  )?.partial_after_gap === true;
   return <div
     className="chart-canvas"
     ref={containerRef}
@@ -491,14 +515,24 @@ export function MarketChart({ instrument = "ETH-USDT", interval = "15m", flow }:
     onWheel={handleWheel}
     onMouseLeave={() => {
       crosshairTimestamp.current = null;
+      setCrosshairFlow(null);
       endUserInteraction();
       updateAxisLabels();
     }}
   >
     <div className="market-flow-coverage" aria-label={t("flow.historyCoverage")}>
+      {latestCvdPartial && <span>CVD · {t("flow.partial")}</span>}
       <span>CVD（日内累计，UTC 00:00 重置） · {formatFlowCoverage(cvdHistory.coverage)}</span>
       <span>OI · {formatFlowCoverage(oiHistory.coverage)}</span>
     </div>
+    {crosshairFlow && <div className="market-flow-crosshair" role="status">
+      <span>CVD: {crosshairFlow.cvd.value === null
+        ? t("flow.noConfirmed")
+        : `${formatMillions(crosshairFlow.cvd.value)}${crosshairFlow.cvd.partial ? ` · ${t("flow.partial")}` : ""}`}</span>
+      <span>OI: {crosshairFlow.oi.value === null
+        ? t("flow.noConfirmed")
+        : formatMillions(crosshairFlow.oi.value)}</span>
+    </div>}
   </div>;
 }
 
@@ -523,7 +557,7 @@ export function FlowChart({ points, color = "#7c3aed", zeroLine = false, instrum
   const { t } = useLanguage();
   const history = useServerFlowHistory(instrument, interval, seriesType, points);
   const retained = history.points;
-  const normalized = retained.length === 1 ? [{ time: retained[0].time - 1, value: retained[0].value }, retained[0]] : retained;
+  const normalized = retained;
   const seriesRef = useRef<ISeriesApi<"Area"> | null>(null);
   const flowChartRef = useRef<IChartApi | null>(null);
   const rangeTimer = useRef(0);

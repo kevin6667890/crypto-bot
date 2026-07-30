@@ -35,6 +35,7 @@ try:
     from alert_service import AlertService
     from health_service import HealthService, configure_logging, log_event
     from flow_history import (
+        CanonicalFlowHistoryStore,
         FlowHistoryStore,
         RAW_RETENTION_SECONDS,
         RETENTION_POLICY_VERSION,
@@ -62,6 +63,7 @@ except ImportError:
     from .alert_service import AlertService
     from .health_service import HealthService, configure_logging, log_event
     from .flow_history import (
+        CanonicalFlowHistoryStore,
         FlowHistoryStore,
         RAW_RETENTION_SECONDS,
         RETENTION_POLICY_VERSION,
@@ -1090,6 +1092,7 @@ HEALTH = HealthService(DB_PATH,SERVICE,RESEARCH.jobs,ALERTS,ROOT)
 MICROSTRUCTURE = MicrostructureStore(
     Path(os.getenv("MICROSTRUCTURE_DB_PATH", ROOT / "data_cache" / "market_microstructure.db"))
 )
+CANONICAL_FLOW_HISTORY = CanonicalFlowHistoryStore(MICROSTRUCTURE.path)
 LIMITER = RateLimiter()
 LOGGER = configure_logging(ROOT)
 
@@ -1287,7 +1290,7 @@ class Handler(BaseHTTPRequestHandler):
                 def history_int(name: str) -> int | None:
                     return int(query[name][0]) if name in query else None
 
-                self._send(SERVICE.flow_history.query(
+                self._send(CANONICAL_FLOW_HISTORY.query(
                     instrument,
                     query.get("series", ["cvd"])[0],
                     start=history_int("start"),

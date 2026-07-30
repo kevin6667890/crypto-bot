@@ -173,7 +173,23 @@
         "additionalProperties": true
       },
       "EligibilitySummary": { "type": "object", "required": ["feature_groups"], "properties": { "_snapshot": { "type": "object", "nullable": true, "additionalProperties": true }, "aggregate_policy": { "type": "string", "nullable": true }, "feature_groups": { "type": "object", "additionalProperties": { "$ref": "#/components/schemas/EligibilityFeatureGroup" } } } },
-      "FlowHistoryPoint": { "type": "object", "required": ["time", "value"], "properties": { "time": { "$ref": "#/components/schemas/UnixSeconds" }, "value": { "type": "number" }, "delta": { "type": "number", "nullable": true }, "trades": { "type": "integer", "nullable": true }, "min": { "type": "number", "nullable": true }, "max": { "type": "number", "nullable": true }, "observation_count": { "type": "integer", "nullable": true } } },
+      "FlowHistoryPoint": {
+        "type": "object",
+        "required": ["time", "status", "source_complete", "partial_after_gap"],
+        "properties": {
+          "time": { "$ref": "#/components/schemas/UnixSeconds" },
+          "value": { "type": "number", "nullable": true },
+          "delta": { "type": "number", "nullable": true },
+          "trades": { "type": "integer", "nullable": true },
+          "min": { "type": "number", "nullable": true },
+          "max": { "type": "number", "nullable": true },
+          "observation_count": { "type": "integer", "nullable": true },
+          "status": { "type": "string", "enum": ["VALID", "WHITESPACE", "PARTIAL_AFTER_GAP", "ARCHIVED_CONFIRMED"] },
+          "gap_reason": { "type": "string", "nullable": true },
+          "source_complete": { "type": "boolean" },
+          "partial_after_gap": { "type": "boolean" }
+        }
+      },
       "FlowHistoryResponse": {
         "type": "object",
         "required": ["api_version", "instrument", "series", "requested_start", "requested_end", "available_start", "available_end", "latest_timestamp", "raw_row_count", "returned_point_count", "resolution", "resolution_seconds", "stale", "has_history", "has_more_before", "has_more_after", "next_before_cursor", "source", "retention_policy_version", "has_gaps", "gap_count", "fallback", "points"],

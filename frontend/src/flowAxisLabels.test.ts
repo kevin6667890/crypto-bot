@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { flowOnCandleTimeline } from "./candleHistory";
+import { flowStatusAtCandle } from "./flowHistory";
 import { NativePriceAxisLabelOptions, PriceLabelSource, updateLatestNativePriceAxisLabels, updateNativePriceAxisLabels } from "./priceLabels";
 import type { Candle } from "./data";
 
@@ -58,5 +59,14 @@ describe("shared historical CVD/OI axis labels", () => {
     updateLatestNativePriceAxisLabels(sources, labels);
     expect(applied.get("cvd")).toMatchObject({ price: 3_000_000, axisLabelVisible: true });
     expect(applied.get("oi")).toMatchObject({ price: 11_000_000, axisLabelVisible: true });
+  });
+
+  it("reports no confirmed data at whitespace without borrowing latest", () => {
+    const status = flowStatusAtCandle(160, 60, [
+      { time: 100, value: 1, status: "VALID", source_complete: true, partial_after_gap: false },
+      { time: 160, status: "WHITESPACE", source_complete: false, partial_after_gap: false },
+      { time: 220, value: 3, status: "PARTIAL_AFTER_GAP", source_complete: false, partial_after_gap: true },
+    ]);
+    expect(status).toEqual({ status: "WHITESPACE", value: null, partial: false });
   });
 });

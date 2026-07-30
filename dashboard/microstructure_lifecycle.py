@@ -521,6 +521,25 @@ def prune_archived_raw_trades(
                 int(time.time() * 1000),
             ),
         )
+        if after == 0 and connection.execute(
+            """SELECT 1 FROM sqlite_master
+               WHERE type='table' AND name='source_runtime_summary'"""
+        ).fetchone():
+            connection.execute(
+                """UPDATE source_runtime_summary
+                   SET earliest_ms=(
+                         SELECT source_ts_ms FROM trade_flow_observations
+                         WHERE instrument=?
+                         ORDER BY source_ts_ms LIMIT 1
+                       ),
+                       generated_at_ms=?
+                   WHERE lane='trades' AND instrument=?""",
+                (
+                    manifest["instrument"],
+                    int(time.time() * 1000),
+                    manifest["instrument"],
+                ),
+            )
         connection.commit()
         report.update(
             {

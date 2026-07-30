@@ -403,6 +403,16 @@ def test_prune_requires_verified_ack_reconciliation_gap_and_cold_window(
 
 def test_prune_is_bounded_resumable_and_never_vacuums(tmp_path: Path) -> None:
     source = _micro_database(tmp_path / "micro.db")
+    with sqlite3.connect(source) as connection:
+        connection.execute(
+            """CREATE TABLE source_runtime_summary(
+               lane TEXT,instrument TEXT,earliest_ms INTEGER,
+               generated_at_ms INTEGER)"""
+        )
+        connection.execute(
+            """INSERT INTO source_runtime_summary
+               VALUES('trades','BTC-USDT-SWAP',1577836800000,0)"""
+        )
     report = archive_raw_trade_day(
         source, tmp_path / "archive",
         instrument="BTC-USDT-SWAP", utc_day="2020-01-01",
@@ -421,6 +431,11 @@ def test_prune_is_bounded_resumable_and_never_vacuums(tmp_path: Path) -> None:
     assert second["deleted_rows"] == 4
     assert second["status"] == "ARCHIVED_CONFIRMED"
     assert second["vacuum"] is False
+    with sqlite3.connect(source) as connection:
+        assert connection.execute(
+            """SELECT earliest_ms FROM source_runtime_summary
+               WHERE lane='trades' AND instrument='BTC-USDT-SWAP'"""
+        ).fetchone()[0] is None
 
 
 def test_archived_interval_is_not_a_critical_gap_and_coverage_survives(

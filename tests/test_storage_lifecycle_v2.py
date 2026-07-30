@@ -436,6 +436,25 @@ def test_archived_interval_is_not_a_critical_gap_and_coverage_survives(
     assert btc["earliest_ms"] == start
 
 
+def test_coverage_survives_before_archive_schema_migration(
+    tmp_path: Path,
+) -> None:
+    store = MicrostructureStore(tmp_path / "store.db")
+    store.initialize()
+    with store.connect() as connection:
+        connection.execute("DROP TABLE microstructure_archive_manifest")
+
+    coverage = store.coverage()
+
+    assert coverage["_snapshot"]["source"] == "collector_runtime_summary"
+    assert all(
+        row["archive_status"] is None
+        for lane, rows in coverage.items()
+        if not lane.startswith("_")
+        for row in rows
+    )
+
+
 @pytest.mark.parametrize(
     ("free", "days85", "days90", "level"),
     (

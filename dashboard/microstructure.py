@@ -1382,16 +1382,25 @@ class MicrostructureStore:
                           generated_at_ms,data_as_of_ms,refreshing
                    FROM source_runtime_summary ORDER BY lane,instrument"""
             ).fetchall()
-            archived_rows = c.execute(
-                """SELECT lane,instrument,MIN(start_ms) earliest_ms,
-                          MAX(end_ms) latest_ms,SUM(row_count) row_count,
-                          MAX(updated_at_ms) updated_at_ms
-                   FROM microstructure_archive_manifest
-                   WHERE status='ARCHIVED_CONFIRMED'
-                     AND aggregate_reconciliation='PASS'
-                     AND gap_status='PASS'
-                   GROUP BY lane,instrument"""
-            ).fetchall()
+            archive_manifest_exists = c.execute(
+                """SELECT 1 FROM sqlite_master
+                   WHERE type='table'
+                     AND name='microstructure_archive_manifest'"""
+            ).fetchone()
+            archived_rows = (
+                c.execute(
+                    """SELECT lane,instrument,MIN(start_ms) earliest_ms,
+                              MAX(end_ms) latest_ms,SUM(row_count) row_count,
+                              MAX(updated_at_ms) updated_at_ms
+                       FROM microstructure_archive_manifest
+                       WHERE status='ARCHIVED_CONFIRMED'
+                         AND aggregate_reconciliation='PASS'
+                         AND gap_status='PASS'
+                       GROUP BY lane,instrument"""
+                ).fetchall()
+                if archive_manifest_exists
+                else []
+            )
             sql_finished = time.monotonic()
         archived = {
             (str(row["lane"]), str(row["instrument"])): row

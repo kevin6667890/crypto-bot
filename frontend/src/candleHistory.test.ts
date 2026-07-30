@@ -156,6 +156,20 @@ describe("candle master timeline", () => {
     expect(formatMillions(1_250_000)).toBe("1.25M");
   });
 
+  it("renders official whitespace and never bridges a confirmed gap", () => {
+    const candles = [candle(0), candle(60), candle(120)];
+    const projected = flowOnCandleTimeline(candles, [
+      { time: 0, value: 10, status: "VALID" },
+      { time: 60, status: "WHITESPACE" },
+      { time: 120, value: 30, status: "PARTIAL_AFTER_GAP" },
+    ], 60);
+    expect(projected).toEqual([
+      { time: 0, value: 10 },
+      { time: 60 },
+      { time: 120, value: 30 },
+    ]);
+  });
+
   it("normal refresh preservation never calls fitContent", () => {
     const scale = {
       getVisibleRange: () => ({ from: 1, to: 2 }),

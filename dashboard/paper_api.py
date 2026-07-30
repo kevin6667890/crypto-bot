@@ -35,6 +35,7 @@ try:
     from alert_service import AlertService
     from health_service import HealthService, configure_logging, log_event
     from flow_history import (
+        CanonicalFlowHistoryStore,
         FlowHistoryStore,
         RAW_RETENTION_SECONDS,
         RETENTION_POLICY_VERSION,
@@ -62,6 +63,7 @@ except ImportError:
     from .alert_service import AlertService
     from .health_service import HealthService, configure_logging, log_event
     from .flow_history import (
+        CanonicalFlowHistoryStore,
         FlowHistoryStore,
         RAW_RETENTION_SECONDS,
         RETENTION_POLICY_VERSION,
@@ -281,7 +283,10 @@ class PaperService:
         self._init_db()
         self.flow_history = FlowHistoryStore(self.db_path)
         self.flow_history.initialize()
-        self.flow_history.backfill()
+        # backfill() intentionally removed: calling it on startup causes
+        # sustained iowait >79% whenever RETENTION_POLICY_VERSION changes,
+        # because it re-scans all 90 days of raw history across 24 lanes.
+        # Use the CLI tool to backfill manually when needed:
         self.last_analysis: dict[str, dict[str, Any]] = {
             instrument: {"instrument": instrument, "status": "Starting", "action": "WAIT", "score": 0, "updated_at": now_iso()}
             for instrument in INSTRUMENTS
@@ -623,8 +628,9 @@ class PaperService:
         self.flow_collectors.stop()
 
     def _prune_flow_retention(self) -> None:
-        """Prune bounded raw data only after durable aggregates are current."""
-        self.flow_history.backfill()
+        """Prune bounded raw data without triggering a full-history rescan."""
+        # backfill() removed: it would cause an I/O storm on every prune cycle
+        # when the migration key changes (e.g. on RETENTION_POLICY_VERSION bump).
         cutoff = int(time.time()) - FLOW_RETENTION_SECONDS
         with self._connect() as conn:
             conn.execute("DELETE FROM flow_trade_buckets WHERE ts<?", (cutoff,))
@@ -1090,6 +1096,7 @@ HEALTH = HealthService(DB_PATH,SERVICE,RESEARCH.jobs,ALERTS,ROOT)
 MICROSTRUCTURE = MicrostructureStore(
     Path(os.getenv("MICROSTRUCTURE_DB_PATH", ROOT / "data_cache" / "market_microstructure.db"))
 )
+CANONICAL_FLOW_HISTORY = CanonicalFlowHistoryStore(MICROSTRUCTURE.path)
 LIMITER = RateLimiter()
 LOGGER = configure_logging(ROOT)
 
@@ -1287,7 +1294,7 @@ class Handler(BaseHTTPRequestHandler):
                 def history_int(name: str) -> int | None:
                     return int(query[name][0]) if name in query else None
 
-                self._send(SERVICE.flow_history.query(
+                self._send(CANONICAL_FLOW_HISTORY.query(
                     instrument,
                     query.get("series", ["cvd"])[0],
                     start=history_int("start"),

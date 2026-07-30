@@ -99,6 +99,36 @@ def _safe_state(path: Path) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def update_storage_lifecycle_state(
+    data_cache: Path | str, **values: Any
+) -> dict[str, Any]:
+    directory = Path(data_cache).resolve()
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / STATE_FILE_NAME
+    state = _safe_state(path)
+    state.update(values)
+    state["updated_at"] = (
+        datetime.now(timezone.utc).replace(microsecond=0).isoformat()
+    )
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    with temporary.open("w", encoding="utf-8") as handle:
+        json.dump(state, handle, sort_keys=True, indent=2)
+        handle.write("\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    os.replace(temporary, path)
+    try:
+        descriptor = os.open(directory, os.O_RDONLY)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+    except OSError:
+        # Directory fsync is unavailable on some local test platforms.
+        pass
+    return state
+
+
 def _days_to(total: int, used: int, rate: float | None, percent: float) -> float | None:
     if rate is None or rate <= 0:
         return None

@@ -12,6 +12,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from dashboard.microstructure_lifecycle import archive_raw_trade_day  # noqa: E402
+from dashboard.storage_guard import update_storage_lifecycle_state  # noqa: E402
 
 
 def main() -> int:
@@ -29,6 +30,18 @@ def main() -> int:
         instrument=args.instrument,
         utc_day=args.utc_day,
         compression=args.compression,
+    )
+    update_storage_lifecycle_state(
+        args.database.resolve().parent,
+        raw_retention_status="ARCHIVE_VERIFIED",
+        last_archive=report["archive_time"],
+        last_archive_sha256=report["archive_sha256"],
+        last_archive_window={
+            "instrument": report["instrument"],
+            "utc_day": report["utc_day"],
+            "row_count": report["row_count"],
+        },
+        prune_backlog=report["row_count"],
     )
     serialized = json.dumps(report, sort_keys=True, indent=2) + "\n"
     if args.report:

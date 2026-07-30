@@ -36,7 +36,11 @@ from dashboard.snapshot_storage import (
     validate_compact_payload,
     write_compact_snapshot,
 )
-from dashboard.storage_guard import evaluate_disk_guard
+from dashboard.storage_guard import (
+    evaluate_disk_guard,
+    storage_operations_summary,
+    update_storage_lifecycle_state,
+)
 
 
 def _analysis(*, oversized: bool = True) -> dict[str, object]:
@@ -514,6 +518,34 @@ def test_disk_guard_levels_keep_core_ledgers(
     assert decision.core_ledger_allowed
     assert decision.core_aggregates_allowed
     assert decision.optional_artifacts_allowed is (level == "NORMAL")
+
+
+def test_storage_lifecycle_state_update_is_atomic_and_preserves_growth(
+    tmp_path: Path,
+) -> None:
+    data_cache = tmp_path / "data_cache"
+    update_storage_lifecycle_state(
+        data_cache,
+        growth_history=[{"total_bytes": 1}],
+        growth_bytes_per_day={"total": 100},
+    )
+    state = update_storage_lifecycle_state(
+        data_cache,
+        raw_retention_status="ARCHIVED_CONFIRMED",
+        last_archive="2026-07-30T01:28:01+00:00",
+        last_offhost_ack="2026-07-30T01:28:15+00:00",
+        prune_backlog=0,
+    )
+
+    assert state["growth_history"] == [{"total_bytes": 1}]
+    assert state["raw_retention_status"] == "ARCHIVED_CONFIRMED"
+    assert not (data_cache / "storage_lifecycle_state.json.tmp").exists()
+    summary = storage_operations_summary(
+        tmp_path, tmp_path / "paper.db", tmp_path / "micro.db"
+    )
+    assert summary["last_archive"] == "2026-07-30T01:28:01+00:00"
+    assert summary["last_offhost_ack"] == "2026-07-30T01:28:15+00:00"
+    assert summary["prune_backlog"] == 0
 
 
 def test_lifecycle_sources_never_vacuum_or_call_order_creation() -> None:

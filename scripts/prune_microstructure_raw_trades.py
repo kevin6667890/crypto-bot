@@ -16,6 +16,7 @@ from dashboard.microstructure_lifecycle import (  # noqa: E402
     load_raw_trade_manifest,
     prune_archived_raw_trades,
 )
+from dashboard.storage_guard import update_storage_lifecycle_state  # noqa: E402
 
 
 def main() -> int:
@@ -63,6 +64,21 @@ def main() -> int:
             .isoformat(),
         }
     )
+    if args.apply:
+        update_storage_lifecycle_state(
+            args.database.resolve().parent,
+            raw_retention_status=report.get("status", "PRUNE_IN_PROGRESS"),
+            last_archive=manifest.get("archive_time"),
+            last_archive_sha256=manifest["archive_sha256"],
+            last_archive_window={
+                "instrument": manifest["instrument"],
+                "utc_day": manifest["utc_day"],
+                "row_count": manifest["row_count"],
+            },
+            last_offhost_ack=ack.get("local_verification_time"),
+            last_offhost_ack_sha256=ack.get("ack_sha256"),
+            prune_backlog=report.get("remaining_rows", manifest["row_count"]),
+        )
     serialized = json.dumps(report, sort_keys=True, indent=2) + "\n"
     if args.checkpoint:
         args.checkpoint.parent.mkdir(parents=True, exist_ok=True)

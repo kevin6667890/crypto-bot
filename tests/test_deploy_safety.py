@@ -12,6 +12,9 @@ def test_docker_compose_ultimate_bot_profile():
     assert "profiles" in crypto_bot, "crypto-bot must have a profile defined"
     assert "ultimate-bot" in crypto_bot["profiles"], "crypto-bot must have 'ultimate-bot' profile to prevent bare up"
 
+    collector = services["microstructure-collector"]
+    assert collector["environment"]["MICROSTRUCTURE_MAINTENANCE_ENABLED"] == "false"
+
 def test_deploy_scripts_no_bare_up_d():
     # Recursively check for 'docker compose up -d' without explicit service names
     root = os.path.join(os.path.dirname(__file__), "..")

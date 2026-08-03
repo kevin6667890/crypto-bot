@@ -139,7 +139,14 @@ class MicrostructureStore:
             "last_checkpoint_result": None,
             "last_checkpoint_mode": None,
             "last_maintenance_duration_ms": None,
+            "maintenance_enabled": None,
+            "maintenance_status": "UNKNOWN",
             "maintenance_paused_reason": None,
+            "realtime_aggregation_enabled": None,
+            "realtime_aggregation_status": "UNKNOWN",
+            "realtime_aggregation_pending_buckets": 0,
+            "realtime_aggregation_last_duration_ms": None,
+            "realtime_aggregation_catchup": False,
             "received_timestamp_by_instrument": {},
             "persisted_timestamp_by_instrument": {},
             "live_lag_ms_by_instrument": {},
@@ -404,6 +411,19 @@ class MicrostructureStore:
                     observation_count INTEGER NOT NULL, first_source_ts_ms INTEGER NOT NULL,
                     last_source_ts_ms INTEGER NOT NULL, gap_flag INTEGER NOT NULL,
                     source_version TEXT NOT NULL, PRIMARY KEY(instrument,resolution,bucket_ms));
+                CREATE TABLE IF NOT EXISTS realtime_aggregate_fingerprints(
+                    instrument TEXT NOT NULL,
+                    series TEXT NOT NULL CHECK(series IN ('cvd','oi')),
+                    resolution TEXT NOT NULL CHECK(resolution IN ('1m','5m','15m','1H')),
+                    bucket_ms INTEGER NOT NULL,
+                    source_fingerprint TEXT,
+                    status TEXT NOT NULL CHECK(status IN ('VALID','MISSING','CONFLICT')),
+                    first_source_ts_ms INTEGER,
+                    last_source_ts_ms INTEGER,
+                    observation_count INTEGER NOT NULL,
+                    detail_json TEXT NOT NULL,
+                    updated_at_ms INTEGER NOT NULL,
+                    PRIMARY KEY(instrument,series,resolution,bucket_ms));
                 CREATE TABLE IF NOT EXISTS basis_aggregates(
                     instrument TEXT NOT NULL, resolution TEXT NOT NULL, bucket_ms INTEGER NOT NULL,
                     first_basis REAL NOT NULL, last_basis REAL NOT NULL, min_basis REAL NOT NULL,
@@ -2101,10 +2121,13 @@ class MicrostructureStore:
                     row["status"] for row in health_rows
                     if row["component"] == "liquidations"), "INITIALIZING"),
             },
-            "maintenance_status": (
-                "RUNNING" if maintenance_cursor
-                and current - int(maintenance_cursor["updated_at_ms"]) < 120_000
-                else "INITIALIZING"),
+            "maintenance_status": next((
+                "DISABLED" for row in health_rows
+                if row["component"] == "maintenance"
+                and row["status"] == "DISABLED"), (
+                    "RUNNING" if maintenance_cursor
+                    and current - int(maintenance_cursor["updated_at_ms"]) < 120_000
+                    else "INITIALIZING")),
         }
         return result
 
@@ -2128,6 +2151,16 @@ class MicrostructureStore:
                 .get("status", "not_recently_checked")),
             "maintenance": {
                 "status": health["maintenance_status"],
+            },
+            "realtime_aggregation": {
+                "status": self.operational_metrics()[
+                    "realtime_aggregation_status"],
+                "enabled": self.operational_metrics()[
+                    "realtime_aggregation_enabled"],
+                "pending_buckets": self.operational_metrics()[
+                    "realtime_aggregation_pending_buckets"],
+                "catchup": self.operational_metrics()[
+                    "realtime_aggregation_catchup"],
             },
             "coverage_snapshot": health["coverage_snapshot"],
         }

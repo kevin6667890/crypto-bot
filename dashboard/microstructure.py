@@ -153,6 +153,15 @@ class MicrostructureStore:
             "realtime_aggregation_pending_buckets": 0,
             "realtime_aggregation_last_duration_ms": None,
             "realtime_aggregation_catchup": False,
+            "realtime_aggregation_task_alive": False,
+            "realtime_aggregation_task_created_at_ms": None,
+            "realtime_aggregation_last_success_at_ms": None,
+            "realtime_aggregation_last_cycle_at_ms": None,
+            "realtime_aggregation_last_heartbeat_at_ms": None,
+            "realtime_aggregation_current_await": None,
+            "realtime_aggregation_task_exception": None,
+            "realtime_aggregation_task_restart_count": 0,
+            "realtime_aggregation_consecutive_failures": 0,
             "received_timestamp_by_instrument": {},
             "persisted_timestamp_by_instrument": {},
             "live_lag_ms_by_instrument": {},
@@ -2140,6 +2149,7 @@ class MicrostructureStore:
     def operations_summary(self) -> dict[str, Any]:
         health = self.health_summary()
         writer = health["data_plane_status"]
+        realtime = self.liveness()
         return {
             "collector": {
                 "status": writer["status"],
@@ -2159,14 +2169,29 @@ class MicrostructureStore:
                 "status": health["maintenance_status"],
             },
             "realtime_aggregation": {
-                "status": self.operational_metrics()[
-                    "realtime_aggregation_status"],
-                "enabled": self.operational_metrics()[
-                    "realtime_aggregation_enabled"],
-                "pending_buckets": self.operational_metrics()[
+                "status": realtime["realtime_aggregation_health"],
+                "runtime_status": realtime["realtime_aggregation_status"],
+                "enabled": realtime["realtime_aggregation_enabled"],
+                "pending_buckets": realtime[
                     "realtime_aggregation_pending_buckets"],
-                "catchup": self.operational_metrics()[
-                    "realtime_aggregation_catchup"],
+                "catchup": realtime["realtime_aggregation_catchup"],
+                "task_alive": realtime["realtime_aggregation_task_alive"],
+                "last_success_at_ms": realtime[
+                    "realtime_aggregation_last_success_at_ms"],
+                "last_cycle_at_ms": realtime[
+                    "realtime_aggregation_last_cycle_at_ms"],
+                "last_heartbeat_at_ms": realtime[
+                    "realtime_aggregation_last_heartbeat_at_ms"],
+                "current_await": realtime[
+                    "realtime_aggregation_current_await"],
+                "task_exception": realtime[
+                    "realtime_aggregation_task_exception"],
+                "task_restart_count": realtime[
+                    "realtime_aggregation_task_restart_count"],
+                "latest_raw_watermark": realtime["latest_raw_watermark"],
+                "latest_aggregate_watermark": realtime[
+                    "latest_aggregate_watermark"],
+                "aggregate_lag_seconds": realtime["aggregate_lag_seconds"],
             },
             "coverage_snapshot": health["coverage_snapshot"],
         }
@@ -2371,12 +2396,40 @@ class MicrostructureStore:
 
     def liveness(self) -> dict[str, Any]:
         """Return constant-time process health without scanning historical rows."""
+        metrics = self.operational_metrics()
+        raw = metrics.get("persisted_timestamp_by_instrument") or {}
+        aggregate = metrics.get("aggregated_timestamp_by_instrument") or {}
+        lag_by_instrument = {
+            instrument: max(0, int(raw_ms) - int(aggregate[instrument])) // 1000
+            for instrument, raw_ms in raw.items()
+            if raw_ms is not None and aggregate.get(instrument) is not None
+        }
+        enabled = bool(metrics.get("realtime_aggregation_enabled"))
+        alive = bool(metrics.get("realtime_aggregation_task_alive"))
+        exhausted = (
+            metrics.get("realtime_aggregation_status") == "FAILED")
+        lagged = bool(lag_by_instrument) and max(lag_by_instrument.values()) > 180
+        aggregation_health = (
+            "FAILED" if enabled and exhausted
+            else "DEGRADED" if enabled and (not alive or lagged)
+            else "HEALTHY"
+        )
         return {
-            "service_status": "RUNNING",
+            "service_status": (
+                "FAILED" if aggregation_health == "FAILED"
+                else "DEGRADED" if aggregation_health == "DEGRADED"
+                else "RUNNING"),
             "database_schema_version": MICROSTRUCTURE_SCHEMA_VERSION,
             "database_exists": self.path.exists(),
             "database_size_bytes": self.path.stat().st_size if self.path.exists() else 0,
-            **self.operational_metrics(),
+            **metrics,
+            "realtime_aggregation_health": aggregation_health,
+            "latest_raw_watermark": max(raw.values()) if raw else None,
+            "latest_aggregate_watermark": (
+                min(aggregate.values()) if aggregate else None),
+            "aggregate_lag_seconds": (
+                max(lag_by_instrument.values()) if lag_by_instrument else None),
+            "aggregate_lag_seconds_by_instrument": lag_by_instrument,
         }
 
 

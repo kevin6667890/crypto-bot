@@ -56,7 +56,7 @@ def test_realtime_task_is_independent_of_disabled_maintenance(tmp_path: Path) ->
         return names
 
     names = asyncio.run(scenario())
-    assert "realtime-aggregation" in names
+    assert "realtime-aggregation-supervisor" in names
     assert "retention-aggregation" not in names
     assert "serialized-sqlite-writer" in names
     assert "public-trades-BTC-USDT-SWAP" in names
@@ -77,6 +77,131 @@ def test_realtime_disabled_does_not_schedule_task(tmp_path: Path) -> None:
         return names
 
     assert "realtime-aggregation" not in asyncio.run(scenario())
+
+
+def test_one_instrument_failure_does_not_stop_other_instruments(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    value = store(tmp_path)
+    collector = Collector(
+        value, maintenance_enabled=False, realtime_aggregation_enabled=True)
+    called: list[str] = []
+
+    async def aggregate(_engine, instrument, *_args, **_kwargs):
+        called.append(instrument)
+        if instrument == "ETH-USDT-SWAP":
+            raise RuntimeError("instrument boom")
+
+    monkeypatch.setattr(collector, "_aggregate_range", aggregate)
+
+    async def scenario() -> tuple[bool, bool]:
+        engine = RealtimeAggregationEngine(value)
+        failed = await collector._aggregate_instrument_safely(
+            engine, "ETH-USDT-SWAP", 0, MINUTE_MS, catchup=False)
+        succeeded = await collector._aggregate_instrument_safely(
+            engine, "BTC-USDT-SWAP", 0, MINUTE_MS, catchup=False)
+        return failed, succeeded
+
+    assert asyncio.run(scenario()) == (False, True)
+    assert called == ["ETH-USDT-SWAP", "BTC-USDT-SWAP"]
+    metrics = value.operational_metrics()
+    assert metrics["realtime_aggregation_status"] == "DEGRADED"
+    assert "RuntimeError" in metrics["realtime_aggregation_task_exception"]
+
+
+def test_supervisor_restarts_once_and_reports_liveness(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    value = store(tmp_path)
+    collector = Collector(
+        value, maintenance_enabled=False, realtime_aggregation_enabled=True)
+    attempts = 0
+    restarted = asyncio.Event()
+    monkeypatch.setattr(
+        "dashboard.microstructure_collector.REALTIME_RESTART_BASE_SECONDS", 0)
+
+    async def worker() -> None:
+        nonlocal attempts
+        attempts += 1
+        if attempts == 1:
+            raise RuntimeError("task boom")
+        restarted.set()
+        await collector.stop_event.wait()
+
+    monkeypatch.setattr(collector, "_realtime_aggregation_loop", worker)
+    async def scenario() -> dict[str, object]:
+        task = asyncio.create_task(collector._supervise_realtime_aggregation())
+        await restarted.wait()
+        metrics = value.operational_metrics()
+        collector.stop_event.set()
+        await task
+        return metrics
+
+    metrics = asyncio.run(scenario())
+    assert attempts == 2
+    assert metrics["realtime_aggregation_task_restart_count"] == 1
+    assert metrics["realtime_aggregation_task_alive"] is True
+
+
+def test_supervisor_stops_after_bounded_consecutive_failures(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    value = store(tmp_path)
+    collector = Collector(
+        value, maintenance_enabled=False, realtime_aggregation_enabled=True)
+    monkeypatch.setattr(
+        "dashboard.microstructure_collector.REALTIME_RESTART_BASE_SECONDS", 0)
+    monkeypatch.setattr(
+        "dashboard.microstructure_collector.REALTIME_RESTART_MAX_CONSECUTIVE", 2)
+
+    async def worker() -> None:
+        raise RuntimeError("always broken")
+
+    monkeypatch.setattr(collector, "_realtime_aggregation_loop", worker)
+
+    async def scenario() -> None:
+        task = asyncio.create_task(collector._supervise_realtime_aggregation())
+        while value.operational_metrics()["realtime_aggregation_status"] != "FAILED":
+            await asyncio.sleep(0)
+        collector.stop_event.set()
+        await task
+
+    asyncio.run(scenario())
+    metrics = value.operational_metrics()
+    assert metrics["realtime_aggregation_task_alive"] is False
+    assert metrics["realtime_aggregation_task_restart_count"] == 1
+    assert metrics["realtime_aggregation_consecutive_failures"] == 2
+    assert value.liveness()["realtime_aggregation_health"] == "FAILED"
+
+
+def test_liveness_degrades_when_raw_advances_past_aggregate(tmp_path: Path) -> None:
+    value = store(tmp_path)
+    value.update_operational_metrics(
+        realtime_aggregation_enabled=True,
+        realtime_aggregation_task_alive=True,
+        realtime_aggregation_status="LIVE",
+        persisted_timestamp_by_instrument={INSTRUMENT: 600_000},
+        aggregated_timestamp_by_instrument={INSTRUMENT: 300_000})
+    health = value.liveness()
+    assert health["realtime_aggregation_health"] == "DEGRADED"
+    assert health["aggregate_lag_seconds"] == 300
+
+
+def test_liveness_detects_dead_task_as_degraded(tmp_path: Path) -> None:
+    value = store(tmp_path)
+    value.update_operational_metrics(
+        realtime_aggregation_enabled=True,
+        realtime_aggregation_task_alive=False,
+        realtime_aggregation_status="DEGRADED")
+    health = value.liveness()
+    assert health["service_status"] == "DEGRADED"
+    assert health["realtime_aggregation_health"] == "DEGRADED"
+
+
+def test_live_loop_is_limited_to_fifteen_minute_lookback() -> None:
+    source = inspect.getsource(Collector._realtime_aggregation_loop)
+    assert "LIVE_LOOKBACK_MINUTES * MINUTE_MS" in source
+    assert "24 *" not in source
 
 
 def test_live_engine_has_no_maintenance_backfill_or_history_entrypoint() -> None:

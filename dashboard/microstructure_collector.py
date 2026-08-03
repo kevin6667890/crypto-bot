@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import random
 import signal
@@ -40,6 +41,12 @@ LIVE_BATCH_MAX = 300
 LIVE_BATCH_DELAY_SECONDS = 0.15
 TRADE_STALL_SECONDS = 30
 FUNDING_HISTORY_POLL_SECONDS = 300
+REALTIME_RESTART_BASE_SECONDS = 5
+REALTIME_RESTART_MAX_SECONDS = 60
+REALTIME_RESTART_MAX_CONSECUTIVE = 5
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 def environment_flag(name: str, *, default: bool = False) -> bool:
@@ -153,6 +160,15 @@ class Collector:
                 "ENABLED" if self.realtime_aggregation_enabled else "DISABLED"),
             realtime_aggregation_pending_buckets=0,
             realtime_aggregation_catchup=False,
+            realtime_aggregation_task_alive=False,
+            realtime_aggregation_task_created_at_ms=None,
+            realtime_aggregation_last_success_at_ms=None,
+            realtime_aggregation_last_cycle_at_ms=None,
+            realtime_aggregation_last_heartbeat_at_ms=None,
+            realtime_aggregation_current_await=None,
+            realtime_aggregation_task_exception=None,
+            realtime_aggregation_task_restart_count=0,
+            realtime_aggregation_consecutive_failures=0,
         )
         self.stop_event = asyncio.Event()
         self.realtime_catchup_event = asyncio.Event()
@@ -239,8 +255,8 @@ class Collector:
                 name="retention-aggregation"))
         if self.realtime_aggregation_enabled:
             tasks.append(asyncio.create_task(
-                self._guard_realtime_aggregation(),
-                name="realtime-aggregation"))
+                self._supervise_realtime_aggregation(),
+                name="realtime-aggregation-supervisor"))
         return tasks
 
     async def run(self) -> None:
@@ -430,31 +446,119 @@ class Collector:
                 source_lag_ms=(max(0, now_ms() - int(latest))
                                if latest is not None else None),
                 last_error=(f"missing_buckets={missing}" if missing else None))
+            self.store.update_operational_metrics(
+                realtime_aggregation_last_success_at_ms=now_ms(),
+                realtime_aggregation_last_heartbeat_at_ms=now_ms(),
+                realtime_aggregation_task_exception=None)
             if catchup and position < end_ms:
                 try:
                     await asyncio.wait_for(self.stop_event.wait(), timeout=2)
                 except TimeoutError:
                     pass
 
-    async def _guard_realtime_aggregation(self) -> None:
-        """Pause on one hard failure; realtime aggregation never retry-loops."""
+    async def _supervise_realtime_aggregation(self) -> None:
+        """Bounded supervisor for an unexpectedly terminated aggregate task."""
+        restarts = 0
+        consecutive = 0
+        while not self.stop_event.is_set():
+            created_at = now_ms()
+            self.store.update_operational_metrics(
+                realtime_aggregation_task_alive=True,
+                realtime_aggregation_task_created_at_ms=created_at,
+                realtime_aggregation_last_heartbeat_at_ms=created_at,
+                realtime_aggregation_current_await="realtime aggregation cycle",
+                realtime_aggregation_status="STARTING" if restarts else "ENABLED",
+                realtime_aggregation_task_restart_count=restarts,
+                realtime_aggregation_consecutive_failures=consecutive)
+            task = asyncio.create_task(
+                self._realtime_aggregation_loop(),
+                name="realtime-aggregation")
+            try:
+                await task
+                if not self.stop_event.is_set():
+                    raise RuntimeError("realtime aggregation task returned unexpectedly")
+                self.store.update_operational_metrics(
+                    realtime_aggregation_task_alive=False,
+                    realtime_aggregation_current_await="stopped")
+                return
+            except asyncio.CancelledError:
+                task.cancel()
+                await asyncio.gather(task, return_exceptions=True)
+                self.store.update_operational_metrics(
+                    realtime_aggregation_task_alive=False,
+                    realtime_aggregation_current_await="cancelled")
+                raise
+            except Exception as error:
+                if now_ms() - created_at >= 60_000:
+                    consecutive = 0
+                consecutive += 1
+                error_text = f"{type(error).__name__}: {error}"
+                LOGGER.exception("realtime aggregation task terminated")
+                failed = consecutive >= REALTIME_RESTART_MAX_CONSECUTIVE
+                self.store.update_operational_metrics(
+                    realtime_aggregation_task_alive=False,
+                    realtime_aggregation_status=("FAILED" if failed else "DEGRADED"),
+                    realtime_aggregation_task_exception=error_text[:1000],
+                    realtime_aggregation_consecutive_failures=consecutive,
+                    realtime_aggregation_current_await=(
+                        "restart limit exhausted" if failed else "restart backoff"))
+                await self._record_health(
+                    "realtime-aggregation", "FAILED" if failed else "DEGRADED",
+                    last_error=error_text[:160], retry_count=restarts)
+                if failed:
+                    await self.stop_event.wait()
+                    return
+                restarts += 1
+                self.store.update_operational_metrics(
+                    realtime_aggregation_task_restart_count=restarts)
+                delay = min(
+                    REALTIME_RESTART_MAX_SECONDS,
+                    REALTIME_RESTART_BASE_SECONDS * (2 ** (consecutive - 1)))
+                try:
+                    await asyncio.wait_for(self.stop_event.wait(), timeout=delay)
+                except TimeoutError:
+                    pass
+
+    async def _aggregate_instrument_safely(
+        self, engine: RealtimeAggregationEngine, instrument: str,
+        start_ms: int, end_ms: int, *, catchup: bool,
+    ) -> bool:
+        """Isolate one instrument failure without advancing its cursor."""
         try:
-            await self._realtime_aggregation_loop()
+            self.store.update_operational_metrics(
+                realtime_aggregation_current_await=(
+                    f"aggregate {instrument} {start_ms}:{end_ms}"),
+                realtime_aggregation_last_heartbeat_at_ms=now_ms())
+            await self._aggregate_range(
+                engine, instrument, start_ms, end_ms, catchup=catchup)
+            return True
         except asyncio.CancelledError:
             raise
         except Exception as error:
+            error_text = f"{type(error).__name__}: {error}"
+            LOGGER.exception(
+                "realtime aggregation instrument failed instrument=%s start_ms=%s end_ms=%s",
+                instrument, start_ms, end_ms)
             self.store.update_operational_metrics(
-                realtime_aggregation_status="PAUSED_ERROR")
+                realtime_aggregation_status="DEGRADED",
+                realtime_aggregation_task_exception=error_text[:1000],
+                realtime_aggregation_last_heartbeat_at_ms=now_ms(),
+                realtime_aggregation_current_await="next bounded cycle")
             await self._record_health(
-                "realtime-aggregation", "PAUSED_ERROR",
-                last_error=f"{type(error).__name__}: {str(error)[:160]}")
-            await self.stop_event.wait()
+                f"realtime-aggregation:{instrument}", "ERROR",
+                last_error=error_text[:160])
+            return False
 
     async def _realtime_aggregation_loop(self) -> None:
         """Close live buckets independently of all historical maintenance."""
         engine = RealtimeAggregationEngine(self.store)
         last_normal_end: int | None = None
         while not self.stop_event.is_set():
+            cycle_at = now_ms()
+            self.store.update_operational_metrics(
+                realtime_aggregation_task_alive=True,
+                realtime_aggregation_last_cycle_at_ms=cycle_at,
+                realtime_aggregation_last_heartbeat_at_ms=cycle_at)
             # Five seconds allows the final live trade/OI samples to reach the
             # serialized writer before the just-closed minute is finalized.
             completed_end = ((now_ms() - 5_000) // MINUTE_MS) * MINUTE_MS
@@ -467,7 +571,7 @@ class Collector:
                 for instrument in (
                     "ETH-USDT-SWAP", "BTC-USDT-SWAP", "SOL-USDT-SWAP"
                 ):
-                    await self._aggregate_range(
+                    await self._aggregate_instrument_safely(
                         engine, instrument, catchup_start, completed_end,
                         catchup=True)
                     if not self.stop_event.is_set() and instrument != "SOL-USDT-SWAP":
@@ -481,14 +585,33 @@ class Collector:
                     realtime_aggregation_status="LIVE")
             if completed_end != last_normal_end:
                 start = completed_end - LIVE_LOOKBACK_MINUTES * MINUTE_MS
+                cycle_succeeded = True
                 for instrument in INSTRUMENTS:
-                    await self._aggregate_range(
+                    cycle_succeeded = (
+                        await self._aggregate_instrument_safely(
                         engine, instrument, start, completed_end, catchup=False)
+                        and cycle_succeeded)
                 last_normal_end = completed_end
+                self.store.update_operational_metrics(
+                    realtime_aggregation_status=(
+                        "LIVE" if cycle_succeeded else "DEGRADED"),
+                    realtime_aggregation_last_success_at_ms=(
+                        now_ms() if cycle_succeeded else self.store.operational_metrics()[
+                            "realtime_aggregation_last_success_at_ms"]),
+                    realtime_aggregation_task_exception=(
+                        None if cycle_succeeded else self.store.operational_metrics()[
+                            "realtime_aggregation_task_exception"]),
+                    realtime_aggregation_current_await="next minute")
                 await self._record_health(
-                    "realtime-aggregation", "LIVE",
-                    last_success_ms=now_ms(), last_error=None)
+                    "realtime-aggregation",
+                    "LIVE" if cycle_succeeded else "DEGRADED",
+                    last_success_ms=(now_ms() if cycle_succeeded else None),
+                    last_error=(None if cycle_succeeded else
+                                "one or more instruments failed; bounded retry pending"))
             try:
+                self.store.update_operational_metrics(
+                    realtime_aggregation_last_heartbeat_at_ms=now_ms(),
+                    realtime_aggregation_current_await="next minute or catchup")
                 await asyncio.wait_for(
                     self.realtime_catchup_event.wait(), timeout=1)
             except TimeoutError:
@@ -874,8 +997,12 @@ def start_health_server(store: MicrostructureStore) -> ThreadingHTTPServer:
             if self.path not in {"/health", "/api/research/microstructure/health"}:
                 self.send_error(HTTPStatus.NOT_FOUND)
                 return
-            body = json.dumps(store.liveness()).encode()
-            self.send_response(HTTPStatus.OK)
+            payload = store.liveness()
+            body = json.dumps(payload).encode()
+            self.send_response(
+                HTTPStatus.SERVICE_UNAVAILABLE
+                if payload.get("realtime_aggregation_health") == "FAILED"
+                else HTTPStatus.OK)
             self.send_header("Content-Type", "application/json")
             self.send_header("Cache-Control", "no-store")
             self.send_header("Content-Length", str(len(body)))

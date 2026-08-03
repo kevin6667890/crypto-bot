@@ -9,6 +9,7 @@ import random
 import signal
 import threading
 import time
+from collections import Counter, deque
 from itertools import count
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -21,6 +22,7 @@ import aiohttp
 import websockets
 
 from .microstructure import INSTRUMENTS, MicrostructureStore, now_ms
+from .collector_pressure import PressureHysteresis
 from .realtime_aggregation import (
     COLLECTOR_BATCH_MINUTES,
     LIVE_LOOKBACK_MINUTES,
@@ -58,19 +60,28 @@ class BoundedPriorityQueue:
 
     def __init__(self, maximum: int) -> None:
         self._queue: asyncio.PriorityQueue[
-            tuple[int, int, tuple[str, dict[str, Any]]]
+            tuple[int, int, float, tuple[str, dict[str, Any]]]
         ] = asyncio.PriorityQueue(maximum)
         self._sequence = count()
+        self.capacity = maximum
+        self._started = time.monotonic()
+        self._enqueued: deque[float] = deque()
+        self._dequeued: deque[float] = deque()
 
     @staticmethod
     def _priority(item: tuple[str, dict[str, Any]]) -> int:
         return 1 if item[0] == "health_flush" else 0
 
     async def put(self, item: tuple[str, dict[str, Any]]) -> None:
-        await self._queue.put((self._priority(item), next(self._sequence), item))
+        enqueued = time.monotonic()
+        await self._queue.put((
+            self._priority(item), next(self._sequence), enqueued, item))
+        self._enqueued.append(time.monotonic())
 
     async def get(self) -> tuple[str, dict[str, Any]]:
-        return (await self._queue.get())[2]
+        item = (await self._queue.get())[3]
+        self._dequeued.append(time.monotonic())
+        return item
 
     def qsize(self) -> int:
         return self._queue.qsize()
@@ -80,6 +91,37 @@ class BoundedPriorityQueue:
 
     async def join(self) -> None:
         await self._queue.join()
+
+    def telemetry(self, *, now: float | None = None) -> dict[str, Any]:
+        current = time.monotonic() if now is None else now
+        cutoff = current - 10.0
+        while self._enqueued and self._enqueued[0] < cutoff:
+            self._enqueued.popleft()
+        while self._dequeued and self._dequeued[0] < cutoff:
+            self._dequeued.popleft()
+        queued = list(self._queue._queue)  # one event loop owns this heap
+        lane_names = {
+            "trade": "raw_trade", "health_flush": "telemetry",
+            "funding_settled": "funding",
+        }
+        lanes = Counter(
+            lane_names.get(entry[3][0], entry[3][0]) for entry in queued)
+        for required in (
+            "raw_trade", "oi", "mark", "index", "persistence",
+            "realtime_aggregate", "higher_timeframe_aggregate",
+        ):
+            lanes.setdefault(required, 0)
+        oldest = max(
+            (int((current - entry[2]) * 1000) for entry in queued), default=0)
+        window = max(0.001, min(10.0, current - self._started))
+        return {
+            "writer_queue_capacity": self.capacity,
+            "writer_queue_depth": len(queued),
+            "writer_queue_depth_by_lane": dict(sorted(lanes.items())),
+            "writer_queue_oldest_age_ms": max(0, oldest),
+            "writer_enqueue_rate_10s": round(len(self._enqueued) / window, 3),
+            "writer_dequeue_rate_10s": round(len(self._dequeued) / window, 3),
+        }
 
 
 class Collector:
@@ -115,6 +157,7 @@ class Collector:
         self.stop_event = asyncio.Event()
         self.realtime_catchup_event = asyncio.Event()
         self.queue = BoundedPriorityQueue(QUEUE_MAX)
+        self.store.update_operational_metrics(**self.queue.telemetry())
         self.pending_health: dict[str, tuple[str, dict[str, Any]]] = {}
         self.health_flush_queued = False
         self.db_writer = None
@@ -132,6 +175,7 @@ class Collector:
         self.maintenance_phase = 0
         self.realtime_aggregation_paused: set[str] = set()
         self.aggregated_timestamp_by_instrument: dict[str, int] = {}
+        self.pressure = PressureHysteresis()
 
     def _counter(self, component: str) -> dict[str, int]:
         return self.counters.setdefault(
@@ -277,8 +321,13 @@ class Collector:
                     write_latency_ms = int((time.monotonic() - write_started) * 1000)
                     self.writer_transactions += 1
                     self.writer_rows_total += rows
+                    queue_metrics = self.queue.telemetry()
+                    pressure_state = self.pressure.observe(
+                        int(queue_metrics["writer_queue_depth"]),
+                        int(queue_metrics["writer_queue_oldest_age_ms"]),)
                     self.store.update_operational_metrics(
-                        writer_queue_depth=self.queue.qsize(),
+                        **queue_metrics,
+                        writer_pressure_state=pressure_state,
                         writer_batch_size=len(batch),
                         writer_rows=rows,
                         writer_transactions_total=self.writer_transactions,

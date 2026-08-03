@@ -21,6 +21,13 @@ import aiohttp
 import websockets
 
 from .microstructure import INSTRUMENTS, MicrostructureStore, now_ms
+from .realtime_aggregation import (
+    COLLECTOR_BATCH_MINUTES,
+    LIVE_LOOKBACK_MINUTES,
+    MAX_CATCHUP_MINUTES,
+    MINUTE_MS,
+    RealtimeAggregationEngine,
+)
 
 
 REST_BASE = "https://www.okx.com"
@@ -79,7 +86,8 @@ class Collector:
     """Independent workers feed exactly one SQLite-writing coroutine."""
 
     def __init__(
-        self, store: MicrostructureStore, *, maintenance_enabled: bool | None = None
+        self, store: MicrostructureStore, *, maintenance_enabled: bool | None = None,
+        realtime_aggregation_enabled: bool | None = None,
     ) -> None:
         self.store = store
         self.store.initialize()
@@ -93,7 +101,19 @@ class Collector:
             maintenance_paused_reason=(
                 None if self.maintenance_enabled else "disabled_by_configuration"),
         )
+        self.realtime_aggregation_enabled = (
+            environment_flag("MICROSTRUCTURE_REALTIME_AGGREGATION_ENABLED")
+            if realtime_aggregation_enabled is None
+            else realtime_aggregation_enabled)
+        self.store.update_operational_metrics(
+            realtime_aggregation_enabled=self.realtime_aggregation_enabled,
+            realtime_aggregation_status=(
+                "ENABLED" if self.realtime_aggregation_enabled else "DISABLED"),
+            realtime_aggregation_pending_buckets=0,
+            realtime_aggregation_catchup=False,
+        )
         self.stop_event = asyncio.Event()
+        self.realtime_catchup_event = asyncio.Event()
         self.queue = BoundedPriorityQueue(QUEUE_MAX)
         self.pending_health: dict[str, tuple[str, dict[str, Any]]] = {}
         self.health_flush_queued = False
@@ -110,6 +130,8 @@ class Collector:
         # Existing aggregates make it safe to wait for the normal daily cycle.
         self.last_prune_ms = now_ms()
         self.maintenance_phase = 0
+        self.realtime_aggregation_paused: set[str] = set()
+        self.aggregated_timestamp_by_instrument: dict[str, int] = {}
 
     def _counter(self, component: str) -> dict[str, int]:
         return self.counters.setdefault(
@@ -171,6 +193,10 @@ class Collector:
             tasks.append(asyncio.create_task(
                 self._supervise("maintenance", self._maintenance),
                 name="retention-aggregation"))
+        if self.realtime_aggregation_enabled:
+            tasks.append(asyncio.create_task(
+                self._guard_realtime_aggregation(),
+                name="realtime-aggregation"))
         return tasks
 
     async def run(self) -> None:
@@ -186,6 +212,10 @@ class Collector:
                 await self._record_health(
                     "maintenance", "DISABLED", last_success_ms=now_ms(),
                     last_error=None)
+            await self._record_health(
+                "realtime-aggregation",
+                "ENABLED" if self.realtime_aggregation_enabled else "DISABLED",
+                last_success_ms=now_ms(), last_error=None)
             tasks = self._start_tasks(session)
             try:
                 await self.stop_event.wait()
@@ -197,6 +227,11 @@ class Collector:
                 tasks[0].cancel()
                 await asyncio.gather(tasks[0], return_exceptions=True)
                 self.store.record_health("service", "STOPPED", last_success_ms=now_ms())
+
+    def request_realtime_catchup(self) -> None:
+        """Request one fixed, local-only 120-minute catch-up pass."""
+        if self.realtime_aggregation_enabled:
+            self.realtime_catchup_event.set()
 
     async def _load_contract_values(self, session: aiohttp.ClientSession) -> None:
         for instrument in INSTRUMENTS:
@@ -282,6 +317,133 @@ class Collector:
                 await self._record_health(
                     "checkpoint", "DEFERRED",
                     last_error=f"{type(error).__name__}: {str(error)[:160]}")
+
+    async def _aggregate_range(
+        self, engine: RealtimeAggregationEngine, instrument: str,
+        start_ms: int, end_ms: int, *, catchup: bool,
+    ) -> None:
+        position = start_ms
+        pending = max(0, (end_ms - start_ms) // MINUTE_MS)
+        while position < end_ms and not self.stop_event.is_set():
+            if instrument in self.realtime_aggregation_paused:
+                return
+            if self.queue.qsize() or self.db_writer is None:
+                self.store.update_operational_metrics(
+                    realtime_aggregation_status="DEFERRED_LIVE_PRIORITY",
+                    realtime_aggregation_pending_buckets=pending)
+                try:
+                    await asyncio.wait_for(self.stop_event.wait(), timeout=1)
+                except TimeoutError:
+                    pass
+                continue
+            batch_end = min(
+                end_ms, position + COLLECTOR_BATCH_MINUTES * MINUTE_MS)
+            started = time.monotonic()
+            result = await asyncio.to_thread(
+                self.db_writer.try_transaction,
+                lambda p=position, e=batch_end: engine.process(
+                    instrument, p, e,
+                    maximum_minute_buckets=COLLECTOR_BATCH_MINUTES))
+            if result is None:
+                await asyncio.sleep(0.25)
+                continue
+            duration_ms = int((time.monotonic() - started) * 1000)
+            if duration_ms > 1_000:
+                raise TimeoutError(
+                    f"realtime aggregate query exceeded 1s: {duration_ms}ms")
+            conflicts = list(result.get("conflicts") or [])
+            if conflicts:
+                self.realtime_aggregation_paused.add(instrument)
+                self.store.update_operational_metrics(
+                    realtime_aggregation_status="CONFLICT",
+                    realtime_aggregation_last_duration_ms=duration_ms,
+                    realtime_aggregation_pending_buckets=pending)
+                await self._record_health(
+                    f"realtime-aggregation:{instrument}", "CONFLICT",
+                    last_error=json.dumps(conflicts, separators=(",", ":"))[:160])
+                return
+            latest = result.get("latest_source_ms")
+            if latest is not None:
+                self.aggregated_timestamp_by_instrument[instrument] = int(latest)
+            position = int(result["end_ms"])
+            pending = max(0, (end_ms - position) // MINUTE_MS)
+            missing = sum(int(value) for value in result.get("missing", {}).values())
+            self.store.update_operational_metrics(
+                realtime_aggregation_status=(
+                    "CATCHUP" if catchup else "LIVE"),
+                realtime_aggregation_last_duration_ms=duration_ms,
+                realtime_aggregation_pending_buckets=pending,
+                aggregated_timestamp_by_instrument={
+                    **self.aggregated_timestamp_by_instrument},)
+            await self._record_health(
+                f"realtime-aggregation:{instrument}", "LIVE",
+                last_success_ms=now_ms(),
+                source_lag_ms=(max(0, now_ms() - int(latest))
+                               if latest is not None else None),
+                last_error=(f"missing_buckets={missing}" if missing else None))
+            if catchup and position < end_ms:
+                try:
+                    await asyncio.wait_for(self.stop_event.wait(), timeout=2)
+                except TimeoutError:
+                    pass
+
+    async def _guard_realtime_aggregation(self) -> None:
+        """Pause on one hard failure; realtime aggregation never retry-loops."""
+        try:
+            await self._realtime_aggregation_loop()
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            self.store.update_operational_metrics(
+                realtime_aggregation_status="PAUSED_ERROR")
+            await self._record_health(
+                "realtime-aggregation", "PAUSED_ERROR",
+                last_error=f"{type(error).__name__}: {str(error)[:160]}")
+            await self.stop_event.wait()
+
+    async def _realtime_aggregation_loop(self) -> None:
+        """Close live buckets independently of all historical maintenance."""
+        engine = RealtimeAggregationEngine(self.store)
+        last_normal_end: int | None = None
+        while not self.stop_event.is_set():
+            # Five seconds allows the final live trade/OI samples to reach the
+            # serialized writer before the just-closed minute is finalized.
+            completed_end = ((now_ms() - 5_000) // MINUTE_MS) * MINUTE_MS
+            if self.realtime_catchup_event.is_set():
+                self.realtime_catchup_event.clear()
+                self.store.update_operational_metrics(
+                    realtime_aggregation_catchup=True,
+                    realtime_aggregation_status="CATCHUP")
+                catchup_start = completed_end - MAX_CATCHUP_MINUTES * MINUTE_MS
+                for instrument in (
+                    "ETH-USDT-SWAP", "BTC-USDT-SWAP", "SOL-USDT-SWAP"
+                ):
+                    await self._aggregate_range(
+                        engine, instrument, catchup_start, completed_end,
+                        catchup=True)
+                    if not self.stop_event.is_set() and instrument != "SOL-USDT-SWAP":
+                        try:
+                            await asyncio.wait_for(
+                                self.stop_event.wait(), timeout=30)
+                        except TimeoutError:
+                            pass
+                self.store.update_operational_metrics(
+                    realtime_aggregation_catchup=False,
+                    realtime_aggregation_status="LIVE")
+            if completed_end != last_normal_end:
+                start = completed_end - LIVE_LOOKBACK_MINUTES * MINUTE_MS
+                for instrument in INSTRUMENTS:
+                    await self._aggregate_range(
+                        engine, instrument, start, completed_end, catchup=False)
+                last_normal_end = completed_end
+                await self._record_health(
+                    "realtime-aggregation", "LIVE",
+                    last_success_ms=now_ms(), last_error=None)
+            try:
+                await asyncio.wait_for(
+                    self.realtime_catchup_event.wait(), timeout=1)
+            except TimeoutError:
+                pass
 
     def _persist_batch(
         self, batch: list[tuple[str, dict[str, Any]]],
@@ -689,6 +851,12 @@ async def main_async() -> None:
     for name in (signal.SIGINT, signal.SIGTERM):
         try:
             loop.add_signal_handler(name, collector.stop_event.set)
+        except NotImplementedError:
+            pass
+    if hasattr(signal, "SIGUSR1"):
+        try:
+            loop.add_signal_handler(
+                signal.SIGUSR1, collector.request_realtime_catchup)
         except NotImplementedError:
             pass
     try:

@@ -56,6 +56,7 @@ services:
     environment:
       MICROSTRUCTURE_DB_PATH: /app/data_cache/market_microstructure.db
       MICROSTRUCTURE_MAINTENANCE_ENABLED: "false"
+      MICROSTRUCTURE_REALTIME_AGGREGATION_ENABLED: "true"
       PYTHONUNBUFFERED: "1"
     volumes:
       - ./data_cache:/app/data_cache

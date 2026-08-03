@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { saveChartSnapshot } from "./chartState";
 import {
   FlowCoverage,
+  FLOW_HISTORY_MAX_POINTS,
   FlowHistoryResponse,
   FlowSelectionGuard,
   __resetFlowHistoryForTests,
@@ -80,10 +81,18 @@ describe("range-driven flow history", () => {
 
   it("builds a cursor request when scrolling backward", () => {
     const older = olderPageRequest(coverage(), [{ time: 100, value: 1 }], 110, 30);
-    expect(older).toEqual({ start: 0, end: 110, maxPoints: 1200, cursor: "cursor-1" });
+    expect(older).toEqual({ start: 0, end: 110, maxPoints: FLOW_HISTORY_MAX_POINTS, cursor: "cursor-1" });
     const url = historyRequestUrl({ instrument: "BTC-USDT", series: "cvd", ...older! });
     expect(url).toContain("cursor=cursor-1");
     expect(url).toContain("cvd_mode=UTC_DAILY_RESET");
+  });
+
+  it("caps every history request at the Paper API safety limit", () => {
+    const url = historyRequestUrl({
+      instrument: "BTC-USDT", series: "cvd", start: 1, end: 2, maxPoints: 1200,
+    });
+    expect(url).toContain(`max_points=${FLOW_HISTORY_MAX_POINTS}`);
+    expect(url).not.toContain("max_points=1200");
   });
 
   it("merges pages by timestamp without duplicates and lets server values win", () => {

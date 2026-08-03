@@ -1,4 +1,5 @@
 import type { UTCTimestamp } from "lightweight-charts";
+import { PUBLIC_MARKET_INSTRUMENTS } from "./marketInstruments";
 
 export type Metric = {
   label: string;
@@ -484,7 +485,7 @@ export async function fetchReplayDetail(
 }
 
 export async function fetchOkxWatchlist(): Promise<WatchlistItem[]> {
-  const wanted = ["BTC-USDT", "ETH-USDT"];
+  const wanted = PUBLIC_MARKET_INSTRUMENTS;
   return Promise.all(
     wanted.map(async (instrument) => {
       const response = await fetch(

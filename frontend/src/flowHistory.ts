@@ -25,6 +25,7 @@ export type FlowRangeRequest = {
 };
 
 const MEMORY_POINT_LIMIT = 50_000;
+export const FLOW_HISTORY_MAX_POINTS = 500;
 const memory = new Map<string, FlowHistoryPoint[]>();
 const metadata = new Map<string, FlowCoverage>();
 const inflight = new Map<string, Promise<FlowHistoryResponse>>();
@@ -143,7 +144,7 @@ export function historyRequestUrl(request: FlowRangeRequest) {
     series: request.series,
     start: String(Math.floor(request.start)),
     end: String(Math.floor(request.end)),
-    max_points: String(request.maxPoints || 1200),
+    max_points: String(Math.min(request.maxPoints || FLOW_HISTORY_MAX_POINTS, FLOW_HISTORY_MAX_POINTS)),
   });
   if (request.cursor) query.set("cursor", request.cursor);
   if (request.series === "cvd") query.set("cvd_mode", request.cvdMode || "UTC_DAILY_RESET");
@@ -207,7 +208,7 @@ export function olderPageRequest(
   return {
     start: coverage.available_start ?? visibleStart,
     end: visibleStart,
-    maxPoints: 1200,
+    maxPoints: FLOW_HISTORY_MAX_POINTS,
     cursor: coverage.next_before_cursor,
   };
 }

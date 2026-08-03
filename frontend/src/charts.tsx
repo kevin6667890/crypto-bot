@@ -8,6 +8,7 @@ import { NativePriceAxisLabel, PriceLabelSource, updateLatestNativePriceAxisLabe
 import { PriceAxisLabelPrimitive } from "./priceAxisLabelPrimitive";
 import {
   FlowCoverage,
+  FLOW_HISTORY_MAX_POINTS,
   FlowHistoryPoint,
   FlowRangeRequest,
   FlowSelectionGuard,
@@ -412,8 +413,8 @@ export function MarketChart({ instrument = "ETH-USDT", interval = "15m", flow }:
         const start = Number(range.from), end = Number(range.to);
         const current = dataRef.current, loaders = historyLoadRef.current;
         loadRef.current.older(start);
-        void loaders.cvd({ start, end, maxPoints: 1200 });
-        void loaders.oi({ start, end, maxPoints: 1200 });
+        void loaders.cvd({ start, end, maxPoints: FLOW_HISTORY_MAX_POINTS });
+        void loaders.oi({ start, end, maxPoints: FLOW_HISTORY_MAX_POINTS });
         for (const [load, points, coverage] of [
           [loaders.cvd, current.cvd, current.cvdCoverage],
           [loaders.oi, current.oi, current.oiCoverage],
@@ -434,8 +435,8 @@ export function MarketChart({ instrument = "ETH-USDT", interval = "15m", flow }:
   useEffect(() => {
     const range = visibleRangeFromCandles(candles);
     if (!range) return;
-    void cvdHistory.load({ ...range, maxPoints: 1200 });
-    void oiHistory.load({ ...range, maxPoints: 1200 });
+    void cvdHistory.load({ ...range, maxPoints: FLOW_HISTORY_MAX_POINTS });
+    void oiHistory.load({ ...range, maxPoints: FLOW_HISTORY_MAX_POINTS });
   }, [candles, instrument, interval, cvdHistory.load, oiHistory.load]);
   useEffect(() => () => {
     window.clearTimeout(rangeTimer.current);
@@ -584,7 +585,7 @@ export function FlowChart({ points, color = "#7c3aed", zeroLine = false, instrum
       rangeTimer.current = window.setTimeout(() => {
         const start = Number(range.from), end = Number(range.to);
         const current = historyRef.current, coverage = current.coverage;
-        void current.load({ start, end, maxPoints: 1200 });
+        void current.load({ start, end, maxPoints: FLOW_HISTORY_MAX_POINTS });
         const older = olderPageRequest(coverage, current.points, start, intervalSeconds(intervalRef.current) * 3);
         if (older) void current.load(older);
       }, 120);
@@ -594,7 +595,7 @@ export function FlowChart({ points, color = "#7c3aed", zeroLine = false, instrum
   useEffect(apply, [normalized, history.coverage, interval]);
   useEffect(() => {
     const end = Math.floor(Date.now() / 1000);
-    void history.load({ start: end - intervalSeconds(interval) * 500, end, maxPoints: 1200 });
+    void history.load({ start: end - intervalSeconds(interval) * 500, end, maxPoints: FLOW_HISTORY_MAX_POINTS });
   }, [instrument, interval, seriesType, history.load]);
   useEffect(() => () => window.clearTimeout(rangeTimer.current), []);
   return <div className="flow-canvas">

@@ -127,6 +127,12 @@ class MicrostructureStore:
         self._operational_lock = threading.Lock()
         self._operational_metrics: dict[str, Any] = {
             "writer_queue_depth": 0,
+            "writer_queue_capacity": 0,
+            "writer_queue_depth_by_lane": {},
+            "writer_queue_oldest_age_ms": 0,
+            "writer_enqueue_rate_10s": 0.0,
+            "writer_dequeue_rate_10s": 0.0,
+            "writer_pressure_state": "NORMAL",
             "writer_batch_size": 0,
             "writer_rows": 0,
             "writer_transactions_total": 0,

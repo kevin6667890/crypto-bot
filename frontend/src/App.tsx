@@ -43,6 +43,7 @@ import {
   strategyComparison,
   strategyEvolution,
 } from "./data";
+import { PUBLIC_MARKET_INSTRUMENTS } from "./marketInstruments";
 
 const StrategyResearchRoute = lazy(() => import("./routes/StrategyResearchRoute"));
 const MicrostructureResearch = lazy(() => import("./MicrostructureResearch"));
@@ -891,8 +892,7 @@ function Workspace() {
             onChange={(event) => setInstrument(event.target.value)}
             aria-label={t("common.instrument")}
           >
-            <option>BTC-USDT</option>
-            <option>ETH-USDT</option>
+            {PUBLIC_MARKET_INSTRUMENTS.map((value) => <option key={value}>{value}</option>)}
           </select>
           <select
             value={interval}

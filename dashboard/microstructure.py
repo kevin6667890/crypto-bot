@@ -139,6 +139,8 @@ class MicrostructureStore:
             "last_checkpoint_result": None,
             "last_checkpoint_mode": None,
             "last_maintenance_duration_ms": None,
+            "maintenance_enabled": None,
+            "maintenance_status": "UNKNOWN",
             "maintenance_paused_reason": None,
             "received_timestamp_by_instrument": {},
             "persisted_timestamp_by_instrument": {},
@@ -2101,10 +2103,13 @@ class MicrostructureStore:
                     row["status"] for row in health_rows
                     if row["component"] == "liquidations"), "INITIALIZING"),
             },
-            "maintenance_status": (
-                "RUNNING" if maintenance_cursor
-                and current - int(maintenance_cursor["updated_at_ms"]) < 120_000
-                else "INITIALIZING"),
+            "maintenance_status": next((
+                "DISABLED" for row in health_rows
+                if row["component"] == "maintenance"
+                and row["status"] == "DISABLED"), (
+                    "RUNNING" if maintenance_cursor
+                    and current - int(maintenance_cursor["updated_at_ms"]) < 120_000
+                    else "INITIALIZING")),
         }
         return result
 

@@ -172,3 +172,91 @@ def test_liveness_uses_in_memory_operational_metrics(tmp_path):
     assert health["writer_queue_depth"] == 4
     assert health["writer_batch_size"] == 123
     assert health["maintenance_paused_reason"] == "live_queue_not_empty"
+
+
+def test_disabled_maintenance_is_not_scheduled_but_live_workers_are(tmp_path):
+    store = MicrostructureStore(tmp_path / "micro.db")
+    collector = Collector(store, maintenance_enabled=False)
+    collector.contract_values = {"BTC-USDT-SWAP": 0.01}
+
+    async def scenario():
+        tasks = collector._start_tasks(None)  # type: ignore[arg-type]
+        names = {task.get_name() for task in tasks}
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        return names
+
+    names = asyncio.run(scenario())
+    assert "serialized-sqlite-writer" in names
+    assert "public-trades-BTC-USDT-SWAP" in names
+    assert "rest-BTC-USDT-SWAP" in names
+    assert "passive-checkpoint" in names
+    assert "retention-aggregation" not in names
+    assert store.liveness()["maintenance_enabled"] is False
+    assert store.liveness()["maintenance_status"] == "DISABLED"
+
+
+def test_disabled_maintenance_does_not_scan_or_advance_cursor(tmp_path, monkeypatch):
+    store = MicrostructureStore(tmp_path / "micro.db")
+    collector = Collector(store, maintenance_enabled=False)
+    collector.contract_values = {"BTC-USDT-SWAP": 0.01}
+    calls: list[str] = []
+
+    monkeypatch.setattr(
+        store, "maintenance_slice",
+        lambda **_values: calls.append("maintenance_slice"))
+    monkeypatch.setattr(
+        store, "aggregate_all", lambda: calls.append("aggregate_all"))
+    async def scenario():
+        tasks = collector._start_tasks(None)  # type: ignore[arg-type]
+        await asyncio.sleep(0)
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+    asyncio.run(scenario())
+    assert calls == []
+    with store.connect(readonly=True) as connection:
+        assert connection.execute(
+            "SELECT cursor FROM collection_checkpoints "
+            "WHERE lane='maintenance_cursor' AND instrument='aggregate'"
+        ).fetchone() is None
+
+
+def test_disabled_maintenance_skips_okx_history_but_keeps_live_rest(
+    tmp_path, monkeypatch
+):
+    store = MicrostructureStore(tmp_path / "micro.db")
+    collector = Collector(store, maintenance_enabled=False)
+    collector.contract_values = {"BTC-USDT-SWAP": 0.01}
+    paths: list[str] = []
+
+    async def fake_get(_session, path, _params):
+        paths.append(path)
+        timestamp = str(now_ms())
+        if path.endswith("open-interest"):
+            return [{"ts": timestamp, "oi": "1", "oiCcy": "1", "oiUsd": "1"}]
+        if path.endswith("funding-rate"):
+            return [{"ts": timestamp, "fundingRate": "0", "fundingTime": timestamp}]
+        if path.endswith("mark-price"):
+            return [{"ts": timestamp, "markPx": "100"}]
+        if path.endswith("index-tickers"):
+            collector.stop_event.set()
+            return [{"ts": timestamp, "idxPx": "100"}]
+        raise AssertionError(f"unexpected historical endpoint: {path}")
+
+    monkeypatch.setattr(collector, "_get", fake_get)
+    asyncio.run(collector._rest_instrument(None, "BTC-USDT-SWAP"))
+    assert "/api/v5/public/open-interest" in paths
+    assert "/api/v5/public/funding-rate" in paths
+    assert "/api/v5/public/mark-price" in paths
+    assert "/api/v5/market/index-tickers" in paths
+    assert "/api/v5/public/funding-rate-history" not in paths
+
+
+def test_operations_summary_reports_persisted_maintenance_disabled(tmp_path):
+    store = MicrostructureStore(tmp_path / "micro.db")
+    store.initialize()
+    store.record_health("maintenance", "DISABLED", last_success_ms=now_ms())
+    assert store.operations_summary()["maintenance"]["status"] == "DISABLED"

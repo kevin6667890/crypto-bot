@@ -55,6 +55,7 @@ services:
     command: python -m dashboard.microstructure_collector
     environment:
       MICROSTRUCTURE_DB_PATH: /app/data_cache/market_microstructure.db
+      MICROSTRUCTURE_MAINTENANCE_ENABLED: "false"
       PYTHONUNBUFFERED: "1"
     volumes:
       - ./data_cache:/app/data_cache

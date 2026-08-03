@@ -33,6 +33,19 @@ TRADE_STALL_SECONDS = 30
 FUNDING_HISTORY_POLL_SECONDS = 300
 
 
+def environment_flag(name: str, *, default: bool = False) -> bool:
+    """Parse one explicit boolean environment flag with a safe default."""
+    value = os.getenv(name)
+    if value is None:
+        return default
+    normalized = value.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(f"{name} must be an explicit boolean")
+
+
 class BoundedPriorityQueue:
     """Compatibility wrapper that prioritizes genuine live observations."""
 
@@ -65,9 +78,21 @@ class BoundedPriorityQueue:
 class Collector:
     """Independent workers feed exactly one SQLite-writing coroutine."""
 
-    def __init__(self, store: MicrostructureStore) -> None:
+    def __init__(
+        self, store: MicrostructureStore, *, maintenance_enabled: bool | None = None
+    ) -> None:
         self.store = store
         self.store.initialize()
+        self.maintenance_enabled = (
+            environment_flag("MICROSTRUCTURE_MAINTENANCE_ENABLED")
+            if maintenance_enabled is None else maintenance_enabled)
+        self.store.update_operational_metrics(
+            maintenance_enabled=self.maintenance_enabled,
+            maintenance_status=(
+                "ENABLED" if self.maintenance_enabled else "DISABLED"),
+            maintenance_paused_reason=(
+                None if self.maintenance_enabled else "disabled_by_configuration"),
+        )
         self.stop_event = asyncio.Event()
         self.queue = BoundedPriorityQueue(QUEUE_MAX)
         self.pending_health: dict[str, tuple[str, dict[str, Any]]] = {}
@@ -121,6 +146,33 @@ class Collector:
                 await asyncio.sleep(min(30, delay) + random.uniform(0, 0.25))
                 delay = min(30, delay * 2)
 
+    def _start_tasks(self, session: aiohttp.ClientSession) -> list[asyncio.Task[Any]]:
+        """Start live workers and, only when enabled, bounded maintenance."""
+        tasks = [
+            asyncio.create_task(self._writer(), name="serialized-sqlite-writer"),
+            *(asyncio.create_task(
+                self._supervise(
+                    f"trades:{instrument}",
+                    lambda i=instrument: self._trade_instrument(i)),
+                name=f"public-trades-{instrument}")
+              for instrument in self.contract_values),
+            asyncio.create_task(
+                self._supervise("liquidations", self._liquidations),
+                name="public-liquidations"),
+            *(asyncio.create_task(
+                self._supervise(
+                    f"rest:{instrument}",
+                    lambda i=instrument: self._rest_instrument(session, i)),
+                name=f"rest-{instrument}") for instrument in INSTRUMENTS),
+            asyncio.create_task(
+                self._checkpoint_worker(), name="passive-checkpoint"),
+        ]
+        if self.maintenance_enabled:
+            tasks.append(asyncio.create_task(
+                self._supervise("maintenance", self._maintenance),
+                name="retention-aggregation"))
+        return tasks
+
     async def run(self) -> None:
         async with aiohttp.ClientSession(
             timeout=aiohttp.ClientTimeout(total=20),
@@ -130,28 +182,11 @@ class Collector:
             await self._record_health(
                 "service", "RUNNING", last_success_ms=now_ms(),
                 last_error=None)
-            tasks = [
-                asyncio.create_task(self._writer(), name="serialized-sqlite-writer"),
-                *(asyncio.create_task(
-                    self._supervise(
-                        f"trades:{instrument}",
-                        lambda i=instrument: self._trade_instrument(i)),
-                    name=f"public-trades-{instrument}")
-                  for instrument in self.contract_values),
-                asyncio.create_task(
-                    self._supervise("liquidations", self._liquidations),
-                    name="public-liquidations"),
-                *(asyncio.create_task(
-                    self._supervise(
-                        f"rest:{instrument}",
-                        lambda i=instrument: self._rest_instrument(session, i)),
-                    name=f"rest-{instrument}") for instrument in INSTRUMENTS),
-                asyncio.create_task(
-                    self._supervise("maintenance", self._maintenance),
-                    name="retention-aggregation"),
-                asyncio.create_task(
-                    self._checkpoint_worker(), name="passive-checkpoint"),
-            ]
+            if not self.maintenance_enabled:
+                await self._record_health(
+                    "maintenance", "DISABLED", last_success_ms=now_ms(),
+                    last_error=None)
+            tasks = self._start_tasks(session)
             try:
                 await self.stop_event.wait()
             finally:
@@ -478,7 +513,9 @@ class Collector:
                 index = (await self._get(session, "/api/v5/market/index-tickers",
                                          {"instId": instrument.removesuffix("-SWAP")}))[0]
                 settled_rows: list[dict[str, Any]] = []
-                if now_ms() - last_funding_history_poll >= FUNDING_HISTORY_POLL_SECONDS * 1000:
+                if (self.maintenance_enabled
+                        and now_ms() - last_funding_history_poll
+                        >= FUNDING_HISTORY_POLL_SECONDS * 1000):
                     settled_rows = await self._get(
                         session, "/api/v5/public/funding-rate-history",
                         {"instId": instrument, "limit": "20"})

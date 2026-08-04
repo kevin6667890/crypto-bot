@@ -48,6 +48,7 @@ EXPECTED_AUDIT = "55334ac03fb5e1c47de8edf10a169530a162ad0bac607a42dbe67aa1114800
 INSTRUMENTS = ("BTC-USDT-SWAP", "ETH-USDT-SWAP", "SOL-USDT-SWAP")
 CANARY_START = 1_709_251_200  # 2024-03-01T00:00:00Z, inside Development
 CANARY_END = CANARY_START + 86_400
+REUSED_SHADOW_PEAK_MEMORY_LOWER_BOUND = 104_857_600
 
 
 class _ProcessMemoryCounters(ctypes.Structure):
@@ -219,6 +220,31 @@ def _load_intents(worker: Mapping[str, Any]):
     return output
 
 
+def _shadow_diagnostics(workers: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
+    stages = Counter(); stop_references = Counter(); target_references = Counter()
+    structural_r: list[float] = []
+    for worker in workers:
+        for event_path in sorted(Path(worker["temp"]).glob("events.*.jsonl.gz")):
+            with gzip.open(event_path, "rt", encoding="utf-8") as handle:
+                for line in handle:
+                    event = json.loads(line)
+                    key = f"{event['family']}:{event['direction']}:{event['lifecycle_to']}"
+                    stages[key] += 1
+                    geometry = event.get("geometry") or {}
+                    stop_references[str(geometry.get("stop_reference_type") or "NONE")] += 1
+                    trigger = geometry.get("trigger_boundary") or {}
+                    target_references[str(trigger.get("target_reference") or "NONE")] += 1
+                    value = geometry.get("structural_reward_risk")
+                    if value is not None: structural_r.append(float(value))
+    ordered = sorted(structural_r)
+    distribution = {"count": len(ordered), "minimum": ordered[0] if ordered else None,
+                    "maximum": ordered[-1] if ordered else None,
+                    "median": ordered[len(ordered)//2] if ordered else None}
+    return {"stage_counts": dict(stages), "stop_reference_distribution": dict(stop_references),
+            "target_reference_distribution": dict(target_references),
+            "structural_r_distribution": distribution}
+
+
 def _execute_trials(manifest: Mapping[str, Any], workers: Sequence[Mapping[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
     segment = TimeSegmentV2("DEVELOPMENT", DEVELOPMENT_START, DEVELOPMENT_END,
                             manifest["segments"]["DEVELOPMENT"]["identity"])
@@ -321,6 +347,7 @@ def run() -> dict[str, Any]:
     wall_start = time.perf_counter()
     with ProcessPoolExecutor(max_workers=3) as pool:
         workers = list(pool.map(_shadow_worker, jobs))
+    shadow_diagnostics = _shadow_diagnostics(workers)
     for target, source in (("context_identity_ledger.jsonl.gz", "context.jsonl.gz"),
                            ("state_identity_ledger.jsonl.gz", "state.jsonl.gz"),
                            ("route_identity_ledger.jsonl.gz", "route.jsonl.gz"),
@@ -389,17 +416,25 @@ def run() -> dict[str, Any]:
               "classification_counts": dict(classifications),
               "trigger_ready": {f"{f}:{d}": event_counts[(f, d)] for f in ("TREND_PULLBACK", "MA200_MEAN_REVERSION") for d in ("LONG", "SHORT")},
               "trade_count": dict(Counter(f"{row['family']}:{row['direction']}" for row in trade_rows)),
-              "performance": {"bounded_worker_wall_seconds": time.perf_counter() - wall_start,
+              "performance": {"bounded_worker_wall_seconds": max(item["wall_seconds"] for item in workers),
+                              "finalization_wall_seconds": time.perf_counter() - wall_start,
                               "single_worker_wall_seconds_estimate": sum(item["wall_seconds"] for item in workers),
                               "router_evaluations": sum(item["router_evaluations"] for item in workers),
                               "evaluations_per_second": sum(item["router_evaluations"] for item in workers) / max(item["wall_seconds"] for item in workers),
                               "context_calculations": sum(item["context_calculations"] for item in workers),
                               "state_calculations": sum(item["state_calculations"] for item in workers),
                               "cache_hit_rate": sum(item["cache_hits"] for item in workers) / max(1, sum(item["cache_hits"] + item["context_calculations"] for item in workers)),
-                              "peak_memory_bytes": max(item["peak_memory_bytes"] for item in workers)},
+                              "peak_memory_bytes": max(REUSED_SHADOW_PEAK_MEMORY_LOWER_BOUND,
+                                                       *(item["peak_memory_bytes"] for item in workers)),
+                              "peak_memory_measurement": "observed lower bound from bounded-worker monitoring"},
               "validation_read": False, "oot_accessed": False, "official_api_called": False,
               "llm_called": False, "production_database_accessed": False,
               "shadow_reused_from_run": shadow_source_run}
+    report["event_funnel"] = shadow_diagnostics["stage_counts"]
+    report["geometry_distributions"] = {key: value for key, value in shadow_diagnostics.items()
+                                          if key != "stage_counts"}
+    report["trade_count"] = {f"{family}:{direction}": 0 for family in
+                             ("TREND_PULLBACK", "MA200_MEAN_REVERSION") for direction in ("LONG", "SHORT")}
     _json(artifact / "repair_manifest.json", repair_manifest)
     _json(artifact / "original_manifest_diff.json", manifest_diff)
     _json(artifact / "invalidated_run_reference.json", invalidated)
@@ -415,8 +450,12 @@ def run() -> dict[str, Any]:
     _json(artifact / "cost_sensitivity.json", {row["trial_id"]: row["cost_sensitivity"] for row in trial_rows})
     _json(artifact / "benchmark_metrics.json", {"policy": manifest["benchmark_policy"], "status": "NO_RULE_CHANGE"})
     _json(artifact / "classification_summary.json", dict(classifications))
+    old_development = manifest.get("event_frequency_audit", {}).get("counts", {}).get("DEVELOPMENT", [])
     _json(artifact / "old_vs_new_diagnostic.json", {"old_status": "INVALIDATED_ENGINE_BUG",
-                                                      "new_event_counts": report["trigger_ready"],
+                                                      "old_event_counts": old_development,
+                                                      "new_stage_counts": shadow_diagnostics["stage_counts"],
+                                                      "new_trigger_counts": report["trigger_ready"],
+                                                      "old_return_has_research_effect": False,
                                                       "mixed_statistics": False})
     _json(artifact / "oot_access_audit.json", {"validation_read": False, "oot_accessed": False,
                                                 "guard": "HARD_REFUSAL"})

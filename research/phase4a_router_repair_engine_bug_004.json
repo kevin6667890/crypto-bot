@@ -1,0 +1,20 @@
+{
+  "bug_id": "phase4a-router-repair-engine-bug-004",
+  "classification": "INCOMPLETE_DIAGNOSTIC_AGGREGATION",
+  "affected_run_ids": [
+    "9ad76d154bea9677b9396384643c59d99662628f324f2392150ae227d5db5a22"
+  ],
+  "affected_run_status": "INVALIDATED_ENGINE_BUG",
+  "research_effect": "NONE",
+  "shadow_completed": true,
+  "raw_trials_completed": 32,
+  "trigger_ready_count": 0,
+  "trade_count": 0,
+  "pnl_computed": true,
+  "result_classification": "NO_EVENTS",
+  "fix": "Aggregate the exhaustive stage funnel and Router geometry distributions and record the observed bounded-worker peak-memory lower bound.",
+  "strategy_result_changed": false,
+  "shadow_reuse_allowed": true,
+  "research_protocol_changed": false,
+  "requires_all_32_trials_rerun": true
+}

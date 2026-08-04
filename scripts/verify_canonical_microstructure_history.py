@@ -14,6 +14,30 @@ RESOLUTIONS = ("5m", "15m", "1h", "4h", "1D")
 COMPLETE = ("VALID", "BACKFILLED_OFFICIAL", "ARCHIVED_CONFIRMED")
 
 
+def gap_segments(connection: sqlite3.Connection, table: str) -> list[dict]:
+    output: list[dict] = []
+    for instrument in ("BTC-USDT-SWAP", "ETH-USDT-SWAP", "SOL-USDT-SWAP"):
+        current: dict | None = None
+        for row in connection.execute(
+            f"""SELECT bucket_ms,status,gap_reason FROM {table}
+                 WHERE instrument=? AND status NOT IN (?,?,?) ORDER BY bucket_ms""",
+            (instrument, *COMPLETE),
+        ):
+            timestamp, status, reason = int(row[0]), str(row[1]), row[2]
+            if (current is None or timestamp != current["end_ms_exclusive"]
+                    or status != current["status"] or reason != current["gap_reason"]):
+                current = {
+                    "instrument": instrument, "status": status,
+                    "gap_reason": reason, "start_ms": timestamp,
+                    "end_ms_exclusive": timestamp + 60_000, "minutes": 1,
+                }
+                output.append(current)
+            else:
+                current["end_ms_exclusive"] += 60_000
+                current["minutes"] += 1
+    return output
+
+
 def sha256(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as source:
@@ -63,7 +87,39 @@ def main() -> int:
         },
         "fingerprint_conflicts": {},
         "reconciliation": {},
+        "gap_segments": {
+            "cvd_1m": gap_segments(connection, "cvd_1m"),
+            "oi_1m": gap_segments(connection, "oi_1m"),
+        },
     }
+
+    schema = [
+        [row[0], row[1], row[2], row[3]] for row in connection.execute(
+            """SELECT type,name,tbl_name,sql FROM sqlite_schema
+                 WHERE name NOT LIKE 'sqlite_%' ORDER BY type,name"""
+        )
+    ]
+    report["schema_sha256"] = hashlib.sha256(
+        json.dumps(schema, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+    report["source_assets"] = [
+        dict(row) for row in connection.execute(
+            """SELECT instrument,source,start_ms,end_ms,earliest_ms,latest_ms,
+                      row_count,unique_identity_count,duplicate_count,
+                      out_of_order_count,timestamp_error_count,trade_id_conflict_count,
+                      source_fingerprint,ingestion_source,official_backfill_manifest_id,
+                      gap_status
+                 FROM source_assets ORDER BY source,instrument,start_ms"""
+        )
+    ]
+    report["official_backfills"] = [
+        dict(row) for row in connection.execute(
+            """SELECT manifest_id,source,instrument,requested_start_ms,
+                      requested_end_ms,endpoint_or_file,request_count,row_count,
+                      unique_row_count,overlap_status,dedupe_key
+                 FROM official_backfill_manifests ORDER BY source,instrument,manifest_id"""
+        )
+    ]
 
     for table in ("cvd_1m", "oi_1m", "cvd_higher_timeframes", "oi_higher_timeframes"):
         report["fingerprint_conflicts"][table] = connection.execute(
@@ -91,6 +147,19 @@ def main() -> int:
            AND status NOT IN ('VALID','BACKFILLED_OFFICIAL','ARCHIVED_CONFIRMED')
         """
     ).fetchone()[0]
+    report["reconciliation"]["cvd_arithmetic_violations"] = connection.execute(
+        """SELECT COUNT(*) FROM cvd_1m WHERE signed_delta IS NOT NULL
+             AND ABS((buy_volume-sell_volume)-signed_delta)>0.000001"""
+    ).fetchone()[0]
+    report["reconciliation"]["oi_observation_time_violations"] = connection.execute(
+        """SELECT COUNT(*) FROM oi_1m WHERE confirmed_oi IS NOT NULL
+             AND (observation_ts_ms<bucket_ms OR observation_ts_ms>=bucket_ms+60000)"""
+    ).fetchone()[0]
+    report["reconciliation"]["generated_commits"] = [
+        row[0] for row in connection.execute(
+            "SELECT DISTINCT generated_commit FROM cvd_1m ORDER BY generated_commit"
+        )
+    ]
 
     completeness: list[dict] = []
     for series, table in (("cvd", "cvd_1m"), ("oi", "oi_1m")):

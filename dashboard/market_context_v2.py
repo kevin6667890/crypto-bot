@@ -14,6 +14,8 @@ from pathlib import Path
 import sqlite3
 import statistics
 import threading
+import hashlib
+import json
 import time
 from typing import Any, Iterable
 
@@ -121,6 +123,7 @@ class MarketAnalysisContextV2:
     flow: FlowContextV2
     levels: tuple[MarketLevelV2, ...]
     quality: dict[str, Any]
+    context_identity: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -696,6 +699,10 @@ class MarketContextServiceV2:
                                            "partial_sources": sorted(set(partial_sources)),
                                            "missing_sources": sorted(set(missing_sources)),
                                            "gaps": gaps}).to_dict()
+        context["context_identity"] = hashlib.sha256(json.dumps(
+            {key: value for key, value in context.items() if key != "context_identity"},
+            sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+            allow_nan=False).encode("utf-8")).hexdigest()
         with self._lock:
             self._cache[key] = (time.monotonic(), context)
             if len(self._cache) > 64:

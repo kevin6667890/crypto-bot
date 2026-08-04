@@ -5,7 +5,7 @@ paper scheduler, or legacy decision-engine dependency.
 """
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 import hashlib
 import json
 import math
@@ -192,6 +192,7 @@ class StrategyCandidateV2:
     limitations: tuple[str, ...]
     selection_status: str = "NOT_SELECTED"
     selection_reason: str = ""
+    parameter_progress: dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
@@ -211,6 +212,8 @@ class StrategyRouteSnapshotV2:
     quality: dict[str, Any]
     transitions: tuple[dict[str, Any], ...]
     disclaimer: str
+    route_snapshot_identity: str | None = None
+    parameter_set_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -358,8 +361,10 @@ def _candidate_level(state: Mapping[str, Any], types: Iterable[str], timeframes:
     return min(items, key=lambda item: abs(float(item.get("distance_pct", 999)))) if items else None
 
 
-def _geometry(family: str, direction: str, state: Mapping[str, Any], level: Mapping[str, Any] | None,
-              *, trigger_ready: bool = False) -> StrategyGeometryV2:
+def _geometry(family: str, direction: str, context: Mapping[str, Any],
+              state: Mapping[str, Any], level: Mapping[str, Any] | None, *,
+              trigger_ready: bool = False,
+              parameters: Mapping[str, Any] = PARAMETERS) -> StrategyGeometryV2:
     wait, hold = PARAMETERS["maximum_wait_bars"][family], PARAMETERS["maximum_holding_bars"][family]
     if not level:
         return StrategyGeometryV2(False, {}, {}, (), {}, "confirmed swing", (), wait, hold,
@@ -368,23 +373,31 @@ def _geometry(family: str, direction: str, state: Mapping[str, Any], level: Mapp
                                   "DEFINE_IN_PHASE_4", ("NO_STRUCTURAL_LEVEL",))
     boundary = float(level["boundary"])
     zone_low, zone_high = float(level["zone_low"]), float(level["zone_high"])
+    atr = _value(context, "15m", "volatility", "atr14")
+    configured_buffer = parameters.get("zone_buffer_atr")
+    if atr is not None and configured_buffer is not None:
+        distance = float(atr) * float(configured_buffer)
+        zone_low, zone_high = boundary - distance, boundary + distance
     invalidation = zone_low if direction == "LONG" else zone_high
     stop_type = {
         "TREND_PULLBACK": "confirmed swing", "MA200_MEAN_REVERSION": "MA zone opposite boundary",
         "BREAKOUT_CONTINUATION": "breakout/retest boundary", "FAILED_BREAKOUT_REVERSAL": "failed breakout extreme",
     }[family]
     targets = ("next confirmed resistance/support", "prior swing")
-    opposing = []
+    opposing: list[tuple[float, float, str, str]] = []
     for other in state.get("level_interactions", []):
         other_boundary = float(other.get("boundary", boundary))
         if direction == "LONG" and other_boundary > boundary or direction == "SHORT" and other_boundary < boundary:
-            opposing.append(abs(other_boundary - boundary))
+            opposing.append((abs(other_boundary - boundary), other_boundary,
+                              str(other.get("level_type")), str(other.get("timeframe"))))
     risk = abs(boundary - invalidation)
-    reward = min(opposing) if opposing else None
+    nearest = min(opposing, default=None)
+    reward = nearest[0] if nearest else None
     structural_r = reward / risk if reward is not None and risk > 0 else None
     limitations: list[str] = []
     valid = risk > 0
-    if structural_r is not None and structural_r < PARAMETERS["minimum_structural_reward_risk"]:
+    minimum_r = float(parameters.get("minimum_r", PARAMETERS["minimum_structural_reward_risk"]))
+    if structural_r is not None and structural_r < minimum_r:
         valid = False; limitations.append("TOO_CLOSE_TO_OPPOSING_LEVEL")
     if trigger_ready and structural_r is None:
         valid = False; limitations.append("target-side structural level unavailable")
@@ -394,10 +407,15 @@ def _geometry(family: str, direction: str, state: Mapping[str, Any], level: Mapp
         "BREAKOUT_CONTINUATION": ("confirmed breakout", "confirmed retest holds", "15m continuation"),
         "FAILED_BREAKOUT_REVERSAL": ("confirmed re-entry into range", "confirmed reverse structure break"),
     }[family]
+    target_boundary = nearest[1] if nearest else None
+    target_type = nearest[2] if nearest else None
+    target_timeframe = nearest[3] if nearest else None
     return StrategyGeometryV2(valid, {"reference": level.get("level_type"), "timeframe": level.get("timeframe"), "zone_low": zone_low, "zone_high": zone_high},
-                              {"reference": level.get("level_type"), "timeframe": "15m", "boundary": boundary}, confirmation,
+                              {"reference": level.get("level_type"), "timeframe": "15m", "boundary": boundary,
+                               "target_boundary": target_boundary, "target_reference": target_type,
+                               "target_timeframe": target_timeframe}, confirmation,
                               {"reference": stop_type, "boundary": invalidation}, stop_type, targets, wait, hold,
-                              PARAMETERS["minimum_structural_reward_risk"], round(structural_r, 4) if structural_r is not None else None,
+                              minimum_r, round(structural_r, 4) if structural_r is not None else None,
                               "NEXT_CONFIRMED_15M_OPEN_AFTER_TRIGGER", "DEFINE_IN_PHASE_4", "DEFINE_IN_PHASE_4", tuple(limitations))
 
 
@@ -461,7 +479,10 @@ class StrategyRouterV2:
     definitions_version = DEFINITIONS_VERSION
 
     def route(self, context: Mapping[str, Any], state: Mapping[str, Any], *,
-              previous_route: Mapping[str, Any] | None = None) -> dict[str, Any]:
+              previous_route: Mapping[str, Any] | None = None,
+              family: str | None = None, direction: str | None = None,
+              parameter_set_id: str | None = None,
+              parameter_set: Mapping[str, Any] | None = None) -> dict[str, Any]:
         if context.get("version") != "market-analysis-context-v2":
             raise ValueError("context version must be market-analysis-context-v2")
         if state.get("version") != "market-state-engine-v2":
@@ -475,20 +496,34 @@ class StrategyRouterV2:
         execution = str(context.get("execution_timeframe", "15m"))
         if execution != "15m":
             raise ValueError("strategy-router-v2 currently supports execution_timeframe=15m")
+        if (family is None) != (direction is None) or (parameter_set is None) != (parameter_set_id is None):
+            raise ValueError("family/direction and parameter_set_id/parameter_set must be supplied together")
+        if family is not None:
+            if family not in TRADE_FAMILIES or direction not in {"LONG", "SHORT"}:
+                raise ValueError("unsupported family/direction")
+            if parameter_set is None or parameter_set_id is None:
+                raise ValueError("explicit frozen parameter set is required for bounded routing")
+            allowed = dict(backtest_parameter_ranges_v2()[family])
+            if set(parameter_set) != set(allowed) or any(parameter_set[name] not in allowed[name] for name in allowed):
+                raise ValueError("parameter set is outside the frozen Router V2 specification")
         previous_candidates = {(item["family"], item["direction"]): item for item in (previous_route or {}).get("candidates", [])}
         candidates: list[StrategyCandidateV2] = []
         transitions: list[StrategyTransitionV2] = []
-        for family in TRADE_FAMILIES:
-            for direction in ("LONG", "SHORT"):
-                candidate = self._evaluate(family, direction, context, state)
-                prior = previous_candidates.get((family, direction))
-                if prior and (
-                    prior.get("identity", {}).get("level_identity") != candidate.identity.level_identity
-                    or prior.get("identity", {}).get("configuration_hash") != candidate.identity.configuration_hash
-                    or prior.get("identity", {}).get("instrument") != candidate.identity.instrument
-                ):
-                    prior = None
-                if prior:
+        requested = ((family, direction),) if family is not None else tuple(
+            (item_family, item_direction) for item_family in TRADE_FAMILIES for item_direction in ("LONG", "SHORT"))
+        for item_family, item_direction in requested:
+            prior = previous_candidates.get((item_family, item_direction))
+            candidate = self._evaluate(item_family, item_direction, context, state,
+                                       parameter_set_id=parameter_set_id,
+                                       parameter_set=parameter_set,
+                                       previous_candidate=prior)
+            if prior and (
+                prior.get("identity", {}).get("level_identity") != candidate.identity.level_identity
+                or prior.get("identity", {}).get("configuration_hash") != candidate.identity.configuration_hash
+                or prior.get("identity", {}).get("instrument") != candidate.identity.instrument
+            ):
+                prior = None
+            if prior:
                     prior_identity = prior["identity"]
                     started = prior.get("stage", {}).get("setup_started_at")
                     evaluation_id = stable_hash({
@@ -510,11 +545,11 @@ class StrategyRouterV2:
                             int(started) + candidate.geometry.maximum_wait_bars * 900 if started else None,
                             candidate.stage.rearm_after),
                     })
-                stage, transition = StrategyLifecycleV2.advance(candidate, prior, as_of)
-                candidate = StrategyCandidateV2(**{**candidate.__dict__, "state": stage.state, "stage": stage})
-                candidates.append(candidate)
-                if transition:
-                    transitions.append(transition)
+            stage, transition = StrategyLifecycleV2.advance(candidate, prior, as_of)
+            candidate = StrategyCandidateV2(**{**candidate.__dict__, "state": stage.state, "stage": stage})
+            candidates.append(candidate)
+            if transition:
+                transitions.append(transition)
         eligible = [item for item in candidates if item.state != "INELIGIBLE"]
         routable = [item for item in eligible if item.state in {
             "WATCH", "ARMED", "TRIGGER_READY", "TRIGGERED_RESEARCH_ONLY"}]
@@ -533,7 +568,7 @@ class StrategyRouterV2:
         quality = dict(context.get("quality") or {})
         quality["degraded"] = quality.get("overall_status") != "AVAILABLE"
         quality["routing_compute_only"] = True
-        return StrategyRouteSnapshotV2(
+        snapshot = StrategyRouteSnapshotV2(
             ROUTER_VERSION, DEFINITIONS_VERSION, str(context["instrument"]), as_of,
             str(context["version"]), str(state["version"]), execution, dict(TIMEFRAME_ROLES),
             asdict(primary) if primary else None,
@@ -543,8 +578,18 @@ class StrategyRouterV2:
             quality, tuple(asdict(item) for item in transitions),
             "研究策略路由，不是实时交易建议，当前未连接Paper或实盘执行。",
         ).to_dict()
+        snapshot["parameter_set_id"] = parameter_set_id
+        snapshot["route_snapshot_identity"] = stable_hash(
+            {key: value for key, value in snapshot.items() if key != "route_snapshot_identity"})
+        return snapshot
 
-    def _evaluate(self, family: str, direction: str, context: Mapping[str, Any], state: Mapping[str, Any]) -> StrategyCandidateV2:
+    def _evaluate(self, family: str, direction: str, context: Mapping[str, Any], state: Mapping[str, Any], *,
+                  parameter_set_id: str | None = None,
+                  parameter_set: Mapping[str, Any] | None = None,
+                  previous_candidate: Mapping[str, Any] | None = None) -> StrategyCandidateV2:
+        effective_parameters = dict(PARAMETERS)
+        if parameter_set:
+            effective_parameters.update(parameter_set)
         quality, quality_points, blockers, limitations = _quality(context)
         supporting: list[StrategyEvidenceV2] = []
         conflicting: list[StrategyEvidenceV2] = []
@@ -557,6 +602,7 @@ class StrategyRouterV2:
         level: Mapping[str, Any] | None = None
         desired = "INELIGIBLE"
         invalidated = False
+        parameter_progress: dict[str, Any] = {}
 
         if family == "TREND_PULLBACK":
             level_types = {"EMA20", "MA60", "BREAKOUT_RETEST", "SWING_LOW" if direction == "LONG" else "SWING_HIGH"}
@@ -595,7 +641,15 @@ class StrategyRouterV2:
             touching = bool(level and level.get("interaction_type") in {"TOUCHING", "INSIDE_ZONE", "RECLAIMED", "REJECTED"})
             oversold = _momentum(state, "15m") == ("OVERSOLD" if direction == "LONG" else "OVERBOUGHT") or _momentum(state, "1H") == ("OVERSOLD" if direction == "LONG" else "OVERBOUGHT")
             recovered = _momentum(state, "15m") in ({"RECOVERING_FROM_OVERSOLD", "BULLISH"} if direction == "LONG" else {"ROLLING_OVER_FROM_OVERBOUGHT", "BEARISH"})
-            reclaimed = bool(level and (level.get("reclaim_status") not in {None, "", "NOT_RECLAIMED"} or level.get("interaction_type") == "REJECTED"))
+            raw_reclaimed = bool(level and (level.get("reclaim_status") not in {None, "", "NOT_RECLAIMED"} or level.get("interaction_type") == "REJECTED"))
+            current_level_identity = stable_hash({"type": level.get("level_type"), "timeframe": level.get("timeframe"), "boundary": level.get("boundary"), "sources": level.get("source_timestamps")}) if level else stable_hash({"level": "NONE"})
+            same_level = bool(previous_candidate and previous_candidate.get("identity", {}).get("level_identity") == current_level_identity)
+            prior_reclaims = int((previous_candidate or {}).get("parameter_progress", {}).get("reclaim_confirmations", 0)) if same_level else 0
+            reclaim_confirmations = prior_reclaims + 1 if raw_reclaimed else 0
+            required_reclaims = int(effective_parameters.get("reclaim_bars", 1))
+            reclaimed = raw_reclaimed and reclaim_confirmations >= required_reclaims
+            parameter_progress = {"reclaim_confirmations": reclaim_confirmations,
+                                  "required_reclaim_bars": required_reclaims}
             wick = _value(context, "15m", "volume", "lower_wick_percentage" if direction == "LONG" else "upper_wick_percentage")
             rejection = wick is not None and float(wick) >= 30
             invalidated = bool(level and level.get("current_stage") in ({"MA200_BREAKDOWN_CONFIRMED"} if direction == "LONG" else {"MA200_RECLAIM_CONFIRMED"})) or strong_opposite
@@ -655,7 +709,9 @@ class StrategyRouterV2:
             (supporting if points == maximum else conflicting).append(item)
         score_breakdown = {"environment": env, "structure": structure, "setup": setup, "trigger": trigger, "data_quality": quality_points}
         score = round(sum(score_breakdown.values()), 2)
-        geometry = _geometry(family, direction, state, level, trigger_ready=desired == "TRIGGER_READY")
+        geometry = _geometry(family, direction, context, state, level,
+                             trigger_ready=desired == "TRIGGER_READY",
+                             parameters=effective_parameters)
         if not geometry.valid and desired not in {"INELIGIBLE", "INVALIDATED"}:
             blockers.append(StrategyBlockerV2(
                 "INVALID_GEOMETRY", "1H", geometry.limitations or ("structural geometry unavailable",),
@@ -665,7 +721,8 @@ class StrategyRouterV2:
             blockers.append(StrategyBlockerV2(
                 "FLOW_CONFLICT", "15m", tuple(item.code for item in flow_conflict),
                 _source_ts(context, "15m"), True, "wait for price/flow conflict to clear or flow to become unavailable"))
-        if desired == "TRIGGER_READY" and (score < PARAMETERS["trigger_ready_score"] or trigger < PARAMETERS["trigger_dimension_minimum"] or any(item.blocking for item in blockers) or not geometry.valid):
+        trigger_threshold = float(effective_parameters.get("trigger_score", PARAMETERS["trigger_ready_score"]))
+        if desired == "TRIGGER_READY" and (score < trigger_threshold or trigger < PARAMETERS["trigger_dimension_minimum"] or any(item.blocking for item in blockers) or not geometry.valid):
             desired = "ARMED" if setup >= 20 else "WATCH"
         if not geometry.valid and desired == "TRIGGER_READY":
             desired = "WATCH"
@@ -676,9 +733,12 @@ class StrategyRouterV2:
                             if (level or {}).get(key) is not None]
         setup_started = (max(event_timestamps) if event_timestamps else int(context["as_of"])) if desired not in {"INELIGIBLE", "INVALIDATED"} else None
         trigger_ts = int(context["as_of"]) if desired == "TRIGGER_READY" else None
-        configuration_hash = stable_hash({"definitions": DEFINITIONS_VERSION, "parameters": PARAMETERS, "family": family, "direction": direction})
+        configuration_hash = stable_hash({"definitions": DEFINITIONS_VERSION, "parameters": effective_parameters,
+                                          "parameter_set_id": parameter_set_id, "family": family,
+                                          "direction": direction})
         family_id = stable_hash({"family": family, "direction": direction, "strategy_version": FAMILY_VERSIONS[family], "definitions": DEFINITIONS_VERSION, "parameters": PARAMETER_SET_VERSION})
-        setup_id = stable_hash({"family_id": family_id, "instrument": context["instrument"], "timeframes": TIMEFRAME_ROLES, "level_identity": level_identity, "setup_started_at": setup_started, "configuration_hash": configuration_hash})
+        setup_id = stable_hash({"family_id": family_id, "instrument": context["instrument"], "timeframes": TIMEFRAME_ROLES, "level_identity": level_identity, "setup_started_at": setup_started, "configuration_hash": configuration_hash,
+                                "parameter_set_id": parameter_set_id})
         evaluation_id = stable_hash({"setup_id": setup_id, "as_of": context["as_of"], "source_timestamps": sources, "trigger_timestamp": trigger_ts})
         identity = StrategyIdentityV2(family_id, setup_id, evaluation_id, configuration_hash, family, direction,
                                       FAMILY_VERSIONS[family], DEFINITIONS_VERSION, PARAMETER_SET_VERSION,
@@ -693,7 +753,8 @@ class StrategyRouterV2:
         return StrategyCandidateV2(family, direction, FAMILY_VERSIONS[family], PARAMETER_SET_VERSION,
                                    desired, stage, score, score_breakdown, evidence_strength,
                                    tuple(supporting), tuple(conflicting), tuple(blockers), tuple(next_confirmation),
-                                   geometry, sources, quality, identity, stable_hash(asdict(identity)), tuple(sorted(set(limitations))))
+                                   geometry, sources, quality, identity, stable_hash(asdict(identity)), tuple(sorted(set(limitations))),
+                                   parameter_progress=parameter_progress)
 
     @staticmethod
     def _priority(candidate: StrategyCandidateV2) -> tuple[Any, ...]:
@@ -736,14 +797,18 @@ class StrategyRouterV2:
         return reasons
 
 
-def backtest_specifications_v2() -> list[dict[str, Any]]:
-    """Bounded Phase-4 input contract. It does not run a backtest."""
-    ranges = {
+def backtest_parameter_ranges_v2() -> dict[str, dict[str, tuple[Any, ...]]]:
+    return {
         "TREND_PULLBACK": {"zone_buffer_atr": (.2, .35), "trigger_score": (72, 78), "minimum_r": (1.25, 1.5)},
         "MA200_MEAN_REVERSION": {"zone_buffer_atr": (.25, .4), "reclaim_bars": (1, 2), "minimum_r": (1.25, 1.5)},
         "BREAKOUT_CONTINUATION": {"boundary_buffer_atr": (.15, .3), "retest_wait_bars": (2, 4), "minimum_r": (1.25, 1.5)},
         "FAILED_BREAKOUT_REVERSAL": {"reentry_buffer_atr": (.15, .3), "reverse_confirm_bars": (1, 2), "minimum_r": (1.25, 1.5)},
     }
+
+
+def backtest_specifications_v2() -> list[dict[str, Any]]:
+    """Bounded Phase-4 input contract. It does not run a backtest."""
+    ranges = backtest_parameter_ranges_v2()
     output: list[dict[str, Any]] = []
     for family in TRADE_FAMILIES:
         combination_count = math.prod(len(values) for values in ranges[family].values())

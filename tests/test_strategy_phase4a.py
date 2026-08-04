@@ -10,7 +10,7 @@ from dashboard.strategy_phase4a import (
     AccountPolicyV2, ArtifactWriterV2, CostPolicyV2, EntryIntentV2,
     OOTAccessError, ReadOnlyOHLCVStoreV2, ReplayEventV2,
     StrategyBacktestEngineV2, TimeSegmentV2, bootstrap_expectancy_interval,
-    chronological_segments, frozen_trials, stable_hash, structural_r,
+    chronological_segments, frozen_trials, metrics_v2, stable_hash, structural_r,
 )
 
 
@@ -162,9 +162,24 @@ def test_bootstrap_is_deterministic_and_null_when_insufficient():
     assert bootstrap_expectancy_interval([], seed=7)["lower"] is None
 
 
+def test_no_losing_trades_has_json_safe_pf_reason():
+    metrics = metrics_v2([{"net_pnl": 1, "r": 1, "fees": 0, "slippage_drag": 0,
+                           "gap_drag": 0, "bars": 1, "mae": 0, "mfe": 1}])
+    assert metrics["profit_factor"] is None
+    assert metrics["profit_factor_reason"] == "NO_LOSING_TRADES"
+
+
 def test_artifact_resume_is_idempotent_and_collision_safe(tmp_path: Path):
     writer = ArtifactWriterV2(tmp_path, "run")
     first = writer.jsonl("events.jsonl", [{"id": "a", "value": 1}], identity_key="id")
     before = first.read_bytes(); writer.jsonl("events.jsonl", [{"id": "a", "value": 1}], identity_key="id")
     assert first.read_bytes() == before
     with pytest.raises(ValueError): writer.jsonl("events.jsonl", [{"id": "a", "value": 2}], identity_key="id")
+
+
+def test_gzip_event_artifact_is_byte_deterministic(tmp_path: Path):
+    writer = ArtifactWriterV2(tmp_path, "run")
+    path = writer.jsonl_gzip("events.jsonl.gz", [{"id": "a", "value": 1}], identity_key="id")
+    before = path.read_bytes()
+    writer.jsonl_gzip("events.jsonl.gz", [{"id": "a", "value": 1}], identity_key="id")
+    assert path.read_bytes() == before

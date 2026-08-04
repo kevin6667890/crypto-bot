@@ -1,0 +1,14 @@
+{
+  "bug_id": "phase4a-engine-bug-001",
+  "classification": "NON_FINITE_PROFIT_FACTOR_SERIALIZATION",
+  "discovered_at_stage": "POST_COMPUTE_ARTIFACT_SERIALIZATION",
+  "affected_run_ids": [
+    "d3ede4d570e37ef0efb8ac65a56a383a67c9e091a954aaa3f3a64a0f4f4a0f9e"
+  ],
+  "affected_run_status": "INVALIDATED_ENGINE_BUG",
+  "old_engine_version": "strategy-backtest-engine-v2",
+  "new_engine_version": "strategy-backtest-engine-v2.0.1",
+  "fix": "Represent a positive sample with no losing trades as null profit_factor plus NO_LOSING_TRADES reason; internal gates interpret that reason deterministically.",
+  "research_protocol_changed": false,
+  "requires_all_32_trials_rerun": true
+}

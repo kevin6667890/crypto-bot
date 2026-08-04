@@ -18,7 +18,7 @@ ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path: sys.path.insert(0, str(ROOT))
 
 from dashboard.strategy_phase4a import (  # noqa: E402
-    ArtifactWriterV2, CostPolicyV2, EntryIntentV2, FAMILIES, INSTRUMENTS,
+    ArtifactWriterV2, BACKTEST_ENGINE_VERSION, CostPolicyV2, EntryIntentV2, FAMILIES, INSTRUMENTS,
     MANIFEST_VERSION, ReadOnlyOHLCVStoreV2, ReplayEventV2,
     StrategyBacktestEngineV2, StrategyEventReplayEngineV2, TimeSegmentV2,
     bootstrap_expectancy_interval, canonical_json, file_sha256, frozen_trials,
@@ -109,6 +109,15 @@ def _psr(sharpe: float | None, trades: int) -> float | None:
     z = sharpe*math.sqrt(max(1, trades-1)); return .5*(1+math.erf(z/math.sqrt(2)))
 
 
+def _pf_above_one(metrics: Mapping[str, Any]) -> bool:
+    return metrics.get("profit_factor_reason") == "NO_LOSING_TRADES" or (
+        metrics.get("profit_factor") is not None and float(metrics["profit_factor"]) > 1)
+
+
+def _pf_rank(metrics: Mapping[str, Any]) -> float:
+    return math.inf if metrics.get("profit_factor_reason") == "NO_LOSING_TRADES" else float(metrics.get("profit_factor") or 0)
+
+
 def _execute_trial(candles: Mapping[str, Sequence[Mapping[str, Any]]], intents: Mapping[str, Sequence[EntryIntentV2]],
                    segment: TimeSegmentV2, trial: Mapping[str, Any], *, fee: float, slippage: float,
                    intrabar: str) -> dict[str, Any]:
@@ -155,7 +164,7 @@ def _trial_job(args: tuple[str, dict[str, Any], str, dict[str, Any], dict[str, l
     early_terminal = None
     if not formal["trades"]: early_terminal = "NO_EVENTS"
     elif len(formal["trades"]) < int(threshold[pooled_key]) or qualifying < int(threshold["minimum_assets"]): early_terminal = "INSUFFICIENT_SAMPLE"
-    elif (formal["metrics"]["expectancy_r"] or 0) <= 0 or (formal["metrics"]["profit_factor"] or 0) <= 1: early_terminal = "RETIRE_NEGATIVE_EXPECTANCY" if segment_name == "DEVELOPMENT" else "VALIDATION_FAIL"
+    elif (formal["metrics"]["expectancy_r"] or 0) <= 0 or not _pf_above_one(formal["metrics"]): early_terminal = "RETIRE_NEGATIVE_EXPECTANCY" if segment_name == "DEVELOPMENT" else "VALIDATION_FAIL"
     elif segment_name == "DEVELOPMENT" and sum((fold["expectancy_r"] or 0) >= 0 for fold in folds) < 3: early_terminal = "RETIRE_FOLD_INSTABILITY"
     elif segment_name == "DEVELOPMENT" and concentration["single_asset_profit_share"] is not None and concentration["single_asset_profit_share"] > .7: early_terminal = "RETIRE_ASSET_CONCENTRATION"
     elif segment_name == "DEVELOPMENT" and formal["metrics"]["max_drawdown"] > .35: early_terminal = "RETIRE_FOLD_INSTABILITY"
@@ -204,7 +213,7 @@ def classify_development(trial: Mapping[str, Any], formal: Mapping[str, Any], fo
     if not formal.get("trigger_count"): return "NO_EVENTS"
     qualifying_assets = sum(int(asset["trade_count"]) >= int(threshold["development_per_asset"]) for asset in assets)
     if count < int(threshold["development_pooled"]) or qualifying_assets < int(threshold["minimum_assets"]): return "INSUFFICIENT_SAMPLE"
-    if metrics["expectancy_r"] is None or metrics["expectancy_r"] <= 0 or metrics["profit_factor"] is None or metrics["profit_factor"] <= 1: return "RETIRE_NEGATIVE_EXPECTANCY"
+    if metrics["expectancy_r"] is None or metrics["expectancy_r"] <= 0 or not _pf_above_one(metrics): return "RETIRE_NEGATIVE_EXPECTANCY"
     if sum((fold["expectancy_r"] or 0) >= 0 for fold in folds) < 3: return "RETIRE_FOLD_INSTABILITY"
     if concentration["single_trade_profit_share"] is not None and concentration["single_trade_profit_share"] > .5: return "RETIRE_FOLD_INSTABILITY"
     if concentration["single_asset_profit_share"] is not None and concentration["single_asset_profit_share"] > .7: return "RETIRE_ASSET_CONCENTRATION"
@@ -256,7 +265,7 @@ def run(dataset: Path = DEFAULT_DATASET, manifest_path: Path = TRACKED_MANIFEST)
                     formal["metrics"]["trade_count"] >= int(threshold["validation_pooled"]) and
                     qualifying >= int(threshold["minimum_assets"]) and
                     (formal["metrics"]["expectancy_r"] or 0) > 0 and
-                    (formal["metrics"]["profit_factor"] or 0) > 1 and
+                    _pf_above_one(formal["metrics"]) and
                     (stress["2.0x"]["expectancy_r"] or -1) > -.1) else "VALIDATION_FAIL"
             rs = [float(t["r"]) for t in formal["trades"] if t.get("r") is not None]
             sharpe = _daily_sharpe(formal["trades"])
@@ -282,7 +291,7 @@ def run(dataset: Path = DEFAULT_DATASET, manifest_path: Path = TRACKED_MANIFEST)
             for family in FAMILIES:
                 for direction in ("LONG", "SHORT"):
                     group = sorted((r for r in candidates if r["family"] == family and r["direction"] == direction),
-                                   key=lambda r: (r["metrics"]["expectancy_r"], r["metrics"]["profit_factor"], r["trial_id"]), reverse=True)
+                                   key=lambda r: (r["metrics"]["expectancy_r"], _pf_rank(r["metrics"]), r["trial_id"]), reverse=True)
                     selected.extend(group[:2])
                     for retired in group[2:]: retired["classification"] = "RETIRE_FOLD_INSTABILITY"; retired["selection_note"] = "pre-registered maximum two per family/direction"
             development_passes = [{"trial_id": item["trial_id"], "family": item["family"],
@@ -299,13 +308,14 @@ def run(dataset: Path = DEFAULT_DATASET, manifest_path: Path = TRACKED_MANIFEST)
                "development": next(item for item in development if item["trial_id"] == trial["trial_id"]),
                "validation": validation_by_id.get(trial["trial_id"])} for trial in trials]
     for event in event_rows: event["event_identity"] = event.pop("event_id")
-    writer.json("manifest.json", manifest); writer.jsonl("event_ledger.jsonl", event_rows, identity_key="event_identity")
+    writer.json("manifest.json", manifest); writer.jsonl_gzip("event_ledger.jsonl.gz", event_rows, identity_key="event_identity")
     writer.jsonl("trade_ledger.jsonl", trade_rows, identity_key="trade_identity")
     writer.json("trial_ledger.json", ledger); writer.json("checkpoint.json", {"completed": True, "run_id": run_id})
     peak = tracemalloc.get_traced_memory()[1]; tracemalloc.stop(); wall = time.perf_counter()-wall_start
     classifications = Counter(item["development"]["classification"] for item in ledger)
     classifications.update(item["validation"]["classification"] for item in ledger if item["validation"])
     report = {"version": "strategy-phase4a-report-v1", "run_id": run_id,
+              "backtest_engine_version": BACKTEST_ENGINE_VERSION,
               "code_sha": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),
               "manifest_identity": manifest["manifest_identity"], "dataset_identity": dataset_id,
               "segments": manifest["segments"], "oot_access_audit": {"accessed": False, "guard": "HARD_REFUSAL"},

@@ -8,6 +8,8 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 import hashlib
+import gzip
+import io
 import itertools
 import json
 import math
@@ -21,7 +23,7 @@ from typing import Any, Iterable, Iterator, Mapping, Sequence
 
 MANIFEST_VERSION = "phase4a-research-manifest-v1"
 REPLAY_ENGINE_VERSION = "strategy-event-replay-engine-v2"
-BACKTEST_ENGINE_VERSION = "strategy-backtest-engine-v2"
+BACKTEST_ENGINE_VERSION = "strategy-backtest-engine-v2.0.1"
 REPORT_VERSION = "strategy-phase4a-report-v1"
 TRIAL_LEDGER_VERSION = "strategy-phase4a-trial-ledger-v1"
 ROUTER_VERSION = "strategy-router-v2"
@@ -391,11 +393,13 @@ def metrics_v2(trades: Sequence[Mapping[str, Any]], initial_equity: float = 10_0
     equity = initial_equity; peak = equity; max_dd = 0.0
     for value in pnls:
         equity += value; peak = max(peak, equity); max_dd = max(max_dd, (peak-equity)/peak if peak else 0.0)
+    profit_factor = gross_win/gross_loss if gross_loss else None
     return {
         "trade_count": len(trades), "net_pnl": sum(pnls), "total_r": sum(rs),
         "expectancy_r": statistics.fmean(rs) if rs else None,
         "median_trade_r": statistics.median(rs) if rs else None,
-        "profit_factor": gross_win/gross_loss if gross_loss else (math.inf if gross_win else None),
+        "profit_factor": profit_factor,
+        "profit_factor_reason": "NO_LOSING_TRADES" if gross_win and not gross_loss else None,
         "win_rate": sum(value > 0 for value in pnls)/len(pnls), "max_drawdown": max_dd,
         "fees": sum(float(t.get("fees", 0)) for t in trades),
         "slippage_drag": sum(float(t.get("slippage_drag", 0)) for t in trades),
@@ -455,6 +459,22 @@ class ArtifactWriterV2:
             unique[key] = row
         temporary = path.with_suffix(path.suffix + ".tmp")
         temporary.write_text("".join(canonical_json(unique[key])+"\n" for key in sorted(unique)), encoding="utf-8")
+        temporary.replace(path)
+        return path
+
+    def jsonl_gzip(self, name: str, rows: Iterable[Mapping[str, Any]], *, identity_key: str) -> Path:
+        path = self.path / name
+        unique: dict[str, Mapping[str, Any]] = {}
+        for row in rows:
+            key = str(row[identity_key])
+            if key in unique and canonical_json(unique[key]) != canonical_json(row):
+                raise ValueError(f"identity collision in {name}: {key}")
+            unique[key] = row
+        temporary = path.with_suffix(path.suffix + ".tmp")
+        with temporary.open("wb") as raw:
+            with gzip.GzipFile(filename="", mode="wb", fileobj=raw, compresslevel=6, mtime=0) as compressed:
+                with io.TextIOWrapper(compressed, encoding="utf-8", newline="\n") as handle:
+                    for key in sorted(unique): handle.write(canonical_json(unique[key])+"\n")
         temporary.replace(path)
         return path
 

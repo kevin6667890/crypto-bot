@@ -6,6 +6,8 @@ calculation, persistence, raw-data query, strategy decision, or LLM call.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+import hashlib
+import json
 import math
 from typing import Any, Iterable
 
@@ -154,6 +156,7 @@ class MarketStateSnapshotV2:
     transitions: tuple[StateTransitionV2, ...]
     evidence: tuple[StateEvidenceV2, ...]
     limitations: tuple[str, ...]
+    state_snapshot_identity: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -277,7 +280,12 @@ class MarketStateEngineV2:
             timeframe_states, alignment, tuple(level_interactions), overlays,
             tuple(transitions), tuple(evidence), tuple(sorted(set(limitations))),
         )
-        return snapshot.to_dict()
+        payload = snapshot.to_dict()
+        payload["state_snapshot_identity"] = hashlib.sha256(json.dumps(
+            {key: value for key, value in payload.items() if key != "state_snapshot_identity"},
+            sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+            allow_nan=False).encode("utf-8")).hexdigest()
+        return payload
 
     def compare(self, previous_context: dict[str, Any], current_context: dict[str, Any]) -> dict[str, Any]:
         if str(previous_context.get("instrument")) != str(current_context.get("instrument")):

@@ -15,5 +15,14 @@
     "RETIRE_NEGATIVE_EXPECTANCY": 16
   },
   "locked_final_oot_accessed": false,
-  "status": "COMPLETE_RESEARCH_ONLY"
+  "status": "INVALIDATED_ENGINE_BUG",
+  "research_effect": "NONE",
+  "invalidation_reasons": [
+    "ROUTER_CHAIN_BYPASSED",
+    "PRIVATE_EVALUATOR_USED",
+    "SETUP_IDENTITY_MISMATCH",
+    "EVALUATION_IDENTITY_MISMATCH",
+    "LEVEL_IDENTITY_MISMATCH",
+    "GEOMETRY_PROVENANCE_MISMATCH"
+  ]
 }

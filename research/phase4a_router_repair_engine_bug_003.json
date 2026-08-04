@@ -1,0 +1,21 @@
+{
+  "bug_id": "phase4a-router-repair-engine-bug-003",
+  "classification": "EXECUTION_SYMBOL_CANONICALIZATION_MISSING",
+  "affected_run_ids": [
+    "ccae725dad149b96b600365fb217e33b4aa1eeb7dbdf663990c76bc97f1de8b7"
+  ],
+  "affected_run_status": "INVALIDATED_ENGINE_BUG",
+  "research_effect": "NONE",
+  "shadow_completed": true,
+  "shadow_event_count": 2985760,
+  "router_evaluations": 4406976,
+  "legacy_evaluator_calls": 0,
+  "pnl_computed": false,
+  "old_engine_version": "strategy-backtest-engine-v2.1+5b6071f",
+  "new_engine_version": "strategy-backtest-engine-v2.1",
+  "fix": "Canonicalize the Router SWAP instrument to the audited execution store's base OHLCV symbol at its read boundary.",
+  "shadow_reuse_allowed": true,
+  "shadow_reuse_reason": "The failure occurred after all 45 chunks were checkpointed and merged, before execution or PnL; the fix does not touch Context, State, Router, Lifecycle, or shadow lineage.",
+  "research_protocol_changed": false,
+  "requires_all_32_trials_rerun": true
+}

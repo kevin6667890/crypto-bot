@@ -1,0 +1,18 @@
+{
+  "version": "phase4a-router-repair-invalidation-v1",
+  "run_id": "d2a72ac24223320655e7eb08d54dba38d976a5c1e804b83203abfc43b2e6ebed",
+  "artifact_sha": "5b757fd8f2ca0b9ed4194de94b104b47382550420cb98432b84f44995fd26d18",
+  "status": "INVALIDATED_ENGINE_BUG",
+  "research_effect": "NONE",
+  "artifact_preserved": true,
+  "trial_ledger_preserved": true,
+  "trade_ledger_preserved": true,
+  "reasons": [
+    "ROUTER_CHAIN_BYPASSED",
+    "PRIVATE_EVALUATOR_USED",
+    "SETUP_IDENTITY_MISMATCH",
+    "EVALUATION_IDENTITY_MISMATCH",
+    "LEVEL_IDENTITY_MISMATCH",
+    "GEOMETRY_PROVENANCE_MISMATCH"
+  ]
+}

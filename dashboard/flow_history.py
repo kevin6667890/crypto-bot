@@ -248,11 +248,14 @@ class CanonicalFlowHistoryStore:
         history_version = (json.loads(history_version_row[0])
                            if history_version_row else None)
         stale_after = resolution * self._stale_buckets(timeframe)
-        stale = confirmed_end is None or now - (confirmed_end + resolution) > stale_after
+        stale = available_end is None or now - (available_end + resolution) > stale_after
         statuses = {str(point.get("quality_status")) for point in points}
         overall_status = (
             "CONFLICT" if "CONFLICT" in statuses else
             "UNRECOVERABLE_RAW_GAP" if "UNRECOVERABLE_RAW_GAP" in statuses else
+            "SOURCE_UNAVAILABLE" if statuses == {"SOURCE_UNAVAILABLE"} else
+            "PARTIAL_AFTER_GAP" if statuses == {"PARTIAL_AFTER_GAP"} else
+            "MISSING" if statuses == {"MISSING"} else
             "PARTIAL" if any(point["status"] == "WHITESPACE" for point in points) else
             "VALID"
         )
@@ -269,8 +272,8 @@ class CanonicalFlowHistoryStore:
             "resolution": timeframe, "resolution_seconds": resolution,
             "requested_start": requested_start, "requested_end": requested_end,
             "available_start": available_start, "available_end": available_end,
-            "latest_timestamp": confirmed_end,
-            "data_as_of": confirmed_end,
+            "latest_timestamp": available_end,
+            "data_as_of": available_end,
             "last_completed_bucket": last_completed_bucket,
             "next_expected_bucket": last_completed_bucket + resolution,
             "stale_after_seconds": stale_after, "stale": stale,

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict
 from pathlib import Path
+import json
 import sqlite3
 
 import pytest
@@ -239,3 +240,54 @@ def test_future_append_does_not_change_past_replay():
                              "high": 2, "low": .5, "close": 1, "volume": 1, "confirmed": 1})
     after = engine.replay(extended, trial, instrument="BTC-USDT", segment=segment)
     assert [asdict(x) for x in before["events"]] == [asdict(x) for x in after["events"]]
+
+
+def test_frozen_manifest_governance_and_oot_lock():
+    manifest = json.loads(Path("research/phase4a_research_manifest_v1.json").read_text(encoding="utf-8"))
+    assert manifest["status"] == "FROZEN_BEFORE_PNL"
+    assert manifest["raw_trial_count"] == len(manifest["trials"]) == 32
+    assert manifest["oot_lock"]["read_forbidden"] is True
+    assert manifest["scope"]["excluded_families"] == ["BREAKOUT_CONTINUATION", "FAILED_BREAKOUT_REVERSAL"]
+    assert manifest["intrabar_policy"]["formal"] == "STOP_FIRST"
+    assert manifest["execution_policy"]["entry"] == "next 15m open only"
+
+
+@pytest.mark.parametrize("family,direction", [
+    ("TREND_PULLBACK", "LONG"), ("TREND_PULLBACK", "SHORT"),
+    ("MA200_MEAN_REVERSION", "LONG"), ("MA200_MEAN_REVERSION", "SHORT")])
+def test_manifest_has_exactly_eight_trials_per_direction(family, direction):
+    manifest = json.loads(Path("research/phase4a_research_manifest_v1.json").read_text(encoding="utf-8"))
+    assert sum(x["family"] == family and x["direction"] == direction for x in manifest["trials"]) == 8
+
+
+@pytest.mark.parametrize("forbidden", [
+    "decision_engine", "paper_api", "create_order", "DeepSeek", "openai", "requests.get", "httpx"])
+def test_phase4a_execution_has_no_production_or_llm_dependency(forbidden):
+    source = Path("dashboard/strategy_phase4a.py").read_text(encoding="utf-8")
+    source += Path("scripts/run_strategy_phase4a_research.py").read_text(encoding="utf-8")
+    assert forbidden not in source
+
+
+@pytest.mark.parametrize("name", [
+    "phase4a_engine_bug_001.json", "phase4a_engine_bug_002.json",
+    "phase4a_engine_bug_003.json", "phase4a_engine_bug_004.json"])
+def test_engine_bug_runs_are_preserved_as_invalidated(name):
+    payload = json.loads((Path("research")/name).read_text(encoding="utf-8"))
+    assert payload["affected_run_status"] == "INVALIDATED_ENGINE_BUG"
+    assert payload["requires_all_32_trials_rerun"] is True
+    assert payload["research_protocol_changed"] is False
+
+
+def test_accepted_run_pointer_is_zero_selection_and_oot_clean():
+    payload = json.loads(Path("research/phase4a_latest_run.json").read_text(encoding="utf-8"))
+    assert payload["raw_trial_count"] == 32
+    assert payload["development_pass_count"] == 0
+    assert payload["validation_run_count"] == payload["validation_pass_count"] == 0
+    assert payload["locked_final_oot_accessed"] is False
+
+
+def test_replay_source_timestamps_never_exceed_evaluation_time():
+    partitions, end = replay_partitions(); segment = TimeSegmentV2("D", end-5*900, end+900, "same")
+    result = StrategyEventReplayEngineV2().replay(
+        partitions, frozen_trials("dataset")[:4], instrument="BTC-USDT", segment=segment)
+    assert all(max(item.source_candle_timestamps) <= item.context_timestamp for item in result["events"])

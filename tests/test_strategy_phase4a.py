@@ -9,7 +9,7 @@ import pytest
 from dashboard.strategy_phase4a import (
     AccountPolicyV2, ArtifactWriterV2, CostPolicyV2, EntryIntentV2,
     OOTAccessError, ReadOnlyOHLCVStoreV2, ReplayEventV2,
-    StrategyBacktestEngineV2, TimeSegmentV2, bootstrap_expectancy_interval,
+    StrategyBacktestEngineV2, StrategyEventReplayEngineV2, TimeSegmentV2, bootstrap_expectancy_interval,
     chronological_segments, frozen_trials, metrics_v2, stable_hash, structural_r,
 )
 
@@ -194,3 +194,48 @@ def test_gzip_event_artifact_is_byte_deterministic(tmp_path: Path):
     before = path.read_bytes()
     writer.jsonl_gzip("events.jsonl.gz", [{"id": "a", "value": 1}], identity_key="id")
     assert path.read_bytes() == before
+
+
+def replay_partitions():
+    end = 205*86400
+    output = {}
+    for timeframe, width in (("15m", 900), ("1H", 3600), ("4H", 14400), ("1D", 86400)):
+        start = end-205*width
+        output[timeframe] = [
+            {"ts": start+i*width, "candle_close_ts": start+(i+1)*width,
+             "open": 100+i*.1, "high": 101+i*.1, "low": 99+i*.1,
+             "close": 100.5+i*.1, "volume": 10+i, "confirmed": 1}
+            for i in range(205)]
+    return output, end
+
+
+def test_replay_resume_skips_completed_evaluations_and_is_idempotent():
+    partitions, end = replay_partitions(); segment = TimeSegmentV2("D", end-5*900, end+900, "same")
+    engine = StrategyEventReplayEngineV2(); trial = frozen_trials("dataset")[:1]
+    first = engine.replay(partitions, trial, instrument="BTC-USDT", segment=segment)
+    resumed = engine.replay(partitions, trial, instrument="BTC-USDT", segment=segment,
+                            checkpoint=first["checkpoint"])
+    assert first["evaluations"] > 0
+    assert resumed["evaluations"] == 0
+    assert resumed["events"] == [] and resumed["intents"] == []
+
+
+def test_checkpoint_cannot_cross_segment_identity():
+    partitions, end = replay_partitions(); engine = StrategyEventReplayEngineV2()
+    first_segment = TimeSegmentV2("D", end-5*900, end+900, "one")
+    checkpoint = engine.replay(partitions, frozen_trials("dataset")[:1], instrument="BTC-USDT",
+                               segment=first_segment)["checkpoint"]
+    with pytest.raises(ValueError, match="segment identity"):
+        engine.replay(partitions, frozen_trials("dataset")[:1], instrument="BTC-USDT",
+                      segment=TimeSegmentV2("V", end-5*900, end+900, "two"), checkpoint=checkpoint)
+
+
+def test_future_append_does_not_change_past_replay():
+    partitions, end = replay_partitions(); segment = TimeSegmentV2("D", end-5*900, end+900, "same")
+    engine = StrategyEventReplayEngineV2(); trial = frozen_trials("dataset")[:1]
+    before = engine.replay(partitions, trial, instrument="BTC-USDT", segment=segment)
+    extended = {key: list(value) for key, value in partitions.items()}
+    extended["15m"].append({"ts": end+900, "candle_close_ts": end+1800, "open": 1,
+                             "high": 2, "low": .5, "close": 1, "volume": 1, "confirmed": 1})
+    after = engine.replay(extended, trial, instrument="BTC-USDT", segment=segment)
+    assert [asdict(x) for x in before["events"]] == [asdict(x) for x in after["events"]]

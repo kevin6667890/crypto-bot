@@ -342,7 +342,8 @@ def run(dataset: Path = DEFAULT_DATASET, manifest_path: Path = TRACKED_MANIFEST)
               "engine_bug": {"found": True, "invalidated_runs": [
                   "d3ede4d570e37ef0efb8ac65a56a383a67c9e091a954aaa3f3a64a0f4f4a0f9e",
                   "41e0eaffcc25c7fb858cd72771881a35ee3e95adf22140a41c9d4a79f87dd48f",
-                  "4896f970dca57a4039fc72310a443983fda06ff7615c99667b27a97bd64f0bf8"]},
+                  "4896f970dca57a4039fc72310a443983fda06ff7615c99667b27a97bd64f0bf8",
+                  "04b82f55e7696eca2efab518b2e9914f904622ab7528431c3169986f38846945"]},
               "resume": {"idempotent": True},
               "disclaimer": "通过开发与后续验证仅表示等待独立最终OOT；不是交易建议。"}
     writer.json("aggregate_metrics.json", all_segment_results); writer.json("report.json", report)

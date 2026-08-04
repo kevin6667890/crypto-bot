@@ -23,7 +23,7 @@ from typing import Any, Iterable, Iterator, Mapping, Sequence
 
 MANIFEST_VERSION = "phase4a-research-manifest-v1"
 REPLAY_ENGINE_VERSION = "strategy-event-replay-engine-v2"
-BACKTEST_ENGINE_VERSION = "strategy-backtest-engine-v2.0.3"
+BACKTEST_ENGINE_VERSION = "strategy-backtest-engine-v2.0.4"
 REPORT_VERSION = "strategy-phase4a-report-v1"
 TRIAL_LEDGER_VERSION = "strategy-phase4a-trial-ledger-v1"
 ROUTER_VERSION = "strategy-router-v2"
@@ -601,18 +601,23 @@ class StrategyEventReplayEngineV2:
         if instrument not in INSTRUMENTS: raise ValueError("unsupported instrument")
         for timeframe in ("15m", "1H", "4H", "1D"):
             if timeframe not in partitions: raise ValueError(f"missing {timeframe} partition")
+        if checkpoint and checkpoint.get("segment") != segment.identity:
+            raise ValueError("checkpoint segment identity mismatch; setup cannot cross segment boundary")
+        resume_after = int((checkpoint or {}).get("last_evaluated_ts", -1))
         frames = {name: _frame(rows) for name, rows in partitions.items()}
         execution = frames["15m"]; cursor = {"1H": -1, "4H": -1, "1D": -1}
         lifecycle: dict[str, dict[str, Any]] = dict((checkpoint or {}).get("lifecycle", {}))
         events: list[ReplayEventV2] = []; intents: list[EntryIntentV2] = []
-        evaluations = 0; started_wall = time.perf_counter()
+        evaluations = 0; started_wall = time.perf_counter(); last_evaluated = resume_after
         for i, row in enumerate(execution.rows):
             as_of = int(row["candle_close_ts"])
             if as_of < segment.start_ts: continue
             if as_of >= segment.end_ts: break
+            if as_of <= resume_after: continue
             for timeframe in cursor:
                 cursor[timeframe] = _latest_closed_index(frames[timeframe], as_of, cursor[timeframe])
             if min(cursor.values()) < 199 or i < 200: continue
+            last_evaluated = as_of
             indices = {"15m": i, **cursor}
             source_ts = tuple(int(frames[tf].rows[idx]["candle_close_ts"]) for tf, idx in indices.items())
             if any(value > as_of for value in source_ts): raise AssertionError("future candle became visible")
@@ -626,7 +631,7 @@ class StrategyEventReplayEngineV2:
                 if isinstance(prior.get("triggered"), list): prior["triggered"] = set(prior["triggered"])
                 level_key = ((level or {}).get("type"), (level or {}).get("timeframe"),
                              (level or {}).get("boundary"), (level or {}).get("source_timestamp"))
-                prior_level_key = prior.get("level_key")
+                prior_level_key = tuple(prior.get("level_key")) if prior.get("level_key") is not None else None
                 if prior_level_key != level_key:
                     prior = {"state": "INELIGIBLE", "setup_ts": None, "setup_id": None,
                              "expires_at": None, "triggered": prior.get("triggered", set())}
@@ -676,7 +681,7 @@ class StrategyEventReplayEngineV2:
         return {"events": events, "intents": intents, "evaluations": evaluations,
                 "evaluations_per_second": evaluations/wall if wall else None, "wall_seconds": wall,
                 "checkpoint": {"lifecycle": serialized_lifecycle, "segment": segment.identity,
-                               "engine_version": self.version}}
+                               "engine_version": self.version, "last_evaluated_ts": last_evaluated}}
 
     @staticmethod
     def _evaluate(frames: Mapping[str, _CausalFrame], idx: Mapping[str, int], trial: FrozenTrialV2

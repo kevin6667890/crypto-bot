@@ -1,0 +1,17 @@
+{
+  "bug_id": "phase4a-router-repair-engine-bug-002",
+  "classification": "INTERRUPTED_BEFORE_CHECKPOINT",
+  "affected_run_ids": [
+    "33cb644cfcf3e72ac03420a4ecb7409a6748004f307d1b7169a452ace8515419"
+  ],
+  "affected_run_status": "INVALIDATED_ENGINE_BUG",
+  "research_effect": "NONE",
+  "formal_artifact_completed": false,
+  "pnl_computed": false,
+  "preserved_incomplete_bytes": 328133165,
+  "old_engine_version": "strategy-event-replay-engine-v2.1+218d1b2",
+  "new_engine_version": "strategy-event-replay-engine-v2.1",
+  "fix": "Write deterministic gzip members and a route/state checkpoint after each 1024 confirmed closes.",
+  "research_protocol_changed": false,
+  "requires_all_32_trials_rerun": true
+}

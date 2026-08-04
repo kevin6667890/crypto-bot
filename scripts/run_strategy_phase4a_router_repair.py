@@ -142,51 +142,80 @@ def _shadow_worker(args: tuple[str, str, list[dict[str, Any]], str]) -> dict[str
     trials = tuple(RouterNativeTrialV2(**item) for item in raw_trials)
     temp = Path(temp_root) / instrument
     temp.mkdir(parents=True, exist_ok=True)
-    handles = []
-    sinks = {}
-    for key, name in (("context", "context.jsonl.gz"), ("state", "state.jsonl.gz"),
-                      ("route", "route.jsonl.gz"), ("event", "events.jsonl.gz"),
-                      ("geometry", "geometry.jsonl.gz")):
-        handle, sink = _jsonl_gz_sink(temp / name); handles.append(handle); sinks[key] = sink
     provider = HistoricalMarketContextV2Provider(database, dataset_identity=EXPECTED_DATASET)
     engine = StrategyEventReplayEngineV2_1(provider)
     segment = TimeSegmentV2("DEVELOPMENT", DEVELOPMENT_START, DEVELOPMENT_END,
                             "136344ca2b47ace332c40571e2d591f8ac31f7a20869d291d68b0dc477994574")
     timestamps = _timestamps(Path(database), instrument, DEVELOPMENT_START, DEVELOPMENT_END)
     started = time.perf_counter()
-    result = engine.replay(instrument=instrument, confirmed_close_timestamps=timestamps,
-                           trials=trials, segment=segment, sinks=sinks, retain_lineage=False)
-    for handle in handles: handle.close()
-    intents_path = temp / "intents.jsonl"
-    with intents_path.open("w", encoding="utf-8") as handle:
-        for intent in result["intents"]:
-            handle.write(canonical_json(asdict(intent)) + "\n")
-    _json(temp / "checkpoint.json", result["checkpoint"])
-    return {"instrument": instrument, "event_count": result["event_count"],
-            "intent_count": len(result["intents"]), "router_evaluations": result["router_evaluations"],
-            "context_calculations": provider.calculations, "state_calculations": engine.state_calculations,
-            "cache_hits": provider.cache_hits, "wall_seconds": time.perf_counter() - started,
+    progress_path = temp / "progress.json"
+    progress = json.loads(progress_path.read_text(encoding="utf-8")) if progress_path.exists() else {
+        "completed_chunks": 0, "event_count": 0, "intent_count": 0, "wall_seconds": 0.0,
+        "router_evaluations": 0, "context_calculations": 0, "state_calculations": 0,
+        "cache_hits": 0}
+    checkpoint_path = temp / "checkpoint.json"
+    checkpoint = json.loads(checkpoint_path.read_text(encoding="utf-8")) if checkpoint_path.exists() else None
+    chunk_size = 1024
+    for chunk_index, offset in enumerate(range(0, len(timestamps), chunk_size)):
+        if chunk_index < int(progress["completed_chunks"]):
+            continue
+        handles = []; sinks = {}
+        for key, stem in (("context", "context"), ("state", "state"), ("route", "route"),
+                          ("event", "events"), ("geometry", "geometry")):
+            handle, sink = _jsonl_gz_sink(temp / f"{stem}.{chunk_index:05d}.jsonl.gz")
+            handles.append(handle); sinks[key] = sink
+        before_router = engine.router_evaluations
+        before_context = provider.calculations
+        before_state = engine.state_calculations
+        before_hits = provider.cache_hits
+        result = engine.replay(instrument=instrument,
+                               confirmed_close_timestamps=timestamps[offset:offset + chunk_size],
+                               trials=trials, segment=segment, sinks=sinks,
+                               retain_lineage=False, checkpoint=checkpoint)
+        for handle in handles: handle.close()
+        with (temp / f"intents.{chunk_index:05d}.jsonl").open("w", encoding="utf-8") as handle:
+            for intent in result["intents"]:
+                handle.write(canonical_json(asdict(intent)) + "\n")
+        checkpoint = result["checkpoint"]
+        _json(checkpoint_path, checkpoint)
+        progress = {"completed_chunks": chunk_index + 1,
+                    "event_count": int(progress["event_count"]) + int(result["event_count"]),
+                    "intent_count": int(progress["intent_count"]) + len(result["intents"]),
+                    "wall_seconds": float(progress["wall_seconds"]) + float(result["wall_seconds"]),
+                    "router_evaluations": int(progress.get("router_evaluations", 0)) + engine.router_evaluations - before_router,
+                    "context_calculations": int(progress.get("context_calculations", 0)) + provider.calculations - before_context,
+                    "state_calculations": int(progress.get("state_calculations", 0)) + engine.state_calculations - before_state,
+                    "cache_hits": int(progress.get("cache_hits", 0)) + provider.cache_hits - before_hits}
+        _json(progress_path, progress)
+    return {"instrument": instrument, "event_count": int(progress["event_count"]),
+            "intent_count": int(progress["intent_count"]), "router_evaluations": int(progress["router_evaluations"]),
+            "context_calculations": int(progress["context_calculations"]), "state_calculations": int(progress["state_calculations"]),
+            "cache_hits": int(progress["cache_hits"]), "wall_seconds": float(progress["wall_seconds"]),
             "peak_memory_bytes": _peak_working_set(),
-            "checkpoint_size": (temp / "checkpoint.json").stat().st_size, "temp": str(temp)}
+            "checkpoint_size": checkpoint_path.stat().st_size, "resume_time_seconds": time.perf_counter() - started,
+            "completed_chunks": int(progress["completed_chunks"]), "temp": str(temp)}
 
 
 def _merge_members(target: Path, workers: Sequence[Mapping[str, Any]], source: str) -> None:
     with target.open("wb") as output:
         for worker in workers:
-            with (Path(worker["temp"]) / source).open("rb") as handle:
-                shutil.copyfileobj(handle, output)
+            stem = source.removesuffix(".jsonl.gz")
+            for member in sorted(Path(worker["temp"]).glob(f"{stem}.*.jsonl.gz")):
+                with member.open("rb") as handle:
+                    shutil.copyfileobj(handle, output)
 
 
 def _load_intents(worker: Mapping[str, Any]):
     from dashboard.strategy_phase4a import EntryIntentV2, ReplayEventV2
     output = []
-    with (Path(worker["temp"]) / "intents.jsonl").open(encoding="utf-8") as handle:
-        for line in handle:
-            raw = json.loads(line); event = raw["event"]
-            event["source_candle_timestamps"] = tuple(event["source_candle_timestamps"])
-            event["blockers"] = tuple(event["blockers"])
-            output.append(EntryIntentV2(ReplayEventV2(**event), raw["side"], raw["stop"], raw["target"],
-                                        raw["maximum_holding_bars"], raw["minimum_structural_r"]))
+    for intent_path in sorted(Path(worker["temp"]).glob("intents.*.jsonl")):
+        with intent_path.open(encoding="utf-8") as handle:
+            for line in handle:
+                raw = json.loads(line); event = raw["event"]
+                event["source_candle_timestamps"] = tuple(event["source_candle_timestamps"])
+                event["blockers"] = tuple(event["blockers"])
+                output.append(EntryIntentV2(ReplayEventV2(**event), raw["side"], raw["stop"], raw["target"],
+                                            raw["maximum_holding_bars"], raw["minimum_structural_r"]))
     return output
 
 
@@ -268,8 +297,10 @@ def run() -> dict[str, Any]:
     run_id = stable_hash({"repair_manifest": REPAIR_MANIFEST_VERSION, "original": EXPECTED_MANIFEST,
                           "code": code_sha, "dataset": EXPECTED_DATASET})
     artifact = ROOT / ".runtime" / "strategy-phase4a-router-repair" / run_id
-    artifact.mkdir(parents=True, exist_ok=False)
-    temp_root = artifact / "workers"; temp_root.mkdir()
+    artifact.mkdir(parents=True, exist_ok=True)
+    if (artifact / "sha256_manifest.json").exists():
+        raise FileExistsError("completed run artifact already exists")
+    temp_root = artifact / "workers"; temp_root.mkdir(exist_ok=True)
     trials = trials_from_original_manifest(ORIGINAL_MANIFEST)
     jobs = [(str(DATASET), instrument, [asdict(item) for item in trials], str(temp_root)) for instrument in INSTRUMENTS]
     wall_start = time.perf_counter()

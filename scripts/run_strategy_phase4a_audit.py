@@ -9,7 +9,6 @@ from pathlib import Path
 import statistics
 import subprocess
 import sys
-import time
 
 ROOT=Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:sys.path.insert(0,str(ROOT))
@@ -121,7 +120,7 @@ implementation, not the frozen strategies.
 
 
 def run():
-    started=time.perf_counter();before_sha,_=artifact_sha(PHASE4_ROOT)
+    before_sha,_=artifact_sha(PHASE4_ROOT)
     bundle=EvidenceBundle.verify(PHASE4_ROOT,DATABASE,BUGS);trades=bundle.trades();trade_event_ids={t["event_id"] for t in trades};event_by_id={}
     def stream():
         for event in bundle.events():
@@ -156,7 +155,7 @@ def run():
     summary={"route_samples":len(route_audit),"stage_matches":sum(x["stage_match"] for x in route_audit),
              "identity_matches":sum(x["setup_identity_match"] and x["evaluation_identity_match"] and x["level_identity_match"] for x in route_audit),
              "execution_samples":len(execution_audit),"execution_matches":sum(x["all_execution_checks_match"] for x in execution_audit),
-             "metric_aggregation_match":aggregation["all_match"],"elapsed_seconds":time.perf_counter()-started}
+             "metric_aggregation_match":aggregation["all_match"]}
     audit_code_sha=subprocess.check_output(["git","rev-parse","HEAD"],cwd=ROOT,text=True).strip()
     manifest={"version":AUDIT_VERSION,"audit_code_sha":audit_code_sha,"source_artifact_sha":EXPECTED_ARTIFACT_SHA,"dataset_identity":EXPECTED_DATASET_ID,
               "seed":20260804,"scope":"DEVELOPMENT_ONLY","validation_read":False,"oot_read":False,"new_trials":0,"new_parameters":0,

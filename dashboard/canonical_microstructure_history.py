@@ -691,6 +691,11 @@ class CanonicalHistoryBuilder:
             columns = [description[0] for description in rows.description]
             ts_index = columns.index("source_ts_ms")
             identity_index = columns.index("uniqueness_key")
+            trade_id_index = columns.index("trade_id") if "trade_id" in columns else None
+            trade_fact_indexes = (
+                [columns.index(name) for name in ("source_ts_ms", "side", "price", "size")]
+                if source_name == "trades" else []
+            )
             inserts: list[tuple[Any, ...]] = []
             missing = 0
             expected_bucket = minute_floor(earliest)
@@ -700,17 +705,33 @@ class CanonicalHistoryBuilder:
             identities: set[str] = set()
             cell_hash = hashlib.sha256()
             processed = 0
+            asset_unique = 0
+            asset_duplicates = 0
+            asset_conflicts = 0
+            identity_facts: dict[str, tuple[Any, ...]] = {}
+            conflicting_identities: set[str] = set()
+
+            def row_identity(row: sqlite3.Row) -> str:
+                if trade_id_index is not None and row[trade_id_index] is not None:
+                    return str(row[trade_id_index])
+                return str(row[identity_index])
 
             def emit_observed() -> None:
                 nonlocal inserts, count, identities
+                nonlocal asset_unique, asset_duplicates, asset_conflicts
                 assert current_bucket is not None
                 duplicate_count = count - len(identities)
-                status = "CONFLICT" if duplicate_count else "VALID"
+                conflict_count = len(conflicting_identities)
+                asset_unique += len(identities)
+                asset_duplicates += duplicate_count
+                asset_conflicts += conflict_count
+                status = "CONFLICT" if conflict_count else "VALID"
                 inserts.append((
                     instrument, source_name, current_bucket, 1, count,
                     len(identities), duplicate_count, 0, first, last,
                     cell_hash.hexdigest(), status,
-                    "DUPLICATE_IDENTITY" if duplicate_count else None, "OBSERVED",
+                    "TRADE_ID_CONTENT_CONFLICT" if conflict_count else None,
+                    "OBSERVED",
                 ))
 
             def stable_rows() -> Iterator[sqlite3.Row]:
@@ -721,13 +742,13 @@ class CanonicalHistoryBuilder:
                     raw_ts = int(raw_row[ts_index])
                     if pending_ts is not None and raw_ts != pending_ts:
                         yield from sorted(
-                            pending, key=lambda item: str(item[identity_index]))
+                            pending, key=row_identity)
                         pending.clear()
                     pending_ts = raw_ts
                     pending.append(raw_row)
                 if pending:
                     yield from sorted(
-                        pending, key=lambda item: str(item[identity_index]))
+                        pending, key=row_identity)
 
             for row in stable_rows():
                 processed += 1
@@ -749,10 +770,19 @@ class CanonicalHistoryBuilder:
                     count = 0
                     first = last = timestamp
                     identities = set()
+                    identity_facts = {}
+                    conflicting_identities = set()
                     cell_hash = hashlib.sha256()
-                identity = str(row[identity_index])
+                identity = row_identity(row)
                 count += 1
                 last = timestamp
+                if trade_fact_indexes:
+                    fact = tuple(row[index] for index in trade_fact_indexes)
+                    prior_fact = identity_facts.get(identity)
+                    if prior_fact is not None and prior_fact != fact:
+                        conflicting_identities.add(identity)
+                    elif prior_fact is None:
+                        identity_facts[identity] = fact
                 identities.add(identity)
                 encoded = canonical_json(list(row)).encode()
                 cell_hash.update(encoded)
@@ -788,22 +818,30 @@ class CanonicalHistoryBuilder:
                     "INSERT INTO coverage_ledger VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     inserts,
                 )
-            status = "PARTIAL" if missing else "VALID"
+            status = ("CONFLICT" if asset_conflicts else
+                      "PARTIAL" if missing else "VALID")
             out.execute(
                 """INSERT INTO source_assets VALUES(
                    ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (instrument, source_name, table, minute_floor(earliest),
-                 minute_floor(latest), earliest, latest, total_rows, total_rows,
-                 0, 0, 0, 0, asset_hash.hexdigest(), "local-frozen-db", None,
+                 minute_floor(latest), earliest, latest, total_rows, asset_unique,
+                 asset_duplicates, 0, 0, asset_conflicts,
+                 asset_hash.hexdigest(), "local-frozen-db", None,
                  None, status),
             )
             self.destination.checkpoint(
                 out, f"coverage:{source_name}", instrument, latest, "COMPLETE",
-                {"row_count": total_rows, "missing_minutes": missing},
+                {"row_count": total_rows, "missing_minutes": missing,
+                 "unique_identity_count": asset_unique,
+                 "duplicate_count": asset_duplicates,
+                 "trade_id_conflict_count": asset_conflicts},
             )
             return {"instrument": instrument, "source": source_name,
                     "earliest_ms": earliest, "latest_ms": latest,
                     "row_count": total_rows, "missing_minutes": missing,
+                    "unique_identity_count": asset_unique,
+                    "duplicate_count": asset_duplicates,
+                    "trade_id_conflict_count": asset_conflicts,
                     "status": status}
 
     def build_cvd_1m(self, instrument: str) -> dict[str, Any]:
@@ -994,6 +1032,41 @@ class CanonicalHistoryBuilder:
                 "INSERT INTO cvd_1m VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 inserts,
             )
+            if official_audit:
+                file_fingerprint = fingerprint([
+                    [item["path"], item["sha256"], item["row_count"]]
+                    for item in official_audit
+                ])
+                manifest_id = fingerprint([
+                    "trades", instrument, file_fingerprint,
+                    official_ranges[0][0], official_ranges[-1][1],
+                ])
+                official_rows = sum(int(item["row_count"]) for item in official_audit)
+                out.execute(
+                    """INSERT OR REPLACE INTO official_backfill_manifests
+                       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (manifest_id, "trades", instrument,
+                     official_ranges[0][0], official_ranges[-1][1],
+                     "OKX /api/v5/public/market-data-history daily tick files",
+                     len(official_audit), file_fingerprint, official_rows,
+                     official_rows, official_ranges[0][0], official_ranges[-1][1],
+                     "AUTHORITATIVE_FULL_PARTITION_REPLACEMENT", "instrument+trade_id",
+                     self.identity.generated_at_ms, canonical_json(official_audit)),
+                )
+                out.execute(
+                    """INSERT OR REPLACE INTO source_assets VALUES(
+                       ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (instrument, "trades", "OKX_OFFICIAL_DAILY_TICK_FILES",
+                     official_ranges[0][0], official_ranges[-1][1] - 1,
+                     min(int(cell["first"]) for bucket, cell in official.items()
+                         if official_ranges[0][0] <= bucket < official_ranges[-1][1]),
+                     max(int(cell["last"]) for bucket, cell in official.items()
+                         if official_ranges[0][0] <= bucket < official_ranges[-1][1]),
+                     official_rows, official_rows, 0, 0, 0, 0,
+                     file_fingerprint, "OKX_OFFICIAL_MARKET_DATA_HISTORY",
+                     self.identity.generated_at_ms, manifest_id,
+                     "BACKFILLED_OFFICIAL"),
+                )
             self._reconcile_cvd_days(out, instrument)
             self.destination.checkpoint(
                 out, "cvd:1m", instrument, max(ledger), "COMPLETE",

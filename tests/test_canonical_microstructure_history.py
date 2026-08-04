@@ -254,6 +254,7 @@ def test_official_price_overlay_only_fills_missing_and_checks_overlap(
         "INSERT INTO mark_price_observations VALUES(?,?,?,?,?,?,?,?)",
         [(0, 1, 2, 0.5, 1.5, "confirmed", "BTC-USDT-SWAP", "a"),
          (60_000, 1.5, 2.5, 1.25, 1.75, "provisional", "BTC-USDT-SWAP", "p"),
+         (30_000, None, None, None, 1.4, "confirmed", "BTC-USDT-SWAP", "s"),
          (120_000, 2, 3, 1.5, 2.5, "confirmed", "BTC-USDT-SWAP", "b")],
     )
     connection.commit()
@@ -287,6 +288,7 @@ def test_official_price_overlay_only_fills_missing_and_checks_overlap(
     assert result == {
         "source": "mark", "instrument": "BTC-USDT-SWAP",
         "official_points": 3, "points_used": 1, "overlap_checked": 2,
+        "overlap_rows_checked": 3,
         "overlap_conflicts": 0, "status": "COMPLETE",
     }
     with builder.destination.connect() as output:

@@ -43,7 +43,7 @@
       "dedupe_key": ["instrument", "timestamp", "resolution"],
       "required_fields": ["ts", "o", "h", "l", "c", "confirm"],
       "canonical_treatment": "these are the native confirmed 1m raw facts already used by mark_price_observations; apply only to audited missing timestamps in the offline overlay",
-      "overlap_validation": "two confirmed 1m buckets on each side of every segment",
+      "overlap_validation": "for stored historical candles require exact OHLC equality; for confirmed live snapshots require each close to remain inside the official candle low-high range; provisional rows are not valid overlap facts",
       "failure_recovery": "checkpoint the oldest confirmed timestamp and response SHA per segment; retry idempotently"
     },
     {
@@ -56,7 +56,7 @@
       "dedupe_key": ["instrument", "timestamp", "resolution"],
       "required_fields": ["ts", "o", "h", "l", "c", "confirm"],
       "canonical_treatment": "these are the native confirmed 1m raw facts already used by index_price_observations; apply only to audited missing timestamps in the offline overlay",
-      "overlap_validation": "two confirmed 1m buckets on each side of every segment",
+      "overlap_validation": "for stored historical candles require exact OHLC equality; for confirmed live snapshots require each close to remain inside the official candle low-high range; provisional rows are not valid overlap facts",
       "failure_recovery": "checkpoint the oldest confirmed timestamp and response SHA per segment; retry idempotently"
     },
     {

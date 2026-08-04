@@ -467,31 +467,41 @@ class CanonicalHistoryBuilder:
                     "status": "SOURCE_UNAVAILABLE", "points_used": 0}
         table = SOURCE_TABLES[source_name]
         source_instrument = self._source_instrument(source_name, instrument)
-        overlap_checked = overlap_conflicts = points_used = 0
+        overlap_checked = overlap_rows_checked = overlap_conflicts = points_used = 0
         official_fingerprint = hashlib.sha256()
         with _readonly(self.source_path) as source, self.destination.connect() as out:
-            local: dict[int, sqlite3.Row] = {}
+            local: dict[int, list[sqlite3.Row]] = {}
             timestamps = sorted(points)
-            for offset in range(0, len(timestamps), 900):
-                chunk = timestamps[offset:offset + 900]
-                placeholders = ",".join("?" for _ in chunk)
+            if timestamps:
                 for row in source.execute(
                     f"""SELECT source_ts_ms,open,high,low,close,state
-                          FROM {table} WHERE instrument=?
-                           AND state='confirmed'
-                           AND source_ts_ms IN ({placeholders})""",
-                    (source_instrument, *chunk),
+                          FROM {table} WHERE instrument=? AND state='confirmed'
+                           AND source_ts_ms>=? AND source_ts_ms<?
+                          ORDER BY source_ts_ms""",
+                    (source_instrument, timestamps[0], timestamps[-1] + 60_000),
                 ):
-                    local[int(row[0])] = row
+                    bucket = minute_floor(int(row[0]))
+                    if bucket in points:
+                        local.setdefault(bucket, []).append(row)
             for timestamp, row in sorted(points.items()):
                 official_fingerprint.update(canonical_json(row).encode("utf-8"))
-                existing = local.get(timestamp)
-                if existing is not None:
+                existing = local.get(timestamp, [])
+                if existing:
                     overlap_checked += 1
-                    local_values = tuple(Decimal(str(existing[index])) for index in range(1, 5))
                     official_values = tuple(Decimal(row[index]) for index in range(1, 5))
-                    if existing[5] != "confirmed" or local_values != official_values:
-                        overlap_conflicts += 1
+                    official_open, official_high, official_low, official_close = official_values
+                    for local_row in existing:
+                        overlap_rows_checked += 1
+                        if all(local_row[index] is not None for index in range(1, 5)):
+                            local_values = tuple(
+                                Decimal(str(local_row[index])) for index in range(1, 5)
+                            )
+                            if local_values != official_values:
+                                overlap_conflicts += 1
+                        else:
+                            local_close = Decimal(str(local_row[4]))
+                            if not official_low <= local_close <= official_high:
+                                overlap_conflicts += 1
                     continue
                 ledger = out.execute(
                     """SELECT status FROM coverage_ledger
@@ -557,6 +567,7 @@ class CanonicalHistoryBuilder:
             "source": source_name, "instrument": instrument,
             "official_points": len(points), "points_used": points_used,
             "overlap_checked": overlap_checked,
+            "overlap_rows_checked": overlap_rows_checked,
             "overlap_conflicts": overlap_conflicts, "status": audit["status"],
         }
 

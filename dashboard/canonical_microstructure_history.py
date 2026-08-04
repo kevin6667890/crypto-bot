@@ -773,6 +773,7 @@ class CanonicalHistoryBuilder:
         official, official_ranges, official_audit = (
             self._load_official_trade_minutes(instrument)
         )
+        official_minute_count = len(official)
         with _readonly(self.source_path) as source, self.destination.connect() as out:
             for range_start, range_end in official_ranges:
                 for bucket in range(range_start, range_end, 60_000):
@@ -953,7 +954,7 @@ class CanonicalHistoryBuilder:
             )
             return {"instrument": instrument, "rows": len(inserts),
                     "official_files": official_audit,
-                    "official_minutes": len(official)}
+                    "official_minutes": official_minute_count}
 
     def _reconcile_cvd_days(
         self, out: sqlite3.Connection, instrument: str,

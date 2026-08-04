@@ -60,6 +60,8 @@ def main() -> None:
     parser.add_argument("--source-name", action="append", choices=SOURCE_TABLES)
     parser.add_argument("--official-trade-manifest", type=Path)
     parser.add_argument("--official-oi-manifest", type=Path)
+    parser.add_argument("--official-price-manifest", type=Path)
+    parser.add_argument("--apply-price-overlay-only", action="store_true")
     parser.add_argument(
         "--contract-value", action="append", default=[],
         help="verified instrument=value pair, e.g. BTC-USDT-SWAP=0.01",
@@ -80,8 +82,18 @@ def main() -> None:
         official_trade_manifest_path=arguments.official_trade_manifest,
         contract_values=contract_values,
         official_oi_manifest_path=arguments.official_oi_manifest,
+        official_price_manifest_path=arguments.official_price_manifest,
     )
-    if arguments.audit_only:
+    if arguments.apply_price_overlay_only:
+        report = {"price_overlay": []}
+        for instrument in arguments.instrument or INSTRUMENTS:
+            for source_name in arguments.source_name or ("mark", "index"):
+                if source_name not in {"mark", "index"}:
+                    continue
+                report["price_overlay"].append(
+                    builder.apply_official_price_overlay(source_name, instrument)
+                )
+    elif arguments.audit_only:
         report: dict[str, object] = {"coverage": []}
 
         def progress(payload: dict[str, object]) -> None:

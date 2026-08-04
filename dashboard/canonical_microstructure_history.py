@@ -403,6 +403,7 @@ class CanonicalHistoryBuilder:
         official_trade_manifest_path: Path | str | None = None,
         contract_values: dict[str, str] | None = None,
         official_oi_manifest_path: Path | str | None = None,
+        official_price_manifest_path: Path | str | None = None,
     ) -> None:
         self.source_path = Path(source_path)
         self.destination = CanonicalHistoryStore(destination_path)
@@ -416,7 +417,147 @@ class CanonicalHistoryBuilder:
             Path(official_oi_manifest_path)
             if official_oi_manifest_path is not None else None
         )
+        self.official_price_manifest_path = (
+            Path(official_price_manifest_path)
+            if official_price_manifest_path is not None else None
+        )
         self.destination.initialise(identity)
+
+    def _load_official_price_points(
+        self, source_name: str, instrument: str,
+    ) -> tuple[dict[int, list[str]], dict[str, Any] | None]:
+        if self.official_price_manifest_path is None:
+            return {}, None
+        manifest_body = self.official_price_manifest_path.read_bytes()
+        manifest = json.loads(manifest_body)
+        if manifest.get("manifest_version") != "okx-official-price-gap-manifest-v1":
+            raise ValueError("unsupported official price manifest")
+        item = next((entry for entry in manifest.get("instruments", [])
+                     if entry.get("instrument") == instrument
+                     and entry.get("source") == source_name), None)
+        if item is None:
+            return {}, None
+        rows_path = Path(str(item["rows_path"]))
+        rows_body = rows_path.read_bytes()
+        if hashlib.sha256(rows_body).hexdigest() != item["rows_sha256"]:
+            raise ValueError(f"official {source_name} rows SHA mismatch: {instrument}")
+        points: dict[int, list[str]] = {}
+        for raw in json.loads(rows_body):
+            row = [str(value) for value in raw]
+            if len(row) != 6 or row[5] != "1" or int(row[0]) % 60_000:
+                raise ValueError(f"invalid official {source_name} row: {instrument}")
+            timestamp = int(row[0])
+            previous = points.get(timestamp)
+            if previous is not None and previous != row:
+                raise ValueError(f"conflicting official {source_name} timestamp {timestamp}")
+            points[timestamp] = row
+        audit = dict(item)
+        audit["manifest_sha256"] = hashlib.sha256(manifest_body).hexdigest()
+        return points, audit
+
+    def apply_official_price_overlay(
+        self, source_name: str, instrument: str,
+    ) -> dict[str, Any]:
+        """Apply exact confirmed official candles to missing ledger cells only."""
+        if source_name not in {"mark", "index"}:
+            raise ValueError("official price overlay supports mark/index only")
+        points, audit = self._load_official_price_points(source_name, instrument)
+        if audit is None:
+            return {"source": source_name, "instrument": instrument,
+                    "status": "SOURCE_UNAVAILABLE", "points_used": 0}
+        table = SOURCE_TABLES[source_name]
+        source_instrument = self._source_instrument(source_name, instrument)
+        overlap_checked = overlap_conflicts = points_used = 0
+        official_fingerprint = hashlib.sha256()
+        with _readonly(self.source_path) as source, self.destination.connect() as out:
+            local: dict[int, sqlite3.Row] = {}
+            timestamps = sorted(points)
+            for offset in range(0, len(timestamps), 900):
+                chunk = timestamps[offset:offset + 900]
+                placeholders = ",".join("?" for _ in chunk)
+                for row in source.execute(
+                    f"""SELECT source_ts_ms,open,high,low,close,state
+                          FROM {table} WHERE instrument=?
+                           AND source_ts_ms IN ({placeholders})""",
+                    (source_instrument, *chunk),
+                ):
+                    local[int(row[0])] = row
+            for timestamp, row in sorted(points.items()):
+                official_fingerprint.update(canonical_json(row).encode("utf-8"))
+                existing = local.get(timestamp)
+                if existing is not None:
+                    overlap_checked += 1
+                    local_values = tuple(Decimal(str(existing[index])) for index in range(1, 5))
+                    official_values = tuple(Decimal(row[index]) for index in range(1, 5))
+                    if existing[5] != "confirmed" or local_values != official_values:
+                        overlap_conflicts += 1
+                    continue
+                ledger = out.execute(
+                    """SELECT status FROM coverage_ledger
+                        WHERE instrument=? AND source=? AND bucket_ms=?""",
+                    (instrument, source_name, timestamp),
+                ).fetchone()
+                if ledger is None or ledger[0] not in {"MISSING", "SOURCE_UNAVAILABLE"}:
+                    continue
+                row_fingerprint = fingerprint(row)
+                out.execute(
+                    """UPDATE coverage_ledger SET observed_count=1,
+                              unique_identity_count=1,duplicate_count=0,
+                              first_source_ts_ms=?,last_source_ts_ms=?,
+                              source_fingerprint=?,status='BACKFILLED_OFFICIAL',
+                              gap_reason=NULL,classification='OBSERVED'
+                        WHERE instrument=? AND source=? AND bucket_ms=?""",
+                    (timestamp, timestamp, row_fingerprint, instrument,
+                     source_name, timestamp),
+                )
+                points_used += 1
+            if overlap_conflicts:
+                raise ValueError(
+                    f"official {source_name} overlap conflicts for {instrument}: "
+                    f"{overlap_conflicts}"
+                )
+            for gap in audit.get("gaps", []):
+                for timestamp in range(
+                    int(gap["start_ms"]), int(gap["end_ms_exclusive"]), 60_000
+                ):
+                    out.execute(
+                        """UPDATE coverage_ledger
+                              SET status='SOURCE_UNAVAILABLE',
+                                  gap_reason='OFFICIAL_CANDLE_NOT_RETURNED'
+                            WHERE instrument=? AND source=? AND bucket_ms=?
+                              AND status='MISSING'""",
+                        (instrument, source_name, timestamp),
+                    )
+            manifest_id = f"{audit['manifest_sha256']}:{source_name}:{instrument}"
+            out.execute(
+                """INSERT OR REPLACE INTO official_backfill_manifests
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (manifest_id, source_name, instrument,
+                 min(int(gap["start_ms"]) for gap in audit["gaps"]),
+                 max(int(gap["end_ms_exclusive"]) for gap in audit["gaps"]),
+                 audit["endpoint"], int(audit["page_count"]), audit["rows_sha256"],
+                 points_used, len(points), min(points) if points else None,
+                 max(points) if points else None,
+                 "MATCH" if overlap_checked else "NO_OVERLAP",
+                 str(audit["dedupe_key"]), now_ms(), canonical_json(audit)),
+            )
+            out.execute(
+                """INSERT OR REPLACE INTO source_assets VALUES(
+                   ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                (instrument, source_name, f"official:{table}",
+                 min(points) if points else None, max(points) if points else None,
+                 min(points) if points else None, max(points) if points else None,
+                 len(points), len(points), 0, 0, 0, 0,
+                 official_fingerprint.hexdigest(), "OKX_OFFICIAL_HISTORY_CANDLES",
+                 now_ms(), manifest_id,
+                 "BACKFILLED_OFFICIAL" if audit["status"] == "COMPLETE" else "PARTIAL"),
+            )
+        return {
+            "source": source_name, "instrument": instrument,
+            "official_points": len(points), "points_used": points_used,
+            "overlap_checked": overlap_checked,
+            "overlap_conflicts": overlap_conflicts, "status": audit["status"],
+        }
 
     def _load_official_oi_points(
         self, instrument: str,

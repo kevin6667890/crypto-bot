@@ -172,3 +172,60 @@ def test_higher_timeframe_rows_match_schema_width(tmp_path: Path) -> None:
         assert connection.execute(
             "SELECT count(*) FROM cvd_higher_timeframes"
         ).fetchone()[0] == 5
+
+
+def test_official_oi_only_fills_exact_missing_observation_minute(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source.db"
+    connection = sqlite3.connect(source)
+    connection.execute(
+        """CREATE TABLE oi_observations(
+        source_ts_ms INTEGER,oi_contracts REAL,oi_currency REAL,oi_usd REAL,
+        uniqueness_key TEXT,state TEXT,instrument TEXT)"""
+    )
+    connection.executemany(
+        "INSERT INTO oi_observations VALUES(?,?,?,?,?,?,?)",
+        [(0, 1, 2, 10, "a", "confirmed", "BTC-USDT-SWAP"),
+         (600_000, 1, 2, 20, "b", "confirmed", "BTC-USDT-SWAP")],
+    )
+    connection.commit()
+    connection.close()
+    rows_path = tmp_path / "oi.json"
+    rows_body = json.dumps([["300000", "1", "2", "15"]]).encode()
+    rows_path.write_bytes(rows_body)
+    manifest_path = tmp_path / "oi-manifest.json"
+    manifest_path.write_text(json.dumps({
+        "manifest_version": "okx-official-oi-history-manifest-v1",
+        "instruments": [{
+            "instrument": "BTC-USDT-SWAP", "rows_path": str(rows_path),
+            "rows_sha256": hashlib.sha256(rows_body).hexdigest(),
+            "earliest_ms": 300_000, "latest_ms": 300_000,
+            "endpoint": "https://www.okx.com/example", "page_count": 1,
+        }],
+    }), encoding="utf-8")
+    builder = CanonicalHistoryBuilder(
+        source, tmp_path / "canonical.db",
+        BuildIdentity("a" * 64, "commit", 600_000, 123),
+        official_oi_manifest_path=manifest_path,
+    )
+    with builder.destination.connect() as output:
+        for bucket in range(0, 600_001, 60_000):
+            observed = bucket in {0, 600_000}
+            output.execute(
+                "INSERT INTO coverage_ledger VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                ("BTC-USDT-SWAP", "oi", bucket, 1, int(observed), int(observed),
+                 0, 0, bucket if observed else None, bucket if observed else None,
+                 "local" if observed else None, "VALID" if observed else "MISSING",
+                 None if observed else "NO_RAW_OBSERVATION",
+                 "OBSERVED" if observed else "TRUE_RAW_GAP"),
+            )
+    result = builder.build_oi_1m("BTC-USDT-SWAP")
+    assert result["official_points_used"] == 1
+    with builder.destination.connect() as output:
+        rows = output.execute(
+            "SELECT bucket_ms,confirmed_oi,status FROM oi_1m ORDER BY bucket_ms"
+        ).fetchall()
+    assert tuple(rows[0]) == (0, 10.0, "VALID")
+    assert tuple(rows[1]) == (60_000, None, "UNRECOVERABLE_RAW_GAP")
+    assert tuple(rows[5]) == (300_000, 15.0, "BACKFILLED_OFFICIAL")

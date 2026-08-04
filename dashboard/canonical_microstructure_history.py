@@ -15,7 +15,7 @@ import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterable, Iterator, Sequence
+from typing import Any, Callable, Iterable, Iterator, Sequence
 
 
 CANONICAL_MICROSTRUCTURE_HISTORY_VERSION = (
@@ -389,7 +389,10 @@ class CanonicalHistoryBuilder:
     def _source_instrument(source_name: str, instrument: str) -> str:
         return instrument.removesuffix("-SWAP") if source_name == "index" else instrument
 
-    def build_coverage(self, source_name: str, instrument: str) -> dict[str, Any]:
+    def build_coverage(
+        self, source_name: str, instrument: str,
+        progress: Callable[[dict[str, Any]], None] | None = None,
+    ) -> dict[str, Any]:
         """Create a factual minute ledger; old collection_gaps are not inputs."""
         table = SOURCE_TABLES[source_name]
         source_instrument = self._source_instrument(source_name, instrument)
@@ -416,7 +419,7 @@ class CanonicalHistoryBuilder:
             rows = source.execute(
                 f"""SELECT *
                     FROM {table} WHERE instrument=?
-                    ORDER BY source_ts_ms,uniqueness_key""", (source_instrument,),
+                    ORDER BY source_ts_ms""", (source_instrument,),
             )
             asset_hash = hashlib.sha256()
             columns = [description[0] for description in rows.description]
@@ -430,6 +433,7 @@ class CanonicalHistoryBuilder:
             first = last = 0
             identities: set[str] = set()
             cell_hash = hashlib.sha256()
+            processed = 0
 
             def emit_observed() -> None:
                 nonlocal inserts, count, identities
@@ -443,7 +447,24 @@ class CanonicalHistoryBuilder:
                     "DUPLICATE_IDENTITY" if duplicate_count else None, "OBSERVED",
                 ))
 
-            for row in rows:
+            def stable_rows() -> Iterator[sqlite3.Row]:
+                """Use the time index, sorting only equal-ms rows in memory."""
+                pending: list[sqlite3.Row] = []
+                pending_ts: int | None = None
+                for raw_row in rows:
+                    raw_ts = int(raw_row[ts_index])
+                    if pending_ts is not None and raw_ts != pending_ts:
+                        yield from sorted(
+                            pending, key=lambda item: str(item[identity_index]))
+                        pending.clear()
+                    pending_ts = raw_ts
+                    pending.append(raw_row)
+                if pending:
+                    yield from sorted(
+                        pending, key=lambda item: str(item[identity_index]))
+
+            for row in stable_rows():
+                processed += 1
                 timestamp = int(row[ts_index])
                 bucket = minute_floor(timestamp)
                 if current_bucket is None or bucket != current_bucket:
@@ -470,6 +491,14 @@ class CanonicalHistoryBuilder:
                 encoded = canonical_json(list(row)).encode()
                 cell_hash.update(encoded)
                 asset_hash.update(encoded)
+                if progress is not None and processed % 1_000_000 == 0:
+                    progress({
+                        "instrument": instrument,
+                        "source": source_name,
+                        "processed_rows": processed,
+                        "total_rows": total_rows,
+                        "bucket_ms": bucket,
+                    })
                 if len(inserts) >= 10_000:
                     out.executemany(
                         "INSERT INTO coverage_ledger VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",

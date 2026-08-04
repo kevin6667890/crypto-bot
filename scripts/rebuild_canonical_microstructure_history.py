@@ -10,6 +10,8 @@ from pathlib import Path
 
 from dashboard.canonical_microstructure_history import (
     BuildIdentity,
+    INSTRUMENTS,
+    SOURCE_TABLES,
     CanonicalHistoryBuilder,
     now_ms,
 )
@@ -45,6 +47,9 @@ def main() -> None:
     parser.add_argument("--source-sha256")
     parser.add_argument("--commit", required=True)
     parser.add_argument("--report", type=Path, required=True)
+    parser.add_argument("--audit-only", action="store_true")
+    parser.add_argument("--instrument", action="append", choices=INSTRUMENTS)
+    parser.add_argument("--source-name", action="append", choices=SOURCE_TABLES)
     arguments = parser.parse_args()
     source_hash = sha256_file(arguments.source)
     if arguments.source_sha256 and source_hash != arguments.source_sha256.lower():
@@ -55,9 +60,23 @@ def main() -> None:
         source_watermark_ms=source_watermark(arguments.source),
         generated_at_ms=now_ms(),
     )
-    report = CanonicalHistoryBuilder(
+    builder = CanonicalHistoryBuilder(
         arguments.source, arguments.destination, identity,
-    ).rebuild()
+    )
+    if arguments.audit_only:
+        report: dict[str, object] = {"coverage": []}
+
+        def progress(payload: dict[str, object]) -> None:
+            print(json.dumps({"progress": payload}, sort_keys=True), flush=True)
+
+        for instrument in arguments.instrument or INSTRUMENTS:
+            for source_name in arguments.source_name or SOURCE_TABLES:
+                print(json.dumps({"start": [instrument, source_name]}), flush=True)
+                report["coverage"].append(builder.build_coverage(
+                    source_name, instrument, progress))
+                print(json.dumps({"complete": [instrument, source_name]}), flush=True)
+    else:
+        report = builder.rebuild()
     arguments.report.parent.mkdir(parents=True, exist_ok=True)
     arguments.report.write_text(
         json.dumps(report, ensure_ascii=False, sort_keys=True, indent=2) + "\n",

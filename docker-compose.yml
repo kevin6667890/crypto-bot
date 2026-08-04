@@ -39,6 +39,7 @@ services:
       PAPER_API_HOST: 0.0.0.0
       GIT_COMMIT: ${GIT_COMMIT:-unknown}
       MICROSTRUCTURE_DB_PATH: /app/data_cache/market_microstructure.db
+      CANONICAL_MICROSTRUCTURE_HISTORY_DB_PATH: /app/data_cache/canonical_microstructure_history_v1.db
     volumes:
       - ./data_cache:/app/data_cache
     healthcheck:
@@ -55,6 +56,8 @@ services:
     command: python -m dashboard.microstructure_collector
     environment:
       MICROSTRUCTURE_DB_PATH: /app/data_cache/market_microstructure.db
+      CANONICAL_MICROSTRUCTURE_HISTORY_DB_PATH: /app/data_cache/canonical_microstructure_history_v1.db
+      GIT_COMMIT: ${GIT_COMMIT:-unknown}
       MICROSTRUCTURE_MAINTENANCE_ENABLED: "false"
       MICROSTRUCTURE_REALTIME_AGGREGATION_ENABLED: "true"
       PYTHONUNBUFFERED: "1"

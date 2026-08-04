@@ -133,6 +133,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/market/state": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Read-only deterministic market-state recognition. This is not a trading signal. */
+        get: operations["getMarketStateV2"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/market/state/compare": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Bounded comparison of exactly two causal market contexts. */
+        get: operations["compareMarketStatesV2"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -252,6 +286,103 @@ export interface components {
             flow: components["schemas"]["FlowContextV2"];
             levels: components["schemas"]["MarketLevelV2"][];
             quality: components["schemas"]["OverallDataQualityV2"];
+        };
+        StateEvidenceV2: {
+            code: string;
+            timeframe: string;
+            value: unknown;
+            weight: number;
+            source_timestamp: components["schemas"]["UnixSeconds"] | null;
+            quality: string;
+            /** @enum {string} */
+            classification: "supporting" | "conflicting" | "unavailable";
+        };
+        TimeframeStateV2: {
+            timeframe: components["schemas"]["MarketTimeframeV2"];
+            role: string;
+            /** @enum {string} */
+            primary_state: "TREND_UP" | "TREND_DOWN" | "RANGE_LOW_VOLATILITY" | "RANGE_HIGH_VOLATILITY" | "TRANSITION_UP" | "TRANSITION_DOWN" | "TRANSITION_MIXED" | "UNKNOWN";
+            primary_state_code: string;
+            evidence_strength: number;
+            quality: components["schemas"]["DataQualityV2"];
+            momentum_state: string;
+            overlays: string[];
+            source_timestamps: components["schemas"]["UnixSeconds"][];
+            supporting_evidence: string[];
+            conflicting_evidence: string[];
+            unavailable_evidence: string[];
+            limitations: string[];
+        };
+        LevelInteractionV2: {
+            level_type: string;
+            timeframe: string;
+            zone_low: number;
+            zone_high: number;
+            boundary: number;
+            distance_pct: number;
+            approach_direction: string;
+            /** @enum {string} */
+            interaction_type: "APPROACHING" | "TOUCHING" | "REJECTED" | "BROKEN" | "RECLAIMED" | "RETESTING" | "INSIDE_ZONE" | "UNKNOWN";
+            touch_count: number;
+            rejection_strength?: number | null;
+            reclaim_status: string;
+            source_timestamps: components["schemas"]["UnixSeconds"][];
+            quality: string;
+            breakout_timestamp?: components["schemas"]["UnixSeconds"] | null;
+            confirmation_timestamp?: components["schemas"]["UnixSeconds"] | null;
+            reclaim_timestamp?: components["schemas"]["UnixSeconds"] | null;
+            volume_ratio?: number | null;
+            cvd_oi_quality: string;
+            current_stage: string;
+            invalidation_reason?: string | null;
+        };
+        CrossTimeframeAlignmentV2: {
+            state: string;
+            supporting_timeframes: string[];
+            conflicting_timeframes: string[];
+            missing_timeframes: string[];
+            normal_pullback: boolean;
+            countertrend_lower_timeframe_move: boolean;
+            structure_state: string;
+            environment_state: string;
+            setup_state: string;
+            trigger_state: string;
+        };
+        StateTransitionV2: {
+            from_state: string;
+            to_state: string;
+            transition_timestamp: components["schemas"]["UnixSeconds"];
+            trigger_evidence: string[];
+            source_candle_timestamps: components["schemas"]["UnixSeconds"][];
+            confirmation_status: string;
+            invalidation_reason: string | null;
+        };
+        MarketStateSnapshotV2: {
+            /** @enum {string} */
+            version: "market-state-engine-v2";
+            definition_version: string;
+            instrument: string;
+            as_of: components["schemas"]["UnixSeconds"];
+            execution_timeframe: components["schemas"]["MarketTimeframeV2"];
+            primary_state: string;
+            primary_state_code: string;
+            evidence_strength: number;
+            quality: components["schemas"]["OverallDataQualityV2"];
+            timeframes: {
+                [key: string]: components["schemas"]["TimeframeStateV2"];
+            };
+            cross_timeframe: components["schemas"]["CrossTimeframeAlignmentV2"];
+            level_interactions: components["schemas"]["LevelInteractionV2"][];
+            overlays: string[];
+            transitions: components["schemas"]["StateTransitionV2"][];
+            evidence: components["schemas"]["StateEvidenceV2"][];
+            limitations: string[];
+        };
+        MarketStateComparisonV2: {
+            version: string;
+            previous: components["schemas"]["MarketStateSnapshotV2"];
+            current: components["schemas"]["MarketStateSnapshotV2"];
+            transitions: components["schemas"]["StateTransitionV2"][];
         };
         OperationsSummary: {
             generated_at: components["schemas"]["IsoTimestamp"];
@@ -701,6 +832,69 @@ export interface operations {
                         error: string;
                     };
                 };
+            };
+        };
+    };
+    getMarketStateV2: {
+        parameters: {
+            query: {
+                instrument: string;
+                as_of?: components["schemas"]["UnixSeconds"];
+                execution_timeframe?: components["schemas"]["MarketTimeframeV2"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description MarketStateSnapshotV2 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MarketStateSnapshotV2"];
+                };
+            };
+            /** @description Invalid bounded query */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    compareMarketStatesV2: {
+        parameters: {
+            query: {
+                instrument: string;
+                previous_as_of: components["schemas"]["UnixSeconds"];
+                current_as_of: components["schemas"]["UnixSeconds"];
+                execution_timeframe?: components["schemas"]["MarketTimeframeV2"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Two snapshots and their deterministic transitions */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MarketStateComparisonV2"];
+                };
+            };
+            /** @description Invalid bounded comparison */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
             };
         };
     };

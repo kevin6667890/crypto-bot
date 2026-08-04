@@ -51,6 +51,31 @@
           "400": { "description": "Invalid bounded query", "content": { "application/json": { "schema": { "type": "object", "required": ["error"], "properties": { "error": { "type": "string" } } } } } }
         }
       }
+    },
+    "/api/market/state": {
+      "get": {
+        "operationId": "getMarketStateV2",
+        "description": "Read-only deterministic market-state recognition. This is not a trading signal.",
+        "parameters": [
+          { "name": "instrument", "in": "query", "required": true, "schema": { "type": "string", "maxLength": 48 } },
+          { "name": "as_of", "in": "query", "schema": { "$ref": "#/components/schemas/UnixSeconds" } },
+          { "name": "execution_timeframe", "in": "query", "schema": { "$ref": "#/components/schemas/MarketTimeframeV2" } }
+        ],
+        "responses": { "200": { "description": "MarketStateSnapshotV2", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MarketStateSnapshotV2" } } } }, "400": { "description": "Invalid bounded query" } }
+      }
+    },
+    "/api/market/state/compare": {
+      "get": {
+        "operationId": "compareMarketStatesV2",
+        "description": "Bounded comparison of exactly two causal market contexts.",
+        "parameters": [
+          { "name": "instrument", "in": "query", "required": true, "schema": { "type": "string", "maxLength": 48 } },
+          { "name": "previous_as_of", "in": "query", "required": true, "schema": { "$ref": "#/components/schemas/UnixSeconds" } },
+          { "name": "current_as_of", "in": "query", "required": true, "schema": { "$ref": "#/components/schemas/UnixSeconds" } },
+          { "name": "execution_timeframe", "in": "query", "schema": { "$ref": "#/components/schemas/MarketTimeframeV2" } }
+        ],
+        "responses": { "200": { "description": "Two snapshots and their deterministic transitions", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MarketStateComparisonV2" } } } }, "400": { "description": "Invalid bounded comparison" } }
+      }
     }
   },
   "components": {
@@ -152,6 +177,59 @@
           "flow": { "$ref": "#/components/schemas/FlowContextV2" }, "levels": { "type": "array", "items": { "$ref": "#/components/schemas/MarketLevelV2" } },
           "quality": { "$ref": "#/components/schemas/OverallDataQualityV2" }
         }
+      },
+      "StateEvidenceV2": {
+        "type": "object", "required": ["code", "timeframe", "value", "weight", "source_timestamp", "quality", "classification"],
+        "properties": {
+          "code": { "type": "string" }, "timeframe": { "type": "string" }, "value": { "nullable": true }, "weight": { "type": "number" },
+          "source_timestamp": { "allOf": [{ "$ref": "#/components/schemas/UnixSeconds" }], "nullable": true },
+          "quality": { "type": "string" }, "classification": { "type": "string", "enum": ["supporting", "conflicting", "unavailable"] }
+        }
+      },
+      "TimeframeStateV2": {
+        "type": "object", "required": ["timeframe", "role", "primary_state", "primary_state_code", "evidence_strength", "quality", "momentum_state", "overlays", "source_timestamps", "supporting_evidence", "conflicting_evidence", "unavailable_evidence", "limitations"],
+        "properties": {
+          "timeframe": { "$ref": "#/components/schemas/MarketTimeframeV2" }, "role": { "type": "string" },
+          "primary_state": { "type": "string", "enum": ["TREND_UP", "TREND_DOWN", "RANGE_LOW_VOLATILITY", "RANGE_HIGH_VOLATILITY", "TRANSITION_UP", "TRANSITION_DOWN", "TRANSITION_MIXED", "UNKNOWN"] },
+          "primary_state_code": { "type": "string" }, "evidence_strength": { "type": "number", "minimum": 0, "maximum": 100 },
+          "quality": { "$ref": "#/components/schemas/DataQualityV2" }, "momentum_state": { "type": "string" },
+          "overlays": { "type": "array", "items": { "type": "string" } }, "source_timestamps": { "type": "array", "items": { "$ref": "#/components/schemas/UnixSeconds" } },
+          "supporting_evidence": { "type": "array", "items": { "type": "string" } }, "conflicting_evidence": { "type": "array", "items": { "type": "string" } },
+          "unavailable_evidence": { "type": "array", "items": { "type": "string" } }, "limitations": { "type": "array", "items": { "type": "string" } }
+        }
+      },
+      "LevelInteractionV2": {
+        "type": "object", "required": ["level_type", "timeframe", "zone_low", "zone_high", "boundary", "distance_pct", "approach_direction", "interaction_type", "touch_count", "reclaim_status", "source_timestamps", "quality", "cvd_oi_quality", "current_stage"],
+        "properties": {
+          "level_type": { "type": "string" }, "timeframe": { "type": "string" }, "zone_low": { "type": "number" }, "zone_high": { "type": "number" }, "boundary": { "type": "number" }, "distance_pct": { "type": "number" },
+          "approach_direction": { "type": "string" }, "interaction_type": { "type": "string", "enum": ["APPROACHING", "TOUCHING", "REJECTED", "BROKEN", "RECLAIMED", "RETESTING", "INSIDE_ZONE", "UNKNOWN"] },
+          "touch_count": { "type": "integer" }, "rejection_strength": { "type": "number", "nullable": true }, "reclaim_status": { "type": "string" },
+          "source_timestamps": { "type": "array", "items": { "$ref": "#/components/schemas/UnixSeconds" } },
+          "quality": { "type": "string" }, "breakout_timestamp": { "allOf": [{ "$ref": "#/components/schemas/UnixSeconds" }], "nullable": true },
+          "confirmation_timestamp": { "allOf": [{ "$ref": "#/components/schemas/UnixSeconds" }], "nullable": true }, "reclaim_timestamp": { "allOf": [{ "$ref": "#/components/schemas/UnixSeconds" }], "nullable": true },
+          "volume_ratio": { "type": "number", "nullable": true }, "cvd_oi_quality": { "type": "string" }, "current_stage": { "type": "string" }, "invalidation_reason": { "type": "string", "nullable": true }
+        }
+      },
+      "CrossTimeframeAlignmentV2": {
+        "type": "object", "required": ["state", "supporting_timeframes", "conflicting_timeframes", "missing_timeframes", "normal_pullback", "countertrend_lower_timeframe_move", "structure_state", "environment_state", "setup_state", "trigger_state"],
+        "properties": { "state": { "type": "string" }, "supporting_timeframes": { "type": "array", "items": { "type": "string" } }, "conflicting_timeframes": { "type": "array", "items": { "type": "string" } }, "missing_timeframes": { "type": "array", "items": { "type": "string" } }, "normal_pullback": { "type": "boolean" }, "countertrend_lower_timeframe_move": { "type": "boolean" }, "structure_state": { "type": "string" }, "environment_state": { "type": "string" }, "setup_state": { "type": "string" }, "trigger_state": { "type": "string" } }
+      },
+      "StateTransitionV2": {
+        "type": "object", "required": ["from_state", "to_state", "transition_timestamp", "trigger_evidence", "source_candle_timestamps", "confirmation_status", "invalidation_reason"],
+        "properties": { "from_state": { "type": "string" }, "to_state": { "type": "string" }, "transition_timestamp": { "$ref": "#/components/schemas/UnixSeconds" }, "trigger_evidence": { "type": "array", "items": { "type": "string" } }, "source_candle_timestamps": { "type": "array", "items": { "$ref": "#/components/schemas/UnixSeconds" } }, "confirmation_status": { "type": "string" }, "invalidation_reason": { "type": "string", "nullable": true } }
+      },
+      "MarketStateSnapshotV2": {
+        "type": "object", "required": ["version", "definition_version", "instrument", "as_of", "execution_timeframe", "primary_state", "primary_state_code", "evidence_strength", "quality", "timeframes", "cross_timeframe", "level_interactions", "overlays", "transitions", "evidence", "limitations"],
+        "properties": {
+          "version": { "type": "string", "enum": ["market-state-engine-v2"] }, "definition_version": { "type": "string" }, "instrument": { "type": "string" }, "as_of": { "$ref": "#/components/schemas/UnixSeconds" }, "execution_timeframe": { "$ref": "#/components/schemas/MarketTimeframeV2" },
+          "primary_state": { "type": "string" }, "primary_state_code": { "type": "string" }, "evidence_strength": { "type": "number", "minimum": 0, "maximum": 100 }, "quality": { "$ref": "#/components/schemas/OverallDataQualityV2" },
+          "timeframes": { "type": "object", "additionalProperties": { "$ref": "#/components/schemas/TimeframeStateV2" } }, "cross_timeframe": { "$ref": "#/components/schemas/CrossTimeframeAlignmentV2" },
+          "level_interactions": { "type": "array", "items": { "$ref": "#/components/schemas/LevelInteractionV2" } }, "overlays": { "type": "array", "items": { "type": "string" } }, "transitions": { "type": "array", "items": { "$ref": "#/components/schemas/StateTransitionV2" } }, "evidence": { "type": "array", "items": { "$ref": "#/components/schemas/StateEvidenceV2" } }, "limitations": { "type": "array", "items": { "type": "string" } }
+        }
+      },
+      "MarketStateComparisonV2": {
+        "type": "object", "required": ["version", "previous", "current", "transitions"],
+        "properties": { "version": { "type": "string" }, "previous": { "$ref": "#/components/schemas/MarketStateSnapshotV2" }, "current": { "$ref": "#/components/schemas/MarketStateSnapshotV2" }, "transitions": { "type": "array", "items": { "$ref": "#/components/schemas/StateTransitionV2" } } }
       },
       "OperationsSummary": {
         "type": "object",

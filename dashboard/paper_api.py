@@ -56,6 +56,7 @@ try:
     )
     from storage_guard import storage_operations_summary
     from market_context_v2 import BoundedMarketDataReaderV2, MarketContextServiceV2
+    from market_state_v2 import MarketStateEngineV2
 except ImportError:
     from .research_service import ResearchService
     from .strategy_rules import StrategyParameters, calculate_indicators, validate_parameters
@@ -85,6 +86,7 @@ except ImportError:
     )
     from .storage_guard import storage_operations_summary
     from .market_context_v2 import BoundedMarketDataReaderV2, MarketContextServiceV2
+    from .market_state_v2 import MarketStateEngineV2
 
 try:
     from dotenv import load_dotenv
@@ -1097,6 +1099,7 @@ MICROSTRUCTURE = MicrostructureStore(
 MARKET_CONTEXT_V2 = MarketContextServiceV2(
     BoundedMarketDataReaderV2(DB_PATH, MICROSTRUCTURE.path)
 )
+MARKET_STATE_ENGINE_V2 = MarketStateEngineV2()
 CANONICAL_FLOW_HISTORY = CanonicalFlowHistoryStore(MICROSTRUCTURE.path)
 LIMITER = RateLimiter()
 LOGGER = configure_logging(ROOT)
@@ -1300,6 +1303,37 @@ class Handler(BaseHTTPRequestHandler):
                     execution_timeframe=query.get("execution_timeframe", ["15m"])[0],
                 )
                 self._send(context)
+            except (TypeError, ValueError) as error:
+                self._send({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+        elif parsed.path == "/api/market/state":
+            try:
+                if "instrument" not in query:
+                    raise ValueError("instrument is required")
+                raw_as_of = query.get("as_of", [None])[0]
+                context = MARKET_CONTEXT_V2.context(
+                    instrument,
+                    as_of=int(raw_as_of) if raw_as_of is not None else None,
+                    execution_timeframe=query.get("execution_timeframe", ["15m"])[0],
+                )
+                self._send(MARKET_STATE_ENGINE_V2.evaluate(context))
+            except (TypeError, ValueError) as error:
+                self._send({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+        elif parsed.path == "/api/market/state/compare":
+            try:
+                if "instrument" not in query:
+                    raise ValueError("instrument is required")
+                previous_as_of = int(query.get("previous_as_of", [""])[0])
+                current_as_of = int(query.get("current_as_of", [""])[0])
+                execution_timeframe = query.get("execution_timeframe", ["15m"])[0]
+                previous_context = MARKET_CONTEXT_V2.context(
+                    instrument, as_of=previous_as_of,
+                    execution_timeframe=execution_timeframe,
+                )
+                current_context = MARKET_CONTEXT_V2.context(
+                    instrument, as_of=current_as_of,
+                    execution_timeframe=execution_timeframe,
+                )
+                self._send(MARKET_STATE_ENGINE_V2.compare(previous_context, current_context))
             except (TypeError, ValueError) as error:
                 self._send({"error": str(error)}, HTTPStatus.BAD_REQUEST)
         elif parsed.path == "/api/paper/flow/health": self._send(SERVICE.flow_health())

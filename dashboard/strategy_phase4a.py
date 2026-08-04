@@ -23,7 +23,7 @@ from typing import Any, Iterable, Iterator, Mapping, Sequence
 
 MANIFEST_VERSION = "phase4a-research-manifest-v1"
 REPLAY_ENGINE_VERSION = "strategy-event-replay-engine-v2"
-BACKTEST_ENGINE_VERSION = "strategy-backtest-engine-v2.0.2"
+BACKTEST_ENGINE_VERSION = "strategy-backtest-engine-v2.0.3"
 REPORT_VERSION = "strategy-phase4a-report-v1"
 TRIAL_LEDGER_VERSION = "strategy-phase4a-trial-ledger-v1"
 ROUTER_VERSION = "strategy-router-v2"
@@ -310,6 +310,7 @@ class StrategyBacktestEngineV2:
                                 "entry_fee": entry_fee, "entry_slippage": abs(entry - raw_open) * units,
                                 "bars": 0, "maximum_holding_bars": pending.maximum_holding_bars,
                                 "mae": 0.0, "mfe": 0.0,
+                                "regime_tags": list(pending.event.geometry.get("regime_tags", ())),
                             }
                             equity -= entry_fee
                             seen_setups.add(pending.event.setup_identity); pending = None
@@ -384,8 +385,11 @@ class StrategyBacktestEngineV2:
 
 def metrics_v2(trades: Sequence[Mapping[str, Any]], initial_equity: float = 10_000.0) -> dict[str, Any]:
     if not trades:
-        return {"trade_count": 0, "net_pnl": 0.0, "expectancy_r": None, "profit_factor": None,
-                "win_rate": None, "median_trade_r": None, "max_drawdown": 0.0}
+        return {"trade_count": 0, "gross_pnl": 0.0, "net_pnl": 0.0, "net_return_pct": 0.0,
+                "expectancy_r": None, "profit_factor": None, "profit_factor_reason": "NO_TRADES",
+                "win_rate": None, "average_win": None, "average_loss": None,
+                "median_trade_r": None, "max_drawdown": 0.0, "downside_deviation_r": None,
+                "stop_exits": 0, "target_exits": 0, "timeout_exits": 0}
     pnls = [float(t["net_pnl"]) for t in trades]
     rs = [float(t["r"]) for t in trades if t.get("r") is not None]
     gross_win = sum(max(0.0, value) for value in pnls)
@@ -394,13 +398,19 @@ def metrics_v2(trades: Sequence[Mapping[str, Any]], initial_equity: float = 10_0
     for value in pnls:
         equity += value; peak = max(peak, equity); max_dd = max(max_dd, (peak-equity)/peak if peak else 0.0)
     profit_factor = gross_win/gross_loss if gross_loss else None
+    wins = [value for value in pnls if value > 0]; losses = [value for value in pnls if value < 0]
+    negative_rs = [value for value in rs if value < 0]
     return {
-        "trade_count": len(trades), "net_pnl": sum(pnls), "total_r": sum(rs),
+        "trade_count": len(trades), "gross_pnl": sum(float(t.get("gross_pnl", 0)) for t in trades),
+        "net_pnl": sum(pnls), "net_return_pct": sum(pnls)/initial_equity*100, "total_r": sum(rs),
         "expectancy_r": statistics.fmean(rs) if rs else None,
         "median_trade_r": statistics.median(rs) if rs else None,
         "profit_factor": profit_factor,
         "profit_factor_reason": "NO_LOSING_TRADES" if gross_win and not gross_loss else None,
-        "win_rate": sum(value > 0 for value in pnls)/len(pnls), "max_drawdown": max_dd,
+        "win_rate": len(wins)/len(pnls), "average_win": statistics.fmean(wins) if wins else None,
+        "average_loss": statistics.fmean(losses) if losses else None,
+        "max_drawdown": max_dd,
+        "downside_deviation_r": math.sqrt(sum(value*value for value in negative_rs)/len(rs)) if rs else None,
         "fees": sum(float(t.get("fees", 0)) for t in trades),
         "slippage_drag": sum(float(t.get("slippage_drag", 0)) for t in trades),
         "gap_drag": sum(float(t.get("gap_drag", 0)) for t in trades),
@@ -408,6 +418,9 @@ def metrics_v2(trades: Sequence[Mapping[str, Any]], initial_equity: float = 10_0
         "maximum_hold_bars": max(int(t.get("bars", 0)) for t in trades),
         "mae_r": statistics.fmean(float(t.get("mae", 0)) for t in trades),
         "mfe_r": statistics.fmean(float(t.get("mfe", 0)) for t in trades),
+        "stop_exits": sum(str(t.get("exit_reason")) in {"STOP", "STOP_FIRST", "GAP_STOP"} for t in trades),
+        "target_exits": sum(str(t.get("exit_reason")) in {"TARGET", "TARGET_FIRST", "GAP_TARGET"} for t in trades),
+        "timeout_exits": sum(str(t.get("exit_reason")) in {"TIMEOUT", "SEGMENT_END"} for t in trades),
     }
 
 
@@ -748,7 +761,13 @@ class StrategyEventReplayEngineV2:
                         "maximum_wait_bars": 64 if trial.family == "TREND_PULLBACK" else 48,
                         "maximum_holding_bars": 96 if trial.family == "TREND_PULLBACK" else 64,
                         "entry_timing": "next confirmed 15m open", "intrabar_policy": "STOP_FIRST",
-                        "gap_policy": "conservative-open-v1", "valid": valid_geometry}
+                        "gap_policy": "conservative-open-v1", "valid": valid_geometry,
+                        "regime_tags": [
+                            "HTF_UPTREND" if h4_trend == 1 else "HTF_DOWNTREND" if h4_trend == -1 else "TRANSITION",
+                            "PULLBACK" if trial.family == "TREND_PULLBACK" else
+                            ("MAJOR_SUPPORT_TEST" if trial.direction == "LONG" else "MAJOR_RESISTANCE_TEST"),
+                            "HIGH_VOLATILITY" if atr/price >= .02 else "LOW_VOLATILITY" if atr/price <= .005 else "NORMAL_VOLATILITY",
+                        ]}
             if not valid_geometry: blockers.append("INVALID_GEOMETRY")
         else:
             blockers.append("INVALID_GEOMETRY")

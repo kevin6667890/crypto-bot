@@ -13,6 +13,7 @@ import sys
 import time
 import tracemalloc
 from typing import Any, Mapping, Sequence
+from statistics import NormalDist
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path: sys.path.insert(0, str(ROOT))
@@ -107,6 +108,15 @@ def _psr(sharpe: float | None, trades: int) -> float | None:
     if sharpe is None or trades < 3: return None
     # Gaussian PSR against zero; report explicitly remains diagnostic.
     z = sharpe*math.sqrt(max(1, trades-1)); return .5*(1+math.erf(z/math.sqrt(2)))
+
+
+def _dsr(sharpe: float | None, observations: int, effective_trials: int = 8) -> float | None:
+    if sharpe is None or observations < 3: return None
+    normal = NormalDist(); gamma = .5772156649015329
+    expected_max = ((1-gamma)*normal.inv_cdf(1-1/effective_trials) +
+                    gamma*normal.inv_cdf(1-1/(effective_trials*math.e)))
+    z = (sharpe-expected_max)*math.sqrt(max(1, observations-1))
+    return .5*(1+math.erf(z/math.sqrt(2)))
 
 
 def _pf_above_one(metrics: Mapping[str, Any]) -> bool:
@@ -273,7 +283,8 @@ def run(dataset: Path = DEFAULT_DATASET, manifest_path: Path = TRACKED_MANIFEST)
                       "bootstrap": bootstrap_expectancy_interval(rs, seed=int(manifest["random_seed"])),
                       "block_bootstrap": bootstrap_expectancy_interval(rs, seed=int(manifest["random_seed"]), block_size=5),
                       "daily_sharpe": sharpe, "psr": _psr(sharpe, len(formal["trades"])),
-                      "dsr": None, "dsr_reason": "32 correlated raw trials; conservative effective-cluster adjustment reported globally"}
+                      "dsr": _dsr(sharpe, len(formal["trades"])),
+                      "dsr_reason": None if sharpe is not None and len(formal["trades"]) >= 3 else "INSUFFICIENT_SAMPLE"}
             segment_trials.append(record)
             for trade in formal["trades"]:
                 enriched = {**trade, "trial_id": trial["trial_id"], "segment": segment_name}
@@ -308,6 +319,7 @@ def run(dataset: Path = DEFAULT_DATASET, manifest_path: Path = TRACKED_MANIFEST)
     peak = tracemalloc.get_traced_memory()[1]; tracemalloc.stop(); wall = time.perf_counter()-wall_start
     classifications = Counter(item["development"]["classification"] for item in ledger)
     classifications.update(item["validation"]["classification"] for item in ledger if item["validation"])
+    regime_counts = Counter(tag for trade in trade_rows for tag in trade.get("regime_tags", []))
     report = {"version": "strategy-phase4a-report-v1", "run_id": run_id,
               "backtest_engine_version": BACKTEST_ENGINE_VERSION,
               "code_sha": subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip(),
@@ -322,14 +334,15 @@ def run(dataset: Path = DEFAULT_DATASET, manifest_path: Path = TRACKED_MANIFEST)
                                "confirming_result": None, "conflict_result": None,
                                "limitation": "local real CVD/OI begins after price dataset; no overlap and no synthesis"},
               "funding": {"included": False, "reason": "no verified historical overlap"},
-              "regime_breakdown": {"status": "AVAILABLE_IN_TRADE_LEDGER_CONTEXT_REFERENCES",
-                                   "limitation": "no post-result filters were created"},
+              "regime_breakdown": {"trade_tag_counts": dict(regime_counts),
+                                   "limitation": "post-trade explanation only; no filters were created"},
               "performance": {"wall_seconds": wall, "peak_memory_bytes": peak,
                               "evaluations": sum(item["evaluations"] for seg in all_segment_results.values() for item in seg["replay_performance"]),
                               "artifact_size_bytes": None},
               "engine_bug": {"found": True, "invalidated_runs": [
                   "d3ede4d570e37ef0efb8ac65a56a383a67c9e091a954aaa3f3a64a0f4f4a0f9e",
-                  "41e0eaffcc25c7fb858cd72771881a35ee3e95adf22140a41c9d4a79f87dd48f"]},
+                  "41e0eaffcc25c7fb858cd72771881a35ee3e95adf22140a41c9d4a79f87dd48f",
+                  "4896f970dca57a4039fc72310a443983fda06ff7615c99667b27a97bd64f0bf8"]},
               "resume": {"idempotent": True},
               "disclaimer": "通过开发与后续验证仅表示等待独立最终OOT；不是交易建议。"}
     writer.json("aggregate_metrics.json", all_segment_results); writer.json("report.json", report)

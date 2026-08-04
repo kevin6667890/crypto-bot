@@ -167,6 +167,17 @@ def test_no_losing_trades_has_json_safe_pf_reason():
                            "gap_drag": 0, "bars": 1, "mae": 0, "mfe": 1}])
     assert metrics["profit_factor"] is None
     assert metrics["profit_factor_reason"] == "NO_LOSING_TRADES"
+    assert metrics["average_win"] == 1
+    assert metrics["average_loss"] is None
+    assert metrics["gross_pnl"] == 0
+    assert metrics["target_exits"] == 0
+
+
+def test_empty_metrics_are_explicit_nulls_not_fabricated_zeroes():
+    metrics = metrics_v2([])
+    assert metrics["profit_factor"] is None
+    assert metrics["expectancy_r"] is None
+    assert metrics["profit_factor_reason"] == "NO_TRADES"
 
 
 def test_artifact_resume_is_idempotent_and_collision_safe(tmp_path: Path):

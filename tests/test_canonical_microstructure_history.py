@@ -139,6 +139,12 @@ def test_official_trade_file_dedupes_identical_adjacent_trade_id(
     assert grouped[0]["count"] == 2
     assert float(grouped[0]["buy"]) == 2.0
     assert float(grouped[0]["sell"]) == 0.5
+    resumed, resumed_ranges, resumed_audit = (
+        builder._load_official_trade_minutes("BTC-USDT-SWAP")
+    )
+    assert resumed_ranges == ranges
+    assert resumed_audit[0]["resumed"] is True
+    assert resumed[0]["hash"] == grouped[0]["hash"]
 
 
 def test_higher_timeframe_rows_match_schema_width(tmp_path: Path) -> None:

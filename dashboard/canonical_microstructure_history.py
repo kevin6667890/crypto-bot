@@ -161,6 +161,34 @@ CREATE TABLE IF NOT EXISTS official_backfill_manifests(
   created_at_ms INTEGER NOT NULL,
   manifest_json TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS official_trade_file_checkpoints(
+  file_sha256 TEXT PRIMARY KEY,
+  instrument TEXT NOT NULL,
+  path TEXT NOT NULL,
+  range_start_ms INTEGER NOT NULL,
+  range_end_ms INTEGER NOT NULL,
+  row_count INTEGER NOT NULL,
+  unique_trade_id_count INTEGER NOT NULL,
+  duplicate_count INTEGER NOT NULL,
+  conflict_count INTEGER NOT NULL,
+  contract_value TEXT NOT NULL,
+  status TEXT NOT NULL CHECK(status IN ('COMPLETE','CONFLICT')),
+  completed_at_ms INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS official_trade_1m_overlay(
+  file_sha256 TEXT NOT NULL REFERENCES official_trade_file_checkpoints(file_sha256),
+  instrument TEXT NOT NULL,
+  bucket_ms INTEGER NOT NULL,
+  buy_volume_decimal TEXT NOT NULL,
+  sell_volume_decimal TEXT NOT NULL,
+  trade_count INTEGER NOT NULL,
+  source_min_ts_ms INTEGER NOT NULL,
+  source_max_ts_ms INTEGER NOT NULL,
+  source_fingerprint TEXT NOT NULL,
+  PRIMARY KEY(file_sha256,instrument,bucket_ms)
+);
+CREATE INDEX IF NOT EXISTS idx_official_trade_overlay_query
+  ON official_trade_1m_overlay(instrument,bucket_ms);
 CREATE TABLE IF NOT EXISTS cvd_1m(
   instrument TEXT NOT NULL,
   bucket_ms INTEGER NOT NULL,
@@ -428,7 +456,45 @@ class CanonicalHistoryBuilder:
             actual_sha = self._sha256_file(path)
             if actual_sha != str(item["sha256"]).lower():
                 raise ValueError(f"official trade file SHA mismatch: {path}")
-            file_rows = 0
+            range_start = int(item["date_ts"])
+            range_end = range_start + 86_400_000
+            with self.destination.connect() as cache:
+                checkpoint = cache.execute(
+                    """SELECT * FROM official_trade_file_checkpoints
+                       WHERE file_sha256=? AND instrument=? AND contract_value=?
+                             AND status='COMPLETE'""",
+                    (actual_sha, instrument, str(contract_value)),
+                ).fetchone()
+                if checkpoint is not None:
+                    cached_rows = list(cache.execute(
+                        """SELECT bucket_ms,buy_volume_decimal,sell_volume_decimal,
+                                  trade_count,source_min_ts_ms,source_max_ts_ms,
+                                  source_fingerprint
+                           FROM official_trade_1m_overlay
+                           WHERE file_sha256=? AND instrument=? ORDER BY bucket_ms""",
+                        (actual_sha, instrument),
+                    ))
+                    if not cached_rows:
+                        raise ValueError(f"empty official checkpoint: {path}")
+                    for row in cached_rows:
+                        grouped[int(row[0])] = {
+                            "buy": Decimal(row[1]), "sell": Decimal(row[2]),
+                            "count": int(row[3]), "first": int(row[4]),
+                            "last": int(row[5]), "hash": str(row[6]),
+                            "status": "BACKFILLED_OFFICIAL", "gap_reason": None,
+                        }
+                    covered_ranges.append((range_start, range_end))
+                    audit.append({
+                        "path": str(path), "sha256": actual_sha,
+                        "range_start_ms": range_start, "range_end_ms": range_end,
+                        "partition_label": Path(str(item["filename"])).stem[-10:],
+                        "row_count": int(checkpoint[5]),
+                        "unique_trade_id_count": int(checkpoint[6]),
+                        "duplicate_count": int(checkpoint[7]),
+                        "conflict_count": int(checkpoint[8]), "resumed": True,
+                    })
+                    continue
+            physical_rows = 0
             duplicate_count = 0
             conflict_count = 0
             previous_trade_id: int | None = None
@@ -436,6 +502,7 @@ class CanonicalHistoryBuilder:
             unique_count = 0
             file_min_ts: int | None = None
             file_max_ts: int | None = None
+            file_grouped: dict[int, dict[str, Any]] = {}
             with zipfile.ZipFile(path) as archive:
                 member = str(item["member"])
                 with archive.open(member) as raw:
@@ -449,6 +516,7 @@ class CanonicalHistoryBuilder:
                     ]:
                         raise ValueError(f"unexpected official CSV columns: {path}")
                     for row in reader:
+                        physical_rows += 1
                         if row["instrument_name"] != instrument:
                             raise ValueError(f"instrument mismatch in {path}")
                         trade_id = row["trade_id"]
@@ -473,7 +541,7 @@ class CanonicalHistoryBuilder:
                             file_max_ts, timestamp
                         )
                         bucket = minute_floor(timestamp)
-                        cell = grouped.setdefault(bucket, {
+                        cell = file_grouped.setdefault(bucket, {
                             "buy": Decimal(0), "sell": Decimal(0), "count": 0,
                             "first": timestamp, "last": timestamp,
                             "hash": hashlib.sha256(), "status": "BACKFILLED_OFFICIAL",
@@ -490,26 +558,49 @@ class CanonicalHistoryBuilder:
                         cell["hash"].update(canonical_json(
                             [trade_id, timestamp, side, row["price"], row["size"]]
                         ).encode("utf-8"))
-                        file_rows += 1
             if conflict_count:
                 raise ValueError(f"official trade-ID conflict in {path}: {conflict_count}")
             # OKX daily files are partitioned at 00:00 UTC+8. date_ts is the
             # exact UTC interval start; the filename is only the UTC+8 label.
-            range_start = int(item["date_ts"])
-            range_end = range_start + 86_400_000
             if (file_min_ts is None or file_min_ts < range_start
                     or file_max_ts is None or file_max_ts >= range_end):
                 raise ValueError(f"official rows outside declared interval: {path}")
+            for cell in file_grouped.values():
+                cell["hash"] = cell["hash"].hexdigest()
+            with self.destination.connect() as cache:
+                cache.execute(
+                    "DELETE FROM official_trade_1m_overlay WHERE file_sha256=?",
+                    (actual_sha,),
+                )
+                cache.execute(
+                    "DELETE FROM official_trade_file_checkpoints WHERE file_sha256=?",
+                    (actual_sha,),
+                )
+                cache.execute(
+                    "INSERT INTO official_trade_file_checkpoints VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                    (actual_sha, instrument, str(path), range_start, range_end,
+                     physical_rows, unique_count, duplicate_count, conflict_count,
+                     str(contract_value), "COMPLETE", now_ms()),
+                )
+                cache.executemany(
+                    "INSERT INTO official_trade_1m_overlay VALUES(?,?,?,?,?,?,?,?,?)",
+                    ((actual_sha, instrument, bucket, str(cell["buy"]),
+                      str(cell["sell"]), cell["count"], cell["first"], cell["last"],
+                      cell["hash"]) for bucket, cell in sorted(file_grouped.items())),
+                )
+            for bucket, cell in file_grouped.items():
+                if bucket in grouped:
+                    raise ValueError(f"overlapping official trade files at {bucket}")
+                grouped[bucket] = cell
             covered_ranges.append((range_start, range_end))
             audit.append({
                 "path": str(path), "sha256": actual_sha,
                 "range_start_ms": range_start, "range_end_ms": range_end,
                 "partition_label": Path(str(item["filename"])).stem[-10:],
-                "row_count": file_rows, "unique_trade_id_count": unique_count,
+                "row_count": physical_rows, "unique_trade_id_count": unique_count,
                 "duplicate_count": duplicate_count, "conflict_count": conflict_count,
+                "resumed": False,
             })
-        for cell in grouped.values():
-            cell["hash"] = cell["hash"].hexdigest()
         return grouped, covered_ranges, audit
 
     def _source_bounds(

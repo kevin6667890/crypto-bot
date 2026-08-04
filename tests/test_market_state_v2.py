@@ -227,6 +227,8 @@ def test_two_confirmed_closes_confirm_breakout():
     assert interaction["current_stage"] == "BREAKOUT_CONFIRMED"
     assert interaction["confirmation_timestamp"] == current["as_of"]
     assert "BREAKOUT_CONFIRMED" in compared["current"]["overlays"]
+    assert compared["current"]["primary_state_code"] == "HTF_UPTREND_CONTINUATION"
+    assert any(item["from_state"] == "BREAKOUT_DEVELOPING" for item in compared["transitions"])
 
 
 def test_boundary_retest_is_distinct_from_confirmation():
@@ -276,6 +278,19 @@ def test_causal_compression_and_expansion_overlays(volatility, overlay):
 def test_compression_release_candidate_requires_expansion_volume():
     result = ENGINE.evaluate(context(volatility="high"))
     assert "4H:COMPRESSION_RELEASE_CANDIDATE" in result["overlays"]
+
+
+def test_compression_to_expansion_emits_confirmed_transition():
+    previous = context(volatility="low")
+    current = advance(previous)
+    for item in current["timeframes"].values():
+        item["volatility"]["compression_percentile"]["value"] = 5
+        item["volatility"]["expansion_percentile"]["value"] = 90
+        item["volatility"]["atr_percentage"]["value"] = 3
+    transitions = ENGINE.compare(previous, current)["transitions"]
+    assert any(item["from_state"] == "VOLATILITY_COMPRESSION" and
+               item["to_state"] == "VOLATILITY_EXPANSION" and
+               item["confirmation_status"] == "CONFIRMED" for item in transitions)
 
 
 @pytest.mark.parametrize(("quality", "expected"), [

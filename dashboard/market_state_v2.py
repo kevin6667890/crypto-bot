@@ -300,6 +300,15 @@ class MarketStateEngineV2:
                     tuple(current["timeframes"][timeframe]["source_timestamps"]),
                     "CONFIRMED", None,
                 )))
+            if (f"{timeframe}:VOLATILITY_COMPRESSION" in previous.get("overlays", []) and
+                    f"{timeframe}:VOLATILITY_EXPANSION" in current.get("overlays", [])):
+                timeframe_transitions.append(asdict(StateTransitionV2(
+                    "VOLATILITY_COMPRESSION", "VOLATILITY_EXPANSION",
+                    int(current_context["as_of"]),
+                    (f"{timeframe}:EXPANSION_PERCENTILE_CROSSED",),
+                    tuple(current["timeframes"][timeframe]["source_timestamps"]),
+                    "CONFIRMED", None,
+                )))
         prior_levels = {
             (item["level_type"], item["timeframe"], item["boundary"]): item
             for item in previous.get("level_interactions", [])
@@ -315,10 +324,16 @@ class MarketStateEngineV2:
                 item["current_stage"] = "BREAKOUT_CONFIRMED"
                 item["confirmation_timestamp"] = int(current_context["as_of"])
                 current["overlays"] = sorted(set([*current["overlays"], "BREAKOUT_CONFIRMED"]))
+                if current["cross_timeframe"]["state"] == "ALIGNED_UP":
+                    current["primary_state"] = current["primary_state_code"] = "HTF_UPTREND_CONTINUATION"
+                    sequence_transition = self._comparison_transition(previous, current, "CONFIRMED")
             elif prior_stage == "BREAKDOWN_CANDIDATE" and distance < 0 and item.get("interaction_type") == "BROKEN":
                 item["current_stage"] = "BREAKDOWN_CONFIRMED"
                 item["confirmation_timestamp"] = int(current_context["as_of"])
                 current["overlays"] = sorted(set([*current["overlays"], "BREAKDOWN_CONFIRMED"]))
+                if current["cross_timeframe"]["state"] == "ALIGNED_DOWN":
+                    current["primary_state"] = current["primary_state_code"] = "HTF_DOWNTREND_CONTINUATION"
+                    sequence_transition = self._comparison_transition(previous, current, "CONFIRMED")
             elif prior_stage == "BREAKOUT_CANDIDATE" and distance > 0 and item.get("interaction_type") in {"TOUCHING", "INSIDE_ZONE"}:
                 item["interaction_type"] = "RETESTING"
                 item["current_stage"] = "BREAKOUT_RETESTING"

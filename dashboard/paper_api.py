@@ -57,6 +57,7 @@ try:
     from storage_guard import storage_operations_summary
     from market_context_v2 import BoundedMarketDataReaderV2, MarketContextServiceV2
     from market_state_v2 import MarketStateEngineV2
+    from strategy_router_v2 import StrategyRouterV2
 except ImportError:
     from .research_service import ResearchService
     from .strategy_rules import StrategyParameters, calculate_indicators, validate_parameters
@@ -87,6 +88,7 @@ except ImportError:
     from .storage_guard import storage_operations_summary
     from .market_context_v2 import BoundedMarketDataReaderV2, MarketContextServiceV2
     from .market_state_v2 import MarketStateEngineV2
+    from .strategy_router_v2 import StrategyRouterV2
 
 try:
     from dotenv import load_dotenv
@@ -1100,6 +1102,7 @@ MARKET_CONTEXT_V2 = MarketContextServiceV2(
     BoundedMarketDataReaderV2(DB_PATH, MICROSTRUCTURE.path)
 )
 MARKET_STATE_ENGINE_V2 = MarketStateEngineV2()
+STRATEGY_ROUTER_V2 = StrategyRouterV2()
 CANONICAL_FLOW_HISTORY = CanonicalFlowHistoryStore(MICROSTRUCTURE.path)
 LIMITER = RateLimiter()
 LOGGER = configure_logging(ROOT)
@@ -1336,6 +1339,35 @@ class Handler(BaseHTTPRequestHandler):
                 self._send(MARKET_STATE_ENGINE_V2.compare(previous_context, current_context))
             except (TypeError, ValueError) as error:
                 self._send({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+        elif parsed.path == "/api/strategy/route":
+            try:
+                if "instrument" not in query:
+                    raise ValueError("instrument is required")
+                execution_timeframe = query.get("execution_timeframe", ["15m"])[0]
+                raw_as_of = query.get("as_of", [None])[0]
+                current_context = MARKET_CONTEXT_V2.context(
+                    instrument, as_of=int(raw_as_of) if raw_as_of is not None else None,
+                    execution_timeframe=execution_timeframe,
+                )
+                previous_route = None
+                if query.get("previous_as_of"):
+                    previous_as_of = int(query["previous_as_of"][0])
+                    if previous_as_of >= int(current_context["as_of"]):
+                        raise ValueError("previous_as_of must be earlier than as_of")
+                    previous_context = MARKET_CONTEXT_V2.context(
+                        instrument, as_of=previous_as_of,
+                        execution_timeframe=execution_timeframe,
+                    )
+                    previous_state = MARKET_STATE_ENGINE_V2.evaluate(previous_context)
+                    previous_route = STRATEGY_ROUTER_V2.route(previous_context, previous_state)
+                    current_state = MARKET_STATE_ENGINE_V2.compare(
+                        previous_context, current_context)["current"]
+                else:
+                    current_state = MARKET_STATE_ENGINE_V2.evaluate(current_context)
+                self._send(STRATEGY_ROUTER_V2.route(
+                    current_context, current_state, previous_route=previous_route))
+            except (TypeError, ValueError) as error:
+                self._send({"error": str(error)}, HTTPStatus.BAD_REQUEST)
         elif parsed.path == "/api/paper/flow/health": self._send(SERVICE.flow_health())
         elif parsed.path == "/api/paper/flow/history/v1":
             req_start = time.monotonic()
@@ -1537,6 +1569,20 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
+        if parsed.path == "/api/strategy/route/evaluate":
+            if os.getenv("ENABLE_STRATEGY_ROUTER_FIXTURE_API", "").lower() not in {"1", "true", "yes"}:
+                self._send({"error": "Strategy Router fixture evaluation is disabled."}, HTTPStatus.NOT_FOUND)
+                return
+            payload = self._body()
+            if payload is None:
+                return
+            try:
+                self._send(STRATEGY_ROUTER_V2.route(
+                    payload["context"], payload["state"],
+                    previous_route=payload.get("previous_route")))
+            except (KeyError, TypeError, ValueError) as error:
+                self._send({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+            return
         if parsed.path not in {
             "/api/chat", "/api/compare", "/api/optimization/compare",
         } and not self._admin():

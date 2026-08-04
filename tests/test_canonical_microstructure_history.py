@@ -238,3 +238,60 @@ def test_official_oi_only_fills_exact_missing_observation_minute(
     assert tuple(rows[0]) == (0, 10.0, "VALID")
     assert tuple(rows[1]) == (60_000, None, "UNRECOVERABLE_RAW_GAP")
     assert tuple(rows[5]) == (300_000, 15.0, "BACKFILLED_OFFICIAL")
+
+
+def test_official_price_overlay_only_fills_missing_and_checks_overlap(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source.db"
+    connection = sqlite3.connect(source)
+    connection.execute(
+        """CREATE TABLE mark_price_observations(
+        source_ts_ms INTEGER,open REAL,high REAL,low REAL,close REAL,
+        state TEXT,instrument TEXT,uniqueness_key TEXT)"""
+    )
+    connection.executemany(
+        "INSERT INTO mark_price_observations VALUES(?,?,?,?,?,?,?,?)",
+        [(0, 1, 2, 0.5, 1.5, "confirmed", "BTC-USDT-SWAP", "a"),
+         (120_000, 2, 3, 1.5, 2.5, "confirmed", "BTC-USDT-SWAP", "b")],
+    )
+    connection.commit()
+    connection.close()
+    rows_path = tmp_path / "mark.json"
+    rows_body = json.dumps([
+        ["0", "1", "2", "0.5", "1.5", "1"],
+        ["60000", "1.5", "2.5", "1", "2", "1"],
+        ["120000", "2", "3", "1.5", "2.5", "1"],
+    ]).encode()
+    rows_path.write_bytes(rows_body)
+    manifest_path = tmp_path / "price-manifest.json"
+    manifest_path.write_text(json.dumps({
+        "manifest_version": "okx-official-price-gap-manifest-v1",
+        "instruments": [{
+            "source": "mark", "instrument": "BTC-USDT-SWAP",
+            "rows_path": str(rows_path),
+            "rows_sha256": hashlib.sha256(rows_body).hexdigest(),
+            "endpoint": "https://www.okx.com/example", "page_count": 1,
+            "dedupe_key": "source+instrument+ts+resolution", "status": "COMPLETE",
+            "gaps": [{"start_ms": 60_000, "end_ms_exclusive": 120_000}],
+        }],
+    }), encoding="utf-8")
+    builder = CanonicalHistoryBuilder(
+        source, tmp_path / "canonical.db",
+        BuildIdentity("a" * 64, "commit", 120_000, 123),
+        official_price_manifest_path=manifest_path,
+    )
+    builder.build_coverage("mark", "BTC-USDT-SWAP")
+    result = builder.apply_official_price_overlay("mark", "BTC-USDT-SWAP")
+    assert result == {
+        "source": "mark", "instrument": "BTC-USDT-SWAP",
+        "official_points": 3, "points_used": 1, "overlap_checked": 2,
+        "overlap_conflicts": 0, "status": "COMPLETE",
+    }
+    with builder.destination.connect() as output:
+        assert tuple(output.execute(
+            "SELECT status,classification FROM coverage_ledger WHERE bucket_ms=60000"
+        ).fetchone()) == ("BACKFILLED_OFFICIAL", "OBSERVED")
+        assert output.execute(
+            "SELECT COUNT(*) FROM official_backfill_manifests"
+        ).fetchone()[0] == 1

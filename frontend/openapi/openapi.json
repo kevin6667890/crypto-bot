@@ -36,6 +36,21 @@
     },
     "/api/data-coverage": {
       "get": { "operationId": "getDataCoverage", "responses": { "200": { "description": "Research data coverage", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/DataCoverageResponse" } } } } } }
+    },
+    "/api/market/context": {
+      "get": {
+        "operationId": "getMarketAnalysisContextV2",
+        "description": "Read-only causal facts and indicators from bounded confirmed data. It never emits a trading signal or invokes order logic.",
+        "parameters": [
+          { "name": "instrument", "in": "query", "required": true, "schema": { "type": "string", "maxLength": 48 }, "example": "ETH-USDT-SWAP" },
+          { "name": "as_of", "in": "query", "required": false, "schema": { "$ref": "#/components/schemas/UnixSeconds" } },
+          { "name": "execution_timeframe", "in": "query", "required": false, "schema": { "$ref": "#/components/schemas/MarketTimeframeV2" } }
+        ],
+        "responses": {
+          "200": { "description": "MarketAnalysisContextV2", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MarketAnalysisContextV2" } } } },
+          "400": { "description": "Invalid bounded query", "content": { "application/json": { "schema": { "type": "object", "required": ["error"], "properties": { "error": { "type": "string" } } } } } }
+        }
+      }
     }
   },
   "components": {
@@ -43,6 +58,101 @@
       "UnixSeconds": { "type": "integer", "format": "int64", "description": "Unix timestamp in whole seconds.", "x-time-unit": "seconds" },
       "UnixMilliseconds": { "type": "integer", "format": "int64", "description": "Unix timestamp in whole milliseconds.", "x-time-unit": "milliseconds" },
       "IsoTimestamp": { "type": "string", "format": "date-time", "description": "RFC 3339 UTC timestamp." },
+      "MarketTimeframeV2": { "type": "string", "enum": ["15m", "1H", "4H", "1D", "1W"], "default": "15m" },
+      "IndicatorValueV2": {
+        "type": "object",
+        "required": ["value", "source_timestamp", "available", "stale", "partial", "warmup_complete", "calculation_version"],
+        "properties": {
+          "value": { "nullable": true, "oneOf": [{ "type": "number" }, { "type": "string" }] },
+          "source_timestamp": { "allOf": [{ "$ref": "#/components/schemas/UnixSeconds" }], "nullable": true },
+          "available": { "type": "boolean" }, "stale": { "type": "boolean" },
+          "partial": { "type": "boolean" }, "warmup_complete": { "type": "boolean" },
+          "calculation_version": { "type": "string" }
+        }
+      },
+      "DataGapV2": {
+        "type": "object", "required": ["start", "end", "missing_bars"],
+        "properties": { "source": { "type": "string" }, "start": { "$ref": "#/components/schemas/UnixSeconds" }, "end": { "$ref": "#/components/schemas/UnixSeconds" }, "missing_bars": { "type": "integer", "minimum": 1 } }
+      },
+      "DataQualityV2": {
+        "type": "object", "required": ["status", "source_timestamp", "stale", "partial", "missing", "gaps", "notes"],
+        "properties": {
+          "status": { "type": "string", "enum": ["AVAILABLE", "STALE", "PARTIAL", "MISSING"] },
+          "source_timestamp": { "allOf": [{ "$ref": "#/components/schemas/UnixSeconds" }], "nullable": true },
+          "stale": { "type": "boolean" }, "partial": { "type": "boolean" }, "missing": { "type": "boolean" },
+          "gaps": { "type": "array", "items": { "$ref": "#/components/schemas/DataGapV2" } },
+          "notes": { "type": "array", "items": { "type": "string" } }
+        }
+      },
+      "IndicatorGroupV2": { "type": "object", "additionalProperties": { "$ref": "#/components/schemas/IndicatorValueV2" } },
+      "TimeframeMarketContextV2": {
+        "type": "object",
+        "required": ["candle_close_ts", "confirmed", "trend", "momentum", "volatility", "structure", "volume", "quality"],
+        "properties": {
+          "candle_close_ts": { "allOf": [{ "$ref": "#/components/schemas/UnixSeconds" }], "nullable": true },
+          "confirmed": { "type": "boolean" },
+          "trend": { "$ref": "#/components/schemas/IndicatorGroupV2" },
+          "momentum": { "$ref": "#/components/schemas/IndicatorGroupV2" },
+          "volatility": { "$ref": "#/components/schemas/IndicatorGroupV2" },
+          "structure": { "$ref": "#/components/schemas/IndicatorGroupV2" },
+          "volume": { "$ref": "#/components/schemas/IndicatorGroupV2" },
+          "quality": { "$ref": "#/components/schemas/DataQualityV2" }
+        }
+      },
+      "MarketLevelV2": {
+        "type": "object", "required": ["type", "timeframe", "value", "source_timestamp", "distance_pct", "touches", "confirmed", "confluence_sources", "calculation_version"],
+        "properties": {
+          "type": { "type": "string" }, "timeframe": { "type": "string" }, "value": { "type": "number" },
+          "source_timestamp": { "$ref": "#/components/schemas/UnixSeconds" }, "distance_pct": { "type": "number" },
+          "touches": { "type": "integer", "minimum": 0 }, "confirmed": { "type": "boolean" },
+          "confluence_sources": { "type": "array", "items": { "type": "string" } }, "calculation_version": { "type": "string" }
+        }
+      },
+      "CombinationFactV2": {
+        "type": "object", "required": ["state", "observation_window_seconds", "start_timestamp", "end_timestamp", "price_change_pct", "data_quality", "calculation_version"],
+        "properties": {
+          "state": { "type": "string", "enum": ["PRICE_UP_OI_UP", "PRICE_UP_OI_DOWN", "PRICE_DOWN_OI_UP", "PRICE_DOWN_OI_DOWN", "PRICE_UP_CVD_UP", "PRICE_UP_CVD_DOWN", "PRICE_DOWN_CVD_UP", "PRICE_DOWN_CVD_DOWN", "INSUFFICIENT_DATA"] },
+          "observation_window_seconds": { "type": "integer" },
+          "start_timestamp": { "allOf": [{ "$ref": "#/components/schemas/UnixSeconds" }], "nullable": true },
+          "end_timestamp": { "allOf": [{ "$ref": "#/components/schemas/UnixSeconds" }], "nullable": true },
+          "price_change_pct": { "type": "number", "nullable": true }, "oi_change": { "type": "number", "nullable": true },
+          "cvd_change": { "type": "number", "nullable": true }, "data_quality": { "type": "string" }, "calculation_version": { "type": "string" }
+        }
+      },
+      "FlowContextV2": {
+        "type": "object", "required": ["cvd", "oi", "funding", "basis", "vpvr", "price_oi_combination", "price_cvd_combination"],
+        "properties": {
+          "cvd": { "$ref": "#/components/schemas/IndicatorGroupV2" }, "oi": { "$ref": "#/components/schemas/IndicatorGroupV2" },
+          "funding": { "$ref": "#/components/schemas/IndicatorGroupV2" }, "basis": { "$ref": "#/components/schemas/IndicatorGroupV2" },
+          "vpvr": { "$ref": "#/components/schemas/IndicatorGroupV2" },
+          "price_oi_combination": { "$ref": "#/components/schemas/CombinationFactV2" },
+          "price_cvd_combination": { "$ref": "#/components/schemas/CombinationFactV2" }
+        }
+      },
+      "OverallDataQualityV2": {
+        "type": "object", "required": ["overall_status", "stale_sources", "partial_sources", "missing_sources", "gaps"],
+        "properties": {
+          "overall_status": { "type": "string", "enum": ["AVAILABLE", "STALE", "PARTIAL", "MISSING"] },
+          "stale_sources": { "type": "array", "items": { "type": "string" } },
+          "partial_sources": { "type": "array", "items": { "type": "string" } },
+          "missing_sources": { "type": "array", "items": { "type": "string" } },
+          "gaps": { "type": "array", "items": { "$ref": "#/components/schemas/DataGapV2" } }
+        }
+      },
+      "MarketAnalysisContextV2": {
+        "type": "object", "required": ["version", "instrument", "as_of", "execution_timeframe", "price", "timeframes", "flow", "levels", "quality"],
+        "properties": {
+          "version": { "type": "string", "enum": ["market-analysis-context-v2"] }, "instrument": { "type": "string" },
+          "as_of": { "$ref": "#/components/schemas/UnixSeconds" }, "execution_timeframe": { "$ref": "#/components/schemas/MarketTimeframeV2" },
+          "price": { "$ref": "#/components/schemas/IndicatorValueV2" },
+          "timeframes": {
+            "type": "object", "required": ["15m", "1H", "4H", "1D", "1W"],
+            "properties": { "15m": { "$ref": "#/components/schemas/TimeframeMarketContextV2" }, "1H": { "$ref": "#/components/schemas/TimeframeMarketContextV2" }, "4H": { "$ref": "#/components/schemas/TimeframeMarketContextV2" }, "1D": { "$ref": "#/components/schemas/TimeframeMarketContextV2" }, "1W": { "$ref": "#/components/schemas/TimeframeMarketContextV2" } }
+          },
+          "flow": { "$ref": "#/components/schemas/FlowContextV2" }, "levels": { "type": "array", "items": { "$ref": "#/components/schemas/MarketLevelV2" } },
+          "quality": { "$ref": "#/components/schemas/OverallDataQualityV2" }
+        }
+      },
       "OperationsSummary": {
         "type": "object",
         "required": ["generated_at", "service", "frontend", "paper_api", "collector", "query_plane", "database", "wal_size_bytes", "maintenance", "scheduler", "tasks", "warning_count", "storage", "system"],

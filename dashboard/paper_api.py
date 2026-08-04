@@ -55,6 +55,7 @@ try:
         write_compact_snapshot,
     )
     from storage_guard import storage_operations_summary
+    from market_context_v2 import BoundedMarketDataReaderV2, MarketContextServiceV2
 except ImportError:
     from .research_service import ResearchService
     from .strategy_rules import StrategyParameters, calculate_indicators, validate_parameters
@@ -83,6 +84,7 @@ except ImportError:
         write_compact_snapshot,
     )
     from .storage_guard import storage_operations_summary
+    from .market_context_v2 import BoundedMarketDataReaderV2, MarketContextServiceV2
 
 try:
     from dotenv import load_dotenv
@@ -1092,6 +1094,9 @@ HEALTH = HealthService(DB_PATH,SERVICE,RESEARCH.jobs,ALERTS,ROOT)
 MICROSTRUCTURE = MicrostructureStore(
     Path(os.getenv("MICROSTRUCTURE_DB_PATH", ROOT / "data_cache" / "market_microstructure.db"))
 )
+MARKET_CONTEXT_V2 = MarketContextServiceV2(
+    BoundedMarketDataReaderV2(DB_PATH, MICROSTRUCTURE.path)
+)
 CANONICAL_FLOW_HISTORY = CanonicalFlowHistoryStore(MICROSTRUCTURE.path)
 LIMITER = RateLimiter()
 LOGGER = configure_logging(ROOT)
@@ -1284,6 +1289,19 @@ class Handler(BaseHTTPRequestHandler):
         parsed, query = urlparse(self.path), parse_qs(urlparse(self.path).query)
         instrument = query.get("instrument", ["ETH-USDT"])[0]
         if parsed.path == "/api/status": self._send(SERVICE.status(instrument))
+        elif parsed.path == "/api/market/context":
+            try:
+                if "instrument" not in query:
+                    raise ValueError("instrument is required")
+                raw_as_of = query.get("as_of", [None])[0]
+                context = MARKET_CONTEXT_V2.context(
+                    instrument,
+                    as_of=int(raw_as_of) if raw_as_of is not None else None,
+                    execution_timeframe=query.get("execution_timeframe", ["15m"])[0],
+                )
+                self._send(context)
+            except (TypeError, ValueError) as error:
+                self._send({"error": str(error)}, HTTPStatus.BAD_REQUEST)
         elif parsed.path == "/api/paper/flow/health": self._send(SERVICE.flow_health())
         elif parsed.path == "/api/paper/flow/history/v1":
             try:

@@ -376,9 +376,13 @@ class MicrostructureStore:
                 CREATE TABLE IF NOT EXISTS funding_settled(
                     {OBSERVATION_COLUMNS}, funding_rate REAL NOT NULL, realized_rate REAL,
                     funding_time_ms INTEGER NOT NULL);
+                CREATE INDEX IF NOT EXISTS idx_funding_settled_time
+                    ON funding_settled(instrument,source_ts_ms);
                 CREATE TABLE IF NOT EXISTS funding_predicted(
                     {OBSERVATION_COLUMNS}, funding_rate REAL NOT NULL,
                     next_funding_time_ms INTEGER NOT NULL, premium REAL);
+                CREATE INDEX IF NOT EXISTS idx_funding_predicted_time
+                    ON funding_predicted(instrument,source_ts_ms);
                 CREATE TABLE IF NOT EXISTS mark_price_observations(
                     {OBSERVATION_COLUMNS}, open REAL, high REAL, low REAL, close REAL NOT NULL);
                 CREATE INDEX IF NOT EXISTS idx_mark_time

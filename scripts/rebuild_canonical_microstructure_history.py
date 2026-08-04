@@ -52,6 +52,10 @@ def main() -> None:
         "--series-only", action="store_true",
         help="resume aggregate construction from an existing coverage ledger",
     )
+    parser.add_argument(
+        "--oi-only", action="store_true",
+        help="apply OI overlay and rederive higher timeframes without rebuilding CVD",
+    )
     parser.add_argument("--instrument", action="append", choices=INSTRUMENTS)
     parser.add_argument("--source-name", action="append", choices=SOURCE_TABLES)
     parser.add_argument("--official-trade-manifest", type=Path)
@@ -89,6 +93,14 @@ def main() -> None:
                 report["coverage"].append(builder.build_coverage(
                     source_name, instrument, progress))
                 print(json.dumps({"complete": [instrument, source_name]}), flush=True)
+    elif arguments.oi_only:
+        report = {"series": []}
+        for instrument in arguments.instrument or INSTRUMENTS:
+            report["series"].append(builder.build_oi_1m(instrument))
+            report["series"].append({
+                "instrument": instrument,
+                **builder.derive_higher_timeframes(instrument),
+            })
     elif arguments.series_only:
         report = {"series": []}
         for instrument in arguments.instrument or INSTRUMENTS:

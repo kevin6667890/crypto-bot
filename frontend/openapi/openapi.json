@@ -76,6 +76,27 @@
         ],
         "responses": { "200": { "description": "Two snapshots and their deterministic transitions", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/MarketStateComparisonV2" } } } }, "400": { "description": "Invalid bounded comparison" } }
       }
+    },
+    "/api/strategy/route": {
+      "get": {
+        "operationId": "getStrategyRouteV2",
+        "description": "Read-only deterministic research strategy routing. It never creates orders or calls the legacy decision engine.",
+        "parameters": [
+          { "name": "instrument", "in": "query", "required": true, "schema": { "type": "string", "maxLength": 48 } },
+          { "name": "as_of", "in": "query", "schema": { "$ref": "#/components/schemas/UnixSeconds" } },
+          { "name": "previous_as_of", "in": "query", "schema": { "$ref": "#/components/schemas/UnixSeconds" } },
+          { "name": "execution_timeframe", "in": "query", "schema": { "type": "string", "enum": ["15m"], "default": "15m" } }
+        ],
+        "responses": { "200": { "description": "StrategyRouteSnapshotV2 research-only route", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/StrategyRouteSnapshotV2" } } } }, "400": { "description": "Invalid bounded query" } }
+      }
+    },
+    "/api/strategy/route/evaluate": {
+      "post": {
+        "operationId": "evaluateStrategyRouteFixtureV2",
+        "description": "Development-only fixture evaluation. Disabled unless ENABLE_STRATEGY_ROUTER_FIXTURE_API is explicit.",
+        "requestBody": { "required": true, "content": { "application/json": { "schema": { "type": "object", "required": ["context", "state"], "properties": { "context": { "$ref": "#/components/schemas/MarketAnalysisContextV2" }, "state": { "$ref": "#/components/schemas/MarketStateSnapshotV2" }, "previous_route": { "allOf": [{ "$ref": "#/components/schemas/StrategyRouteSnapshotV2" }], "nullable": true } } } } } },
+        "responses": { "200": { "description": "StrategyRouteSnapshotV2", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/StrategyRouteSnapshotV2" } } } }, "400": { "description": "Invalid fixture" }, "404": { "description": "Fixture API disabled" } }
+      }
     }
   },
   "components": {
@@ -230,6 +251,42 @@
       "MarketStateComparisonV2": {
         "type": "object", "required": ["version", "previous", "current", "transitions"],
         "properties": { "version": { "type": "string" }, "previous": { "$ref": "#/components/schemas/MarketStateSnapshotV2" }, "current": { "$ref": "#/components/schemas/MarketStateSnapshotV2" }, "transitions": { "type": "array", "items": { "$ref": "#/components/schemas/StateTransitionV2" } } }
+      },
+      "StrategyEvidenceV2": {
+        "type": "object", "required": ["code", "dimension", "timeframe", "classification", "strength", "source_timestamp", "detail"],
+        "properties": { "code": { "type": "string" }, "dimension": { "type": "string" }, "timeframe": { "type": "string" }, "classification": { "type": "string", "enum": ["supporting", "conflicting"] }, "strength": { "type": "string" }, "source_timestamp": { "allOf": [{ "$ref": "#/components/schemas/UnixSeconds" }], "nullable": true }, "detail": { "type": "string" } }
+      },
+      "StrategyBlockerV2": {
+        "type": "object", "required": ["code", "timeframe", "evidence", "source_timestamp", "blocking", "release_condition"],
+        "properties": { "code": { "type": "string" }, "timeframe": { "type": "string" }, "evidence": { "type": "array", "items": { "type": "string" } }, "source_timestamp": { "allOf": [{ "$ref": "#/components/schemas/UnixSeconds" }], "nullable": true }, "blocking": { "type": "boolean" }, "release_condition": { "type": "string" } }
+      },
+      "StrategyGeometryV2": {
+        "type": "object", "required": ["valid", "setup_zone", "trigger_boundary", "confirmation_rule", "invalidation_reference", "stop_reference_type", "target_reference_types", "maximum_wait_bars", "maximum_holding_bars", "minimum_structural_reward_risk", "structural_reward_risk", "entry_timing", "intrabar_policy_placeholder", "gap_policy_placeholder", "limitations"],
+        "properties": { "valid": { "type": "boolean" }, "setup_zone": { "type": "object", "additionalProperties": true }, "trigger_boundary": { "type": "object", "additionalProperties": true }, "confirmation_rule": { "type": "array", "items": { "type": "string" } }, "invalidation_reference": { "type": "object", "additionalProperties": true }, "stop_reference_type": { "type": "string" }, "target_reference_types": { "type": "array", "items": { "type": "string" } }, "maximum_wait_bars": { "type": "integer" }, "maximum_holding_bars": { "type": "integer" }, "minimum_structural_reward_risk": { "type": "number" }, "structural_reward_risk": { "type": "number", "nullable": true }, "entry_timing": { "type": "string" }, "intrabar_policy_placeholder": { "type": "string" }, "gap_policy_placeholder": { "type": "string" }, "limitations": { "type": "array", "items": { "type": "string" } } }
+      },
+      "StrategyStageV2": {
+        "type": "object", "required": ["state", "setup_started_at", "trigger_timestamp", "expires_at", "rearm_after"],
+        "properties": { "state": { "type": "string", "enum": ["INELIGIBLE", "WATCH", "ARMED", "TRIGGER_READY", "TRIGGERED_RESEARCH_ONLY", "INVALIDATED", "EXPIRED", "COOLDOWN_RESEARCH_ONLY"] }, "setup_started_at": { "allOf": [{ "$ref": "#/components/schemas/UnixSeconds" }], "nullable": true }, "trigger_timestamp": { "allOf": [{ "$ref": "#/components/schemas/UnixSeconds" }], "nullable": true }, "expires_at": { "allOf": [{ "$ref": "#/components/schemas/UnixSeconds" }], "nullable": true }, "rearm_after": { "allOf": [{ "$ref": "#/components/schemas/UnixSeconds" }], "nullable": true } }
+      },
+      "StrategyIdentityV2": {
+        "type": "object", "required": ["strategy_family_id", "strategy_setup_id", "strategy_evaluation_id", "configuration_hash", "family", "direction", "strategy_version", "definitions_version", "parameter_set_version", "instrument", "execution_timeframe", "setup_timeframe", "environment_timeframe", "context_timeframes", "source_candle_timestamps", "level_identity", "setup_started_at", "trigger_timestamp"],
+        "properties": { "strategy_family_id": { "type": "string" }, "strategy_setup_id": { "type": "string" }, "strategy_evaluation_id": { "type": "string" }, "configuration_hash": { "type": "string" }, "family": { "type": "string" }, "direction": { "type": "string", "enum": ["LONG", "SHORT"] }, "strategy_version": { "type": "string" }, "definitions_version": { "type": "string" }, "parameter_set_version": { "type": "string" }, "instrument": { "type": "string" }, "execution_timeframe": { "type": "string" }, "setup_timeframe": { "type": "string" }, "environment_timeframe": { "type": "string" }, "context_timeframes": { "type": "array", "items": { "type": "string" } }, "source_candle_timestamps": { "type": "array", "items": { "$ref": "#/components/schemas/UnixSeconds" } }, "level_identity": { "type": "string" }, "setup_started_at": { "allOf": [{ "$ref": "#/components/schemas/UnixSeconds" }], "nullable": true }, "trigger_timestamp": { "allOf": [{ "$ref": "#/components/schemas/UnixSeconds" }], "nullable": true } }
+      },
+      "StrategyCandidateV2": {
+        "type": "object", "required": ["family", "direction", "strategy_version", "parameter_set_version", "state", "stage", "score", "score_breakdown", "evidence_strength", "supporting_evidence", "conflicting_evidence", "blockers", "next_confirmation", "geometry", "source_timestamps", "data_quality", "identity", "identity_hash", "limitations", "selection_status", "selection_reason"],
+        "properties": { "family": { "type": "string" }, "direction": { "type": "string", "enum": ["LONG", "SHORT"] }, "strategy_version": { "type": "string" }, "parameter_set_version": { "type": "string" }, "state": { "type": "string" }, "stage": { "$ref": "#/components/schemas/StrategyStageV2" }, "score": { "type": "number", "minimum": 0, "maximum": 100 }, "score_breakdown": { "type": "object", "required": ["environment", "structure", "setup", "trigger", "data_quality"], "additionalProperties": { "type": "number" } }, "evidence_strength": { "type": "number", "minimum": 0, "maximum": 100 }, "supporting_evidence": { "type": "array", "items": { "$ref": "#/components/schemas/StrategyEvidenceV2" } }, "conflicting_evidence": { "type": "array", "items": { "$ref": "#/components/schemas/StrategyEvidenceV2" } }, "blockers": { "type": "array", "items": { "$ref": "#/components/schemas/StrategyBlockerV2" } }, "next_confirmation": { "type": "array", "items": { "type": "string" } }, "geometry": { "$ref": "#/components/schemas/StrategyGeometryV2" }, "source_timestamps": { "type": "array", "items": { "$ref": "#/components/schemas/UnixSeconds" } }, "data_quality": { "type": "object", "additionalProperties": true }, "identity": { "$ref": "#/components/schemas/StrategyIdentityV2" }, "identity_hash": { "type": "string" }, "limitations": { "type": "array", "items": { "type": "string" } }, "selection_status": { "type": "string" }, "selection_reason": { "type": "string" } }
+      },
+      "NoTradeReasonV2": {
+        "type": "object", "required": ["code", "timeframe", "evidence", "source_timestamp", "temporary", "release_condition"],
+        "properties": { "code": { "type": "string" }, "timeframe": { "type": "string" }, "evidence": { "type": "array", "items": { "type": "string" } }, "source_timestamp": { "allOf": [{ "$ref": "#/components/schemas/UnixSeconds" }], "nullable": true }, "temporary": { "type": "boolean" }, "release_condition": { "type": "string" } }
+      },
+      "StrategyTransitionV2": {
+        "type": "object", "required": ["strategy_setup_id", "from_state", "to_state", "transition_timestamp", "reason", "idempotency_key"],
+        "properties": { "strategy_setup_id": { "type": "string" }, "from_state": { "type": "string" }, "to_state": { "type": "string" }, "transition_timestamp": { "$ref": "#/components/schemas/UnixSeconds" }, "reason": { "type": "string" }, "idempotency_key": { "type": "string" } }
+      },
+      "StrategyRouteSnapshotV2": {
+        "type": "object", "required": ["version", "definitions_version", "instrument", "as_of", "market_context_version", "market_state_version", "execution_timeframe", "timeframe_roles", "primary_route", "alternatives", "candidates", "no_trade", "quality", "transitions", "disclaimer"],
+        "properties": { "version": { "type": "string", "enum": ["strategy-router-v2"] }, "definitions_version": { "type": "string", "enum": ["strategy-family-definitions-v2.1"] }, "instrument": { "type": "string" }, "as_of": { "$ref": "#/components/schemas/UnixSeconds" }, "market_context_version": { "type": "string" }, "market_state_version": { "type": "string" }, "execution_timeframe": { "type": "string" }, "timeframe_roles": { "type": "object", "additionalProperties": true }, "primary_route": { "allOf": [{ "$ref": "#/components/schemas/StrategyCandidateV2" }], "nullable": true }, "alternatives": { "type": "array", "items": { "$ref": "#/components/schemas/StrategyCandidateV2" } }, "candidates": { "type": "array", "items": { "$ref": "#/components/schemas/StrategyCandidateV2" } }, "no_trade": { "type": "object", "required": ["active", "strategy_version", "reasons"], "properties": { "active": { "type": "boolean" }, "strategy_version": { "type": "string" }, "reasons": { "type": "array", "items": { "$ref": "#/components/schemas/NoTradeReasonV2" } } } }, "quality": { "type": "object", "additionalProperties": true }, "transitions": { "type": "array", "items": { "$ref": "#/components/schemas/StrategyTransitionV2" } }, "disclaimer": { "type": "string" } }
       },
       "OperationsSummary": {
         "type": "object",

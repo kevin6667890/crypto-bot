@@ -253,6 +253,7 @@ def test_official_price_overlay_only_fills_missing_and_checks_overlap(
     connection.executemany(
         "INSERT INTO mark_price_observations VALUES(?,?,?,?,?,?,?,?)",
         [(0, 1, 2, 0.5, 1.5, "confirmed", "BTC-USDT-SWAP", "a"),
+         (60_000, 1.5, 2.5, 1.25, 1.75, "provisional", "BTC-USDT-SWAP", "p"),
          (120_000, 2, 3, 1.5, 2.5, "confirmed", "BTC-USDT-SWAP", "b")],
     )
     connection.commit()

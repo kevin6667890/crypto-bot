@@ -478,6 +478,7 @@ class CanonicalHistoryBuilder:
                 for row in source.execute(
                     f"""SELECT source_ts_ms,open,high,low,close,state
                           FROM {table} WHERE instrument=?
+                           AND state='confirmed'
                            AND source_ts_ms IN ({placeholders})""",
                     (source_instrument, *chunk),
                 ):
@@ -786,7 +787,7 @@ class CanonicalHistoryBuilder:
     ) -> tuple[int, int, int] | None:
         row = source.execute(
             f"""SELECT MIN(source_ts_ms),MAX(source_ts_ms),COUNT(*)
-                FROM {table} WHERE instrument=?""", (instrument,),
+                FROM {table} WHERE instrument=? AND state='confirmed'""", (instrument,),
         ).fetchone()
         if row is None or row[0] is None:
             return None
@@ -805,6 +806,12 @@ class CanonicalHistoryBuilder:
         source_instrument = self._source_instrument(source_name, instrument)
         with _readonly(self.source_path) as source, self.destination.connect() as out:
             bounds = self._source_bounds(source, table, source_instrument)
+            state_counts = {
+                str(row[0]): int(row[1]) for row in source.execute(
+                    f"SELECT state,COUNT(*) FROM {table} WHERE instrument=? GROUP BY state",
+                    (source_instrument,),
+                )
+            }
             out.execute(
                 "DELETE FROM coverage_ledger WHERE instrument=? AND source=?",
                 (instrument, source_name),
@@ -826,6 +833,7 @@ class CanonicalHistoryBuilder:
             rows = source.execute(
                 f"""SELECT *
                     FROM {table} WHERE instrument=?
+                    AND state='confirmed'
                     ORDER BY source_ts_ms""", (source_instrument,),
             )
             asset_hash = hashlib.sha256()
@@ -973,6 +981,7 @@ class CanonicalHistoryBuilder:
             self.destination.checkpoint(
                 out, f"coverage:{source_name}", instrument, latest, "COMPLETE",
                 {"row_count": total_rows, "missing_minutes": missing,
+                 "state_counts": state_counts,
                  "unique_identity_count": asset_unique,
                  "duplicate_count": asset_duplicates,
                  "trade_id_conflict_count": asset_conflicts},
@@ -980,6 +989,7 @@ class CanonicalHistoryBuilder:
             return {"instrument": instrument, "source": source_name,
                     "earliest_ms": earliest, "latest_ms": latest,
                     "row_count": total_rows, "missing_minutes": missing,
+                    "state_counts": state_counts,
                     "unique_identity_count": asset_unique,
                     "duplicate_count": asset_duplicates,
                     "trade_id_conflict_count": asset_conflicts,

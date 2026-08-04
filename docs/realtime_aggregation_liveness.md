@@ -12,6 +12,9 @@ minutes ahead of aggregates is `DEGRADED`; exhausted restarts are `FAILED` and
 make the collector health endpoint return HTTP 503. Disabled maintenance does
 not affect this status.
 
+Raw and aggregate watermarks are tracked independently for CVD and OI. A fresh
+OI series therefore cannot mask a missing or stale CVD series in health output.
+
 One instrument failure is rolled back and recorded without stopping other
 instruments. It is retried by the next bounded live cycle. The supervisor waits
 5 seconds before the first task restart, doubles the delay up to 60 seconds,

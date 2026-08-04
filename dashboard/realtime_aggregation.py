@@ -46,6 +46,7 @@ class AggregationResult:
     missing: dict[str, int] = field(default_factory=dict)
     conflicts: list[dict[str, Any]] = field(default_factory=list)
     latest_source_ms: int | None = None
+    latest_source_ms_by_series: dict[str, int] = field(default_factory=dict)
 
     def bump(self, bucket: str, kind: str) -> None:
         target = getattr(self, kind)
@@ -62,6 +63,7 @@ class AggregationResult:
             "missing": self.missing,
             "conflicts": self.conflicts,
             "latest_source_ms": self.latest_source_ms,
+            "latest_source_ms_by_series": self.latest_source_ms_by_series,
         }
 
 
@@ -270,6 +272,8 @@ class RealtimeAggregationEngine:
             last_source_ms=last_ms, observation_count=len(rows))
         if ok:
             result.latest_source_ms = max(result.latest_source_ms or 0, last_ms)
+            result.latest_source_ms_by_series["cvd"] = max(
+                result.latest_source_ms_by_series.get("cvd", 0), last_ms)
         return ok
 
     def _minute_oi(
@@ -319,6 +323,8 @@ class RealtimeAggregationEngine:
             last_source_ms=last_ms, observation_count=len(rows))
         if ok:
             result.latest_source_ms = max(result.latest_source_ms or 0, last_ms)
+            result.latest_source_ms_by_series["oi"] = max(
+                result.latest_source_ms_by_series.get("oi", 0), last_ms)
         return ok
 
     def _derive_cvd(

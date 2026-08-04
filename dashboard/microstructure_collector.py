@@ -191,6 +191,9 @@ class Collector:
         self.maintenance_phase = 0
         self.realtime_aggregation_paused: set[str] = set()
         self.aggregated_timestamp_by_instrument: dict[str, int] = {}
+        self.raw_timestamp_by_instrument_series: dict[str, dict[str, int]] = {}
+        self.aggregated_timestamp_by_instrument_series: dict[
+            str, dict[str, int]] = {}
         self.pressure = PressureHysteresis()
 
     def _counter(self, component: str) -> dict[str, int]:
@@ -430,6 +433,12 @@ class Collector:
             latest = result.get("latest_source_ms")
             if latest is not None:
                 self.aggregated_timestamp_by_instrument[instrument] = int(latest)
+            for series, timestamp in (
+                result.get("latest_source_ms_by_series") or {}).items():
+                values = self.aggregated_timestamp_by_instrument_series.setdefault(
+                    instrument, {})
+                values[str(series)] = max(
+                    values.get(str(series), 0), int(timestamp))
             position = int(result["end_ms"])
             pending = max(0, (end_ms - position) // MINUTE_MS)
             missing = sum(int(value) for value in result.get("missing", {}).values())
@@ -440,6 +449,10 @@ class Collector:
                 realtime_aggregation_pending_buckets=pending,
                 aggregated_timestamp_by_instrument={
                     **self.aggregated_timestamp_by_instrument},)
+            self.store.update_operational_metrics(
+                aggregated_timestamp_by_instrument_series={
+                    instrument: dict(values) for instrument, values
+                    in self.aggregated_timestamp_by_instrument_series.items()})
             await self._record_health(
                 f"realtime-aggregation:{instrument}", "LIVE",
                 last_success_ms=now_ms(),
@@ -642,6 +655,8 @@ class Collector:
                 received_metrics[instrument] = max(received)
                 persisted_metrics[instrument] = persisted_at
                 lag_metrics[instrument] = max(0, persisted_at - max(timestamps))
+                self.raw_timestamp_by_instrument_series.setdefault(
+                    instrument, {})["cvd"] = max(timestamps)
                 for suffix, success in (
                     ("received", max(received)), ("persisted", persisted_at)):
                     self.store.record_health(
@@ -670,6 +685,8 @@ class Collector:
                     oi_usd=float(payload["oiUsd"]) if payload.get("oiUsd") else None,
                     source="OKX GET /api/v5/public/open-interest",
                     source_identity=f"{item['instrument']}:{payload['ts']}"))
+                self.raw_timestamp_by_instrument_series.setdefault(
+                    item["instrument"], {})["oi"] = int(payload["ts"])
             elif kind == "funding":
                 rows_written += int(self.store.insert_funding(
                     item["instrument"], payload, settled=False))
@@ -722,6 +739,11 @@ class Collector:
                 received_timestamp_by_instrument=received_metrics,
                 persisted_timestamp_by_instrument=persisted_metrics,
                 live_lag_ms_by_instrument=lag_metrics)
+        if self.raw_timestamp_by_instrument_series:
+            self.store.update_operational_metrics(
+                raw_timestamp_by_instrument_series={
+                    instrument: dict(values) for instrument, values
+                    in self.raw_timestamp_by_instrument_series.items()})
         return rows_written
 
     async def _trade_instrument(self, instrument: str) -> None:

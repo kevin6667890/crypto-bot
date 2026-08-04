@@ -180,11 +180,28 @@ def test_liveness_degrades_when_raw_advances_past_aggregate(tmp_path: Path) -> N
         realtime_aggregation_enabled=True,
         realtime_aggregation_task_alive=True,
         realtime_aggregation_status="LIVE",
-        persisted_timestamp_by_instrument={INSTRUMENT: 600_000},
-        aggregated_timestamp_by_instrument={INSTRUMENT: 300_000})
+        raw_timestamp_by_instrument_series={
+            INSTRUMENT: {"cvd": 600_000, "oi": 600_000}},
+        aggregated_timestamp_by_instrument_series={
+            INSTRUMENT: {"cvd": 300_000, "oi": 600_000}})
     health = value.liveness()
     assert health["realtime_aggregation_health"] == "DEGRADED"
     assert health["aggregate_lag_seconds"] == 300
+
+
+def test_liveness_does_not_let_oi_mask_missing_cvd(tmp_path: Path) -> None:
+    value = store(tmp_path)
+    value.update_operational_metrics(
+        realtime_aggregation_enabled=True,
+        realtime_aggregation_task_alive=True,
+        realtime_aggregation_status="LIVE",
+        raw_timestamp_by_instrument_series={
+            INSTRUMENT: {"cvd": 600_000, "oi": 600_000}},
+        aggregated_timestamp_by_instrument_series={
+            INSTRUMENT: {"oi": 590_000}})
+    health = value.liveness()
+    assert health["realtime_aggregation_health"] == "DEGRADED"
+    assert health["aggregate_missing_series"] == [f"{INSTRUMENT}:cvd"]
 
 
 def test_liveness_detects_dead_task_as_degraded(tmp_path: Path) -> None:

@@ -166,6 +166,8 @@ class MicrostructureStore:
             "persisted_timestamp_by_instrument": {},
             "live_lag_ms_by_instrument": {},
             "aggregated_timestamp_by_instrument": {},
+            "raw_timestamp_by_instrument_series": {},
+            "aggregated_timestamp_by_instrument_series": {},
         }
 
     def _open_connection(
@@ -2397,18 +2399,39 @@ class MicrostructureStore:
     def liveness(self) -> dict[str, Any]:
         """Return constant-time process health without scanning historical rows."""
         metrics = self.operational_metrics()
-        raw = metrics.get("persisted_timestamp_by_instrument") or {}
-        aggregate = metrics.get("aggregated_timestamp_by_instrument") or {}
+        raw_series = metrics.get("raw_timestamp_by_instrument_series") or {}
+        aggregate_series = (
+            metrics.get("aggregated_timestamp_by_instrument_series") or {})
         lag_by_instrument = {
-            instrument: max(0, int(raw_ms) - int(aggregate[instrument])) // 1000
-            for instrument, raw_ms in raw.items()
-            if raw_ms is not None and aggregate.get(instrument) is not None
+            instrument: max(series_lags)
+            for instrument in raw_series
+            if (series_lags := [
+                max(0, int(raw_ms) - int(
+                    aggregate_series[instrument][series])) // 1000
+                for series, raw_ms in raw_series[instrument].items()
+                if raw_ms is not None
+                and aggregate_series.get(instrument, {}).get(series) is not None
+            ])
         }
+        missing_series = sorted(
+            f"{instrument}:{series}"
+            for instrument, series_values in raw_series.items()
+            for series, raw_ms in series_values.items()
+            if raw_ms is not None
+            and aggregate_series.get(instrument, {}).get(series) is None)
+        raw_values = [
+            int(value) for series in raw_series.values()
+            for value in series.values() if value is not None]
+        aggregate_values = [
+            int(value) for series in aggregate_series.values()
+            for value in series.values() if value is not None]
         enabled = bool(metrics.get("realtime_aggregation_enabled"))
         alive = bool(metrics.get("realtime_aggregation_task_alive"))
         exhausted = (
             metrics.get("realtime_aggregation_status") == "FAILED")
-        lagged = bool(lag_by_instrument) and max(lag_by_instrument.values()) > 180
+        lagged = (
+            bool(missing_series)
+            or bool(lag_by_instrument) and max(lag_by_instrument.values()) > 180)
         aggregation_health = (
             "FAILED" if enabled and exhausted
             else "DEGRADED" if enabled and (not alive or lagged)
@@ -2424,12 +2447,13 @@ class MicrostructureStore:
             "database_size_bytes": self.path.stat().st_size if self.path.exists() else 0,
             **metrics,
             "realtime_aggregation_health": aggregation_health,
-            "latest_raw_watermark": max(raw.values()) if raw else None,
+            "latest_raw_watermark": max(raw_values) if raw_values else None,
             "latest_aggregate_watermark": (
-                min(aggregate.values()) if aggregate else None),
+                min(aggregate_values) if aggregate_values else None),
             "aggregate_lag_seconds": (
                 max(lag_by_instrument.values()) if lag_by_instrument else None),
             "aggregate_lag_seconds_by_instrument": lag_by_instrument,
+            "aggregate_missing_series": missing_series,
         }
 
 

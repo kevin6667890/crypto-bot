@@ -16,6 +16,7 @@ describe("route splitting", () => {
     expect(app).toContain('lazy(() => import("./routes/StrategyResearchRoute"))');
     expect(app).toContain('lazy(() => import("./MicrostructureResearch"))');
     expect(app).toContain('lazy(() => import("./Operations"))');
+    expect(app).toContain('lazy(() => import("./MarketStateResearch"))');
   });
 
   it("retains visited route instances and isolates route errors", () => {

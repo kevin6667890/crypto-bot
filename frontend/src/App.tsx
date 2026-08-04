@@ -48,6 +48,7 @@ import { PUBLIC_MARKET_INSTRUMENTS } from "./marketInstruments";
 const StrategyResearchRoute = lazy(() => import("./routes/StrategyResearchRoute"));
 const MicrostructureResearch = lazy(() => import("./MicrostructureResearch"));
 const Operations = lazy(() => import("./Operations"));
+const MarketStateResearch = lazy(() => import("./MarketStateResearch"));
 
 type RouteErrorBoundaryProps = { name: string; children: React.ReactNode };
 type RouteErrorBoundaryState = { failed: boolean };
@@ -689,7 +690,7 @@ function Workspace() {
   const [selectedTrade, setSelectedTrade] = useState<PaperStatus["closed_trades"][number] | null>(null);
   const [vpvr, setVpvr] = useState<VpvrProfile | null>(null);
   const [activePage, setActivePage] = useState<
-    "market" | "research" | "microstructure" | "operations"
+    "market" | "state" | "research" | "microstructure" | "operations"
   >("market");
   const [visitedPages, setVisitedPages] = useState(() => new Set(["market"]));
   const [question, setQuestion] = useState("");
@@ -699,7 +700,7 @@ function Workspace() {
   const [replayDetail, setReplayDetail] = useState<ReplayDetail | null>(null);
   const [replayLoading, setReplayLoading] = useState(false);
   const paperRequest = useRef(0);
-  const selectPage = (page: "market" | "research" | "microstructure" | "operations") => {
+  const selectPage = (page: "market" | "state" | "research" | "microstructure" | "operations") => {
     setVisitedPages((current) => new Set(current).add(page));
     setActivePage(page);
   };
@@ -863,6 +864,12 @@ function Workspace() {
               onClick={() => selectPage("market")}
             >
               {t("nav.market")}
+            </button>
+            <button
+              className={activePage === "state" ? "active" : ""}
+              onClick={() => selectPage("state")}
+            >
+              市场状态 V2
             </button>
             <button
               className={activePage === "research" ? "active" : ""}
@@ -1599,6 +1606,11 @@ function Workspace() {
       {visitedPages.has("research") && (
         <div hidden={activePage !== "research"} data-route="research">
           <DeferredRoute name="Strategy Research"><StrategyResearchRoute /></DeferredRoute>
+        </div>
+      )}
+      {visitedPages.has("state") && (
+        <div hidden={activePage !== "state"} data-route="state">
+          <DeferredRoute name="Market State V2"><MarketStateResearch instrument={perpetualInstrument(instrument)} /></DeferredRoute>
         </div>
       )}
       {visitedPages.has("microstructure") && (

@@ -402,6 +402,7 @@ class CanonicalHistoryBuilder:
         identity: BuildIdentity,
         official_trade_manifest_path: Path | str | None = None,
         contract_values: dict[str, str] | None = None,
+        official_oi_manifest_path: Path | str | None = None,
     ) -> None:
         self.source_path = Path(source_path)
         self.destination = CanonicalHistoryStore(destination_path)
@@ -411,7 +412,43 @@ class CanonicalHistoryBuilder:
             if official_trade_manifest_path is not None else None
         )
         self.contract_values = contract_values or {}
+        self.official_oi_manifest_path = (
+            Path(official_oi_manifest_path)
+            if official_oi_manifest_path is not None else None
+        )
         self.destination.initialise(identity)
+
+    def _load_official_oi_points(
+        self, instrument: str,
+    ) -> tuple[dict[int, list[str]], dict[str, Any] | None]:
+        if self.official_oi_manifest_path is None:
+            return {}, None
+        manifest_body = self.official_oi_manifest_path.read_bytes()
+        manifest = json.loads(manifest_body)
+        if manifest.get("manifest_version") != "okx-official-oi-history-manifest-v1":
+            raise ValueError("unsupported official OI manifest")
+        item = next((entry for entry in manifest.get("instruments", [])
+                     if entry.get("instrument") == instrument), None)
+        if item is None:
+            return {}, None
+        rows_path = Path(str(item["rows_path"]))
+        rows_body = rows_path.read_bytes()
+        if hashlib.sha256(rows_body).hexdigest() != item["rows_sha256"]:
+            raise ValueError(f"official OI rows SHA mismatch: {instrument}")
+        rows = json.loads(rows_body)
+        points: dict[int, list[str]] = {}
+        for raw in rows:
+            row = [str(value) for value in raw]
+            if len(row) != 4 or int(row[0]) % 300_000 != 0:
+                raise ValueError(f"invalid official 5m OI row: {instrument}")
+            timestamp = int(row[0])
+            previous = points.get(timestamp)
+            if previous is not None and previous != row:
+                raise ValueError(f"conflicting official OI timestamp: {timestamp}")
+            points[timestamp] = row
+        audit = dict(item)
+        audit["manifest_sha256"] = hashlib.sha256(manifest_body).hexdigest()
+        return points, audit
 
     def _official_trade_files(self, instrument: str) -> list[dict[str, Any]]:
         if self.official_trade_manifest_path is None:
@@ -989,6 +1026,7 @@ class CanonicalHistoryBuilder:
             )
 
     def build_oi_1m(self, instrument: str) -> dict[str, Any]:
+        official_points, official_audit = self._load_official_oi_points(instrument)
         with _readonly(self.source_path) as source, self.destination.connect() as out:
             ledger = {
                 int(row["bucket_ms"]): row for row in out.execute(
@@ -1010,15 +1048,58 @@ class CanonicalHistoryBuilder:
                 grouped.setdefault(minute_floor(int(row[0])), []).append(row)
             out.execute("DELETE FROM oi_1m WHERE instrument=?", (instrument,))
             inserts = []
+            official_used = 0
+            official_overlap = 0
             for bucket, coverage in ledger.items():
                 observations = grouped.get(bucket, [])
                 status = str(coverage["status"])
+                official = official_points.get(bucket)
+                if observations and official is not None:
+                    official_overlap += 1
+                if not observations and official is not None:
+                    value = next((float(value) for value in official[3:0:-1]
+                                  if value not in {None, ""}), None)
+                    source_hash = fingerprint([
+                        "OKX_OFFICIAL_OI_HISTORY_5M", instrument, official,
+                    ])
+                    inserts.append((
+                        instrument, bucket, "1m", value, int(official[0]), 1,
+                        source_hash, "BACKFILLED_OFFICIAL", None,
+                        CANONICAL_MICROSTRUCTURE_HISTORY_VERSION,
+                        self.identity.generated_at_ms,
+                    ))
+                    out.execute(
+                        """UPDATE coverage_ledger SET observed_count=1,
+                           unique_identity_count=1,first_source_ts_ms=?,
+                           last_source_ts_ms=?,source_fingerprint=?,
+                           status='BACKFILLED_OFFICIAL',gap_reason=NULL,
+                           classification='OBSERVED'
+                           WHERE instrument=? AND source='oi' AND bucket_ms=?""",
+                        (int(official[0]), int(official[0]), source_hash,
+                         instrument, bucket),
+                    )
+                    official_used += 1
+                    continue
                 if not observations or status not in {
                     "VALID", "BACKFILLED_OFFICIAL", "ARCHIVED_CONFIRMED"
                 }:
+                    if not observations:
+                        status = "UNRECOVERABLE_RAW_GAP"
+                        reason = (
+                            "OKX_OFFICIAL_OI_HISTORY_BOUNDARY"
+                            if (not official_points or bucket < min(official_points))
+                            else "OKX_OFFICIAL_OI_ONLY_5M_NO_EXACT_OBSERVATION"
+                        )
+                        out.execute(
+                            """UPDATE coverage_ledger SET status=?,gap_reason=?
+                               WHERE instrument=? AND source='oi' AND bucket_ms=?""",
+                            (status, reason, instrument, bucket),
+                        )
+                    else:
+                        reason = coverage["gap_reason"]
                     inserts.append((
                         instrument, bucket, "1m", None, None, 0, None, status,
-                        coverage["gap_reason"],
+                        reason,
                         CANONICAL_MICROSTRUCTURE_HISTORY_VERSION,
                         self.identity.generated_at_ms,
                     ))
@@ -1036,12 +1117,36 @@ class CanonicalHistoryBuilder:
             out.executemany(
                 "INSERT INTO oi_1m VALUES(?,?,?,?,?,?,?,?,?,?,?)", inserts,
             )
+            if official_audit is not None:
+                manifest_id = fingerprint([
+                    official_audit["manifest_sha256"], instrument,
+                    official_audit["rows_sha256"], official_used,
+                ])
+                out.execute(
+                    """INSERT OR REPLACE INTO official_backfill_manifests
+                       VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                    (manifest_id, "oi", instrument,
+                     int(official_audit["earliest_ms"]),
+                     int(official_audit["latest_ms"]),
+                     official_audit["endpoint"],
+                     int(official_audit["page_count"]),
+                     official_audit["rows_sha256"],
+                     official_used, official_used,
+                     int(official_audit["earliest_ms"]),
+                     int(official_audit["latest_ms"]),
+                     f"OVERLAP_MINUTES:{official_overlap}", "instrument+ts",
+                     self.identity.generated_at_ms,
+                     canonical_json(official_audit)),
+                )
             self._reconcile_oi_days(out, instrument)
             self.destination.checkpoint(
                 out, "oi:1m", instrument, max(ledger), "COMPLETE",
                 {"rows": len(inserts)},
             )
-            return {"instrument": instrument, "rows": len(inserts)}
+            return {"instrument": instrument, "rows": len(inserts),
+                    "official_points_available": len(official_points),
+                    "official_points_used": official_used,
+                    "official_overlap_minutes": official_overlap}
 
     def _reconcile_oi_days(
         self, out: sqlite3.Connection, instrument: str,

@@ -55,6 +55,7 @@ def main() -> None:
     parser.add_argument("--instrument", action="append", choices=INSTRUMENTS)
     parser.add_argument("--source-name", action="append", choices=SOURCE_TABLES)
     parser.add_argument("--official-trade-manifest", type=Path)
+    parser.add_argument("--official-oi-manifest", type=Path)
     parser.add_argument(
         "--contract-value", action="append", default=[],
         help="verified instrument=value pair, e.g. BTC-USDT-SWAP=0.01",
@@ -74,6 +75,7 @@ def main() -> None:
         arguments.source, arguments.destination, identity,
         official_trade_manifest_path=arguments.official_trade_manifest,
         contract_values=contract_values,
+        official_oi_manifest_path=arguments.official_oi_manifest,
     )
     if arguments.audit_only:
         report: dict[str, object] = {"coverage": []}

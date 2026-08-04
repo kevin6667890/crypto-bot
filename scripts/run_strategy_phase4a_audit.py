@@ -147,7 +147,7 @@ def run():
               "folds":sorted({x["fold"] for x in route_audit}),"parameter_sets":len({x["parameter_set_id"] for x in samples}),
               "by_bucket":dict(Counter(f"{x['family']}:{x['direction']}:{x['lifecycle_to']}" for x in samples))}
     expected_groups={(family,direction) for family in ("TREND_PULLBACK","MA200_MEAN_REVERSION") for direction in ("LONG","SHORT")}
-    if set(map(tuple,coverage["groups"])) != expected_groups or set(coverage["instruments"]) != {"BTC-USDT-SWAP","ETH-USDT-SWAP","SOL-USDT-SWAP"} or set(coverage["folds"]) != {1,2,3,4}:
+    if set(map(tuple,coverage["groups"])) != expected_groups or set(coverage["instruments"]) != {"BTC-USDT","ETH-USDT","SOL-USDT"} or set(coverage["folds"]) != {1,2,3,4}:
         raise ValueError(f"forensic sampling coverage incomplete: {coverage}")
     for family,direction in expected_groups:
         for stage in ("WATCH","ARMED","TRIGGER_READY"):

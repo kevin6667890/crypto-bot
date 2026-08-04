@@ -28,6 +28,7 @@
       "dedupe_key": ["instrument", "tradeId"],
       "stable_order": ["timestamp", "tradeId", "row fingerprint"],
       "required_fields": ["instId", "tradeId", "side", "px", "sz", "ts"],
+      "contract_spec_source": "GET /api/v5/public/instruments?instType=SWAP; persist response SHA and exact ctVal/ctValCcy/ctMult for each instrument before computing notional",
       "overlap_validation": "retain at least 5 minutes of already-observed data on both sides of each gap when present",
       "manifest": "one metadata-response SHA plus filename/url/size/SHA/row-count/min-max/id-range/schema for every downloaded file",
       "failure_recovery": "download to .partial, verify archive, atomically rename, checkpoint per file; resume never redownloads a matching SHA"

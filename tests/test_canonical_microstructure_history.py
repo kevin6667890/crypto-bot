@@ -1,4 +1,5 @@
 from pathlib import Path
+import sqlite3
 
 from dashboard.canonical_microstructure_history import (
     BuildIdentity,
@@ -40,3 +41,49 @@ def test_higher_quality_inheritance_is_conservative() -> None:
         "UNRECOVERABLE_RAW_GAP"
     )
     assert aggregate_quality(["VALID", "CONFLICT"])[0] == "CONFLICT"
+
+
+def test_index_uses_non_swap_source_identity() -> None:
+    assert CanonicalHistoryBuilder._source_instrument(
+        "index", "BTC-USDT-SWAP"
+    ) == "BTC-USDT"
+    assert CanonicalHistoryBuilder._source_instrument(
+        "trades", "BTC-USDT-SWAP"
+    ) == "BTC-USDT-SWAP"
+
+
+def test_coverage_streams_observed_and_missing_minutes(tmp_path: Path) -> None:
+    source = tmp_path / "source.db"
+    connection = sqlite3.connect(source)
+    connection.execute(
+        """CREATE TABLE trade_flow_observations(
+        source TEXT,source_version TEXT,instrument TEXT,source_ts_ms INTEGER,
+        ingested_at_ms INTEGER,resolution TEXT,state TEXT,source_identity TEXT,
+        uniqueness_key TEXT PRIMARY KEY,trade_id TEXT,side TEXT,price REAL,
+        size REAL,contract_value REAL,notional REAL,provenance_table TEXT)"""
+    )
+    rows = []
+    for timestamp, key in ((1_000, "a"), (61_000, "b"), (181_000, "c")):
+        rows.append(("OKX", "v1", "BTC-USDT-SWAP", timestamp, timestamp,
+                     "tick", "confirmed", key, key, key, "buy", 1.0, 1.0,
+                     1.0, 1.0, None))
+    connection.executemany(
+        "INSERT INTO trade_flow_observations VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        rows,
+    )
+    connection.commit()
+    connection.close()
+    builder = CanonicalHistoryBuilder(
+        source, tmp_path / "canonical.db",
+        BuildIdentity("a" * 64, "commit", 240_000, 123),
+    )
+    report = builder.build_coverage("trades", "BTC-USDT-SWAP")
+    assert report["missing_minutes"] == 1
+    with builder.destination.connect() as connection:
+        ledger = connection.execute(
+            "SELECT bucket_ms,status FROM coverage_ledger ORDER BY bucket_ms"
+        ).fetchall()
+    assert [tuple(row) for row in ledger] == [
+        (0, "VALID"), (60_000, "VALID"), (120_000, "MISSING"),
+        (180_000, "VALID"),
+    ]

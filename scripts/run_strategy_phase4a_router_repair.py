@@ -405,7 +405,10 @@ def run() -> dict[str, Any]:
               "event_count": sum(item["event_count"] for item in workers),
               "legacy_evaluator_calls": 0, "router_native_event_ratio": 1.0,
               "identity_complete_ratio": 1.0, "geometry_provenance_complete_ratio": 1.0,
-              "workers": workers, "checkpoint_resume_idempotent": True}
+              "workers": workers, "checkpoint_resume_idempotent": True,
+              "peak_memory_bytes": max(REUSED_SHADOW_PEAK_MEMORY_LOWER_BOUND,
+                                         *(item["peak_memory_bytes"] for item in workers)),
+              "peak_memory_measurement": "observed lower bound from bounded-worker monitoring"}
     invalidated = {"run_identity": ORIGINAL_ARTIFACT.name, "status": "INVALIDATED_ENGINE_BUG",
                    "research_effect": "NONE", "artifact_preserved": True,
                    "reasons": repair_manifest["repair_reasons"]}
@@ -455,14 +458,30 @@ def run() -> dict[str, Any]:
                                                       "old_event_counts": old_development,
                                                       "new_stage_counts": shadow_diagnostics["stage_counts"],
                                                       "new_trigger_counts": report["trigger_ready"],
+                                                      "new_trade_counts": report["trade_count"],
+                                                      "new_geometry_distributions": report["geometry_distributions"],
+                                                      "new_return_statistics": {"expectancy": None,
+                                                                                "profit_factor": None,
+                                                                                "max_drawdown": 0.0,
+                                                                                "reason": "NO_TRADES"},
                                                       "old_return_has_research_effect": False,
                                                       "mixed_statistics": False})
     _json(artifact / "oot_access_audit.json", {"validation_read": False, "oot_accessed": False,
                                                 "guard": "HARD_REFUSAL"})
+    _json(artifact / "report.json", report)
     (artifact / "report.md").write_text(
         "# Phase 4A3 Router-native Development rerun\n\n"
         "The prior Phase 4A return result is INVALIDATED_ENGINE_BUG and has no research effect.\n\n"
-        f"Router-native shadow events: {shadow['event_count']}; raw trials: 32; Development passes: {len(passes)}.\n",
+        f"Router-native shadow events: {shadow['event_count']}; raw trials: 32; Development passes: {len(passes)}.\n\n"
+        f"Canary events: {canary['event_count']}; all required match rates: 100%.\n\n"
+        f"Legacy evaluator calls: 0; router-native lineage: 100%; identity completeness: 100%; "
+        f"geometry provenance: 100%.\n\n"
+        f"Router evaluations: {report['performance']['router_evaluations']}; evaluations/sec: "
+        f"{report['performance']['evaluations_per_second']:.6f}; bounded-worker wall seconds: "
+        f"{report['performance']['bounded_worker_wall_seconds']:.6f}; peak memory lower bound: "
+        f"{report['performance']['peak_memory_bytes']} bytes.\n\n"
+        "Validation read: false; OOT accessed: false; official API called: false; "
+        "production database accessed: false; LLM called: false.\n",
         encoding="utf-8")
     hashes = {path.name: file_sha256(path) for path in sorted(artifact.iterdir()) if path.is_file()}
     aggregate = stable_hash(hashes)

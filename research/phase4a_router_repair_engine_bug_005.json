@@ -1,0 +1,8 @@
+{
+  "run_identity": "2f1acd06d9bab7f405c1ed8e18578d5153dc48df8deb86c28eff6c6fe55c3f9e",
+  "status": "INVALIDATED_ENGINE_BUG",
+  "research_effect": "NONE",
+  "artifact_preserved": true,
+  "reason": "PERFORMANCE_AND_GEOMETRY_EVIDENCE_NOT_PERSISTED",
+  "return_statistics_valid": false
+}

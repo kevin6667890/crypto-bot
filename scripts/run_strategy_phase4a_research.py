@@ -115,8 +115,22 @@ def _execute_trial(candles: Mapping[str, Sequence[Mapping[str, Any]]], intents: 
     trades: list[dict[str, Any]] = []; rejections: list[dict[str, Any]] = []; ambiguous = 0
     for instrument in INSTRUMENTS:
         selected = [intent for intent in intents[instrument] if intent.event.parameter_set_id == trial["parameter_set_id"]]
+        # Preserve exact chronological semantics while omitting long stretches in
+        # which this trial has neither a pending nor open position.  Each window
+        # includes the trigger bar, next-open bar and the full frozen max hold.
+        source = candles[instrument]
+        if selected:
+            index_by_close = {int(row["candle_close_ts"]): index for index, row in enumerate(source)}
+            keep: set[int] = set()
+            for intent in selected:
+                trigger_index = index_by_close.get(int(intent.event.trigger_timestamp or -1))
+                if trigger_index is not None:
+                    keep.update(range(trigger_index, min(len(source), trigger_index+intent.maximum_holding_bars+3)))
+            relevant = [source[index] for index in sorted(keep)]
+        else:
+            relevant = []
         result = StrategyBacktestEngineV2(CostPolicyV2(fee, slippage), intrabar_policy=intrabar).run(
-            candles[instrument], selected, segment=segment)
+            relevant, selected, segment=segment)
         trades.extend(result["trades"]); rejections.extend(result["rejections"])
         ambiguous += int(result["ambiguous_intrabar_count"])
     return {"trades": trades, "rejections": rejections, "ambiguous_intrabar_count": ambiguous,
@@ -128,18 +142,20 @@ def _trial_job(args: tuple[str, dict[str, Any], str, dict[str, Any], dict[str, l
     segment = _segment(manifest, segment_name); dataset_id = manifest["dataset"]["identity"]
     store = ReadOnlyOHLCVStoreV2(Path(dataset), dataset_identity=dataset_id,
                                  oot_start_ts=int(manifest["oot_lock"]["start_ts"]))
-    candles = {instrument: [row for row in _load_partitions(store, instrument, segment.end_ts)["15m"]
+    candles = {instrument: [row for row in store.candles(instrument, "15m", 1677628800, segment.end_ts)
                             if int(row["candle_close_ts"]) >= segment.start_ts]
                for instrument in INSTRUMENTS}
     intents = {instrument: [_intent(value) for value in raw_intents[instrument]] for instrument in INSTRUMENTS}
     formal = _execute_trial(candles, intents, segment, trial, fee=.0005, slippage=.0003, intrabar="STOP_FIRST")
     folds, assets = _trade_groups(formal["trades"], segment); concentration = _concentration(formal["trades"])
-    stress = {label: _execute_trial(candles, intents, segment, trial, fee=.0005*multiplier,
-                                    slippage=.0003*multiplier, intrabar="STOP_FIRST")["metrics"]
-              for label, multiplier in (("1.0x", 1.0), ("1.5x", 1.5), ("2.0x", 2.0))}
-    intrabar = {policy: _execute_trial(candles, intents, segment, trial, fee=.0005,
-                                      slippage=.0003, intrabar=policy)["metrics"]
-                for policy in ("STOP_FIRST", "TARGET_FIRST", "DROP_AMBIGUOUS_BAR")}
+    stress = {"1.0x": formal["metrics"]}
+    for label, multiplier in (("1.5x", 1.5), ("2.0x", 2.0)):
+        stress[label] = _execute_trial(candles, intents, segment, trial, fee=.0005*multiplier,
+                                       slippage=.0003*multiplier, intrabar="STOP_FIRST")["metrics"]
+    intrabar = {"STOP_FIRST": formal["metrics"]}
+    for policy in ("TARGET_FIRST", "DROP_AMBIGUOUS_BAR"):
+        intrabar[policy] = _execute_trial(candles, intents, segment, trial, fee=.0005,
+                                         slippage=.0003, intrabar=policy)["metrics"]
     return {"trial": trial, "formal": formal, "folds": folds, "assets": assets,
             "concentration": concentration, "stress": stress, "intrabar": intrabar,
             "benchmark": _benchmark(candles, formal["trades"], segment)}

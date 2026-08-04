@@ -224,7 +224,7 @@ def _execute_trials(manifest: Mapping[str, Any], workers: Sequence[Mapping[str, 
                             manifest["segments"]["DEVELOPMENT"]["identity"])
     store = ReadOnlyOHLCVStoreV2(DATASET, dataset_identity=EXPECTED_DATASET,
                                  oot_start_ts=int(manifest["segments"]["LOCKED_FINAL_OOT"]["start_ts"]))
-    candles = {instrument: store.candles(instrument, "15m", DEVELOPMENT_START - 900, DEVELOPMENT_END)
+    candles = {instrument: store.candles(instrument.removesuffix("-SWAP"), "15m", DEVELOPMENT_START - 900, DEVELOPMENT_END)
                for instrument in INSTRUMENTS}
     intents = {worker["instrument"]: _load_intents(worker) for worker in workers}
     trial_rows: list[dict[str, Any]] = []
@@ -301,6 +301,21 @@ def run() -> dict[str, Any]:
     if (artifact / "sha256_manifest.json").exists():
         raise FileExistsError("completed run artifact already exists")
     temp_root = artifact / "workers"; temp_root.mkdir(exist_ok=True)
+    shadow_source_run = os.environ.get("PHASE4A_SHADOW_SOURCE_RUN")
+    if shadow_source_run:
+        source_root = ROOT / ".runtime" / "strategy-phase4a-router-repair" / shadow_source_run / "workers"
+        for instrument in INSTRUMENTS:
+            source = source_root / instrument
+            progress = json.loads((source / "progress.json").read_text(encoding="utf-8"))
+            expected_chunks = (len(_timestamps(DATASET, instrument, DEVELOPMENT_START, DEVELOPMENT_END)) + 1023) // 1024
+            checkpoint = json.loads((source / "checkpoint.json").read_text(encoding="utf-8"))
+            if (int(progress["completed_chunks"]) != expected_chunks
+                    or checkpoint.get("dataset_identity") != EXPECTED_DATASET
+                    or checkpoint.get("segment_identity") != manifest["segments"]["DEVELOPMENT"]["identity"]):
+                raise ValueError("reusable shadow checkpoint is incomplete or has the wrong identity")
+            destination = temp_root / instrument
+            if not destination.exists():
+                shutil.copytree(source, destination)
     trials = trials_from_original_manifest(ORIGINAL_MANIFEST)
     jobs = [(str(DATASET), instrument, [asdict(item) for item in trials], str(temp_root)) for instrument in INSTRUMENTS]
     wall_start = time.perf_counter()
@@ -345,6 +360,7 @@ def run() -> dict[str, Any]:
                                 "StrategyRouteSnapshotV2", "StrategyLifecycleV2", "TRIGGER_READY",
                                 "StrategyGeometryV2", "NEXT_OPEN"],
         "canary_evidence": canary, "shadow_event_count": sum(item["event_count"] for item in workers),
+        "shadow_reused_from_run": shadow_source_run,
     }
     allowed_diff = {"versions.replay_engine", "versions.backtest_engine", "run_id", "code_sha",
                     "repair_metadata", "artifact_path"}
@@ -382,7 +398,8 @@ def run() -> dict[str, Any]:
                               "cache_hit_rate": sum(item["cache_hits"] for item in workers) / max(1, sum(item["cache_hits"] + item["context_calculations"] for item in workers)),
                               "peak_memory_bytes": max(item["peak_memory_bytes"] for item in workers)},
               "validation_read": False, "oot_accessed": False, "official_api_called": False,
-              "llm_called": False, "production_database_accessed": False}
+              "llm_called": False, "production_database_accessed": False,
+              "shadow_reused_from_run": shadow_source_run}
     _json(artifact / "repair_manifest.json", repair_manifest)
     _json(artifact / "original_manifest_diff.json", manifest_diff)
     _json(artifact / "invalidated_run_reference.json", invalidated)

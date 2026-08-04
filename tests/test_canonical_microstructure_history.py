@@ -45,6 +45,47 @@ def test_higher_quality_inheritance_is_conservative() -> None:
         "UNRECOVERABLE_RAW_GAP"
     )
     assert aggregate_quality(["VALID", "CONFLICT"])[0] == "CONFLICT"
+    assert aggregate_quality(["VALID", "PARTIAL_AFTER_GAP"])[0] == (
+        "PARTIAL_AFTER_GAP"
+    )
+    assert aggregate_quality(["PARTIAL_AFTER_GAP"] * 5) == (
+        "PARTIAL_AFTER_GAP", "EARLIER_RAW_GAP_SAME_UTC_DAY"
+    )
+
+
+def test_partial_after_gap_progress_is_current_but_not_confirmed(
+    tmp_path: Path,
+) -> None:
+    path = tmp_path / "canonical.db"
+    store = CanonicalHistoryStore(path)
+    store.initialise(BuildIdentity("a" * 64, "commit", 600_000, 123))
+    with store.connect() as connection:
+        connection.execute(
+            "INSERT INTO cvd_1m VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            ("BTC-USDT-SWAP", 0, "1m", 2.0, 1.0, 1.0, 1, 1, 2, 1,
+             "f0", 1.0, "1970-01-01", "VALID", None,
+             CANONICAL_MICROSTRUCTURE_HISTORY_VERSION, "commit", 123),
+        )
+        for bucket in range(60_000, 660_000, 60_000):
+            connection.execute(
+                "INSERT INTO cvd_1m VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                ("BTC-USDT-SWAP", bucket, "1m", 2.0, 1.0, 1.0, 1,
+                 bucket + 1, bucket + 2, 1, f"f{bucket}", None,
+                 "1970-01-01", "PARTIAL_AFTER_GAP",
+                 "EARLIER_RAW_GAP_SAME_UTC_DAY",
+                 CANONICAL_MICROSTRUCTURE_HISTORY_VERSION, "commit", 123),
+            )
+    result = CanonicalFlowHistoryStore(path).query(
+        "BTC-USDT", "cvd", start=60, end=600, max_points=10,
+        now=780, timeframe="1m",
+    )
+    assert result["status"] == "PARTIAL_AFTER_GAP"
+    assert result["data_as_of"] == 600
+    assert result["latest_timestamp"] == 600
+    assert result["source_coverage"]["confirmed_end"] == 0
+    assert result["stale"] is False
+    assert all(point["status"] == "WHITESPACE" for point in result["points"])
+    assert all(point["partial_after_gap"] for point in result["points"])
 
 
 def test_index_uses_non_swap_source_identity() -> None:

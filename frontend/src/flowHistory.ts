@@ -71,8 +71,16 @@ export function flowStatusAtCandle(
     point.time >= candleTime && point.time < candleTime + timeframeSeconds
   );
   const point = matches[matches.length - 1];
-  if (!point || point.status === "WHITESPACE" || !Number.isFinite(point.value)) {
+  if (!point) {
     return { status: "WHITESPACE" as const, value: null, partial: false };
+  }
+  if (point.status === "WHITESPACE" || !Number.isFinite(point.value)) {
+    const partial = point.quality_status === "PARTIAL_AFTER_GAP" || point.partial_after_gap === true;
+    return {
+      status: partial ? "PARTIAL_AFTER_GAP" as const : "WHITESPACE" as const,
+      value: null,
+      partial,
+    };
   }
   return {
     status: point.status || "VALID",

@@ -391,6 +391,11 @@ def aggregate_quality(statuses: Sequence[str]) -> tuple[str, str | None]:
         return "UNRECOVERABLE_RAW_GAP", "UNRECOVERABLE_1M_INPUT"
     if "SOURCE_UNAVAILABLE" in unique:
         return "SOURCE_UNAVAILABLE", "SOURCE_UNAVAILABLE_1M_INPUT"
+    if "PARTIAL_AFTER_GAP" in unique and unique <= {
+        "VALID", "BACKFILLED_OFFICIAL", "ARCHIVED_CONFIRMED",
+        "PARTIAL_AFTER_GAP",
+    }:
+        return "PARTIAL_AFTER_GAP", "EARLIER_RAW_GAP_SAME_UTC_DAY"
     return "PARTIAL", "INCOMPLETE_1M_INPUT"
 
 

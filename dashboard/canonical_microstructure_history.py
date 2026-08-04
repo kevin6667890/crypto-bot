@@ -385,11 +385,16 @@ class CanonicalHistoryBuilder:
             return None
         return int(row[0]), int(row[1]), int(row[2])
 
+    @staticmethod
+    def _source_instrument(source_name: str, instrument: str) -> str:
+        return instrument.removesuffix("-SWAP") if source_name == "index" else instrument
+
     def build_coverage(self, source_name: str, instrument: str) -> dict[str, Any]:
         """Create a factual minute ledger; old collection_gaps are not inputs."""
         table = SOURCE_TABLES[source_name]
+        source_instrument = self._source_instrument(source_name, instrument)
         with _readonly(self.source_path) as source, self.destination.connect() as out:
-            bounds = self._source_bounds(source, table, instrument)
+            bounds = self._source_bounds(source, table, source_instrument)
             out.execute(
                 "DELETE FROM coverage_ledger WHERE instrument=? AND source=?",
                 (instrument, source_name),
@@ -409,56 +414,89 @@ class CanonicalHistoryBuilder:
                         "row_count": 0, "status": "SOURCE_UNAVAILABLE"}
             earliest, latest, total_rows = bounds
             rows = source.execute(
-                f"""SELECT source_ts_ms,uniqueness_key
+                f"""SELECT *
                     FROM {table} WHERE instrument=?
-                    ORDER BY source_ts_ms,uniqueness_key""", (instrument,),
+                    ORDER BY source_ts_ms,uniqueness_key""", (source_instrument,),
             )
-            observed: dict[int, dict[str, Any]] = {}
             asset_hash = hashlib.sha256()
-            for row in rows:
-                timestamp = int(row[0])
-                identity = str(row[1])
-                bucket = minute_floor(timestamp)
-                cell = observed.setdefault(bucket, {
-                    "count": 0, "first": timestamp, "last": timestamp,
-                    "identities": set(), "hash": hashlib.sha256(),
-                })
-                cell["count"] += 1
-                cell["first"] = min(cell["first"], timestamp)
-                cell["last"] = max(cell["last"], timestamp)
-                cell["identities"].add(identity)
-                encoded = canonical_json([timestamp, identity]).encode()
-                cell["hash"].update(encoded)
-                asset_hash.update(encoded)
-            inserts = []
+            columns = [description[0] for description in rows.description]
+            ts_index = columns.index("source_ts_ms")
+            identity_index = columns.index("uniqueness_key")
+            inserts: list[tuple[Any, ...]] = []
             missing = 0
-            for bucket in iter_minutes(earliest, latest):
-                cell = observed.get(bucket)
-                if cell is None:
-                    missing += 1
-                    inserts.append((
-                        instrument, source_name, bucket, 1, 0, 0, 0, 0,
-                        None, None, None, "MISSING", "NO_RAW_OBSERVATION",
-                        "TRUE_RAW_GAP",
-                    ))
-                else:
-                    duplicate_count = cell["count"] - len(cell["identities"])
-                    status = "CONFLICT" if duplicate_count else "VALID"
-                    inserts.append((
-                        instrument, source_name, bucket, 1, cell["count"],
-                        len(cell["identities"]), duplicate_count, 0,
-                        cell["first"], cell["last"], cell["hash"].hexdigest(),
-                        status, "DUPLICATE_IDENTITY" if duplicate_count else None,
-                        "OBSERVED",
-                    ))
-            out.executemany(
-                "INSERT INTO coverage_ledger VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
-                inserts,
-            )
+            expected_bucket = minute_floor(earliest)
+            current_bucket: int | None = None
+            count = 0
+            first = last = 0
+            identities: set[str] = set()
+            cell_hash = hashlib.sha256()
+
+            def emit_observed() -> None:
+                nonlocal inserts, count, identities
+                assert current_bucket is not None
+                duplicate_count = count - len(identities)
+                status = "CONFLICT" if duplicate_count else "VALID"
+                inserts.append((
+                    instrument, source_name, current_bucket, 1, count,
+                    len(identities), duplicate_count, 0, first, last,
+                    cell_hash.hexdigest(), status,
+                    "DUPLICATE_IDENTITY" if duplicate_count else None, "OBSERVED",
+                ))
+
+            for row in rows:
+                timestamp = int(row[ts_index])
+                bucket = minute_floor(timestamp)
+                if current_bucket is None or bucket != current_bucket:
+                    if current_bucket is not None:
+                        emit_observed()
+                        expected_bucket = current_bucket + RESOLUTION_MS["1m"]
+                    while expected_bucket < bucket:
+                        missing += 1
+                        inserts.append((
+                            instrument, source_name, expected_bucket, 1, 0, 0, 0,
+                            0, None, None, None, "MISSING", "NO_RAW_OBSERVATION",
+                            "TRUE_RAW_GAP",
+                        ))
+                        expected_bucket += RESOLUTION_MS["1m"]
+                    current_bucket = bucket
+                    count = 0
+                    first = last = timestamp
+                    identities = set()
+                    cell_hash = hashlib.sha256()
+                identity = str(row[identity_index])
+                count += 1
+                last = timestamp
+                identities.add(identity)
+                encoded = canonical_json(list(row)).encode()
+                cell_hash.update(encoded)
+                asset_hash.update(encoded)
+                if len(inserts) >= 10_000:
+                    out.executemany(
+                        "INSERT INTO coverage_ledger VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                        inserts,
+                    )
+                    inserts.clear()
+            if current_bucket is not None:
+                emit_observed()
+                expected_bucket = current_bucket + RESOLUTION_MS["1m"]
+            final_bucket = minute_floor(latest)
+            while expected_bucket <= final_bucket:
+                missing += 1
+                inserts.append((
+                    instrument, source_name, expected_bucket, 1, 0, 0, 0, 0,
+                    None, None, None, "MISSING", "NO_RAW_OBSERVATION",
+                    "TRUE_RAW_GAP",
+                ))
+                expected_bucket += RESOLUTION_MS["1m"]
+            if inserts:
+                out.executemany(
+                    "INSERT INTO coverage_ledger VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                    inserts,
+                )
             status = "PARTIAL" if missing else "VALID"
             out.execute(
                 """INSERT INTO source_assets VALUES(
-                   ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                   ?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
                 (instrument, source_name, table, minute_floor(earliest),
                  minute_floor(latest), earliest, latest, total_rows, total_rows,
                  0, 0, 0, 0, asset_hash.hexdigest(), "local-frozen-db", None,
@@ -487,9 +525,10 @@ class CanonicalHistoryBuilder:
             out.execute("DELETE FROM cvd_1m WHERE instrument=?", (instrument,))
             grouped: dict[int, dict[str, Any]] = {}
             rows = source.execute(
-                """SELECT source_ts_ms,trade_id,side,size,contract_value,
+                """SELECT source_ts_ms,trade_id,side,notional,
                           uniqueness_key,state
-                   FROM trade_flow_observations WHERE instrument=?
+                   FROM trade_flow_observations
+                   WHERE instrument=? AND state='confirmed'
                    ORDER BY source_ts_ms,trade_id,uniqueness_key""", (instrument,),
             )
             for row in rows:
@@ -499,7 +538,7 @@ class CanonicalHistoryBuilder:
                     "first": int(row[0]), "last": int(row[0]),
                     "hash": hashlib.sha256(),
                 })
-                volume = float(row[3]) * float(row[4])
+                volume = float(row[3])
                 side = str(row[2]).lower()
                 if side == "buy":
                     cell["buy"] += volume

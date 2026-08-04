@@ -23,7 +23,7 @@ from typing import Any, Iterable, Iterator, Mapping, Sequence
 
 MANIFEST_VERSION = "phase4a-research-manifest-v1"
 REPLAY_ENGINE_VERSION = "strategy-event-replay-engine-v2"
-BACKTEST_ENGINE_VERSION = "strategy-backtest-engine-v2.0.1"
+BACKTEST_ENGINE_VERSION = "strategy-backtest-engine-v2.0.2"
 REPORT_VERSION = "strategy-phase4a-report-v1"
 TRIAL_LEDGER_VERSION = "strategy-phase4a-trial-ledger-v1"
 ROUTER_VERSION = "strategy-router-v2"

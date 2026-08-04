@@ -170,18 +170,12 @@ def _trial_job(args: tuple[str, dict[str, Any], str, dict[str, Any], dict[str, l
     elif segment_name == "DEVELOPMENT" and formal["metrics"]["max_drawdown"] > .35: early_terminal = "RETIRE_FOLD_INSTABILITY"
     stress: dict[str, Any] = {"1.0x": formal["metrics"]}
     intrabar: dict[str, Any] = {"STOP_FIRST": formal["metrics"]}
-    if early_terminal is None:
-        for label, multiplier in (("1.5x", 1.5), ("2.0x", 2.0)):
-            stress[label] = _execute_trial(candles, intents, segment, trial, fee=.0005*multiplier,
-                                           slippage=.0003*multiplier, intrabar="STOP_FIRST")["metrics"]
-        for policy in ("TARGET_FIRST", "DROP_AMBIGUOUS_BAR"):
-            intrabar[policy] = _execute_trial(candles, intents, segment, trial, fee=.0005,
-                                             slippage=.0003, intrabar=policy)["metrics"]
-    else:
-        skipped = {"status": "NOT_APPLICABLE_AFTER_EARLIER_PRE_REGISTERED_TERMINAL",
-                   "earlier_terminal": early_terminal}
-        stress.update({"1.5x": skipped, "2.0x": skipped})
-        intrabar.update({"TARGET_FIRST": skipped, "DROP_AMBIGUOUS_BAR": skipped})
+    for label, multiplier in (("1.5x", 1.5), ("2.0x", 2.0)):
+        stress[label] = _execute_trial(candles, intents, segment, trial, fee=.0005*multiplier,
+                                       slippage=.0003*multiplier, intrabar="STOP_FIRST")["metrics"]
+    for policy in ("TARGET_FIRST", "DROP_AMBIGUOUS_BAR"):
+        intrabar[policy] = _execute_trial(candles, intents, segment, trial, fee=.0005,
+                                         slippage=.0003, intrabar=policy)["metrics"]
     return {"trial": trial, "formal": formal, "folds": folds, "assets": assets,
             "concentration": concentration, "stress": stress, "intrabar": intrabar,
             "benchmark": _benchmark(candles, formal["trades"], segment),
@@ -333,7 +327,10 @@ def run(dataset: Path = DEFAULT_DATASET, manifest_path: Path = TRACKED_MANIFEST)
               "performance": {"wall_seconds": wall, "peak_memory_bytes": peak,
                               "evaluations": sum(item["evaluations"] for seg in all_segment_results.values() for item in seg["replay_performance"]),
                               "artifact_size_bytes": None},
-              "engine_bug": {"found": False, "invalidated_runs": []}, "resume": {"idempotent": True},
+              "engine_bug": {"found": True, "invalidated_runs": [
+                  "d3ede4d570e37ef0efb8ac65a56a383a67c9e091a954aaa3f3a64a0f4f4a0f9e",
+                  "41e0eaffcc25c7fb858cd72771881a35ee3e95adf22140a41c9d4a79f87dd48f"]},
+              "resume": {"idempotent": True},
               "disclaimer": "通过开发与后续验证仅表示等待独立最终OOT；不是交易建议。"}
     writer.json("aggregate_metrics.json", all_segment_results); writer.json("report.json", report)
     report["performance"]["artifact_size_bytes"] = sum(path.stat().st_size for path in writer.path.iterdir() if path.is_file())

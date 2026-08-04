@@ -36,6 +36,12 @@
 .state-error { color: #ff8f8f; }
 @media (max-width: 1000px) { .state-frame-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); } .state-columns, .state-summary-grid { grid-template-columns: 1fr; } }
 @media (max-width: 640px) { .market-state-heading { align-items: flex-start; flex-direction: column; } .state-frame-grid { grid-template-columns: 1fr; } .state-table > div { grid-template-columns: 1fr 1fr; } }
+.strategy-router-research { padding:28px; display:grid; gap:18px; }
+.router-heading { display:flex; justify-content:space-between; align-items:center; gap:20px; }.router-heading h1 { margin:6px 0; }.router-heading>strong { max-width:520px; color:#925b00; border:1px solid #f8df9d; background:var(--amber-soft); border-radius:12px; padding:12px; }
+.router-no-trade,.router-candidate { border:1px solid var(--line); border-radius:14px; background:var(--surface); padding:18px; }.router-no-trade.active { border-color:#f0b8b3; background:var(--red-soft); }.router-candidate.primary { border-color:#7bd8bb; box-shadow:0 0 0 2px var(--green-soft); }
+.router-candidate header { display:flex; justify-content:space-between; gap:12px; }.router-candidate h2 { margin:4px 0 12px; }.router-scores { display:grid; grid-template-columns:repeat(7,minmax(0,1fr)); gap:8px; }.router-scores div { padding:9px; background:var(--surface-soft); border-radius:8px; display:grid; gap:4px; }.router-scores span { color:var(--muted); font-size:11px; }
+.router-columns { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:12px; }.router-columns section,.router-geometry { border-top:1px solid var(--line); margin-top:12px; padding-top:10px; min-width:0; }.router-columns p,.router-geometry p,.router-candidate details p { overflow-wrap:anywhere; font-size:12px; }.router-columns small { display:block; color:var(--muted); }.router-note,.router-limit { color:var(--muted); font-size:12px; }.router-list { display:grid; gap:14px; }
+@media (max-width:1000px) { .router-scores { grid-template-columns:repeat(3,minmax(0,1fr)); } .router-columns { grid-template-columns:1fr; } } @media (max-width:640px) { .router-heading { align-items:flex-start; flex-direction:column; } .router-scores { grid-template-columns:1fr 1fr; } }
 
 * {
   box-sizing: border-box;

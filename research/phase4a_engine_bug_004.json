@@ -1,0 +1,13 @@
+{
+  "bug_id": "phase4a-engine-bug-004",
+  "classification": "CHECKPOINT_REPLAY_CURSOR_MISSING",
+  "affected_run_ids": [
+    "04b82f55e7696eca2efab518b2e9914f904622ab7528431c3169986f38846945"
+  ],
+  "affected_run_status": "INVALIDATED_ENGINE_BUG",
+  "old_engine_version": "strategy-backtest-engine-v2.0.3",
+  "new_engine_version": "strategy-backtest-engine-v2.0.4",
+  "fix": "Persist last_evaluated_ts, skip already evaluated closes on resume, normalize serialized level keys and reject checkpoint reuse across segment identities.",
+  "research_protocol_changed": false,
+  "requires_all_32_trials_rerun": true
+}

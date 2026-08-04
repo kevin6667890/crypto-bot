@@ -49,6 +49,7 @@ const StrategyResearchRoute = lazy(() => import("./routes/StrategyResearchRoute"
 const MicrostructureResearch = lazy(() => import("./MicrostructureResearch"));
 const Operations = lazy(() => import("./Operations"));
 const MarketStateResearch = lazy(() => import("./MarketStateResearch"));
+const StrategyRouterResearch = lazy(() => import("./StrategyRouterResearch"));
 
 type RouteErrorBoundaryProps = { name: string; children: React.ReactNode };
 type RouteErrorBoundaryState = { failed: boolean };
@@ -690,7 +691,7 @@ function Workspace() {
   const [selectedTrade, setSelectedTrade] = useState<PaperStatus["closed_trades"][number] | null>(null);
   const [vpvr, setVpvr] = useState<VpvrProfile | null>(null);
   const [activePage, setActivePage] = useState<
-    "market" | "state" | "research" | "microstructure" | "operations"
+    "market" | "state" | "router" | "research" | "microstructure" | "operations"
   >("market");
   const [visitedPages, setVisitedPages] = useState(() => new Set(["market"]));
   const [question, setQuestion] = useState("");
@@ -700,7 +701,7 @@ function Workspace() {
   const [replayDetail, setReplayDetail] = useState<ReplayDetail | null>(null);
   const [replayLoading, setReplayLoading] = useState(false);
   const paperRequest = useRef(0);
-  const selectPage = (page: "market" | "state" | "research" | "microstructure" | "operations") => {
+  const selectPage = (page: "market" | "state" | "router" | "research" | "microstructure" | "operations") => {
     setVisitedPages((current) => new Set(current).add(page));
     setActivePage(page);
   };
@@ -870,6 +871,9 @@ function Workspace() {
               onClick={() => selectPage("state")}
             >
               市场状态 V2
+            </button>
+            <button className={activePage === "router" ? "active" : ""} onClick={() => selectPage("router")}>
+              {t("nav.router")}
             </button>
             <button
               className={activePage === "research" ? "active" : ""}
@@ -1616,6 +1620,11 @@ function Workspace() {
       {visitedPages.has("microstructure") && (
         <div hidden={activePage !== "microstructure"} data-route="microstructure">
           <DeferredRoute name="Microstructure"><MicrostructureResearch /></DeferredRoute>
+        </div>
+      )}
+      {visitedPages.has("router") && (
+        <div hidden={activePage !== "router"} data-route="router">
+          <DeferredRoute name="Strategy Router V2"><StrategyRouterResearch instrument={perpetualInstrument(instrument)} /></DeferredRoute>
         </div>
       )}
       {visitedPages.has("operations") && (

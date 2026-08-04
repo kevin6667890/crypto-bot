@@ -1,0 +1,13 @@
+{
+  "bug_id": "phase4a-engine-bug-003",
+  "classification": "INCOMPLETE_STATISTICAL_AND_REGIME_EVIDENCE",
+  "affected_run_ids": [
+    "4896f970dca57a4039fc72310a443983fda06ff7615c99667b27a97bd64f0bf8"
+  ],
+  "affected_run_status": "INVALIDATED_ENGINE_BUG",
+  "old_engine_version": "strategy-backtest-engine-v2.0.2",
+  "new_engine_version": "strategy-backtest-engine-v2.0.3",
+  "fix": "Persist causal regime tags and calculate JSON-safe DSR, average win/loss, downside deviation, gross return, return percentage and exit counts.",
+  "research_protocol_changed": false,
+  "requires_all_32_trials_rerun": true
+}

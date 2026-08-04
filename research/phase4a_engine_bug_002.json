@@ -1,0 +1,13 @@
+{
+  "bug_id": "phase4a-engine-bug-002",
+  "classification": "MANDATORY_DIAGNOSTICS_SHORT_CIRCUITED",
+  "affected_run_ids": [
+    "41e0eaffcc25c7fb858cd72771881a35ee3e95adf22140a41c9d4a79f87dd48f"
+  ],
+  "affected_run_status": "INVALIDATED_ENGINE_BUG",
+  "old_engine_version": "strategy-backtest-engine-v2.0.1",
+  "new_engine_version": "strategy-backtest-engine-v2.0.2",
+  "fix": "Run 1.5x/2.0x cost and TARGET_FIRST/DROP_AMBIGUOUS_BAR diagnostics for every raw trial, including trials already terminal under earlier formal gates.",
+  "research_protocol_changed": false,
+  "requires_all_32_trials_rerun": true
+}

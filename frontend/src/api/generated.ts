@@ -167,6 +167,40 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/strategy/route": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Read-only deterministic research strategy routing. It never creates orders or calls the legacy decision engine. */
+        get: operations["getStrategyRouteV2"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/strategy/route/evaluate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Development-only fixture evaluation. Disabled unless ENABLE_STRATEGY_ROUTER_FIXTURE_API is explicit. */
+        post: operations["evaluateStrategyRouteFixtureV2"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -383,6 +417,147 @@ export interface components {
             previous: components["schemas"]["MarketStateSnapshotV2"];
             current: components["schemas"]["MarketStateSnapshotV2"];
             transitions: components["schemas"]["StateTransitionV2"][];
+        };
+        StrategyEvidenceV2: {
+            code: string;
+            dimension: string;
+            timeframe: string;
+            /** @enum {string} */
+            classification: "supporting" | "conflicting";
+            strength: string;
+            source_timestamp: components["schemas"]["UnixSeconds"] | null;
+            detail: string;
+        };
+        StrategyBlockerV2: {
+            code: string;
+            timeframe: string;
+            evidence: string[];
+            source_timestamp: components["schemas"]["UnixSeconds"] | null;
+            blocking: boolean;
+            release_condition: string;
+        };
+        StrategyGeometryV2: {
+            valid: boolean;
+            setup_zone: {
+                [key: string]: unknown;
+            };
+            trigger_boundary: {
+                [key: string]: unknown;
+            };
+            confirmation_rule: string[];
+            invalidation_reference: {
+                [key: string]: unknown;
+            };
+            stop_reference_type: string;
+            target_reference_types: string[];
+            maximum_wait_bars: number;
+            maximum_holding_bars: number;
+            minimum_structural_reward_risk: number;
+            structural_reward_risk: number | null;
+            entry_timing: string;
+            intrabar_policy_placeholder: string;
+            gap_policy_placeholder: string;
+            limitations: string[];
+        };
+        StrategyStageV2: {
+            /** @enum {string} */
+            state: "INELIGIBLE" | "WATCH" | "ARMED" | "TRIGGER_READY" | "TRIGGERED_RESEARCH_ONLY" | "INVALIDATED" | "EXPIRED" | "COOLDOWN_RESEARCH_ONLY";
+            setup_started_at: components["schemas"]["UnixSeconds"] | null;
+            trigger_timestamp: components["schemas"]["UnixSeconds"] | null;
+            expires_at: components["schemas"]["UnixSeconds"] | null;
+            rearm_after: components["schemas"]["UnixSeconds"] | null;
+        };
+        StrategyIdentityV2: {
+            strategy_family_id: string;
+            strategy_setup_id: string;
+            strategy_evaluation_id: string;
+            configuration_hash: string;
+            family: string;
+            /** @enum {string} */
+            direction: "LONG" | "SHORT";
+            strategy_version: string;
+            definitions_version: string;
+            parameter_set_version: string;
+            instrument: string;
+            execution_timeframe: string;
+            setup_timeframe: string;
+            environment_timeframe: string;
+            context_timeframes: string[];
+            source_candle_timestamps: components["schemas"]["UnixSeconds"][];
+            level_identity: string;
+            setup_started_at: components["schemas"]["UnixSeconds"] | null;
+            trigger_timestamp: components["schemas"]["UnixSeconds"] | null;
+        };
+        StrategyCandidateV2: {
+            family: string;
+            /** @enum {string} */
+            direction: "LONG" | "SHORT";
+            strategy_version: string;
+            parameter_set_version: string;
+            state: string;
+            stage: components["schemas"]["StrategyStageV2"];
+            score: number;
+            score_breakdown: {
+                [key: string]: number;
+            };
+            evidence_strength: number;
+            supporting_evidence: components["schemas"]["StrategyEvidenceV2"][];
+            conflicting_evidence: components["schemas"]["StrategyEvidenceV2"][];
+            blockers: components["schemas"]["StrategyBlockerV2"][];
+            next_confirmation: string[];
+            geometry: components["schemas"]["StrategyGeometryV2"];
+            source_timestamps: components["schemas"]["UnixSeconds"][];
+            data_quality: {
+                [key: string]: unknown;
+            };
+            identity: components["schemas"]["StrategyIdentityV2"];
+            identity_hash: string;
+            limitations: string[];
+            selection_status: string;
+            selection_reason: string;
+        };
+        NoTradeReasonV2: {
+            code: string;
+            timeframe: string;
+            evidence: string[];
+            source_timestamp: components["schemas"]["UnixSeconds"] | null;
+            temporary: boolean;
+            release_condition: string;
+        };
+        StrategyTransitionV2: {
+            strategy_setup_id: string;
+            from_state: string;
+            to_state: string;
+            transition_timestamp: components["schemas"]["UnixSeconds"];
+            reason: string;
+            idempotency_key: string;
+        };
+        StrategyRouteSnapshotV2: {
+            /** @enum {string} */
+            version: "strategy-router-v2";
+            /** @enum {string} */
+            definitions_version: "strategy-family-definitions-v2.1";
+            instrument: string;
+            as_of: components["schemas"]["UnixSeconds"];
+            market_context_version: string;
+            market_state_version: string;
+            execution_timeframe: string;
+            timeframe_roles: {
+                [key: string]: unknown;
+            };
+            primary_route: components["schemas"]["StrategyCandidateV2"] | null;
+            alternatives: components["schemas"]["StrategyCandidateV2"][];
+            candidates: components["schemas"]["StrategyCandidateV2"][];
+            no_trade: {
+                active: boolean;
+                strategy_version: string;
+                reasons: components["schemas"]["NoTradeReasonV2"][];
+            };
+            quality: {
+                [key: string]: unknown;
+            };
+            transitions: components["schemas"]["StrategyTransitionV2"][];
+            disclaimer: string;
         };
         OperationsSummary: {
             generated_at: components["schemas"]["IsoTimestamp"];
@@ -915,6 +1090,80 @@ export interface operations {
             };
             /** @description Invalid bounded comparison */
             400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    getStrategyRouteV2: {
+        parameters: {
+            query: {
+                instrument: string;
+                as_of?: components["schemas"]["UnixSeconds"];
+                previous_as_of?: components["schemas"]["UnixSeconds"];
+                execution_timeframe?: "15m";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description StrategyRouteSnapshotV2 research-only route */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StrategyRouteSnapshotV2"];
+                };
+            };
+            /** @description Invalid bounded query */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+        };
+    };
+    evaluateStrategyRouteFixtureV2: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    context: components["schemas"]["MarketAnalysisContextV2"];
+                    state: components["schemas"]["MarketStateSnapshotV2"];
+                    previous_route?: components["schemas"]["StrategyRouteSnapshotV2"] | null;
+                };
+            };
+        };
+        responses: {
+            /** @description StrategyRouteSnapshotV2 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["StrategyRouteSnapshotV2"];
+                };
+            };
+            /** @description Invalid fixture */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Fixture API disabled */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

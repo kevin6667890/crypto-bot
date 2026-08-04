@@ -123,6 +123,28 @@ def _execute_trial(candles: Mapping[str, Sequence[Mapping[str, Any]]], intents: 
             "metrics": metrics_v2(trades)}
 
 
+def _trial_job(args: tuple[str, dict[str, Any], str, dict[str, Any], dict[str, list[dict[str, Any]]]]) -> dict[str, Any]:
+    dataset, manifest, segment_name, trial, raw_intents = args
+    segment = _segment(manifest, segment_name); dataset_id = manifest["dataset"]["identity"]
+    store = ReadOnlyOHLCVStoreV2(Path(dataset), dataset_identity=dataset_id,
+                                 oot_start_ts=int(manifest["oot_lock"]["start_ts"]))
+    candles = {instrument: [row for row in _load_partitions(store, instrument, segment.end_ts)["15m"]
+                            if int(row["candle_close_ts"]) >= segment.start_ts]
+               for instrument in INSTRUMENTS}
+    intents = {instrument: [_intent(value) for value in raw_intents[instrument]] for instrument in INSTRUMENTS}
+    formal = _execute_trial(candles, intents, segment, trial, fee=.0005, slippage=.0003, intrabar="STOP_FIRST")
+    folds, assets = _trade_groups(formal["trades"], segment); concentration = _concentration(formal["trades"])
+    stress = {label: _execute_trial(candles, intents, segment, trial, fee=.0005*multiplier,
+                                    slippage=.0003*multiplier, intrabar="STOP_FIRST")["metrics"]
+              for label, multiplier in (("1.0x", 1.0), ("1.5x", 1.5), ("2.0x", 2.0))}
+    intrabar = {policy: _execute_trial(candles, intents, segment, trial, fee=.0005,
+                                      slippage=.0003, intrabar=policy)["metrics"]
+                for policy in ("STOP_FIRST", "TARGET_FIRST", "DROP_AMBIGUOUS_BAR")}
+    return {"trial": trial, "formal": formal, "folds": folds, "assets": assets,
+            "concentration": concentration, "stress": stress, "intrabar": intrabar,
+            "benchmark": _benchmark(candles, formal["trades"], segment)}
+
+
 def _benchmark(candles: Mapping[str, Sequence[Mapping[str, Any]]], trades: Sequence[Mapping[str, Any]],
                segment: TimeSegmentV2) -> dict[str, Any]:
     returns: list[float] = []
@@ -173,23 +195,22 @@ def run(dataset: Path = DEFAULT_DATASET, manifest_path: Path = TRACKED_MANIFEST)
         with ProcessPoolExecutor(max_workers=3) as pool: replayed = list(pool.map(_replay_job, jobs))
         intents = {item["instrument"]: [_intent(value) for value in item["intents"]] for item in replayed}
         events = {item["instrument"]: item["events"] for item in replayed}
-        store = ReadOnlyOHLCVStoreV2(dataset, dataset_identity=dataset_id,
-                                     oot_start_ts=int(manifest["oot_lock"]["start_ts"]))
-        candles = {instrument: _load_partitions(store, instrument, segment.end_ts)["15m"] for instrument in INSTRUMENTS}
         allowed_ids = {item["trial_id"] for item in development_passes} if segment_name == "VALIDATION" else None
         segment_trials: list[dict[str, Any]] = []
-        for trial in trials:
-            if allowed_ids is not None and trial["trial_id"] not in allowed_ids: continue
-            formal = _execute_trial(candles, intents, segment, trial, fee=.0005, slippage=.0003, intrabar="STOP_FIRST")
+        selected_trials = [trial for trial in trials if allowed_ids is None or trial["trial_id"] in allowed_ids]
+        jobs = []
+        for trial in selected_trials:
+            raw_selected = {instrument: [asdict(intent) for intent in intents[instrument]
+                                         if intent.event.parameter_set_id == trial["parameter_set_id"]]
+                            for instrument in INSTRUMENTS}
+            jobs.append((str(dataset), manifest, segment_name, trial, raw_selected))
+        with ProcessPoolExecutor(max_workers=min(4, len(jobs))) as pool:
+            trial_outputs = list(pool.map(_trial_job, jobs))
+        for output in trial_outputs:
+            trial = output["trial"]; formal = output["formal"]
             formal["trigger_count"] = sum(event["lifecycle_to"] == "TRIGGER_READY" and event["parameter_set_id"] == trial["parameter_set_id"] for values in events.values() for event in values)
-            folds, assets = _trade_groups(formal["trades"], segment); concentration = _concentration(formal["trades"])
-            stress = {}
-            for label, multiplier in (("1.0x", 1.0), ("1.5x", 1.5), ("2.0x", 2.0)):
-                stress[label] = _execute_trial(candles, intents, segment, trial, fee=.0005*multiplier,
-                                               slippage=.0003*multiplier, intrabar="STOP_FIRST")["metrics"]
-            intrabar = {policy: _execute_trial(candles, intents, segment, trial, fee=.0005,
-                                               slippage=.0003, intrabar=policy)["metrics"]
-                        for policy in ("STOP_FIRST", "TARGET_FIRST", "DROP_AMBIGUOUS_BAR")}
+            folds, assets, concentration = output["folds"], output["assets"], output["concentration"]
+            stress, intrabar = output["stress"], output["intrabar"]
             threshold = manifest["sample_thresholds"][trial["family"]]
             if segment_name == "DEVELOPMENT":
                 classification = classify_development(trial, formal, folds, assets, stress, concentration, threshold)
@@ -209,7 +230,7 @@ def run(dataset: Path = DEFAULT_DATASET, manifest_path: Path = TRACKED_MANIFEST)
                       "metrics": formal["metrics"], "folds": folds, "assets": assets,
                       "cost_sensitivity": stress, "intrabar_sensitivity": intrabar,
                       "ambiguous_intrabar_count": formal["ambiguous_intrabar_count"],
-                      "concentration": concentration, "benchmark": _benchmark(candles, formal["trades"], segment),
+                      "concentration": concentration, "benchmark": output["benchmark"],
                       "bootstrap": bootstrap_expectancy_interval(rs, seed=int(manifest["random_seed"])),
                       "block_bootstrap": bootstrap_expectancy_interval(rs, seed=int(manifest["random_seed"]), block_size=5),
                       "daily_sharpe": sharpe, "psr": _psr(sharpe, len(formal["trades"])),

@@ -19,7 +19,6 @@ import {
   olderPageRequest,
   persistedFlowInstrument,
   requestFlowHistory,
-  retainFallbackHistory,
   retainedCoverage,
   retainServerHistory,
   visibleRangeFromCandles,
@@ -148,7 +147,7 @@ function useServerFlowHistory(
   instrument: string,
   timeframe: string,
   series: FlowSeriesName,
-  fallback: unknown,
+  _fallback: unknown,
 ) {
   const guard = useRef(new FlowSelectionGuard());
   guard.current.select(instrument, timeframe);
@@ -164,17 +163,12 @@ function useServerFlowHistory(
     setCoverage(retainedCoverage(instrument, timeframe, series));
   }, [selection, instrument, timeframe, series]);
 
-  useEffect(() => {
-    if (series === "cvd") return;
-    const retained = retainFallbackHistory(instrument, timeframe, series, fallback);
-    if (retained.length) setPoints(retained);
-  }, [fallback, selection, instrument, timeframe, series]);
-
-  const load = useCallback(async (range: Omit<FlowRangeRequest, "instrument" | "series">) => {
+  const load = useCallback(async (range: Omit<FlowRangeRequest, "instrument" | "series" | "timeframe">) => {
     const token = guard.current.token();
     try {
-      const response = await requestFlowHistory({ instrument, series, ...range });
-      if (!guard.current.accepts(token) || response.instrument !== instrument || response.series !== series) return;
+      const response = await requestFlowHistory({ instrument, timeframe, series, ...range });
+      if (!guard.current.accepts(token) || response.instrument !== instrument
+          || response.series !== series || response.actual_resolution !== timeframe) return;
       const retained = retainServerHistory(timeframe, response);
       if (retained.length) setPoints(retained);
       setCoverage(response);
@@ -306,7 +300,12 @@ export function MarketChart({ instrument = "ETH-USDT", interval = "15m", flow }:
   const applyData = () => {
     const series = seriesRef.current;
     const data = dataRef.current;
-    if (!series || !data.candles.length) return;
+    if (!series) return;
+    if (!data.candles.length) {
+      series.candles.setData([]); series.ema20.setData([]); series.ma60.setData([]);
+      series.ma200.setData([]); series.cvd.setData([]); series.oi.setData([]);
+      return;
+    }
     const timeScale = marketChartRef.current?.timeScale();
     const priorTimeRange = timeScale?.getVisibleRange() ?? null;
     const newestTime = Number(data.candles[data.candles.length - 1].time);
@@ -568,7 +567,6 @@ export function FlowChart({ points, color = "#7c3aed", zeroLine = false, instrum
   intervalRef.current = interval;
   const dataRef = useRef(normalized); dataRef.current = normalized;
   const apply = () => {
-    if (!dataRef.current.length) return;
     withPreservedTimeRange(flowChartRef.current?.timeScale(), () => {
       seriesRef.current?.setData(gapAware(dataRef.current, history.coverage?.resolution_seconds || intervalSeconds(interval)));
     });

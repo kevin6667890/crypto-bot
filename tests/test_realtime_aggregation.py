@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import sqlite3
 from pathlib import Path
 
 import pytest
@@ -13,6 +14,10 @@ from dashboard.realtime_aggregation import (
     MINUTE_MS,
     RealtimeAggregationEngine,
 )
+from dashboard.canonical_microstructure_history import (
+    BuildIdentity, CanonicalHistoryStore,
+)
+from dashboard.canonical_realtime import CanonicalRealtimeWriter
 
 
 INSTRUMENT = "BTC-USDT-SWAP"
@@ -251,6 +256,32 @@ def test_one_minute_cvd_and_oi_are_real_and_idempotent(tmp_path: Path) -> None:
     assert (stored_oi["first_value"], stored_oi["last_value"],
             stored_oi["absolute_change"], stored_oi["observation_count"]) == (
                 10, 12, 2, 2)
+
+
+def test_realtime_writer_continues_prebuilt_canonical_db(tmp_path: Path) -> None:
+    value = store(tmp_path); start = BASE_DAY + 30 * DAY_MS
+    trade(value, start + 1_000, "a", "buy", 2)
+    trade(value, start + 2_000, "b", "sell", 1)
+    oi(value, start + 5_000, "o1", 10)
+    RealtimeAggregationEngine(value).process(
+        INSTRUMENT, start, start + MINUTE_MS
+    )
+    canonical = tmp_path / "canonical.db"
+    CanonicalHistoryStore(canonical).initialise(
+        BuildIdentity("a" * 64, "history", start - 1, 1)
+    )
+    writer = CanonicalRealtimeWriter(value.path, canonical, "realtime")
+    assert writer.sync(INSTRUMENT, start, start + MINUTE_MS)["minutes"] == 1
+    assert writer.sync(INSTRUMENT, start, start + MINUTE_MS)["minutes"] == 1
+    with sqlite3.connect(canonical) as connection:
+        cvd = connection.execute(
+            "SELECT signed_delta,daily_cumulative,status,trade_count FROM cvd_1m"
+        ).fetchone()
+        stored_oi = connection.execute(
+            "SELECT confirmed_oi,status,observation_count FROM oi_1m"
+        ).fetchone()
+    assert cvd == (100.0, 100.0, "VALID", 2)
+    assert stored_oi == (10.0, "VALID", 1)
 
 
 def test_missing_raw_stays_missing_and_unclosed_minute_is_not_requested(

@@ -16,6 +16,7 @@ import base64
 import json
 import logging
 import math
+import os
 import sqlite3
 import time
 from contextlib import contextmanager
@@ -33,6 +34,11 @@ DEFAULT_MAX_POINTS = 1200
 MAX_POINT_BUDGET = 5000
 MIGRATION_BATCH_SECONDS = 7 * 86400
 STALE_AFTER_SECONDS = 90
+CANONICAL_HISTORY_SCHEMA_VERSION = "canonical-microstructure-schema-v1"
+TIMEFRAME_SECONDS = {
+    "1m": 60, "5m": 300, "15m": 900, "1h": 3600,
+    "4h": 14_400, "1D": 86_400,
+}
 CANONICAL_RESOLUTIONS = (60, 300, 900, 3600, 14400, 86400)
 POINT_STATUSES = {
     "VALID", "WHITESPACE", "PARTIAL_AFTER_GAP", "ARCHIVED_CONFIRMED",
@@ -53,16 +59,21 @@ def _resolution_name(seconds: int) -> str:
     return f"{seconds}s"
 
 
-def _encode_cursor(instrument: str, series: str, before_ts: int) -> str:
+def _encode_cursor(
+    instrument: str, series: str, before_ts: int, scope: str | None = None,
+) -> str:
     payload = json.dumps(
-        {"v": 1, "instrument": instrument, "series": series, "before": before_ts},
+        {"v": 1, "instrument": instrument, "series": series,
+         "before": before_ts, "scope": scope},
         separators=(",", ":"),
         sort_keys=True,
     ).encode()
     return base64.urlsafe_b64encode(payload).decode().rstrip("=")
 
 
-def _decode_cursor(cursor: str, instrument: str, series: str) -> int:
+def _decode_cursor(
+    cursor: str, instrument: str, series: str, scope: str | None = None,
+) -> int:
     try:
         padded = cursor + "=" * (-len(cursor) % 4)
         payload = json.loads(base64.urlsafe_b64decode(padded).decode())
@@ -70,6 +81,7 @@ def _decode_cursor(cursor: str, instrument: str, series: str) -> int:
             payload.get("v") != 1
             or payload.get("instrument") != instrument
             or payload.get("series") != series
+            or payload.get("scope") != scope
         ):
             raise ValueError
         return int(payload["before"])
@@ -139,6 +151,148 @@ class CanonicalFlowHistoryStore:
                 runs[-1]["end"] = timestamp
         return runs
 
+    @staticmethod
+    def _stale_buckets(timeframe: str) -> int:
+        value = int(os.getenv(f"FLOW_HISTORY_STALE_BUCKETS_{timeframe}", "3"))
+        return max(1, min(value, 20))
+
+    def _query_canonical_v1(
+        self, connection: sqlite3.Connection, instrument: str, series: str,
+        *, timeframe: str, requested_start: int, requested_end: int,
+        effective_end: int, max_points: int, now: int, cvd_mode: str,
+    ) -> dict[str, Any]:
+        resolution = TIMEFRAME_SECONDS[timeframe]
+        last_completed_bucket = (now // resolution) * resolution - resolution
+        query_end = min((effective_end // resolution) * resolution,
+                        last_completed_bucket)
+        query_start = (requested_start // resolution) * resolution
+        query_start = max(query_start, query_end - (max_points - 1) * resolution)
+        canonical = self._canonical_instrument(instrument)
+        if series == "cvd":
+            if timeframe == "1m":
+                table = "cvd_1m"
+                value_column, delta_column = "daily_cumulative", "signed_delta"
+                resolution_clause = ""
+            else:
+                table = "cvd_higher_timeframes"
+                value_column, delta_column = "cumulative_close", "signed_delta"
+                resolution_clause = " AND resolution=?"
+            sql = f"""SELECT bucket_ms,{value_column} AS value,
+                              {delta_column} AS delta,trade_count AS observation_count,
+                              status,gap_reason,source_fingerprint,generated_version
+                       FROM {table} WHERE instrument=?{resolution_clause}
+                         AND bucket_ms>=? AND bucket_ms<=? ORDER BY bucket_ms"""
+        else:
+            if timeframe == "1m":
+                table = "oi_1m"
+                resolution_clause = ""
+            else:
+                table = "oi_higher_timeframes"
+                resolution_clause = " AND resolution=?"
+            sql = f"""SELECT bucket_ms,confirmed_oi AS value,NULL AS delta,
+                              observation_count,status,gap_reason,
+                              source_fingerprint,generated_version
+                       FROM {table} WHERE instrument=?{resolution_clause}
+                         AND bucket_ms>=? AND bucket_ms<=? ORDER BY bucket_ms"""
+        parameters: tuple[Any, ...] = (
+            (canonical, timeframe, query_start * 1000, query_end * 1000)
+            if resolution_clause else
+            (canonical, query_start * 1000, query_end * 1000)
+        )
+        rows = connection.execute(sql, parameters).fetchall() if query_end >= query_start else []
+        bounds_sql = f"""SELECT MIN(bucket_ms),MAX(bucket_ms),
+                              MAX(CASE WHEN {value_column if series == 'cvd' else 'confirmed_oi'}
+                                           IS NOT NULL THEN bucket_ms END)
+                           FROM {table} WHERE instrument=?{resolution_clause}"""
+        bounds_parameters: tuple[Any, ...] = (
+            (canonical, timeframe) if resolution_clause else (canonical,)
+        )
+        bounds = connection.execute(bounds_sql, bounds_parameters).fetchone()
+        available_start = int(bounds[0]) // 1000 if bounds and bounds[0] is not None else None
+        available_end = int(bounds[1]) // 1000 if bounds and bounds[1] is not None else None
+        confirmed_end = int(bounds[2]) // 1000 if bounds and bounds[2] is not None else None
+        by_bucket = {int(row["bucket_ms"]) // 1000: row for row in rows}
+        points: list[dict[str, Any]] = []
+        if query_end >= query_start:
+            for bucket in range(query_start, query_end + 1, resolution):
+                row = by_bucket.get(bucket)
+                if row is None or row["value"] is None:
+                    quality = str(row["status"]) if row is not None else "MISSING"
+                    points.append({
+                        "time": bucket, "status": "WHITESPACE",
+                        "quality_status": quality,
+                        "gap_reason": (row["gap_reason"] if row is not None
+                                       else "NO_CANONICAL_BUCKET"),
+                        "source_complete": False,
+                        "partial_after_gap": quality == "PARTIAL_AFTER_GAP",
+                    })
+                    continue
+                quality = str(row["status"])
+                point = {
+                    "time": bucket, "value": float(row["value"]),
+                    "observation_count": int(row["observation_count"]),
+                    "status": quality, "quality_status": quality,
+                    "gap_reason": row["gap_reason"],
+                    "source_complete": quality in {
+                        "VALID", "BACKFILLED_OFFICIAL", "ARCHIVED_CONFIRMED"},
+                    "partial_after_gap": quality == "PARTIAL_AFTER_GAP",
+                    "source_fingerprint": row["source_fingerprint"],
+                }
+                if series == "cvd":
+                    point["delta"] = float(row["delta"])
+                points.append(point)
+        gaps = self._gap_runs(points, resolution)
+        history_version_row = connection.execute(
+            "SELECT value_json FROM canonical_metadata WHERE key='history_version'"
+        ).fetchone()
+        history_version = (json.loads(history_version_row[0])
+                           if history_version_row else None)
+        stale_after = resolution * self._stale_buckets(timeframe)
+        stale = confirmed_end is None or now - (confirmed_end + resolution) > stale_after
+        statuses = {str(point.get("quality_status")) for point in points}
+        overall_status = (
+            "CONFLICT" if "CONFLICT" in statuses else
+            "UNRECOVERABLE_RAW_GAP" if "UNRECOVERABLE_RAW_GAP" in statuses else
+            "PARTIAL" if any(point["status"] == "WHITESPACE" for point in points) else
+            "VALID"
+        )
+        first = points[0]["time"] if points else None
+        last = points[-1]["time"] if points else None
+        return {
+            "api_version": HISTORY_API_VERSION,
+            "schema_version": CANONICAL_HISTORY_SCHEMA_VERSION,
+            "history_version": history_version,
+            "instrument": instrument, "canonical_instrument": canonical,
+            "series": series, "cvd_mode": cvd_mode if series == "cvd" else None,
+            "timeframe": timeframe, "requested_resolution": timeframe,
+            "actual_resolution": timeframe,
+            "resolution": timeframe, "resolution_seconds": resolution,
+            "requested_start": requested_start, "requested_end": requested_end,
+            "available_start": available_start, "available_end": available_end,
+            "latest_timestamp": confirmed_end,
+            "data_as_of": confirmed_end,
+            "last_completed_bucket": last_completed_bucket,
+            "next_expected_bucket": last_completed_bucket + resolution,
+            "stale_after_seconds": stale_after, "stale": stale,
+            "status": overall_status,
+            "gap_reason": gaps[0]["gap_reason"] if gaps else None,
+            "source_coverage": {"start": available_start, "end": available_end,
+                                "confirmed_end": confirmed_end},
+            "returned_point_count": len(points),
+            "has_history": any("value" in point for point in points),
+            "has_more_before": bool(first is not None and available_start is not None
+                                    and available_start < int(first)),
+            "has_more_after": bool(last is not None and available_end is not None
+                                   and available_end > int(last)),
+            "next_before_cursor": (_encode_cursor(instrument, series, int(first), timeframe)
+                                   if first is not None and available_start is not None
+                                   and available_start < int(first) else None),
+            "source": "canonical-microstructure-history-v1",
+            "aggregate_available": True, "has_gaps": bool(gaps),
+            "gap_count": len(gaps), "gaps": gaps[:100],
+            "fallback": False, "points": points,
+        }
+
     def query(
         self,
         instrument: str,
@@ -150,6 +304,7 @@ class CanonicalFlowHistoryStore:
         cursor: str | None = None,
         now: int | None = None,
         cvd_mode: str = "UTC_DAILY_RESET",
+        timeframe: str | None = None,
     ) -> dict[str, Any]:
         if series not in {"cvd", "oi"}:
             raise ValueError("series must be cvd or oi")
@@ -169,8 +324,29 @@ class CanonicalFlowHistoryStore:
         effective_end = requested_end
         if cursor:
             effective_end = min(
-                effective_end, _decode_cursor(cursor, instrument, series) - 1
+                effective_end, _decode_cursor(cursor, instrument, series, timeframe) - 1
             )
+
+        if timeframe is not None and timeframe not in TIMEFRAME_SECONDS:
+            raise ValueError("unsupported timeframe")
+        with self._connect() as canonical_connection:
+            has_v1 = canonical_connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='cvd_1m'"
+            ).fetchone()
+            if has_v1:
+                auto_resolution = self._resolution(
+                    effective_end - requested_start + 1, max_points
+                )
+                resolved_timeframe = timeframe or next(
+                    (name for name, seconds in TIMEFRAME_SECONDS.items()
+                     if seconds == auto_resolution), "1D"
+                )
+                return self._query_canonical_v1(
+                    canonical_connection, instrument, series,
+                    timeframe=resolved_timeframe, requested_start=requested_start,
+                    requested_end=requested_end, effective_end=effective_end,
+                    max_points=max_points, now=now, cvd_mode=cvd_mode,
+                )
             
         # Prevent fetching more than max_points buckets
         duration = effective_end - requested_start + 1

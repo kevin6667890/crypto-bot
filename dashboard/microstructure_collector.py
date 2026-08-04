@@ -24,6 +24,7 @@ import websockets
 
 from .microstructure import INSTRUMENTS, MicrostructureStore, now_ms
 from .collector_pressure import PressureHysteresis
+from .canonical_realtime import CanonicalRealtimeWriter
 from .realtime_aggregation import (
     COLLECTOR_BATCH_MINUTES,
     LIVE_LOOKBACK_MINUTES,
@@ -195,6 +196,13 @@ class Collector:
         self.aggregated_timestamp_by_instrument_series: dict[
             str, dict[str, int]] = {}
         self.pressure = PressureHysteresis()
+        canonical_path = os.getenv("CANONICAL_MICROSTRUCTURE_HISTORY_DB_PATH")
+        self.canonical_realtime_writer = (
+            CanonicalRealtimeWriter(
+                self.store.path, Path(canonical_path),
+                os.getenv("GIT_COMMIT", "unknown"),
+            ) if canonical_path and self.realtime_aggregation_enabled else None
+        )
 
     def _counter(self, component: str) -> dict[str, int]:
         return self.counters.setdefault(
@@ -415,6 +423,11 @@ class Collector:
             if result is None:
                 await asyncio.sleep(0.25)
                 continue
+            if self.canonical_realtime_writer is not None:
+                result["canonical"] = await asyncio.to_thread(
+                    self.canonical_realtime_writer.sync,
+                    instrument, position, batch_end,
+                )
             duration_ms = int((time.monotonic() - started) * 1000)
             if duration_ms > 1_000:
                 raise TimeoutError(

@@ -12,6 +12,7 @@ from dashboard.canonical_microstructure_history import (
     aggregate_quality,
     fingerprint,
 )
+from dashboard.flow_history import CanonicalFlowHistoryStore
 
 
 def test_schema_has_explicit_quality_and_version(tmp_path: Path) -> None:
@@ -172,6 +173,14 @@ def test_higher_timeframe_rows_match_schema_width(tmp_path: Path) -> None:
         assert connection.execute(
             "SELECT count(*) FROM cvd_higher_timeframes"
         ).fetchone()[0] == 5
+    result = CanonicalFlowHistoryStore(tmp_path / "canonical.db").query(
+        "BTC-USDT", "cvd", start=0, end=899, max_points=10,
+        now=900, timeframe="15m",
+    )
+    assert result["requested_resolution"] == "15m"
+    assert result["actual_resolution"] == "15m"
+    assert result["resolution_seconds"] == 900
+    assert result["stale_after_seconds"] == 2700
 
 
 def test_official_oi_only_fills_exact_missing_observation_minute(

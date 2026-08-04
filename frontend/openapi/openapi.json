@@ -28,8 +28,14 @@
         "parameters": [
           { "name": "instrument", "in": "query", "required": true, "schema": { "type": "string" } },
           { "name": "series", "in": "query", "required": true, "schema": { "type": "string", "enum": ["cvd", "oi"] } },
+          { "name": "timeframe", "in": "query", "required": true, "schema": { "type": "string", "enum": ["1m", "5m", "15m", "1h", "4h", "1D"] } },
           { "name": "start", "in": "query", "schema": { "$ref": "#/components/schemas/UnixSeconds" } },
-          { "name": "end", "in": "query", "schema": { "$ref": "#/components/schemas/UnixSeconds" } }
+          { "name": "end", "in": "query", "schema": { "$ref": "#/components/schemas/UnixSeconds" } },
+          { "name": "max_points", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 500 } },
+          { "name": "cursor", "in": "query", "schema": { "type": "string" } },
+          { "name": "cvd_mode", "in": "query", "schema": { "type": "string", "enum": ["CONTINUOUS", "UTC_DAILY_RESET"] } },
+          { "name": "schema_version", "in": "query", "required": true, "schema": { "type": "string", "enum": ["canonical-microstructure-schema-v1"] } },
+          { "name": "history_version", "in": "query", "required": true, "schema": { "type": "string", "enum": ["canonical-microstructure-history-v1"] } }
         ],
         "responses": { "200": { "description": "Flow history contract; the array field is points, never data", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/FlowHistoryResponse" } } } } }
       }
@@ -412,6 +418,7 @@
           "usable_days": { "type": "number" },
           "gap_adjusted_sample_days": { "type": "number" },
           "status": { "type": "string" },
+          "gap_reason": { "type": "string", "nullable": true },
           "blocking_reason": { "type": "string", "nullable": true },
           "next_eligibility_date": { "type": "string", "nullable": true }
         },
@@ -429,19 +436,26 @@
           "min": { "type": "number", "nullable": true },
           "max": { "type": "number", "nullable": true },
           "observation_count": { "type": "integer", "nullable": true },
-          "status": { "type": "string", "enum": ["VALID", "WHITESPACE", "PARTIAL_AFTER_GAP", "ARCHIVED_CONFIRMED"] },
+          "status": { "type": "string", "enum": ["VALID", "WHITESPACE", "PARTIAL", "PARTIAL_AFTER_GAP", "MISSING", "UNRECOVERABLE_RAW_GAP", "BACKFILLED_OFFICIAL", "ARCHIVED_CONFIRMED", "CONFLICT", "SOURCE_UNAVAILABLE"] },
+          "quality_status": { "type": "string", "nullable": true },
           "gap_reason": { "type": "string", "nullable": true },
+          "source_fingerprint": { "type": "string", "nullable": true },
           "source_complete": { "type": "boolean" },
           "partial_after_gap": { "type": "boolean" }
         }
       },
       "FlowHistoryResponse": {
         "type": "object",
-        "required": ["api_version", "instrument", "series", "requested_start", "requested_end", "available_start", "available_end", "latest_timestamp", "raw_row_count", "returned_point_count", "resolution", "resolution_seconds", "stale", "has_history", "has_more_before", "has_more_after", "next_before_cursor", "source", "retention_policy_version", "has_gaps", "gap_count", "fallback", "points"],
+        "required": ["api_version", "schema_version", "history_version", "instrument", "series", "timeframe", "requested_resolution", "actual_resolution", "requested_start", "requested_end", "available_start", "available_end", "latest_timestamp", "returned_point_count", "resolution", "resolution_seconds", "stale", "stale_after_seconds", "status", "gap_reason", "source_coverage", "data_as_of", "last_completed_bucket", "next_expected_bucket", "has_history", "has_more_before", "has_more_after", "next_before_cursor", "source", "has_gaps", "gap_count", "fallback", "points"],
         "properties": {
           "api_version": { "type": "string" },
+          "schema_version": { "type": "string" },
+          "history_version": { "type": "string" },
           "instrument": { "type": "string" },
           "series": { "type": "string", "enum": ["cvd", "oi"] },
+          "timeframe": { "type": "string", "enum": ["1m", "5m", "15m", "1h", "4h", "1D"] },
+          "requested_resolution": { "type": "string" },
+          "actual_resolution": { "type": "string" },
           "cvd_mode": { "type": "string", "enum": ["CONTINUOUS", "UTC_DAILY_RESET"], "nullable": true },
           "requested_start": { "$ref": "#/components/schemas/UnixSeconds" },
           "requested_end": { "$ref": "#/components/schemas/UnixSeconds" },
@@ -453,6 +467,13 @@
           "resolution": { "type": "string", "nullable": true },
           "resolution_seconds": { "type": "integer", "nullable": true },
           "stale": { "type": "boolean" },
+          "stale_after_seconds": { "type": "integer" },
+          "status": { "type": "string" },
+          "gap_reason": { "type": "string", "nullable": true },
+          "source_coverage": { "type": "object", "additionalProperties": true },
+          "data_as_of": { "allOf": [{ "$ref": "#/components/schemas/UnixSeconds" }], "nullable": true },
+          "last_completed_bucket": { "$ref": "#/components/schemas/UnixSeconds" },
+          "next_expected_bucket": { "$ref": "#/components/schemas/UnixSeconds" },
           "has_history": { "type": "boolean" },
           "has_more_before": { "type": "boolean" },
           "has_more_after": { "type": "boolean" },

@@ -950,6 +950,16 @@ class CanonicalHistoryBuilder:
                 cell = grouped.get(bucket)
                 status = str(coverage["status"])
                 reason = coverage["gap_reason"]
+                if (cell is None and official_ranges
+                        and bucket >= official_ranges[-1][1]
+                        and status == "MISSING"):
+                    status = "SOURCE_UNAVAILABLE"
+                    reason = "OKX_DAILY_TRADE_FILE_T_PLUS_2_PENDING"
+                    out.execute(
+                        """UPDATE coverage_ledger SET status=?,gap_reason=?
+                           WHERE instrument=? AND source='trades' AND bucket_ms=?""",
+                        (status, reason, instrument, bucket),
+                    )
                 if cell is not None and cell.get("status") == "CONFLICT":
                     status, reason = "CONFLICT", cell["gap_reason"]
                 if cell is None or status not in {

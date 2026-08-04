@@ -1,0 +1,19 @@
+{
+  "version": "strategy-phase4a-report-pointer-v1",
+  "run_id": "d2a72ac24223320655e7eb08d54dba38d976a5c1e804b83203abfc43b2e6ebed",
+  "artifact_sha": "5b757fd8f2ca0b9ed4194de94b104b47382550420cb98432b84f44995fd26d18",
+  "code_sha": "8f7cf55675e3adbe9aaae924978b7de80eef4f80",
+  "manifest_identity": "e0cd13e743abbda3cc69ddd8ddebd625ce7ede9083e44f6dc81ea4536a1c32ff",
+  "dataset_identity": "e8b0c73430a41e5e8696b0319e887b26222c8c6705bef2a32f726da632840062",
+  "backtest_engine_version": "strategy-backtest-engine-v2.0.4",
+  "raw_trial_count": 32,
+  "development_pass_count": 0,
+  "validation_run_count": 0,
+  "validation_pass_count": 0,
+  "classifications": {
+    "INSUFFICIENT_SAMPLE": 16,
+    "RETIRE_NEGATIVE_EXPECTANCY": 16
+  },
+  "locked_final_oot_accessed": false,
+  "status": "COMPLETE_RESEARCH_ONLY"
+}

@@ -48,8 +48,17 @@ def main() -> None:
     parser.add_argument("--commit", required=True)
     parser.add_argument("--report", type=Path, required=True)
     parser.add_argument("--audit-only", action="store_true")
+    parser.add_argument(
+        "--series-only", action="store_true",
+        help="resume aggregate construction from an existing coverage ledger",
+    )
     parser.add_argument("--instrument", action="append", choices=INSTRUMENTS)
     parser.add_argument("--source-name", action="append", choices=SOURCE_TABLES)
+    parser.add_argument("--official-trade-manifest", type=Path)
+    parser.add_argument(
+        "--contract-value", action="append", default=[],
+        help="verified instrument=value pair, e.g. BTC-USDT-SWAP=0.01",
+    )
     arguments = parser.parse_args()
     source_hash = sha256_file(arguments.source)
     if arguments.source_sha256 and source_hash != arguments.source_sha256.lower():
@@ -60,8 +69,11 @@ def main() -> None:
         source_watermark_ms=source_watermark(arguments.source),
         generated_at_ms=now_ms(),
     )
+    contract_values = dict(item.split("=", 1) for item in arguments.contract_value)
     builder = CanonicalHistoryBuilder(
         arguments.source, arguments.destination, identity,
+        official_trade_manifest_path=arguments.official_trade_manifest,
+        contract_values=contract_values,
     )
     if arguments.audit_only:
         report: dict[str, object] = {"coverage": []}
@@ -75,6 +87,17 @@ def main() -> None:
                 report["coverage"].append(builder.build_coverage(
                     source_name, instrument, progress))
                 print(json.dumps({"complete": [instrument, source_name]}), flush=True)
+    elif arguments.series_only:
+        report = {"series": []}
+        for instrument in arguments.instrument or INSTRUMENTS:
+            print(json.dumps({"start": [instrument, "cvd_1m"]}), flush=True)
+            report["series"].append(builder.build_cvd_1m(instrument))
+            print(json.dumps({"complete": [instrument, "cvd_1m"]}), flush=True)
+            report["series"].append(builder.build_oi_1m(instrument))
+            report["series"].append({
+                "instrument": instrument,
+                **builder.derive_higher_timeframes(instrument),
+            })
     else:
         report = builder.rebuild()
     arguments.report.parent.mkdir(parents=True, exist_ok=True)

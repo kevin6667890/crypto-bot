@@ -148,17 +148,35 @@ def _trial_job(args: tuple[str, dict[str, Any], str, dict[str, Any], dict[str, l
     intents = {instrument: [_intent(value) for value in raw_intents[instrument]] for instrument in INSTRUMENTS}
     formal = _execute_trial(candles, intents, segment, trial, fee=.0005, slippage=.0003, intrabar="STOP_FIRST")
     folds, assets = _trade_groups(formal["trades"], segment); concentration = _concentration(formal["trades"])
-    stress = {"1.0x": formal["metrics"]}
-    for label, multiplier in (("1.5x", 1.5), ("2.0x", 2.0)):
-        stress[label] = _execute_trial(candles, intents, segment, trial, fee=.0005*multiplier,
-                                       slippage=.0003*multiplier, intrabar="STOP_FIRST")["metrics"]
-    intrabar = {"STOP_FIRST": formal["metrics"]}
-    for policy in ("TARGET_FIRST", "DROP_AMBIGUOUS_BAR"):
-        intrabar[policy] = _execute_trial(candles, intents, segment, trial, fee=.0005,
-                                         slippage=.0003, intrabar=policy)["metrics"]
+    threshold = manifest["sample_thresholds"][trial["family"]]
+    per_asset_key = "development_per_asset" if segment_name == "DEVELOPMENT" else "validation_per_asset"
+    pooled_key = "development_pooled" if segment_name == "DEVELOPMENT" else "validation_pooled"
+    qualifying = sum(int(asset["trade_count"]) >= int(threshold[per_asset_key]) for asset in assets)
+    early_terminal = None
+    if not formal["trades"]: early_terminal = "NO_EVENTS"
+    elif len(formal["trades"]) < int(threshold[pooled_key]) or qualifying < int(threshold["minimum_assets"]): early_terminal = "INSUFFICIENT_SAMPLE"
+    elif (formal["metrics"]["expectancy_r"] or 0) <= 0 or (formal["metrics"]["profit_factor"] or 0) <= 1: early_terminal = "RETIRE_NEGATIVE_EXPECTANCY" if segment_name == "DEVELOPMENT" else "VALIDATION_FAIL"
+    elif segment_name == "DEVELOPMENT" and sum((fold["expectancy_r"] or 0) >= 0 for fold in folds) < 3: early_terminal = "RETIRE_FOLD_INSTABILITY"
+    elif segment_name == "DEVELOPMENT" and concentration["single_asset_profit_share"] is not None and concentration["single_asset_profit_share"] > .7: early_terminal = "RETIRE_ASSET_CONCENTRATION"
+    elif segment_name == "DEVELOPMENT" and formal["metrics"]["max_drawdown"] > .35: early_terminal = "RETIRE_FOLD_INSTABILITY"
+    stress: dict[str, Any] = {"1.0x": formal["metrics"]}
+    intrabar: dict[str, Any] = {"STOP_FIRST": formal["metrics"]}
+    if early_terminal is None:
+        for label, multiplier in (("1.5x", 1.5), ("2.0x", 2.0)):
+            stress[label] = _execute_trial(candles, intents, segment, trial, fee=.0005*multiplier,
+                                           slippage=.0003*multiplier, intrabar="STOP_FIRST")["metrics"]
+        for policy in ("TARGET_FIRST", "DROP_AMBIGUOUS_BAR"):
+            intrabar[policy] = _execute_trial(candles, intents, segment, trial, fee=.0005,
+                                             slippage=.0003, intrabar=policy)["metrics"]
+    else:
+        skipped = {"status": "NOT_APPLICABLE_AFTER_EARLIER_PRE_REGISTERED_TERMINAL",
+                   "earlier_terminal": early_terminal}
+        stress.update({"1.5x": skipped, "2.0x": skipped})
+        intrabar.update({"TARGET_FIRST": skipped, "DROP_AMBIGUOUS_BAR": skipped})
     return {"trial": trial, "formal": formal, "folds": folds, "assets": assets,
             "concentration": concentration, "stress": stress, "intrabar": intrabar,
-            "benchmark": _benchmark(candles, formal["trades"], segment)}
+            "benchmark": _benchmark(candles, formal["trades"], segment),
+            "early_terminal": early_terminal}
 
 
 def _benchmark(candles: Mapping[str, Sequence[Mapping[str, Any]]], trades: Sequence[Mapping[str, Any]],
@@ -228,7 +246,9 @@ def run(dataset: Path = DEFAULT_DATASET, manifest_path: Path = TRACKED_MANIFEST)
             folds, assets, concentration = output["folds"], output["assets"], output["concentration"]
             stress, intrabar = output["stress"], output["intrabar"]
             threshold = manifest["sample_thresholds"][trial["family"]]
-            if segment_name == "DEVELOPMENT":
+            if output["early_terminal"] is not None:
+                classification = output["early_terminal"]
+            elif segment_name == "DEVELOPMENT":
                 classification = classify_development(trial, formal, folds, assets, stress, concentration, threshold)
             else:
                 qualifying = sum(int(asset["trade_count"]) >= int(threshold["validation_per_asset"]) for asset in assets)

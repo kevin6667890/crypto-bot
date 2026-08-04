@@ -1,0 +1,95 @@
+{
+  "plan_version": "canonical-microstructure-official-backfill-plan-v1",
+  "history_version": "canonical-microstructure-history-v1",
+  "created_date_utc": "2026-08-04",
+  "source_database_sha256": "84a462cca9e94e112501a4f0ad1b2c8449ceedc399c9b9916f4de7de3aabcdbe",
+  "constraints": {
+    "destination": "offline source overlay only",
+    "production_writes": false,
+    "synthetic_rows": false,
+    "interpolation": false,
+    "forward_fill": false,
+    "existing_rows_overwritten": false,
+    "conflicts": "quarantine as CONFLICT; never overwrite"
+  },
+  "sources": [
+    {
+      "source": "trades",
+      "instruments": ["BTC-USDT-SWAP", "ETH-USDT-SWAP", "SOL-USDT-SWAP"],
+      "verified_official_source": "GET /api/v5/public/market-data-history module=1, instType=SWAP, dateAggrType=daily",
+      "official_availability": "tick-by-tick trade history; dataset is still expanding; most data T+2",
+      "gap_segments": {"BTC-USDT-SWAP": 79, "ETH-USDT-SWAP": 82, "SOL-USDT-SWAP": 68},
+      "gap_minutes": {"BTC-USDT-SWAP": 5798, "ETH-USDT-SWAP": 5798, "SOL-USDT-SWAP": 9446},
+      "metadata_requests": 1,
+      "planned_file_downloads_upper_bound": 37,
+      "planned_date_range_utc8": ["2026-07-20", "2026-08-03"],
+      "estimated_download_bytes": {"minimum": 5368709120, "maximum": 32212254720},
+      "rate_limit": "5 requests / 2 seconds / IP for metadata; file URLs separately throttled to one active download",
+      "dedupe_key": ["instrument", "tradeId"],
+      "stable_order": ["timestamp", "tradeId", "row fingerprint"],
+      "required_fields": ["instId", "tradeId", "side", "px", "sz", "ts"],
+      "overlap_validation": "retain at least 5 minutes of already-observed data on both sides of each gap when present",
+      "manifest": "one metadata-response SHA plus filename/url/size/SHA/row-count/min-max/id-range/schema for every downloaded file",
+      "failure_recovery": "download to .partial, verify archive, atomically rename, checkpoint per file; resume never redownloads a matching SHA"
+    },
+    {
+      "source": "mark",
+      "instruments": ["BTC-USDT-SWAP", "ETH-USDT-SWAP", "SOL-USDT-SWAP"],
+      "verified_official_source": "GET /api/v5/market/history-mark-price-candles bar=1m",
+      "planned_requests_upper_bound": 295,
+      "planned_rows_upper_bound": 29500,
+      "rate_limit": "20 requests / 2 seconds / IP",
+      "dedupe_key": ["instrument", "timestamp", "resolution"],
+      "required_fields": ["ts", "o", "h", "l", "c", "confirm"],
+      "overlap_validation": "two confirmed 1m buckets on each side of every segment",
+      "failure_recovery": "checkpoint the oldest confirmed timestamp and response SHA per segment; retry idempotently"
+    },
+    {
+      "source": "index",
+      "instruments": ["BTC-USDT", "ETH-USDT", "SOL-USDT"],
+      "verified_official_source": "GET /api/v5/market/history-index-candles bar=1m",
+      "planned_requests_upper_bound": 304,
+      "planned_rows_upper_bound": 30400,
+      "rate_limit": "10 requests / 2 seconds / IP",
+      "dedupe_key": ["instrument", "timestamp", "resolution"],
+      "required_fields": ["ts", "o", "h", "l", "c", "confirm"],
+      "overlap_validation": "two confirmed 1m buckets on each side of every segment",
+      "failure_recovery": "checkpoint the oldest confirmed timestamp and response SHA per segment; retry idempotently"
+    },
+    {
+      "source": "oi",
+      "instruments": ["BTC-USDT-SWAP", "ETH-USDT-SWAP", "SOL-USDT-SWAP"],
+      "verified_official_source": "GET /api/v5/rubik/stat/contracts/open-interest-history",
+      "official_limit": "latest 1440 entries; supported minimum period is 5m; fields are ts, oi, oiCcy, oiUsd",
+      "planned_requests_upper_bound": 132,
+      "period_plan": [
+        {"period": "5m", "use": "latest five days"},
+        {"period": "15m", "use": "earlier portion within latest fifteen days"},
+        {"period": "30m", "use": "older source-window gaps when still returned"}
+      ],
+      "rate_limit": "10 requests / 2 seconds / IP + instrument",
+      "dedupe_key": ["instrument", "timestamp", "official period"],
+      "canonical_treatment": "each returned point is a genuine sparse observation only; mark only its exact UTC minute BACKFILLED_OFFICIAL; every intervening minute remains MISSING",
+      "prohibited_treatment": "never expand a 5m/15m/30m point into multiple 1m observations and never call the resulting day complete",
+      "failure_recovery": "checkpoint period/instrument/page boundaries and raw response SHA"
+    },
+    {
+      "source": "funding_settled",
+      "action": "no backfill",
+      "reason": "all three instruments have 312 observations at an exact 8-hour cadence with zero missing scheduled settlements"
+    },
+    {
+      "source": "funding_predicted",
+      "action": "no historical backfill",
+      "reason": "official funding-rate endpoint is current/provisional; settled history cannot substitute for predicted observations",
+      "missing_status": "SOURCE_UNAVAILABLE"
+    }
+  ],
+  "execution_gate": [
+    "metadata/files or endpoint must cover the audited gap",
+    "required source fields and instrument identity must match",
+    "overlap rows must agree exactly after canonical numeric normalization",
+    "response/file SHA and manifest must be durable before overlay insert",
+    "any conflict stops that source/instrument and remains CONFLICT"
+  ]
+}

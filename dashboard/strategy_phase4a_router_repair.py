@@ -7,6 +7,7 @@ private evaluator and no fallback path.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from collections import OrderedDict
 import hashlib
 import json
 from pathlib import Path
@@ -85,6 +86,7 @@ class HistoricalMarketContextV2Provider:
     """Offline adapter over immutable canonical OHLCV and the production V2 algorithm."""
 
     version = "historical-market-context-v2-provider-v1"
+    MAX_CONTEXT_CACHE = 64
 
     def __init__(self, database: Path | str, *, dataset_identity: str) -> None:
         self.database = Path(database).resolve()
@@ -97,7 +99,7 @@ class HistoricalMarketContextV2Provider:
         self.service = MarketContextServiceV2(self.reader)
         self.calculations = 0
         self.cache_hits = 0
-        self._cache: dict[tuple[str, int, str, str, str], dict[str, Any]] = {}
+        self._cache: OrderedDict[tuple[str, int, str, str, str], dict[str, Any]] = OrderedDict()
 
     def provide(self, instrument: str, as_of: int, *, segment_identity: str) -> dict[str, Any]:
         DevelopmentAccessGuard.require_as_of(as_of)
@@ -107,6 +109,7 @@ class HistoricalMarketContextV2Provider:
             if cached["context_identity"] != stable_hash({k: v for k, v in cached.items() if k != "context_identity"}):
                 raise RuntimeError("cached context identity mismatch")
             self.cache_hits += 1
+            self._cache.move_to_end(key)
             return cached
         context = self.service.context(instrument, as_of=int(as_of), execution_timeframe="15m")
         if context.get("version") != CONTEXT_VERSION:
@@ -117,8 +120,14 @@ class HistoricalMarketContextV2Provider:
         if context.get("flow", {}).get("price_cvd_combination", {}).get("data_quality") != "MISSING":
             raise RuntimeError("historical CVD must remain MISSING without an injected source")
         self._cache[key] = context
+        while len(self._cache) > self.MAX_CONTEXT_CACHE:
+            self._cache.popitem(last=False)
         self.calculations += 1
         return context
+
+    @property
+    def cache_size(self) -> int:
+        return len(self._cache)
 
     def provide_model(self, instrument: str, as_of: int, *, segment_identity: str) -> MarketAnalysisContextV2:
         payload = self.provide(instrument, as_of, segment_identity=segment_identity)

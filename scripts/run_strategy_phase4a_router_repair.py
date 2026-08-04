@@ -6,6 +6,7 @@ from concurrent.futures import ProcessPoolExecutor
 from dataclasses import asdict
 import gzip
 import io
+import ctypes
 import json
 import os
 from pathlib import Path
@@ -14,7 +15,6 @@ import sqlite3
 import subprocess
 import sys
 import time
-import tracemalloc
 from typing import Any, Mapping, Sequence
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -48,6 +48,22 @@ EXPECTED_AUDIT = "55334ac03fb5e1c47de8edf10a169530a162ad0bac607a42dbe67aa1114800
 INSTRUMENTS = ("BTC-USDT-SWAP", "ETH-USDT-SWAP", "SOL-USDT-SWAP")
 CANARY_START = 1_709_251_200  # 2024-03-01T00:00:00Z, inside Development
 CANARY_END = CANARY_START + 86_400
+
+
+class _ProcessMemoryCounters(ctypes.Structure):
+    _fields_ = [("cb", ctypes.c_ulong), ("PageFaultCount", ctypes.c_ulong),
+                ("PeakWorkingSetSize", ctypes.c_size_t), ("WorkingSetSize", ctypes.c_size_t),
+                ("QuotaPeakPagedPoolUsage", ctypes.c_size_t), ("QuotaPagedPoolUsage", ctypes.c_size_t),
+                ("QuotaPeakNonPagedPoolUsage", ctypes.c_size_t), ("QuotaNonPagedPoolUsage", ctypes.c_size_t),
+                ("PagefileUsage", ctypes.c_size_t), ("PeakPagefileUsage", ctypes.c_size_t)]
+
+
+def _peak_working_set() -> int:
+    counters = _ProcessMemoryCounters(); counters.cb = ctypes.sizeof(counters)
+    process = ctypes.windll.kernel32.GetCurrentProcess()
+    if not ctypes.windll.psapi.GetProcessMemoryInfo(process, ctypes.byref(counters), counters.cb):
+        return 0
+    return int(counters.PeakWorkingSetSize)
 
 
 def _json(path: Path, value: Any) -> None:
@@ -150,6 +166,7 @@ def _shadow_worker(args: tuple[str, str, list[dict[str, Any]], str]) -> dict[str
             "intent_count": len(result["intents"]), "router_evaluations": result["router_evaluations"],
             "context_calculations": provider.calculations, "state_calculations": engine.state_calculations,
             "cache_hits": provider.cache_hits, "wall_seconds": time.perf_counter() - started,
+            "peak_memory_bytes": _peak_working_set(),
             "checkpoint_size": (temp / "checkpoint.json").stat().st_size, "temp": str(temp)}
 
 
@@ -245,7 +262,6 @@ def _write_jsonl(path: Path, rows: Sequence[Mapping[str, Any]]) -> None:
 
 
 def run() -> dict[str, Any]:
-    tracemalloc.start()
     verified = _verify(); manifest = verified["manifest"]
     code_sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=ROOT, text=True).strip()
     canary = _canary(manifest)
@@ -333,7 +349,7 @@ def run() -> dict[str, Any]:
                               "context_calculations": sum(item["context_calculations"] for item in workers),
                               "state_calculations": sum(item["state_calculations"] for item in workers),
                               "cache_hit_rate": sum(item["cache_hits"] for item in workers) / max(1, sum(item["cache_hits"] + item["context_calculations"] for item in workers)),
-                              "peak_memory_bytes": tracemalloc.get_traced_memory()[1]},
+                              "peak_memory_bytes": max(item["peak_memory_bytes"] for item in workers)},
               "validation_read": False, "oot_accessed": False, "official_api_called": False,
               "llm_called": False, "production_database_accessed": False}
     _json(artifact / "repair_manifest.json", repair_manifest)

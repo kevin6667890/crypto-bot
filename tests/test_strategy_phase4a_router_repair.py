@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+import copy
 import json
 from pathlib import Path
 
@@ -13,7 +14,7 @@ from dashboard.strategy_phase4a_router_repair import (
     BACKTEST_ENGINE_VERSION, DEVELOPMENT_END, DEVELOPMENT_START,
     DevelopmentAccessGuard, HistoricalMarketContextV2Provider,
     REPLAY_ENGINE_VERSION, StrategyEventReplayEngineV2_1,
-    trials_from_original_manifest,
+    stable_hash, trials_from_original_manifest,
 )
 
 
@@ -47,6 +48,7 @@ def test_historical_provider_returns_formal_context_model_and_missing_flow():
     assert model.version == payload["version"] == CONTEXT_VERSION
     assert payload["flow"]["price_cvd_combination"]["data_quality"] == "MISSING"
     assert payload["flow"]["price_oi_combination"]["data_quality"] == "MISSING"
+    assert provider.cache_size <= provider.MAX_CONTEXT_CACHE == 64
 
 
 def test_confirmed_and_higher_timeframe_causality():
@@ -55,6 +57,20 @@ def test_confirmed_and_higher_timeframe_causality():
     assert all(frame.get("candle_close_ts") is None or frame["candle_close_ts"] <= payload["as_of"]
                for frame in payload["timeframes"].values())
     assert payload["timeframes"]["15m"]["confirmed"] is True
+
+
+def test_historical_context_cache_is_strictly_bounded():
+    provider = HistoricalMarketContextV2Provider(DATASET, dataset_identity=DATASET_ID)
+    template = provider.provide("BTC-USDT-SWAP", DEVELOPMENT_START, segment_identity="seed")
+    def synthetic(_instrument, *, as_of, execution_timeframe):
+        payload = copy.deepcopy(template); payload["as_of"] = as_of
+        payload["context_identity"] = stable_hash({key: value for key, value in payload.items()
+                                                    if key != "context_identity"})
+        return payload
+    provider.service.context = synthetic
+    for offset in range(70):
+        provider.provide("BTC-USDT-SWAP", DEVELOPMENT_START + offset, segment_identity="bounded")
+    assert provider.cache_size == provider.MAX_CONTEXT_CACHE == 64
 
 
 @pytest.mark.parametrize("as_of", [DEVELOPMENT_END, DEVELOPMENT_END + 900, 1_753_452_900])

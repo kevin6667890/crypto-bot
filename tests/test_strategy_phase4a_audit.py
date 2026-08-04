@@ -141,3 +141,39 @@ def test_engine_invalid_classification_is_explicit(classification):
            "evaluation_identity_match":False,"level_identity_match":False} for f in ("TREND_PULLBACK","MA200_MEAN_REVERSION") for d in ("LONG","SHORT")]
     classes,_,_=final_classifications(rows)
     assert all(classification in value["secondary"] for value in classes.values())
+
+
+def test_all_expiry_and_invalidation_events_are_retained():
+    events=[fake_event("TREND_PULLBACK","LONG","EXPIRED",n) for n in range(31)]
+    events += [fake_event("TREND_PULLBACK","SHORT","INVALIDATED",n) for n in range(17)]
+    samples,_=deterministic_samples(events)
+    assert len(samples)==48
+
+
+def test_event_funnel_counts_are_conserved():
+    events=[fake_event("TREND_PULLBACK","LONG",stage,n) for stage in ("WATCH","ARMED","TRIGGER_READY","EXPIRED") for n in range(7)]
+    _,funnel=deterministic_samples(events)
+    counts=funnel["TREND_PULLBACK:LONG"]["transition_counts"]
+    assert sum(counts.values())==len(events)
+
+
+@pytest.mark.parametrize("field",["family","direction","instrument","parameter_set_id"])
+def test_identity_inputs_are_isolated(field):
+    base={"family":"TREND_PULLBACK","direction":"LONG","instrument":"BTC-USDT","parameter_set_id":"p0"}
+    changed=dict(base);changed[field]=str(base[field])+"-different"
+    assert stable_hash(base)!=stable_hash(changed)
+
+
+def test_regime_metadata_cannot_change_final_decision():
+    rows=[{"family":f,"direction":d,"stage_match":False,"setup_identity_match":False,
+           "evaluation_identity_match":False,"level_identity_match":False} for f in ("TREND_PULLBACK","MA200_MEAN_REVERSION") for d in ("LONG","SHORT")]
+    baseline=final_classifications(rows)
+    for row in rows:row["regime_tags"]=["HAND_SELECTED_WINNER"]
+    assert final_classifications(rows)==baseline
+
+
+def test_source_artifact_hash_is_stable_across_read_only_verification():
+    before,_=artifact_sha(PHASE4)
+    _=json.loads((PHASE4/"trial_ledger.json").read_text(encoding="utf8"))
+    after,_=artifact_sha(PHASE4)
+    assert before==after==EXPECTED_ARTIFACT_SHA

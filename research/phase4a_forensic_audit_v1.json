@@ -1,0 +1,12 @@
+{
+  "artifact_path": ".runtime/strategy-phase4a-audit/381995fcc2c5b2412a92b881faf170b46ae107371d259705db148a1a5241a3e7",
+  "artifact_sha256": "55334ac03fb5e1c47de8edf10a169530a162ad0bac607a42dbe67aa1114800f7",
+  "audit_code_sha": "6b9b28547d82fd72fcbb93096b9de72a11e368e4",
+  "audit_id": "381995fcc2c5b2412a92b881faf170b46ae107371d259705db148a1a5241a3e7",
+  "decision": "F. ENGINE_FIX_REQUIRED_BEFORE_ANY_RESEARCH",
+  "development_only": true,
+  "new_parameters": 0,
+  "new_trials": 0,
+  "oot_read": false,
+  "version": "strategy-phase4a-forensic-audit-v1"
+}

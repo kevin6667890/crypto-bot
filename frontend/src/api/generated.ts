@@ -116,6 +116,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/market/context": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Read-only causal facts and indicators from bounded confirmed data. It never emits a trading signal or invokes order logic. */
+        get: operations["getMarketAnalysisContextV2"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -135,6 +152,107 @@ export interface components {
          * @description RFC 3339 UTC timestamp.
          */
         IsoTimestamp: string;
+        /**
+         * @default 15m
+         * @enum {string}
+         */
+        MarketTimeframeV2: "15m" | "1H" | "4H" | "1D" | "1W";
+        IndicatorValueV2: {
+            value: (number | string) | null;
+            source_timestamp: components["schemas"]["UnixSeconds"] | null;
+            available: boolean;
+            stale: boolean;
+            partial: boolean;
+            warmup_complete: boolean;
+            calculation_version: string;
+        };
+        DataGapV2: {
+            source?: string;
+            start: components["schemas"]["UnixSeconds"];
+            end: components["schemas"]["UnixSeconds"];
+            missing_bars: number;
+        };
+        DataQualityV2: {
+            /** @enum {string} */
+            status: "AVAILABLE" | "STALE" | "PARTIAL" | "MISSING";
+            source_timestamp: components["schemas"]["UnixSeconds"] | null;
+            stale: boolean;
+            partial: boolean;
+            missing: boolean;
+            gaps: components["schemas"]["DataGapV2"][];
+            notes: string[];
+        };
+        IndicatorGroupV2: {
+            [key: string]: components["schemas"]["IndicatorValueV2"];
+        };
+        TimeframeMarketContextV2: {
+            candle_close_ts: components["schemas"]["UnixSeconds"] | null;
+            confirmed: boolean;
+            trend: components["schemas"]["IndicatorGroupV2"];
+            momentum: components["schemas"]["IndicatorGroupV2"];
+            volatility: components["schemas"]["IndicatorGroupV2"];
+            structure: components["schemas"]["IndicatorGroupV2"];
+            volume: components["schemas"]["IndicatorGroupV2"];
+            quality: components["schemas"]["DataQualityV2"];
+        };
+        MarketLevelV2: {
+            type: string;
+            timeframe: string;
+            value: number;
+            source_timestamp: components["schemas"]["UnixSeconds"];
+            distance_pct: number;
+            touches: number;
+            confirmed: boolean;
+            confluence_sources: string[];
+            calculation_version: string;
+        };
+        CombinationFactV2: {
+            /** @enum {string} */
+            state: "PRICE_UP_OI_UP" | "PRICE_UP_OI_DOWN" | "PRICE_DOWN_OI_UP" | "PRICE_DOWN_OI_DOWN" | "PRICE_UP_CVD_UP" | "PRICE_UP_CVD_DOWN" | "PRICE_DOWN_CVD_UP" | "PRICE_DOWN_CVD_DOWN" | "INSUFFICIENT_DATA";
+            observation_window_seconds: number;
+            start_timestamp: components["schemas"]["UnixSeconds"] | null;
+            end_timestamp: components["schemas"]["UnixSeconds"] | null;
+            price_change_pct: number | null;
+            oi_change?: number | null;
+            cvd_change?: number | null;
+            data_quality: string;
+            calculation_version: string;
+        };
+        FlowContextV2: {
+            cvd: components["schemas"]["IndicatorGroupV2"];
+            oi: components["schemas"]["IndicatorGroupV2"];
+            funding: components["schemas"]["IndicatorGroupV2"];
+            basis: components["schemas"]["IndicatorGroupV2"];
+            vpvr: components["schemas"]["IndicatorGroupV2"];
+            price_oi_combination: components["schemas"]["CombinationFactV2"];
+            price_cvd_combination: components["schemas"]["CombinationFactV2"];
+        };
+        OverallDataQualityV2: {
+            /** @enum {string} */
+            overall_status: "AVAILABLE" | "STALE" | "PARTIAL" | "MISSING";
+            stale_sources: string[];
+            partial_sources: string[];
+            missing_sources: string[];
+            gaps: components["schemas"]["DataGapV2"][];
+        };
+        MarketAnalysisContextV2: {
+            /** @enum {string} */
+            version: "market-analysis-context-v2";
+            instrument: string;
+            as_of: components["schemas"]["UnixSeconds"];
+            execution_timeframe: components["schemas"]["MarketTimeframeV2"];
+            price: components["schemas"]["IndicatorValueV2"];
+            timeframes: {
+                "15m": components["schemas"]["TimeframeMarketContextV2"];
+                "1H": components["schemas"]["TimeframeMarketContextV2"];
+                "4H": components["schemas"]["TimeframeMarketContextV2"];
+                "1D": components["schemas"]["TimeframeMarketContextV2"];
+                "1W": components["schemas"]["TimeframeMarketContextV2"];
+            };
+            flow: components["schemas"]["FlowContextV2"];
+            levels: components["schemas"]["MarketLevelV2"][];
+            quality: components["schemas"]["OverallDataQualityV2"];
+        };
         OperationsSummary: {
             generated_at: components["schemas"]["IsoTimestamp"];
             service: {
@@ -546,6 +664,42 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["DataCoverageResponse"];
+                };
+            };
+        };
+    };
+    getMarketAnalysisContextV2: {
+        parameters: {
+            query: {
+                /** @example ETH-USDT-SWAP */
+                instrument: string;
+                as_of?: components["schemas"]["UnixSeconds"];
+                execution_timeframe?: components["schemas"]["MarketTimeframeV2"];
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description MarketAnalysisContextV2 */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MarketAnalysisContextV2"];
+                };
+            };
+            /** @description Invalid bounded query */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        error: string;
+                    };
                 };
             };
         };

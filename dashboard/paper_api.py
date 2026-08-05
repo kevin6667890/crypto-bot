@@ -1103,7 +1103,9 @@ MARKET_CONTEXT_V2 = MarketContextServiceV2(
 )
 MARKET_STATE_ENGINE_V2 = MarketStateEngineV2()
 STRATEGY_ROUTER_V2 = StrategyRouterV2()
-CANONICAL_FLOW_HISTORY = CanonicalFlowHistoryStore(MICROSTRUCTURE.path)
+CANONICAL_FLOW_HISTORY = CanonicalFlowHistoryStore(Path(os.getenv(
+    "CANONICAL_MICROSTRUCTURE_HISTORY_DB_PATH", MICROSTRUCTURE.path,
+)))
 LIMITER = RateLimiter()
 LOGGER = configure_logging(ROOT)
 
@@ -1372,6 +1374,12 @@ class Handler(BaseHTTPRequestHandler):
         elif parsed.path == "/api/paper/flow/history/v1":
             req_start = time.monotonic()
             try:
+                if "timeframe" not in query:
+                    raise ValueError("timeframe is required")
+                if query.get("schema_version", [""])[0] != "canonical-microstructure-schema-v1":
+                    raise ValueError("unsupported canonical schema_version")
+                if query.get("history_version", [""])[0] != "canonical-microstructure-history-v1":
+                    raise ValueError("unsupported canonical history_version")
                 def history_int(name: str) -> int | None:
                     return int(query[name][0]) if name in query else None
                 
@@ -1388,6 +1396,7 @@ class Handler(BaseHTTPRequestHandler):
                     max_points=max_points_resolved,
                     cursor=query.get("cursor", [None])[0],
                     cvd_mode=query.get("cvd_mode", ["CONTINUOUS"])[0],
+                    timeframe=query.get("timeframe", [None])[0],
                 )
                 
                 self._send(result)

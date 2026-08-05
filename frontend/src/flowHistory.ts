@@ -17,6 +17,7 @@ export type FlowCoverage = Omit<FlowHistoryResponse, "points">;
 export type FlowRangeRequest = {
   instrument: string;
   series: FlowSeriesName;
+  timeframe: string;
   start: number;
   end: number;
   maxPoints?: number;
@@ -26,6 +27,8 @@ export type FlowRangeRequest = {
 
 const MEMORY_POINT_LIMIT = 50_000;
 export const FLOW_HISTORY_MAX_POINTS = 500;
+export const CANONICAL_FLOW_SCHEMA_VERSION = "canonical-microstructure-schema-v1";
+export const CANONICAL_FLOW_HISTORY_VERSION = "canonical-microstructure-history-v1";
 const memory = new Map<string, FlowHistoryPoint[]>();
 const metadata = new Map<string, FlowCoverage>();
 const inflight = new Map<string, Promise<FlowHistoryResponse>>();
@@ -39,7 +42,7 @@ const validPoint = (point: unknown): point is FlowHistoryPoint => {
 };
 
 export function flowHistoryKey(instrument: string, timeframe: string, series: FlowSeriesName) {
-  return `${series}:${instrument}:${timeframe}`;
+  return `${CANONICAL_FLOW_HISTORY_VERSION}:${series}:${instrument}:${timeframe}`;
 }
 
 export function persistedFlowInstrument(instrument: string) {
@@ -68,8 +71,16 @@ export function flowStatusAtCandle(
     point.time >= candleTime && point.time < candleTime + timeframeSeconds
   );
   const point = matches[matches.length - 1];
-  if (!point || point.status === "WHITESPACE" || !Number.isFinite(point.value)) {
+  if (!point) {
     return { status: "WHITESPACE" as const, value: null, partial: false };
+  }
+  if (point.status === "WHITESPACE" || !Number.isFinite(point.value)) {
+    const partial = point.quality_status === "PARTIAL_AFTER_GAP" || point.partial_after_gap === true;
+    return {
+      status: partial ? "PARTIAL_AFTER_GAP" as const : "WHITESPACE" as const,
+      value: null,
+      partial,
+    };
   }
   return {
     status: point.status || "VALID",
@@ -101,6 +112,7 @@ export function retainServerHistory(
 ): FlowHistoryPoint[] {
   const key = flowHistoryKey(response.instrument, timeframe, response.series);
   const current = memory.get(key) || hydrateFlowHistory(response.instrument, timeframe, response.series);
+  if (response.actual_resolution !== timeframe || response.timeframe !== timeframe) return current;
   if (!response.points.length) return current; // Empty/stale refreshes are non-destructive.
   // One authoritative response uses one deterministic resolution. Replace
   // only its requested range so cached pages outside the range survive while
@@ -145,6 +157,9 @@ export function historyRequestUrl(request: FlowRangeRequest) {
     start: String(Math.floor(request.start)),
     end: String(Math.floor(request.end)),
     max_points: String(Math.min(request.maxPoints || FLOW_HISTORY_MAX_POINTS, FLOW_HISTORY_MAX_POINTS)),
+    timeframe: request.timeframe,
+    schema_version: CANONICAL_FLOW_SCHEMA_VERSION,
+    history_version: CANONICAL_FLOW_HISTORY_VERSION,
   });
   if (request.cursor) query.set("cursor", request.cursor);
   if (request.series === "cvd") query.set("cvd_mode", request.cvdMode || "UTC_DAILY_RESET");
@@ -157,7 +172,14 @@ export async function requestFlowHistory(request: FlowRangeRequest): Promise<Flo
   if (existing) return existing;
   const pending = fetch(url, { headers: { Accept: "application/json" } }).then(async response => {
     if (!response.ok) throw new Error(`Flow history request failed: ${response.status}`);
-    return response.json() as Promise<FlowHistoryResponse>;
+    const payload = await response.json() as FlowHistoryResponse;
+    if (
+      payload.actual_resolution !== request.timeframe
+      || payload.timeframe !== request.timeframe
+      || payload.schema_version !== CANONICAL_FLOW_SCHEMA_VERSION
+      || payload.history_version !== CANONICAL_FLOW_HISTORY_VERSION
+    ) throw new Error("Flow history contract mismatch");
+    return payload;
   }).finally(() => inflight.delete(url));
   inflight.set(url, pending);
   return pending;

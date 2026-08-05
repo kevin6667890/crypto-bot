@@ -186,14 +186,21 @@ def full_chain_witnesses(trials: Sequence[RouterNativeTrialV2]) -> list[dict[str
                           "context_identity": next(x["context_identity"] for x in result["context_ledger"] if x["as_of"] == state_row["as_of"]),
                           "state_identity": state_row["state_snapshot_identity"],
                           "setup_identity": lifecycle_row["strategy_setup_id"],
+                          "setup_anchor_identity": lifecycle_row.get("strategy_setup_anchor_id", lifecycle_row["strategy_setup_id"]),
+                          "evaluation_identity": lifecycle_row["strategy_evaluation_id"],
                           "level_identity": lifecycle_row["level_identity"],
+                          "level_continuity_identity": lifecycle_row.get("level_continuity_id", lifecycle_row["level_identity"]),
                           "interaction_types": state_row["interaction_types"],
                           "reclaim_statuses": state_row["reclaim_statuses"],
                           "geometry_valid": lifecycle_row["geometry"]["valid"],
                           "source_timestamps": lifecycle_row["source_candle_timestamps"]})
         compare_calls = result["compare_calls"]
         stages = [item["stage"] for item in trace]
-        success = stages == ["WATCH", "ARMED", "TRIGGER_READY"] and compare_calls > 0
+        anchors = {item["setup_anchor_identity"] for item in trace}
+        evaluations = {item["evaluation_identity"] for item in trace}
+        continuities = {item["level_continuity_identity"] for item in trace}
+        success = (stages == ["WATCH", "ARMED", "TRIGGER_READY"] and compare_calls > 0
+                   and len(anchors) == 1 and len(evaluations) == 3 and len(continuities) == 1)
         rows.append({"family": family, "direction": direction, "result": "PASS" if success else "FAIL",
                      "compare_calls": compare_calls, "formal_context": True, "formal_state": True,
                      "formal_router": True, "formal_lifecycle": True, "state_modified": False,
@@ -221,7 +228,8 @@ def _direct_trace(instrument: str, timestamps: Sequence[int], trials: Sequence[R
             key = f"{instrument}:{trial.family}:{trial.direction}:{trial.parameter_set_id}"
             route = router.route(context, state, previous_route=previous_routes.get(key),
                                   family=trial.family, direction=trial.direction,
-                                  parameter_set_id=trial.parameter_set_id, parameter_set=trial.parameters)
+                                  parameter_set_id=trial.parameter_set_id, parameter_set=trial.parameters,
+                                  segment_identity=segment.identity)
             candidate = route["candidates"][0]
             rows.append({"as_of": as_of, "parameter_set_id": trial.parameter_set_id, "mode": mode,
                          "state": state, "candidate": candidate, "route_identity": route["route_snapshot_identity"],

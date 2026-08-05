@@ -249,10 +249,13 @@ class StrategyEventReplayEngineV2_2(StrategyEventReplayEngineV2_1):
                 if as_of <= last_by_key.get(key, -1):
                     continue
                 previous_route = routes.get(key)
+                if state_mode == "COMPARE_SKIPPED_DATA_GAP":
+                    previous_route = None
                 try:
                     route = self.router.route(current_context, current_state, previous_route=previous_route,
                         family=trial.family, direction=trial.direction,
-                        parameter_set_id=trial.parameter_set_id, parameter_set=trial.parameters)
+                        parameter_set_id=trial.parameter_set_id, parameter_set=trial.parameters,
+                        segment_identity=segment.identity)
                 except Exception as exc:
                     raise RuntimeError(f"INVALID_ENGINE_OR_DATA: Router V2 failed for {key}") from exc
                 self.router_evaluations += 1
@@ -264,8 +267,11 @@ class StrategyEventReplayEngineV2_2(StrategyEventReplayEngineV2_1):
                     "parameter_set_id": trial.parameter_set_id, "stage": candidate["state"],
                     "previous_stage": (previous_route or {}).get("candidates", [{}])[0].get("state", "INELIGIBLE"),
                     "strategy_setup_id": identity["strategy_setup_id"],
+                    "strategy_setup_anchor_id": identity.get("strategy_setup_anchor_id", identity["strategy_setup_id"]),
                     "strategy_evaluation_id": identity["strategy_evaluation_id"],
                     "level_identity": identity["level_identity"],
+                    "level_continuity_id": identity.get("level_continuity_id", identity["level_identity"]),
+                    "lifecycle_setup_key": identity.get("lifecycle_setup_key", identity["strategy_setup_id"]),
                     "state_snapshot_identity": current_state["state_snapshot_identity"],
                     "transition_identity": transition_row.get("transition_identity") if transition_row else None,
                     "source_candle_timestamps": identity["source_candle_timestamps"],

@@ -312,13 +312,14 @@ def test_canonical_cvd_gap_keeps_real_delta_partial_and_next_day_recovers(
     value = store(tmp_path); midnight = BASE_DAY + 31 * DAY_MS
     trade(value, midnight + 1_000, "m0")
     oi(value, midnight + 1_000, "o0", 10)
-    trade(value, midnight + 2 * MINUTE_MS + 1_000, "m2")
-    oi(value, midnight + 2 * MINUTE_MS + 1_000, "o2", 12)
+    for minute in range(2, 10):
+        trade(value, midnight + minute * MINUTE_MS + 1_000, f"m{minute}")
+        oi(value, midnight + minute * MINUTE_MS + 1_000, f"o{minute}", 10 + minute)
     next_day = midnight + DAY_MS
     trade(value, next_day + 1_000, "next")
     oi(value, next_day + 1_000, "on", 15)
     engine = RealtimeAggregationEngine(value)
-    engine.process(INSTRUMENT, midnight, midnight + 3 * MINUTE_MS)
+    engine.process(INSTRUMENT, midnight, midnight + 10 * MINUTE_MS)
     engine.process(INSTRUMENT, next_day, next_day + MINUTE_MS)
     canonical = tmp_path / "canonical-gap.db"
     CanonicalHistoryStore(canonical).initialise(
@@ -340,6 +341,16 @@ def test_canonical_cvd_gap_keeps_real_delta_partial_and_next_day_recovers(
             "AND bucket_ms IN (?,?) ORDER BY bucket_ms",
             (INSTRUMENT, midnight + 2 * MINUTE_MS, next_day),
         ).fetchall()
+        higher = connection.execute(
+            "SELECT signed_delta,cumulative_close,status FROM cvd_higher_timeframes "
+            "WHERE instrument=? AND resolution='5m' AND bucket_ms=?",
+            (INSTRUMENT, midnight + 5 * MINUTE_MS),
+        ).fetchone()
+        higher_coverage = connection.execute(
+            "SELECT observed,status FROM bucket_coverage WHERE instrument=? "
+            "AND series='cvd' AND resolution='5m' AND bucket_ms=?",
+            (INSTRUMENT, midnight + 5 * MINUTE_MS),
+        ).fetchone()
     assert rows == [
         (midnight, 100.0, 100.0, "VALID"),
         (midnight + MINUTE_MS, None, None, "MISSING"),
@@ -350,6 +361,8 @@ def test_canonical_cvd_gap_keeps_real_delta_partial_and_next_day_recovers(
         (midnight + 2 * MINUTE_MS, 12.0, "VALID"),
         (next_day, 15.0, "VALID"),
     ]
+    assert higher == (500.0, 900.0, "PARTIAL_AFTER_GAP")
+    assert higher_coverage == (1, "PARTIAL_AFTER_GAP")
 
 
 def test_canonical_cvd_failure_does_not_block_oi(

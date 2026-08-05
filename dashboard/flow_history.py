@@ -360,6 +360,9 @@ class CanonicalFlowHistoryStore:
                 "SELECT 1 FROM sqlite_master WHERE type='table' AND name='cvd_1m'"
             ).fetchone()
             if has_v1:
+                if series == "cvd" and cvd_mode != "UTC_DAILY_RESET":
+                    raise ValueError(
+                        "canonical CVD only supports UTC_DAILY_RESET semantics")
                 auto_resolution = self._resolution(
                     effective_end - requested_start + 1, max_points
                 )

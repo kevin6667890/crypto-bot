@@ -94,7 +94,7 @@ def export_chunk(source: Path, table: str, low: int, high: int, watermark: int) 
         raise ValueError("unsupported table")
     digest = hashlib.sha256(); count = 0
     raw = sys.stdout.buffer
-    with gzip.GzipFile(fileobj=raw, mode="wb", mtime=0) as stream, _connect(source, True) as connection:
+    with gzip.GzipFile(fileobj=raw, mode="wb", compresslevel=1, mtime=0) as stream, _connect(source, True) as connection:
         header = {"version": VERSION, "table": table, "low_rowid": low,
                   "high_rowid": high, "source_watermark_ms": watermark}
         stream.write((json.dumps({"header": header}, separators=(",", ":")) + "\n").encode())

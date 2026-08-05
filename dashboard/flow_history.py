@@ -256,7 +256,20 @@ class CanonicalFlowHistoryStore:
         generated_commit = json.loads(commit_row[0]) if commit_row else "unknown"
         canonical_version = f"{history_version}:{str(generated_commit)[:12]}"
         stale_after = resolution + STALE_GRACE_SECONDS[timeframe]
-        stale = available_end is None or now > available_end + stale_after
+        if available_end is None:
+            stale = True
+        else:
+            completed_lag = last_completed_bucket - available_end
+            stale = (
+                completed_lag > resolution
+                or (
+                    completed_lag == resolution
+                    and now > (
+                        last_completed_bucket + resolution
+                        + STALE_GRACE_SECONDS[timeframe]
+                    )
+                )
+            )
         statuses = {str(point.get("quality_status")) for point in points}
         overall_status = (
             "CONFLICT" if "CONFLICT" in statuses else

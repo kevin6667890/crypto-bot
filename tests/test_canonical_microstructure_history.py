@@ -300,6 +300,14 @@ def test_higher_timeframe_rows_match_schema_width(tmp_path: Path) -> None:
     assert result["actual_resolution"] == "15m"
     assert result["resolution_seconds"] == 900
     assert result["stale_after_seconds"] == 1080
+    open_bucket_result = CanonicalFlowHistoryStore(
+        tmp_path / "canonical.db"
+    ).query(
+        "BTC-USDT", "cvd", start=0, end=1_699, max_points=10,
+        now=1_700, timeframe="15m",
+    )
+    assert open_bucket_result["last_completed_bucket"] == 0
+    assert open_bucket_result["stale"] is False
     with pytest.raises(ValueError, match="only supports UTC_DAILY_RESET"):
         CanonicalFlowHistoryStore(tmp_path / "canonical.db").query(
             "BTC-USDT", "cvd", start=0, end=899, max_points=10,

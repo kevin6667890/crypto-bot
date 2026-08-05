@@ -57,23 +57,25 @@ def manifest(source: Path, chunk_rows: int) -> dict[str, Any]:
             ).fetchone()
             if schema is None:
                 raise ValueError(f"missing source table: {table}")
-            bound = connection.execute(
-                f"SELECT MAX(rowid),MAX(source_ts_ms),MIN(source_ts_ms),COUNT(*) FROM {table}"
+            max_rowid = int(connection.execute(
+                f"SELECT MAX(rowid) FROM {table}").fetchone()[0] or 0)
+            # These raw tables are append-only. ROWID lookups are O(1) even on
+            # the production trade table, unlike an unindexed MAX(timestamp).
+            latest = connection.execute(
+                f"SELECT source_ts_ms FROM {table} WHERE rowid=?", (max_rowid,)
             ).fetchone()
-            max_rowid = int(bound[0] or 0)
-            watermark = int(bound[1] or 0)
-            bounded = connection.execute(
-                f"SELECT COUNT(*),MIN(source_ts_ms),MAX(source_ts_ms) FROM {table} "
-                "WHERE rowid<=? AND source_ts_ms<=?", (max_rowid, watermark)
+            earliest = connection.execute(
+                f"SELECT source_ts_ms FROM {table} ORDER BY rowid LIMIT 1"
             ).fetchone()
+            watermark = int(latest[0] or 0) if latest else 0
             indexes = [row[0] for row in connection.execute(
                 "SELECT sql FROM sqlite_master WHERE type='index' AND tbl_name=? "
                 "AND sql IS NOT NULL ORDER BY name", (table,))]
             result["tables"][table] = {
                 "create_sql": schema[0], "index_sql": indexes,
                 "max_rowid": max_rowid, "source_watermark_ms": watermark,
-                "row_count": int(bounded[0]), "min_source_ts_ms": bounded[1],
-                "max_source_ts_ms": bounded[2],
+                "min_source_ts_ms": earliest[0] if earliest else None,
+                "max_source_ts_ms": watermark,
                 "chunks": [
                     {"low_rowid": low, "high_rowid": min(max_rowid, low + chunk_rows - 1)}
                     for low in range(1, max_rowid + 1, chunk_rows)
@@ -101,10 +103,13 @@ def export_chunk(source: Path, table: str, low: int, high: int, watermark: int) 
 
 
 def import_chunk(destination: Path, manifest_path: Path, table: str, chunk: Path) -> dict[str, Any]:
-    specification = json.loads(manifest_path.read_text(encoding="utf-8"))["tables"][table]
+    specification = json.loads(manifest_path.read_text(encoding="utf-8-sig"))["tables"][table]
     digest = hashlib.sha256(); count = 0; trailer = None
     with _connect(destination) as connection, gzip.open(chunk, "rb") as stream:
-        connection.execute(specification["create_sql"])
+        if connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
+        ).fetchone() is None:
+            connection.execute(specification["create_sql"])
         connection.execute(
             "CREATE TABLE IF NOT EXISTS logical_snapshot_chunks("
             "table_name TEXT,low_rowid INTEGER,high_rowid INTEGER,row_count INTEGER,"
@@ -143,16 +148,24 @@ def import_chunk(destination: Path, manifest_path: Path, table: str, chunk: Path
 
 
 def verify(destination: Path, manifest_path: Path) -> dict[str, Any]:
-    specification = json.loads(manifest_path.read_text(encoding="utf-8"))
+    specification = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
     report = {"version": VERSION, "tables": {}, "ok": True}
     with _connect(destination) as connection:
         for table, expected in specification["tables"].items():
             row = connection.execute(
                 f"SELECT COUNT(*),MIN(source_ts_ms),MAX(source_ts_ms) FROM {table}"
             ).fetchone()
-            actual = {"row_count": int(row[0]), "min_source_ts_ms": row[1],
+            exported_rows = connection.execute(
+                "SELECT COALESCE(SUM(row_count),0) FROM logical_snapshot_chunks WHERE table_name=?",
+                (table,),
+            ).fetchone()[0]
+            actual = {"row_count": int(row[0]), "exported_row_count": int(exported_rows),
+                      "min_source_ts_ms": row[1],
                       "max_source_ts_ms": row[2]}
-            actual["ok"] = all(actual[key] == expected[key] for key in actual if key != "ok")
+            actual["ok"] = (
+                actual["row_count"] == actual["exported_row_count"]
+                and actual["min_source_ts_ms"] == expected["min_source_ts_ms"]
+                and actual["max_source_ts_ms"] == expected["max_source_ts_ms"])
             report["tables"][table] = actual
             report["ok"] = report["ok"] and actual["ok"]
     return report

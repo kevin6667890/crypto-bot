@@ -168,34 +168,36 @@ def full_chain_witnesses(trials: Sequence[RouterNativeTrialV2]) -> list[dict[str
               ("MA200_MEAN_REVERSION", "SHORT"): (98.0, 99.95, 99.0)}
     rows = []
     for family, direction in FAMILY_DIRECTIONS:
-        trial = chosen[(family, direction)]; engine = MarketStateEngineV2(); router = StrategyRouterV2()
-        previous_context = None; previous_state = None; previous_route = None; trace = []; compare_calls = 0
+        trial = chosen[(family, direction)]; contexts = {}
         for index, (phase, price) in enumerate(zip(("WATCH", "ARMED", "TRIGGER_READY"), prices[(family, direction)])):
             context = _set_price(witness_context(1_700_100_000 + index * 900, direction, family, phase), price)
-            if previous_context is None:
-                state = engine.evaluate(context); mode = "EVALUATE"
-            else:
-                comparison = engine.compare(previous_context, context); state = comparison["current"]
-                compare_calls += 1; mode = "COMPARE"
-            route = router.route(context, state, previous_route=previous_route,
-                                  family=family, direction=direction,
-                                  parameter_set_id=trial.parameter_set_id, parameter_set=trial.parameters)
-            candidate = route["candidates"][0]
-            trace.append({"as_of": context["as_of"], "mode": mode, "stage": candidate["state"],
-                          "context_identity": context["context_identity"],
-                          "state_identity": state["state_snapshot_identity"],
-                          "setup_identity": candidate["identity"]["strategy_setup_id"],
-                          "level_identity": candidate["identity"]["level_identity"],
-                          "interaction_types": [x["interaction_type"] for x in state["level_interactions"]],
-                          "reclaim_statuses": [x["reclaim_status"] for x in state["level_interactions"]],
-                          "geometry_valid": candidate["geometry"]["valid"],
-                          "source_timestamps": candidate["identity"]["source_candle_timestamps"]})
-            previous_context, previous_state, previous_route = context, state, route
+            contexts[context["as_of"]] = context
+        provider = HistoricalMarketContextV2Provider(DATASET, dataset_identity=EXPECTED_DATASET)
+        provider.service.context = lambda _instrument, *, as_of, execution_timeframe: deepcopy(contexts[int(as_of)])
+        segment = TimeSegmentV2("DEVELOPMENT_FULL_CHAIN_WITNESS", min(contexts), max(contexts) + 900,
+                                stable_hash({"family": family, "direction": direction, "witness": "phase4a5"}))
+        result = StrategyEventReplayEngineV2_2(provider).replay(
+            instrument="BTC-USDT-SWAP", confirmed_close_timestamps=sorted(contexts),
+            trials=(trial,), segment=segment)
+        trace = []
+        for state_row, lifecycle_row in zip(result["state_ledger"], result["lifecycle_ledger"]):
+            trace.append({"as_of": state_row["as_of"], "mode": "EVALUATE" if state_row["mode"] == "SEGMENT_INITIAL_EVALUATE" else state_row["mode"],
+                          "stage": lifecycle_row["stage"],
+                          "context_identity": next(x["context_identity"] for x in result["context_ledger"] if x["as_of"] == state_row["as_of"]),
+                          "state_identity": state_row["state_snapshot_identity"],
+                          "setup_identity": lifecycle_row["strategy_setup_id"],
+                          "level_identity": lifecycle_row["level_identity"],
+                          "interaction_types": state_row["interaction_types"],
+                          "reclaim_statuses": state_row["reclaim_statuses"],
+                          "geometry_valid": lifecycle_row["geometry"]["valid"],
+                          "source_timestamps": lifecycle_row["source_candle_timestamps"]})
+        compare_calls = result["compare_calls"]
         stages = [item["stage"] for item in trace]
         success = stages == ["WATCH", "ARMED", "TRIGGER_READY"] and compare_calls > 0
         rows.append({"family": family, "direction": direction, "result": "PASS" if success else "FAIL",
                      "compare_calls": compare_calls, "formal_context": True, "formal_state": True,
                      "formal_router": True, "formal_lifecycle": True, "state_modified": False,
+                     "historical_provider_called": provider.calculations == 3,
                      "gate_modified": False, "trace": trace})
     return rows
 

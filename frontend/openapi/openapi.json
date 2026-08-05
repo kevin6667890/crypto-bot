@@ -441,7 +441,8 @@
           "gap_reason": { "type": "string", "nullable": true },
           "source_fingerprint": { "type": "string", "nullable": true },
           "source_complete": { "type": "boolean" },
-          "partial_after_gap": { "type": "boolean" }
+          "partial_after_gap": { "type": "boolean" },
+          "segment_start": { "type": "boolean" }
         }
       },
       "FlowHistoryResponse": {
@@ -451,6 +452,8 @@
           "api_version": { "type": "string" },
           "schema_version": { "type": "string" },
           "history_version": { "type": "string" },
+          "canonical_version": { "type": "string" },
+          "canonical_generation": { "type": "string" },
           "instrument": { "type": "string" },
           "series": { "type": "string", "enum": ["cvd", "oi"] },
           "timeframe": { "type": "string", "enum": ["1m", "5m", "15m", "1h", "4h", "1D"] },
@@ -471,6 +474,7 @@
           "status": { "type": "string" },
           "gap_reason": { "type": "string", "nullable": true },
           "source_coverage": { "type": "object", "additionalProperties": true },
+          "coverage": { "type": "object", "additionalProperties": true },
           "data_as_of": { "allOf": [{ "$ref": "#/components/schemas/UnixSeconds" }], "nullable": true },
           "last_completed_bucket": { "$ref": "#/components/schemas/UnixSeconds" },
           "next_expected_bucket": { "$ref": "#/components/schemas/UnixSeconds" },

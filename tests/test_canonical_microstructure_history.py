@@ -83,7 +83,7 @@ def test_partial_after_gap_progress_is_current_but_not_confirmed(
     assert result["data_as_of"] == 600
     assert result["latest_timestamp"] == 600
     assert result["source_coverage"]["confirmed_end"] == 0
-    assert result["stale"] is False
+    assert result["stale"] is True
     assert all(point["status"] == "WHITESPACE" for point in result["points"])
     assert all(point["partial_after_gap"] for point in result["points"])
 
@@ -221,7 +221,7 @@ def test_higher_timeframe_rows_match_schema_width(tmp_path: Path) -> None:
     assert result["requested_resolution"] == "15m"
     assert result["actual_resolution"] == "15m"
     assert result["resolution_seconds"] == 900
-    assert result["stale_after_seconds"] == 2700
+    assert result["stale_after_seconds"] == 1080
 
 
 def test_official_oi_only_fills_exact_missing_observation_minute(

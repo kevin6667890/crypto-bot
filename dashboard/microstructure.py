@@ -2433,12 +2433,30 @@ class MicrostructureStore:
         alive = bool(metrics.get("realtime_aggregation_task_alive"))
         exhausted = (
             metrics.get("realtime_aggregation_status") == "FAILED")
+        canonical_status = metrics.get(
+            "canonical_task_status_by_instrument_series") or {}
+        canonical_timestamps = metrics.get(
+            "canonical_timestamp_by_instrument_series") or {}
+        canonical_failed_series = sorted(
+            f"{instrument}:{series}"
+            for instrument, values in canonical_status.items()
+            for series, status in values.items() if status != "LIVE")
+        canonical_lag_by_series = {
+            f"{instrument}:{series}": max(0, now_ms() - int(timestamp)) // 1000
+            for instrument, values in canonical_timestamps.items()
+            for series, timestamp in values.items() if timestamp is not None
+        }
+        canonical_lagged_series = sorted(
+            series for series, lag in canonical_lag_by_series.items()
+            if lag > ({"1m": 180, "5m": 420, "15m": 1080, "1h": 4200,
+                       "4h": 15000, "1D": 88200}.get(series.rsplit(":", 1)[-1], 180)))
         lagged = (
             bool(missing_series)
             or bool(lag_by_instrument) and max(lag_by_instrument.values()) > 180)
         aggregation_health = (
             "FAILED" if enabled and exhausted
-            else "DEGRADED" if enabled and (not alive or lagged)
+            else "DEGRADED" if enabled and (
+                not alive or lagged or canonical_failed_series or canonical_lagged_series)
             else "HEALTHY"
         )
         return {
@@ -2458,6 +2476,9 @@ class MicrostructureStore:
                 max(lag_by_instrument.values()) if lag_by_instrument else None),
             "aggregate_lag_seconds_by_instrument": lag_by_instrument,
             "aggregate_missing_series": missing_series,
+            "canonical_failed_series": canonical_failed_series,
+            "canonical_lag_seconds_by_series": canonical_lag_by_series,
+            "canonical_lagged_series": canonical_lagged_series,
         }
 
 

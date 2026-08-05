@@ -1376,9 +1376,9 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 if "timeframe" not in query:
                     raise ValueError("timeframe is required")
-                if query.get("schema_version", [""])[0] != "canonical-microstructure-schema-v1":
+                if query.get("schema_version", [""])[0] != "canonical-microstructure-schema-v2":
                     raise ValueError("unsupported canonical schema_version")
-                if query.get("history_version", [""])[0] != "canonical-microstructure-history-v1":
+                if query.get("history_version", [""])[0] != "canonical-microstructure-history-v2":
                     raise ValueError("unsupported canonical history_version")
                 def history_int(name: str) -> int | None:
                     return int(query[name][0]) if name in query else None

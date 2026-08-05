@@ -284,6 +284,72 @@ def test_realtime_writer_continues_prebuilt_canonical_db(tmp_path: Path) -> None
     assert stored_oi == (10.0, "VALID", 1)
 
 
+def test_canonical_cvd_gap_keeps_real_delta_partial_and_next_day_recovers(
+    tmp_path: Path,
+) -> None:
+    value = store(tmp_path); midnight = BASE_DAY + 31 * DAY_MS
+    trade(value, midnight + 1_000, "m0")
+    oi(value, midnight + 1_000, "o0", 10)
+    trade(value, midnight + 2 * MINUTE_MS + 1_000, "m2")
+    oi(value, midnight + 2 * MINUTE_MS + 1_000, "o2", 12)
+    next_day = midnight + DAY_MS
+    trade(value, next_day + 1_000, "next")
+    oi(value, next_day + 1_000, "on", 15)
+    engine = RealtimeAggregationEngine(value)
+    engine.process(INSTRUMENT, midnight, midnight + 3 * MINUTE_MS)
+    engine.process(INSTRUMENT, next_day, next_day + MINUTE_MS)
+    canonical = tmp_path / "canonical-gap.db"
+    CanonicalHistoryStore(canonical).initialise(
+        BuildIdentity("a" * 64, "history", midnight - 1, 1)
+    )
+    result = CanonicalRealtimeWriter(value.path, canonical, "realtime").sync(
+        INSTRUMENT, midnight, next_day + MINUTE_MS
+    )
+    assert result["errors"] == []
+    with sqlite3.connect(canonical) as connection:
+        rows = connection.execute(
+            "SELECT bucket_ms,signed_delta,daily_cumulative,status FROM cvd_1m "
+            "WHERE instrument=? AND bucket_ms IN (?,?,?,?) ORDER BY bucket_ms",
+            (INSTRUMENT, midnight, midnight + MINUTE_MS,
+             midnight + 2 * MINUTE_MS, next_day),
+        ).fetchall()
+        oi_rows = connection.execute(
+            "SELECT bucket_ms,confirmed_oi,status FROM oi_1m WHERE instrument=? "
+            "AND bucket_ms IN (?,?) ORDER BY bucket_ms",
+            (INSTRUMENT, midnight + 2 * MINUTE_MS, next_day),
+        ).fetchall()
+    assert rows == [
+        (midnight, 100.0, 100.0, "VALID"),
+        (midnight + MINUTE_MS, None, None, "MISSING"),
+        (midnight + 2 * MINUTE_MS, 100.0, 200.0, "PARTIAL_AFTER_GAP"),
+        (next_day, 100.0, 100.0, "VALID"),
+    ]
+    assert oi_rows == [
+        (midnight + 2 * MINUTE_MS, 12.0, "VALID"),
+        (next_day, 15.0, "VALID"),
+    ]
+
+
+def test_canonical_cvd_failure_does_not_block_oi(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    value = store(tmp_path); start = BASE_DAY + 32 * DAY_MS
+    trade(value, start + 1_000, "trade")
+    oi(value, start + 1_000, "oi", 7)
+    RealtimeAggregationEngine(value).process(INSTRUMENT, start, start + MINUTE_MS)
+    canonical = tmp_path / "canonical-isolation.db"
+    CanonicalHistoryStore(canonical).initialise(
+        BuildIdentity("a" * 64, "history", start - 1, 1)
+    )
+    writer = CanonicalRealtimeWriter(value.path, canonical, "realtime")
+    monkeypatch.setattr(writer, "_append_cvd", lambda *_args: (_ for _ in ()).throw(RuntimeError("cvd boom")))
+    result = writer.sync(INSTRUMENT, start, start + MINUTE_MS)
+    assert any("cvd boom" in error["exception"] for error in result["errors"])
+    with sqlite3.connect(canonical) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM cvd_1m").fetchone()[0] == 0
+        assert connection.execute("SELECT confirmed_oi,status FROM oi_1m").fetchone() == (7.0, "VALID")
+
+
 def test_missing_raw_stays_missing_and_unclosed_minute_is_not_requested(
     tmp_path: Path,
 ) -> None:
@@ -316,7 +382,7 @@ def test_cvd_resets_at_utc_midnight(tmp_path: Path) -> None:
         (midnight - MINUTE_MS, 100), (midnight, 100)]
 
 
-def test_cvd_does_not_reset_at_an_artificial_lookback_boundary(
+def test_cvd_continues_delta_at_an_artificial_lookback_boundary(
     tmp_path: Path,
 ) -> None:
     value = store(tmp_path); start = BASE_DAY + 12 * DAY_MS
@@ -326,13 +392,13 @@ def test_cvd_does_not_reset_at_an_artificial_lookback_boundary(
     RealtimeAggregationEngine(value).process(
         INSTRUMENT, start + MINUTE_MS, start + 2 * MINUTE_MS)
     with value.connect(readonly=True) as connection:
-        assert connection.execute(
-            "SELECT 1 FROM cvd_aggregates").fetchone() is None
+        aggregate = connection.execute(
+            "SELECT delta,cumulative_anchored,gap_flag FROM cvd_aggregates").fetchone()
         status = connection.execute(
             """SELECT status,detail_json FROM realtime_aggregate_fingerprints
                WHERE series='cvd' AND resolution='1m'""").fetchone()
-    assert status[0] == "MISSING"
-    assert "prior minute aggregate pending" in status[1]
+    assert tuple(aggregate) == (100.0, 100.0, 1)
+    assert status[0] == "VALID"
 
 
 def test_fingerprint_conflict_pauses_without_overwrite_or_cursor_advance(

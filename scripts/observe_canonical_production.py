@@ -136,8 +136,8 @@ def collect(args: argparse.Namespace, sample: int, prior: dict[str, int]) -> dic
     query = urllib.parse.urlencode({
         "instrument": instrument, "series": series, "timeframe": timeframe,
         "start": end - 7 * 86400, "end": end, "max_points": 500,
-        "schema_version": "canonical-microstructure-schema-v1",
-        "history_version": "canonical-microstructure-history-v1",
+        "schema_version": "canonical-microstructure-schema-v2",
+        "history_version": "canonical-microstructure-history-v2",
     })
     api, api_ms, api_error = json_url(args.paper_api_url + "?" + query)
     record["api_probe"] = {

@@ -12,6 +12,7 @@ import argparse
 import gzip
 import hashlib
 import json
+import re
 import sqlite3
 import sys
 from pathlib import Path
@@ -29,6 +30,10 @@ def _connect(path: Path, readonly: bool = False) -> sqlite3.Connection:
         connection.execute("PRAGMA query_only=ON")
     else:
         connection = sqlite3.connect(path, timeout=30)
+        connection.execute("PRAGMA journal_mode=WAL")
+        connection.execute("PRAGMA synchronous=NORMAL")
+        connection.execute("PRAGMA temp_store=MEMORY")
+        connection.execute("PRAGMA cache_size=-262144")
     connection.row_factory = sqlite3.Row
     return connection
 
@@ -149,9 +154,15 @@ def import_chunk(destination: Path, manifest_path: Path, table: str, chunk: Path
 
 def verify(destination: Path, manifest_path: Path) -> dict[str, Any]:
     specification = json.loads(manifest_path.read_text(encoding="utf-8-sig"))
-    report = {"version": VERSION, "tables": {}, "ok": True}
+    report = {"version": VERSION, "tables": {}, "ok": True,
+              "quick_check": None, "foreign_key_errors": []}
     with _connect(destination) as connection:
         for table, expected in specification["tables"].items():
+            for statement in expected.get("index_sql", []):
+                connection.execute(re.sub(
+                    r"^CREATE\s+(UNIQUE\s+)?INDEX\s+", r"CREATE \1INDEX IF NOT EXISTS ",
+                    statement, count=1, flags=re.IGNORECASE,
+                ))
             row = connection.execute(
                 f"SELECT COUNT(*),MIN(source_ts_ms),MAX(source_ts_ms) FROM {table}"
             ).fetchone()
@@ -168,6 +179,13 @@ def verify(destination: Path, manifest_path: Path) -> dict[str, Any]:
                 and actual["max_source_ts_ms"] == expected["max_source_ts_ms"])
             report["tables"][table] = actual
             report["ok"] = report["ok"] and actual["ok"]
+        report["quick_check"] = connection.execute("PRAGMA quick_check").fetchone()[0]
+        report["foreign_key_errors"] = [list(row) for row in connection.execute(
+            "PRAGMA foreign_key_check")]
+        report["ok"] = (report["ok"] and report["quick_check"] == "ok"
+                        and not report["foreign_key_errors"])
+        connection.commit()
+        connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
     return report
 
 

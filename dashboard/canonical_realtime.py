@@ -38,7 +38,7 @@ class CanonicalRealtimeWriter:
                 "SELECT value_json FROM canonical_metadata WHERE key='history_version'"
             ).fetchone()
             if row is None or json.loads(row[0]) != CANONICAL_MICROSTRUCTURE_HISTORY_VERSION:
-                raise RuntimeError("canonical history DB is not migrated to v1")
+                raise RuntimeError("canonical history DB has the wrong history version")
             watermark = connection.execute(
                 "SELECT value_json FROM canonical_metadata WHERE key='source_watermark_ms'"
             ).fetchone()

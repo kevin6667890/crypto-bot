@@ -17,6 +17,14 @@ def test_logical_snapshot_is_bounded_verified_and_resumable(tmp_path: Path) -> N
             connection.executemany(
                 f"INSERT INTO {table} VALUES(?,?)", [(1, "a"), (2, "b")]
             )
+        connection.execute(
+            "CREATE TABLE collection_gaps(lane TEXT,instrument TEXT,"
+            "start_ms INTEGER,end_ms INTEGER,reason TEXT,detected_at_ms INTEGER,"
+            "resolved_at_ms INTEGER)"
+        )
+        connection.execute(
+            "INSERT INTO collection_gaps VALUES('trades','BTC-USDT-SWAP',1,2,'test',3,NULL)"
+        )
     frozen = manifest(source, 10)
     manifest_path = tmp_path / "manifest.json"
     manifest_path.write_text(json.dumps(frozen), encoding="utf-8")
@@ -34,7 +42,7 @@ def test_logical_snapshot_is_bounded_verified_and_resumable(tmp_path: Path) -> N
             )
         first = import_chunk(destination, manifest_path, table, chunk)
         resumed = import_chunk(destination, manifest_path, table, chunk)
-        assert first["rows"] == 2
+        assert first["rows"] == (1 if table == "collection_gaps" else 2)
         assert resumed["resumed"] is True
         assert first["sha256"] == resumed["sha256"]
     report = verify(destination, manifest_path)

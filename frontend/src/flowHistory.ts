@@ -22,7 +22,7 @@ export type FlowRangeRequest = {
   end: number;
   maxPoints?: number;
   cursor?: string | null;
-  cvdMode?: "CONTINUOUS" | "UTC_DAILY_RESET";
+  cvdMode?: "UTC_DAILY_RESET";
 };
 
 const MEMORY_POINT_LIMIT = 50_000;

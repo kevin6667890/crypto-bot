@@ -20,7 +20,12 @@ from typing import Any, Iterable
 
 
 VERSION = "cvd-oi-logical-snapshot-v1"
-TABLES = ("trade_flow_observations", "oi_observations")
+TABLES = ("trade_flow_observations", "oi_observations", "collection_gaps")
+TIMESTAMP_COLUMNS = {
+    "trade_flow_observations": ("source_ts_ms", "source_ts_ms"),
+    "oi_observations": ("source_ts_ms", "source_ts_ms"),
+    "collection_gaps": ("start_ms", "end_ms"),
+}
 
 
 def _connect(path: Path, readonly: bool = False) -> sqlite3.Connection:
@@ -52,11 +57,14 @@ def _decode(values: list[Any]) -> list[Any]:
             else value for value in values]
 
 
-def manifest(source: Path, chunk_rows: int) -> dict[str, Any]:
+def manifest(
+    source: Path, chunk_rows: int, tables: Iterable[str] = TABLES,
+) -> dict[str, Any]:
     result: dict[str, Any] = {"version": VERSION, "source": str(source),
                               "chunk_rows": chunk_rows, "tables": {}}
     with _connect(source, True) as connection:
-        for table in TABLES:
+        for table in tables:
+            minimum_column, watermark_column = TIMESTAMP_COLUMNS[table]
             schema = connection.execute(
                 "SELECT sql FROM sqlite_master WHERE type='table' AND name=?", (table,)
             ).fetchone()
@@ -67,10 +75,10 @@ def manifest(source: Path, chunk_rows: int) -> dict[str, Any]:
             # These raw tables are append-only. ROWID lookups are O(1) even on
             # the production trade table, unlike an unindexed MAX(timestamp).
             latest = connection.execute(
-                f"SELECT source_ts_ms FROM {table} WHERE rowid=?", (max_rowid,)
+                f"SELECT {watermark_column} FROM {table} WHERE rowid=?", (max_rowid,)
             ).fetchone()
             earliest = connection.execute(
-                f"SELECT source_ts_ms FROM {table} ORDER BY rowid LIMIT 1"
+                f"SELECT {minimum_column} FROM {table} ORDER BY rowid LIMIT 1"
             ).fetchone()
             watermark = int(latest[0] or 0) if latest else 0
             indexes = [row[0] for row in connection.execute(
@@ -78,6 +86,8 @@ def manifest(source: Path, chunk_rows: int) -> dict[str, Any]:
                 "AND sql IS NOT NULL ORDER BY name", (table,))]
             result["tables"][table] = {
                 "create_sql": schema[0], "index_sql": indexes,
+                "minimum_column": minimum_column,
+                "watermark_column": watermark_column,
                 "max_rowid": max_rowid, "source_watermark_ms": watermark,
                 "min_source_ts_ms": earliest[0] if earliest else None,
                 "max_source_ts_ms": watermark,
@@ -98,8 +108,9 @@ def export_chunk(source: Path, table: str, low: int, high: int, watermark: int) 
         header = {"version": VERSION, "table": table, "low_rowid": low,
                   "high_rowid": high, "source_watermark_ms": watermark}
         stream.write((json.dumps({"header": header}, separators=(",", ":")) + "\n").encode())
+        watermark_column = TIMESTAMP_COLUMNS[table][1]
         query = (f"SELECT rowid,* FROM {table} WHERE rowid>=? AND rowid<=? "
-                 "AND source_ts_ms<=? ORDER BY rowid")
+                 f"AND {watermark_column}<=? ORDER BY rowid")
         for row in connection.execute(query, (low, high, watermark)):
             payload = _canonical_row(tuple(row))
             digest.update(payload); count += 1; stream.write(payload)
@@ -163,8 +174,10 @@ def verify(destination: Path, manifest_path: Path) -> dict[str, Any]:
                     r"^CREATE\s+(UNIQUE\s+)?INDEX\s+", r"CREATE \1INDEX IF NOT EXISTS ",
                     statement, count=1, flags=re.IGNORECASE,
                 ))
+            minimum_column = expected.get("minimum_column", "source_ts_ms")
+            watermark_column = expected.get("watermark_column", "source_ts_ms")
             row = connection.execute(
-                f"SELECT COUNT(*),MIN(source_ts_ms),MAX(source_ts_ms) FROM {table}"
+                f"SELECT COUNT(*),MIN({minimum_column}),MAX({watermark_column}) FROM {table}"
             ).fetchone()
             exported_rows = connection.execute(
                 "SELECT COALESCE(SUM(row_count),0) FROM logical_snapshot_chunks WHERE table_name=?",
@@ -175,7 +188,8 @@ def verify(destination: Path, manifest_path: Path) -> dict[str, Any]:
                       "max_source_ts_ms": row[2]}
             actual["ok"] = (
                 actual["row_count"] == actual["exported_row_count"]
-                and actual["min_source_ts_ms"] == expected["min_source_ts_ms"]
+                and (actual["min_source_ts_ms"] is None
+                     or actual["min_source_ts_ms"] <= expected["min_source_ts_ms"])
                 and actual["max_source_ts_ms"] == expected["max_source_ts_ms"])
             report["tables"][table] = actual
             report["ok"] = report["ok"] and actual["ok"]
@@ -191,12 +205,12 @@ def verify(destination: Path, manifest_path: Path) -> dict[str, Any]:
 
 def main() -> None:
     parser = argparse.ArgumentParser(); commands = parser.add_subparsers(dest="command", required=True)
-    value = commands.add_parser("manifest"); value.add_argument("--source", type=Path, required=True); value.add_argument("--chunk-rows", type=int, default=500_000)
+    value = commands.add_parser("manifest"); value.add_argument("--source", type=Path, required=True); value.add_argument("--chunk-rows", type=int, default=500_000); value.add_argument("--table", action="append", choices=TABLES)
     value = commands.add_parser("export"); value.add_argument("--source", type=Path, required=True); value.add_argument("--table", choices=TABLES, required=True); value.add_argument("--low", type=int, required=True); value.add_argument("--high", type=int, required=True); value.add_argument("--watermark", type=int, required=True)
     value = commands.add_parser("import"); value.add_argument("--destination", type=Path, required=True); value.add_argument("--manifest", type=Path, required=True); value.add_argument("--table", choices=TABLES, required=True); value.add_argument("--chunk", type=Path, required=True)
     value = commands.add_parser("verify"); value.add_argument("--destination", type=Path, required=True); value.add_argument("--manifest", type=Path, required=True)
     args = parser.parse_args()
-    if args.command == "manifest": print(json.dumps(manifest(args.source, args.chunk_rows), sort_keys=True))
+    if args.command == "manifest": print(json.dumps(manifest(args.source, args.chunk_rows, args.table or TABLES), sort_keys=True))
     elif args.command == "export": export_chunk(args.source, args.table, args.low, args.high, args.watermark)
     elif args.command == "import": print(json.dumps(import_chunk(args.destination, args.manifest, args.table, args.chunk), sort_keys=True))
     else:

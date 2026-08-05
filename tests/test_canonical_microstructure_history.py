@@ -4,6 +4,8 @@ import json
 import sqlite3
 import zipfile
 
+import pytest
+
 from dashboard.canonical_microstructure_history import (
     BuildIdentity,
     CANONICAL_MICROSTRUCTURE_HISTORY_VERSION,
@@ -107,6 +109,15 @@ def test_coverage_streams_observed_and_missing_minutes(tmp_path: Path) -> None:
         uniqueness_key TEXT PRIMARY KEY,trade_id TEXT,side TEXT,price REAL,
         size REAL,contract_value REAL,notional REAL,provenance_table TEXT)"""
     )
+    connection.execute(
+        """CREATE TABLE collection_gaps(
+        lane TEXT,instrument TEXT,start_ms INTEGER,end_ms INTEGER,reason TEXT,
+        detected_at_ms INTEGER,resolved_at_ms INTEGER)"""
+    )
+    connection.execute(
+        "INSERT INTO collection_gaps VALUES(?,?,?,?,?,?,NULL)",
+        ("trades", "BTC-USDT-SWAP", 61_500, 62_500, "partial minute", 70_000),
+    )
     rows = []
     for timestamp, key in ((1_000, "a"), (61_000, "b"), (181_000, "c")):
         rows.append(("OKX", "v1", "BTC-USDT-SWAP", timestamp, timestamp,
@@ -123,13 +134,14 @@ def test_coverage_streams_observed_and_missing_minutes(tmp_path: Path) -> None:
         BuildIdentity("a" * 64, "commit", 240_000, 123),
     )
     report = builder.build_coverage("trades", "BTC-USDT-SWAP")
-    assert report["missing_minutes"] == 1
+    assert report["missing_minutes"] == 2
+    assert report["recorded_gap_buckets"] == 1
     with builder.destination.connect() as connection:
         ledger = connection.execute(
             "SELECT bucket_ms,status FROM coverage_ledger ORDER BY bucket_ms"
         ).fetchall()
     assert [tuple(row) for row in ledger] == [
-        (0, "VALID"), (60_000, "VALID"), (120_000, "MISSING"),
+        (0, "VALID"), (60_000, "MISSING"), (120_000, "MISSING"),
         (180_000, "VALID"),
     ]
 
@@ -222,6 +234,11 @@ def test_higher_timeframe_rows_match_schema_width(tmp_path: Path) -> None:
     assert result["actual_resolution"] == "15m"
     assert result["resolution_seconds"] == 900
     assert result["stale_after_seconds"] == 1080
+    with pytest.raises(ValueError, match="only supports UTC_DAILY_RESET"):
+        CanonicalFlowHistoryStore(tmp_path / "canonical.db").query(
+            "BTC-USDT", "cvd", start=0, end=899, max_points=10,
+            now=900, timeframe="15m", cvd_mode="CONTINUOUS",
+        )
 
 
 def test_official_oi_only_fills_exact_missing_observation_minute(

@@ -1376,10 +1376,20 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 if "timeframe" not in query:
                     raise ValueError("timeframe is required")
-                if query.get("schema_version", [""])[0] != "canonical-microstructure-schema-v2":
-                    raise ValueError("unsupported canonical schema_version")
-                if query.get("history_version", [""])[0] != "canonical-microstructure-history-v2":
-                    raise ValueError("unsupported canonical history_version")
+                requested_contract = (
+                    query.get("schema_version", [""])[0],
+                    query.get("history_version", [""])[0],
+                )
+                supported_contracts = {
+                    ("canonical-microstructure-schema-v2",
+                     "canonical-microstructure-history-v2"),
+                    # Read-only rollout compatibility for the already-loaded
+                    # frontend while services are replaced one at a time.
+                    ("canonical-microstructure-schema-v1",
+                     "canonical-microstructure-history-v1"),
+                }
+                if requested_contract not in supported_contracts:
+                    raise ValueError("unsupported canonical schema/history version pair")
                 def history_int(name: str) -> int | None:
                     return int(query[name][0]) if name in query else None
                 
@@ -1398,6 +1408,14 @@ class Handler(BaseHTTPRequestHandler):
                     cvd_mode=query.get("cvd_mode", ["UTC_DAILY_RESET"])[0],
                     timeframe=query.get("timeframe", [None])[0],
                 )
+                if requested_contract != (
+                    "canonical-microstructure-schema-v2",
+                    "canonical-microstructure-history-v2",
+                ):
+                    result = {**result,
+                              "schema_version": requested_contract[0],
+                              "history_version": requested_contract[1],
+                              "compatibility_contract": "v1-read-only-wrapper"}
                 
                 self._send(result)
                 

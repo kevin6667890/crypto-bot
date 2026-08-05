@@ -963,9 +963,9 @@ export interface operations {
                 end?: components["schemas"]["UnixSeconds"];
                 max_points?: number;
                 cursor?: string;
-                cvd_mode?: "CONTINUOUS" | "UTC_DAILY_RESET";
-                schema_version: "canonical-microstructure-schema-v1";
-                history_version: "canonical-microstructure-history-v1";
+                cvd_mode?: "UTC_DAILY_RESET";
+                schema_version: "canonical-microstructure-schema-v2";
+                history_version: "canonical-microstructure-history-v2";
             };
             header?: never;
             path?: never;

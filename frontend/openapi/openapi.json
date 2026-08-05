@@ -33,9 +33,9 @@
           { "name": "end", "in": "query", "schema": { "$ref": "#/components/schemas/UnixSeconds" } },
           { "name": "max_points", "in": "query", "schema": { "type": "integer", "minimum": 1, "maximum": 500 } },
           { "name": "cursor", "in": "query", "schema": { "type": "string" } },
-          { "name": "cvd_mode", "in": "query", "schema": { "type": "string", "enum": ["CONTINUOUS", "UTC_DAILY_RESET"] } },
-          { "name": "schema_version", "in": "query", "required": true, "schema": { "type": "string", "enum": ["canonical-microstructure-schema-v1"] } },
-          { "name": "history_version", "in": "query", "required": true, "schema": { "type": "string", "enum": ["canonical-microstructure-history-v1"] } }
+          { "name": "cvd_mode", "in": "query", "schema": { "type": "string", "enum": ["UTC_DAILY_RESET"] } },
+          { "name": "schema_version", "in": "query", "required": true, "schema": { "type": "string", "enum": ["canonical-microstructure-schema-v2"] } },
+          { "name": "history_version", "in": "query", "required": true, "schema": { "type": "string", "enum": ["canonical-microstructure-history-v2"] } }
         ],
         "responses": { "200": { "description": "Flow history contract; the array field is points, never data", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/FlowHistoryResponse" } } } } }
       }

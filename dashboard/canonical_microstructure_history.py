@@ -948,7 +948,7 @@ class CanonicalHistoryBuilder:
         self, source_name: str, instrument: str,
         progress: Callable[[dict[str, Any]], None] | None = None,
     ) -> dict[str, Any]:
-        """Create a factual minute ledger; old collection_gaps are not inputs."""
+        """Create a factual ledger, conservatively honoring unresolved raw gaps."""
         table = SOURCE_TABLES[source_name]
         source_instrument = self._source_instrument(source_name, instrument)
         with _readonly(self.source_path) as source, self.destination.connect() as out:
@@ -1114,6 +1114,34 @@ class CanonicalHistoryBuilder:
                     "INSERT INTO coverage_ledger VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     inserts,
                 )
+            has_gap_ledger = source.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='collection_gaps'"
+            ).fetchone()
+            recorded_gap_buckets = 0
+            if has_gap_ledger:
+                for gap in source.execute(
+                    """SELECT start_ms,end_ms,reason FROM collection_gaps
+                       WHERE lane=? AND instrument=? AND resolved_at_ms IS NULL
+                       ORDER BY start_ms,end_ms""",
+                    (source_name, instrument),
+                ):
+                    cursor = out.execute(
+                        """UPDATE coverage_ledger SET observed_count=0,
+                               unique_identity_count=0,duplicate_count=0,
+                               out_of_order_count=0,first_source_ts_ms=NULL,
+                               last_source_ts_ms=NULL,source_fingerprint=NULL,
+                               status='MISSING',gap_reason=?,classification='MAINTENANCE_GAP'
+                           WHERE instrument=? AND source=?
+                             AND bucket_ms<? AND bucket_ms+60000>?""",
+                        (f"RECORDED_COLLECTION_GAP:{gap[2]}", instrument,
+                         source_name, int(gap[1]), int(gap[0])),
+                    )
+                    recorded_gap_buckets += max(0, cursor.rowcount)
+                missing = int(out.execute(
+                    """SELECT COUNT(*) FROM coverage_ledger
+                       WHERE instrument=? AND source=? AND status='MISSING'""",
+                    (instrument, source_name),
+                ).fetchone()[0])
             status = ("CONFLICT" if asset_conflicts else
                       "PARTIAL" if missing else "VALID")
             out.execute(
@@ -1128,6 +1156,7 @@ class CanonicalHistoryBuilder:
             self.destination.checkpoint(
                 out, f"coverage:{source_name}", instrument, latest, "COMPLETE",
                 {"row_count": total_rows, "missing_minutes": missing,
+                 "recorded_gap_buckets": recorded_gap_buckets,
                  "state_counts": state_counts,
                  "unique_identity_count": asset_unique,
                  "duplicate_count": asset_duplicates,
@@ -1136,6 +1165,7 @@ class CanonicalHistoryBuilder:
             return {"instrument": instrument, "source": source_name,
                     "earliest_ms": earliest, "latest_ms": latest,
                     "row_count": total_rows, "missing_minutes": missing,
+                    "recorded_gap_buckets": recorded_gap_buckets,
                     "state_counts": state_counts,
                     "unique_identity_count": asset_unique,
                     "duplicate_count": asset_duplicates,

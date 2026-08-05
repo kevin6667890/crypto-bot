@@ -46,6 +46,10 @@ def main() -> None:
     parser.add_argument("--destination", type=Path, required=True)
     parser.add_argument("--source-sha256")
     parser.add_argument("--commit", required=True)
+    parser.add_argument(
+        "--generated-at-ms", type=int,
+        help="fixed build identity timestamp for byte-stable resumable rebuilds",
+    )
     parser.add_argument("--report", type=Path, required=True)
     parser.add_argument("--audit-only", action="store_true")
     parser.add_argument(
@@ -74,7 +78,8 @@ def main() -> None:
         source_sha256=source_hash,
         generated_commit=arguments.commit,
         source_watermark_ms=source_watermark(arguments.source),
-        generated_at_ms=now_ms(),
+        generated_at_ms=(arguments.generated_at_ms
+                         if arguments.generated_at_ms is not None else now_ms()),
     )
     contract_values = dict(item.split("=", 1) for item in arguments.contract_value)
     builder = CanonicalHistoryBuilder(

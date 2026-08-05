@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import inspect
 import sqlite3
+import time
 from pathlib import Path
 
 import pytest
@@ -207,6 +208,27 @@ def test_liveness_does_not_let_oi_mask_missing_cvd(tmp_path: Path) -> None:
     health = value.liveness()
     assert health["realtime_aggregation_health"] == "DEGRADED"
     assert health["aggregate_missing_series"] == [f"{INSTRUMENT}:cvd"]
+
+
+def test_liveness_reports_canonical_cvd_lane_failure_independently(
+    tmp_path: Path,
+) -> None:
+    value = store(tmp_path); current = int(time.time() * 1000)
+    value.update_operational_metrics(
+        realtime_aggregation_enabled=True,
+        realtime_aggregation_task_alive=True,
+        realtime_aggregation_status="LIVE",
+        canonical_task_status_by_instrument_series={
+            INSTRUMENT: {"cvd": "ERROR", "oi": "LIVE"}},
+        canonical_timestamp_by_instrument_series={
+            INSTRUMENT: {"cvd": current - 240_000, "oi": current}},
+        canonical_last_exception_by_instrument_series={
+            INSTRUMENT: {"cvd": "RuntimeError: cvd stopped", "oi": None}},
+    )
+    health = value.liveness()
+    assert health["realtime_aggregation_health"] == "DEGRADED"
+    assert health["canonical_failed_series"] == [f"{INSTRUMENT}:cvd"]
+    assert health["canonical_lagged_series"] == [f"{INSTRUMENT}:cvd"]
 
 
 def test_liveness_detects_dead_task_as_degraded(tmp_path: Path) -> None:

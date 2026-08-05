@@ -21,6 +21,7 @@ import {
   requestFlowHistory,
   retainedCoverage,
   retainServerHistory,
+  splitFlowSegments,
   visibleRangeFromCandles,
 } from "./flowHistory";
 import {
@@ -212,6 +213,15 @@ const FLOW_SERIES_CONFIG = [
   { id: "cvd", name: "CVD", color: "#7c3aed" },
   { id: "oi", name: "OI", color: "#0ea5e9" },
 ] as const;
+const CVD_AREA_OPTIONS = {
+  lineColor: FLOW_SERIES_CONFIG[0].color,
+  topColor: "rgba(124,58,237,.22)",
+  bottomColor: "rgba(124,58,237,.02)",
+  lineWidth: 2 as const,
+  priceLineVisible: false,
+  lastValueVisible: false,
+  priceFormat: { type: "custom" as const, formatter: formatMillions },
+};
 const PRICE_FORMAT = { type: "price" as const, precision: 2, minMove: .01 };
 const PRICE_AXIS_MINIMUM_WIDTH = 82;
 
@@ -247,6 +257,7 @@ export function MarketChart({ instrument = "ETH-USDT", interval = "15m", flow }:
   const loadRef = useRef<{ refresh: () => void; older: (start: number) => void }>({ refresh: () => undefined, older: () => undefined });
   const seriesRef = useRef<MarketSeries | null>(null);
   const marketChartRef = useRef<IChartApi | null>(null);
+  const cvdSegmentSeriesRef = useRef<ISeriesApi<"Area">[]>([]);
   const rangeTimer = useRef(0);
   const interactionTimer = useRef(0);
   const internalRangeFrame = useRef(0);
@@ -301,6 +312,8 @@ export function MarketChart({ instrument = "ETH-USDT", interval = "15m", flow }:
     const series = seriesRef.current;
     const data = dataRef.current;
     if (!series) return;
+    for (const extra of cvdSegmentSeriesRef.current) marketChartRef.current?.removeSeries(extra);
+    cvdSegmentSeriesRef.current = [];
     if (!data.candles.length) {
       series.candles.setData([]); series.ema20.setData([]); series.ma60.setData([]);
       series.ma200.setData([]); series.cvd.setData([]); series.oi.setData([]);
@@ -322,9 +335,21 @@ export function MarketChart({ instrument = "ETH-USDT", interval = "15m", flow }:
     series.ema20.setData(ema20);
     series.ma60.setData(ma60);
     series.ma200.setData(ma200);
-    const projectedCvd = flowOnCandleTimeline(data.candles, data.cvd, intervalSeconds(data.interval));
+    const cvdSegments = splitFlowSegments(data.cvd);
+    const projectedCvdSegments = cvdSegments.map(segment =>
+      flowOnCandleTimeline(data.candles, segment, intervalSeconds(data.interval))
+    );
+    const projectedCvd = projectedCvdSegments.flat();
     const projectedOi = flowOnCandleTimeline(data.candles, data.oi, intervalSeconds(data.interval));
-    series.cvd.setData(projectedCvd);
+    const latestCvdSegment = projectedCvdSegments[projectedCvdSegments.length - 1] || [];
+    series.cvd.setData(latestCvdSegment);
+    for (const priorSegment of projectedCvdSegments.slice(0, -1)) {
+      const extra = marketChartRef.current?.addSeries(AreaSeries, CVD_AREA_OPTIONS, 1);
+      if (extra) {
+        extra.setData(priorSegment);
+        cvdSegmentSeriesRef.current.push(extra);
+      }
+    }
     series.oi.setData(projectedOi);
     priceSourcesRef.current = [...PRICE_SERIES_CONFIG, ...FLOW_SERIES_CONFIG].map(config => ({
       ...config,
@@ -360,7 +385,7 @@ export function MarketChart({ instrument = "ETH-USDT", interval = "15m", flow }:
       ema20: chart.addSeries(LineSeries, { color: PRICE_SERIES_CONFIG[1].color, lineWidth: 2, priceLineVisible: false, lastValueVisible: false, priceFormat: PRICE_FORMAT }),
       ma60: chart.addSeries(LineSeries, { color: PRICE_SERIES_CONFIG[2].color, lineWidth: 2, priceLineVisible: false, lastValueVisible: false, priceFormat: PRICE_FORMAT }),
       ma200: chart.addSeries(LineSeries, { color: PRICE_SERIES_CONFIG[3].color, lineWidth: 2, priceLineVisible: false, lastValueVisible: false, priceFormat: PRICE_FORMAT }),
-      cvd: chart.addSeries(AreaSeries, { lineColor: FLOW_SERIES_CONFIG[0].color, topColor: "rgba(124,58,237,.22)", bottomColor: "rgba(124,58,237,.02)", lineWidth: 2, priceLineVisible: false, lastValueVisible: false, priceFormat: { type: "custom", formatter: formatMillions } }, 1),
+      cvd: chart.addSeries(AreaSeries, CVD_AREA_OPTIONS, 1),
       oi: chart.addSeries(AreaSeries, { lineColor: FLOW_SERIES_CONFIG[1].color, topColor: "rgba(14,165,233,.20)", bottomColor: "rgba(14,165,233,.02)", lineWidth: 2, priceLineVisible: false, lastValueVisible: false, priceFormat: { type: "custom", formatter: formatMillions } }, 2),
     };
     const axisLabels = {} as Record<AxisSeriesId, NativePriceAxisLabel>;

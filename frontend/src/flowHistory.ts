@@ -1,4 +1,4 @@
-import { ChartCacheKey, loadChartSnapshot, saveChartSnapshot } from "./chartState";
+import { ChartCacheKey, loadChartSnapshot, loadChartSnapshotMetadata, saveChartSnapshot } from "./chartState";
 import type { components } from "./api/generated";
 
 export type FlowSeriesName = components["schemas"]["FlowHistoryResponse"]["series"];
@@ -8,11 +8,11 @@ export type FlowHistoryPoint =
   & Partial<Pick<
     ContractFlowHistoryPoint,
     "status" | "source_complete" | "partial_after_gap"
-  >>;
+  >> & { segment_start?: boolean };
 type ContractFlowHistoryResponse = components["schemas"]["FlowHistoryResponse"];
 export type FlowHistoryResponse =
   Omit<ContractFlowHistoryResponse, "points">
-  & { points: FlowHistoryPoint[] };
+  & { points: FlowHistoryPoint[]; canonical_version?: string; canonical_generation?: string };
 export type FlowCoverage = Omit<FlowHistoryResponse, "points">;
 export type FlowRangeRequest = {
   instrument: string;
@@ -27,8 +27,8 @@ export type FlowRangeRequest = {
 
 const MEMORY_POINT_LIMIT = 50_000;
 export const FLOW_HISTORY_MAX_POINTS = 500;
-export const CANONICAL_FLOW_SCHEMA_VERSION = "canonical-microstructure-schema-v1";
-export const CANONICAL_FLOW_HISTORY_VERSION = "canonical-microstructure-history-v1";
+export const CANONICAL_FLOW_SCHEMA_VERSION = "canonical-microstructure-schema-v2";
+export const CANONICAL_FLOW_HISTORY_VERSION = "canonical-microstructure-history-v2";
 const memory = new Map<string, FlowHistoryPoint[]>();
 const metadata = new Map<string, FlowCoverage>();
 const inflight = new Map<string, Promise<FlowHistoryResponse>>();
@@ -60,6 +60,20 @@ export function mergeHistoryPoints(
     for (const point of incoming) if (validPoint(point)) byTime.set(point.time, point);
   }
   return [...byTime.values()].sort((a, b) => a.time - b.time).slice(-limit);
+}
+
+export function splitFlowSegments(points: FlowHistoryPoint[]): FlowHistoryPoint[][] {
+  const segments: FlowHistoryPoint[][] = [];
+  let current: FlowHistoryPoint[] = [];
+  for (const point of points) {
+    if (point.segment_start && current.length) {
+      segments.push(current);
+      current = [];
+    }
+    current.push(point);
+  }
+  if (current.length) segments.push(current);
+  return segments;
 }
 
 export function flowStatusAtCandle(
@@ -98,6 +112,11 @@ export function hydrateFlowHistory(instrument: string, timeframe: string, series
   const retained = memory.get(key);
   if (retained?.length) return retained;
   const local = loadChartSnapshot(localKey(instrument, timeframe, series), validPoint);
+  const retainedMetadata = loadChartSnapshotMetadata(localKey(instrument, timeframe, series)) as FlowCoverage | undefined;
+  if (retainedMetadata?.schema_version === CANONICAL_FLOW_SCHEMA_VERSION
+      && retainedMetadata?.history_version === CANONICAL_FLOW_HISTORY_VERSION) {
+    metadata.set(key, retainedMetadata);
+  }
   if (local.length) memory.set(key, local);
   return local;
 }
@@ -111,9 +130,21 @@ export function retainServerHistory(
   response: FlowHistoryResponse,
 ): FlowHistoryPoint[] {
   const key = flowHistoryKey(response.instrument, timeframe, response.series);
-  const current = memory.get(key) || hydrateFlowHistory(response.instrument, timeframe, response.series);
+  const previousCoverage = metadata.get(key);
+  const versionChanged = Boolean(
+    previousCoverage?.canonical_version && response.canonical_version
+    && previousCoverage.canonical_version !== response.canonical_version
+  );
+  const current = versionChanged
+    ? []
+    : memory.get(key) || hydrateFlowHistory(response.instrument, timeframe, response.series);
   if (response.actual_resolution !== timeframe || response.timeframe !== timeframe) return current;
-  if (!response.points.length) return current; // Empty/stale refreshes are non-destructive.
+  const { points: _points, ...coverage } = response;
+  metadata.set(key, coverage);
+  if (!response.points.length) {
+    saveChartSnapshot(localKey(response.instrument, timeframe, response.series), current, validPoint, Date.now(), coverage);
+    return current;
+  }
   // One authoritative response uses one deterministic resolution. Replace
   // only its requested range so cached pages outside the range survive while
   // overlapping points from a different resolution cannot mix semantics.
@@ -122,9 +153,7 @@ export function retainServerHistory(
     : current.filter(point => point.time < response.requested_start || point.time > response.requested_end);
   const merged = mergeHistoryPoints(retainedOutsideRange, response.points);
   memory.set(key, merged);
-  const { points: _points, ...coverage } = response;
-  metadata.set(key, coverage);
-  saveChartSnapshot(localKey(response.instrument, timeframe, response.series), merged, validPoint);
+  saveChartSnapshot(localKey(response.instrument, timeframe, response.series), merged, validPoint, Date.now(), coverage);
   return merged;
 }
 
@@ -236,7 +265,8 @@ export function olderPageRequest(
 }
 
 export function formatFlowCoverage(coverage?: FlowCoverage) {
-  if (!coverage?.has_history || coverage.available_start === null || coverage.available_end === null) return "No persisted coverage";
+  if (!coverage) return "Loading persisted coverage…";
+  if (!coverage.has_history || coverage.available_start === null || coverage.available_end === null) return "No persisted coverage";
   const start = new Date(coverage.available_start * 1000).toISOString().slice(0, 16).replace("T", " ");
   const end = new Date(coverage.available_end * 1000).toISOString().slice(0, 16).replace("T", " ");
   return `${start} – ${end} UTC · ${coverage.resolution || "native"}${coverage.stale ? " · stale" : ""}${coverage.has_gaps ? ` · ${coverage.gap_count} gap${coverage.gap_count === 1 ? "" : "s"}` : ""}`;

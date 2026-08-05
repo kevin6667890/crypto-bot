@@ -23,9 +23,9 @@ from typing import Any, Callable, Iterable, Iterator, Sequence
 
 
 CANONICAL_MICROSTRUCTURE_HISTORY_VERSION = (
-    "canonical-microstructure-history-v1"
+    "canonical-microstructure-history-v2"
 )
-CANONICAL_SCHEMA_VERSION = "canonical-microstructure-schema-v1"
+CANONICAL_SCHEMA_VERSION = "canonical-microstructure-schema-v2"
 INSTRUMENTS = ("BTC-USDT-SWAP", "ETH-USDT-SWAP", "SOL-USDT-SWAP")
 QUALITY_STATUSES = (
     "VALID",
@@ -266,6 +266,29 @@ CREATE TABLE IF NOT EXISTS oi_higher_timeframes(
 );
 CREATE INDEX IF NOT EXISTS idx_oi_higher_query
   ON oi_higher_timeframes(instrument,resolution,bucket_ms);
+CREATE TABLE IF NOT EXISTS bucket_coverage(
+  instrument TEXT NOT NULL,
+  series TEXT NOT NULL CHECK(series IN ('cvd','oi')),
+  resolution TEXT NOT NULL CHECK(resolution IN ('1m','5m','15m','1h','4h','1D')),
+  bucket_ms INTEGER NOT NULL,
+  expected INTEGER NOT NULL CHECK(expected IN (0,1)),
+  observed INTEGER NOT NULL CHECK(observed IN (0,1)),
+  status TEXT NOT NULL CHECK(status IN
+    ('VALID','PARTIAL','PARTIAL_AFTER_GAP','MISSING','UNRECOVERABLE_RAW_GAP',
+     'BACKFILLED_OFFICIAL','ARCHIVED_CONFIRMED','CONFLICT','SOURCE_UNAVAILABLE')),
+  gap_reason TEXT,
+  recoverability TEXT NOT NULL CHECK(recoverability IN
+    ('COMPLETE','PARTIAL','RECOVERABLE','UNRECOVERABLE','CONFLICT')),
+  source_start_ms INTEGER,
+  source_end_ms INTEGER,
+  source_fingerprint TEXT,
+  canonical_version TEXT NOT NULL,
+  generated_commit TEXT NOT NULL,
+  generated_at_ms INTEGER NOT NULL,
+  PRIMARY KEY(instrument,series,resolution,bucket_ms)
+);
+CREATE INDEX IF NOT EXISTS idx_bucket_coverage_query
+  ON bucket_coverage(instrument,series,resolution,bucket_ms);
 CREATE TABLE IF NOT EXISTS daily_reconciliation(
   instrument TEXT NOT NULL,
   series TEXT NOT NULL CHECK(series IN ('cvd','oi')),
@@ -397,6 +420,109 @@ def aggregate_quality(statuses: Sequence[str]) -> tuple[str, str | None]:
     }:
         return "PARTIAL_AFTER_GAP", "EARLIER_RAW_GAP_SAME_UTC_DAY"
     return "PARTIAL", "INCOMPLETE_1M_INPUT"
+
+
+def known_daily_cumulative(
+    bucket_ms: int, delta: float, prior_value: float | None,
+    prior_status: str | None,
+) -> tuple[float, str, str | None]:
+    """Advance the known UTC-day sum without pretending a gap is complete."""
+    if bucket_ms % RESOLUTION_MS["1D"] == 0:
+        return delta, "VALID", None
+    value = (prior_value if prior_value is not None else 0.0) + delta
+    if prior_value is None or prior_status not in {
+        "VALID", "BACKFILLED_OFFICIAL", "ARCHIVED_CONFIRMED",
+    }:
+        return value, "PARTIAL_AFTER_GAP", "EARLIER_RAW_GAP_SAME_UTC_DAY"
+    return value, "VALID", None
+
+
+def _recoverability(status: str) -> str:
+    if status in {"VALID", "BACKFILLED_OFFICIAL", "ARCHIVED_CONFIRMED"}:
+        return "COMPLETE"
+    if status in {"PARTIAL", "PARTIAL_AFTER_GAP"}:
+        return "PARTIAL"
+    if status == "UNRECOVERABLE_RAW_GAP" or status == "SOURCE_UNAVAILABLE":
+        return "UNRECOVERABLE"
+    if status == "CONFLICT":
+        return "CONFLICT"
+    return "RECOVERABLE"
+
+
+def sync_bucket_coverage(
+    connection: sqlite3.Connection, instrument: str, start_ms: int,
+    end_ms: int, generated_commit: str,
+) -> None:
+    """Mirror canonical value/status rows into the complete bucket ledger."""
+    sources = (
+        ("cvd", "1m", "cvd_1m", "signed_delta", "source_min_ts_ms",
+         "source_max_ts_ms", "source_fingerprint", ""),
+        ("oi", "1m", "oi_1m", "confirmed_oi", "observation_ts_ms",
+         "observation_ts_ms", "source_fingerprint", ""),
+    )
+    for series, resolution, table, value, first, last, source_hash, clause in sources:
+        rows = connection.execute(
+            f"""SELECT bucket_ms,{value} value,status,gap_reason,{first} first_ms,
+                       {last} last_ms,{source_hash} source_hash,generated_at_ms
+                  FROM {table} WHERE instrument=? AND bucket_ms>=? AND bucket_ms<?
+                  {clause} ORDER BY bucket_ms""",
+            (instrument, start_ms, end_ms),
+        )
+        for row in rows:
+            status = str(row["status"])
+            connection.execute(
+                """INSERT INTO bucket_coverage VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                   ON CONFLICT(instrument,series,resolution,bucket_ms) DO UPDATE SET
+                     expected=excluded.expected,observed=excluded.observed,
+                     status=excluded.status,gap_reason=excluded.gap_reason,
+                     recoverability=excluded.recoverability,
+                     source_start_ms=excluded.source_start_ms,
+                     source_end_ms=excluded.source_end_ms,
+                     source_fingerprint=excluded.source_fingerprint,
+                     canonical_version=excluded.canonical_version,
+                     generated_commit=excluded.generated_commit,
+                     generated_at_ms=excluded.generated_at_ms""",
+                (instrument, series, resolution, int(row["bucket_ms"]), 1,
+                 int(row["value"] is not None), status, row["gap_reason"],
+                 _recoverability(status), row["first_ms"], row["last_ms"],
+                 row["source_hash"], CANONICAL_MICROSTRUCTURE_HISTORY_VERSION,
+                 generated_commit, int(row["generated_at_ms"])),
+            )
+    for series, table, value, first, last in (
+        ("cvd", "cvd_higher_timeframes", "signed_delta", "source_min_ts_ms",
+         "source_max_ts_ms"),
+        ("oi", "oi_higher_timeframes", "confirmed_oi", "observation_ts_ms",
+         "observation_ts_ms"),
+    ):
+        rows = connection.execute(
+            f"""SELECT resolution,bucket_ms,{value} value,status,gap_reason,
+                       {first} first_ms,{last} last_ms,source_fingerprint,
+                       generated_at_ms
+                  FROM {table} WHERE instrument=? AND bucket_ms>=? AND bucket_ms<?
+                  ORDER BY resolution,bucket_ms""",
+            (instrument, start_ms, end_ms),
+        )
+        for row in rows:
+            status = str(row["status"])
+            connection.execute(
+                """INSERT INTO bucket_coverage VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                   ON CONFLICT(instrument,series,resolution,bucket_ms) DO UPDATE SET
+                     expected=excluded.expected,observed=excluded.observed,
+                     status=excluded.status,gap_reason=excluded.gap_reason,
+                     recoverability=excluded.recoverability,
+                     source_start_ms=excluded.source_start_ms,
+                     source_end_ms=excluded.source_end_ms,
+                     source_fingerprint=excluded.source_fingerprint,
+                     canonical_version=excluded.canonical_version,
+                     generated_commit=excluded.generated_commit,
+                     generated_at_ms=excluded.generated_at_ms""",
+                (instrument, series, str(row["resolution"]), int(row["bucket_ms"]),
+                 1, int(row["value"] is not None), status, row["gap_reason"],
+                 _recoverability(status), row["first_ms"], row["last_ms"],
+                 row["source_fingerprint"],
+                 CANONICAL_MICROSTRUCTURE_HISTORY_VERSION, generated_commit,
+                 int(row["generated_at_ms"])),
+            )
 
 
 class CanonicalHistoryBuilder:
@@ -1171,7 +1297,6 @@ class CanonicalHistoryBuilder:
                     "VALID", "BACKFILLED_OFFICIAL", "ARCHIVED_CONFIRMED"
                 }:
                     day_complete = False
-                    cumulative = None
                     inserts.append((instrument, bucket, "1m", None, None, None,
                                     0, None, None, 0, None, None, date, status,
                                     reason, CANONICAL_MICROSTRUCTURE_HISTORY_VERSION,
@@ -1182,11 +1307,8 @@ class CanonicalHistoryBuilder:
                 sell = float(cell["sell"])
                 delta = buy - sell
                 output_status = status if day_complete else "PARTIAL_AFTER_GAP"
-                if cumulative is None:
-                    daily = None
-                else:
-                    cumulative += delta
-                    daily = cumulative
+                cumulative = (cumulative if cumulative is not None else 0.0) + delta
+                daily = cumulative
                 inserts.append((
                     instrument, bucket, "1m", buy, sell, delta,
                     cell["count"], cell["first"], cell["last"], cell["count"],
@@ -1199,6 +1321,11 @@ class CanonicalHistoryBuilder:
                 "INSERT INTO cvd_1m VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                 inserts,
             )
+            if inserts:
+                sync_bucket_coverage(
+                    out, instrument, int(inserts[0][1]), int(inserts[-1][1]) + 60_000,
+                    self.identity.generated_commit,
+                )
             if official_audit:
                 file_fingerprint = fingerprint([
                     [item["path"], item["sha256"], item["row_count"]]
@@ -1462,9 +1589,7 @@ class CanonicalHistoryBuilder:
                         row["signed_delta"] is not None for row in rows)
                     if not complete and quality == "VALID":
                         quality, reason = "PARTIAL", "MISSING_REQUIRED_1M_BUCKET"
-                    usable = complete and quality in {
-                        "VALID", "BACKFILLED_OFFICIAL", "ARCHIVED_CONFIRMED"
-                    }
+                    usable = complete
                     out.execute(
                         "INSERT INTO cvd_higher_timeframes VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                         (instrument, resolution, bucket,
@@ -1476,7 +1601,8 @@ class CanonicalHistoryBuilder:
                          max(int(row["source_max_ts_ms"]) for row in rows) if usable else None,
                          sum(int(row["source_row_count"]) for row in rows) if usable else 0,
                          fingerprint([row["source_fingerprint"] for row in rows]) if usable else None,
-                         rows[-1]["daily_cumulative"] if usable else None,
+                         rows[-1]["daily_cumulative"]
+                         if complete and rows[-1]["daily_cumulative"] is not None else None,
                          quality, reason, CANONICAL_MICROSTRUCTURE_HISTORY_VERSION,
                          self.identity.generated_commit, self.identity.generated_at_ms),
                     )
@@ -1503,6 +1629,10 @@ class CanonicalHistoryBuilder:
                     )
                 counts[f"cvd:{resolution}"] = len(cvd_groups)
                 counts[f"oi:{resolution}"] = len(oi_groups)
+            sync_bucket_coverage(
+                out, instrument, 0, self.identity.source_watermark_ms + 1,
+                self.identity.generated_commit,
+            )
             self.destination.checkpoint(
                 out, "higher", instrument, self.identity.source_watermark_ms,
                 "COMPLETE", counts,

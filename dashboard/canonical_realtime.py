@@ -13,7 +13,9 @@ from .canonical_microstructure_history import (
     RESOLUTION_MS,
     aggregate_quality,
     fingerprint,
+    known_daily_cumulative,
     now_ms,
+    sync_bucket_coverage,
 )
 
 
@@ -116,20 +118,28 @@ class CanonicalRealtimeWriter:
             self._insert_once(output, "cvd_1m", (instrument, bucket), source_hash, values)
             return
         delta = float(aggregate["delta"])
-        if bucket % 86_400_000 == 0:
-            daily, quality = delta, "VALID"
-        else:
-            prior = output.execute(
-                """SELECT daily_cumulative,status FROM cvd_1m
-                   WHERE instrument=? AND bucket_ms=?""",
-                (instrument, bucket - MINUTE_MS),
-            ).fetchone()
-            if (prior is None or prior["daily_cumulative"] is None
-                    or str(prior["status"]) not in VALID_INPUT):
-                daily, quality = None, "PARTIAL_AFTER_GAP"
-                reason = "EARLIER_RAW_GAP_SAME_UTC_DAY"
-            else:
-                daily, quality = float(prior["daily_cumulative"]) + delta, "VALID"
+        day_start = bucket - bucket % 86_400_000
+        prior = output.execute(
+            """SELECT daily_cumulative,status FROM cvd_1m
+               WHERE instrument=? AND bucket_ms>=? AND bucket_ms<?
+                 AND daily_cumulative IS NOT NULL
+               ORDER BY bucket_ms DESC LIMIT 1""",
+            (instrument, day_start, bucket),
+        ).fetchone()
+        daily, quality, reason = known_daily_cumulative(
+            bucket, delta,
+            float(prior["daily_cumulative"]) if prior is not None else None,
+            str(prior["status"]) if prior is not None else None,
+        )
+        immediate = output.execute(
+            "SELECT status FROM cvd_1m WHERE instrument=? AND bucket_ms=?",
+            (instrument, bucket - MINUTE_MS),
+        ).fetchone()
+        if bucket % 86_400_000 and (
+            immediate is None or str(immediate["status"]) not in VALID_INPUT
+        ):
+            quality = "PARTIAL_AFTER_GAP"
+            reason = "EARLIER_RAW_GAP_SAME_UTC_DAY"
         values = (
             instrument, bucket, "1m", float(aggregate["buy_notional"]),
             float(aggregate["sell_notional"]), delta,
@@ -166,7 +176,7 @@ class CanonicalRealtimeWriter:
                       CANONICAL_MICROSTRUCTURE_HISTORY_VERSION, generated_at)
         self._insert_once(output, "oi_1m", (instrument, bucket), source_hash, values)
 
-    def _derive(
+    def _derive_cvd(
         self, output: sqlite3.Connection, instrument: str, resolution: str,
         bucket: int, generated_at: int,
     ) -> None:
@@ -177,13 +187,8 @@ class CanonicalRealtimeWriter:
                AND bucket_ms<? ORDER BY bucket_ms""",
             (instrument, bucket, bucket + width),
         ))
-        oi = list(output.execute(
-            """SELECT * FROM oi_1m WHERE instrument=? AND bucket_ms>=?
-               AND bucket_ms<? ORDER BY bucket_ms""",
-            (instrument, bucket, bucket + width),
-        ))
         cvd_quality, cvd_reason = aggregate_quality([str(row["status"]) for row in cvd])
-        cvd_usable = (len(cvd) == expected and cvd_quality in VALID_INPUT
+        cvd_usable = (len(cvd) == expected
                       and all(row["signed_delta"] is not None for row in cvd))
         if not cvd_usable and cvd_quality == "VALID":
             cvd_quality, cvd_reason = "PARTIAL", "MISSING_REQUIRED_1M_BUCKET"
@@ -204,6 +209,18 @@ class CanonicalRealtimeWriter:
              cvd_quality, cvd_reason, CANONICAL_MICROSTRUCTURE_HISTORY_VERSION,
              self.generated_commit, generated_at),
         )
+
+    def _derive_oi(
+        self, output: sqlite3.Connection, instrument: str, resolution: str,
+        bucket: int, generated_at: int,
+    ) -> None:
+        width = RESOLUTION_MS[resolution]
+        expected = width // MINUTE_MS
+        oi = list(output.execute(
+            """SELECT * FROM oi_1m WHERE instrument=? AND bucket_ms>=?
+               AND bucket_ms<? ORDER BY bucket_ms""",
+            (instrument, bucket, bucket + width),
+        ))
         oi_quality, oi_reason = aggregate_quality([str(row["status"]) for row in oi])
         oi_usable = (len(oi) == expected and oi_quality in VALID_INPUT
                      and all(row["confirmed_oi"] is not None for row in oi))
@@ -223,17 +240,41 @@ class CanonicalRealtimeWriter:
              generated_at),
         )
 
-    def sync(self, instrument: str, start_ms: int, end_ms: int) -> dict[str, int]:
+    @staticmethod
+    def _isolated(
+        output: sqlite3.Connection, name: str, operation: Any,
+        errors: list[dict[str, str]],
+    ) -> None:
+        savepoint = "series_" + name.replace("-", "_").replace(":", "_")
+        output.execute(f"SAVEPOINT {savepoint}")
+        try:
+            operation()
+            output.execute(f"RELEASE {savepoint}")
+        except Exception as error:
+            output.execute(f"ROLLBACK TO {savepoint}")
+            output.execute(f"RELEASE {savepoint}")
+            errors.append({"lane": name, "exception": f"{type(error).__name__}: {error}"})
+
+    def sync(self, instrument: str, start_ms: int, end_ms: int) -> dict[str, Any]:
         start = start_ms // MINUTE_MS * MINUTE_MS
         end = end_ms // MINUTE_MS * MINUTE_MS
         lower = max(start, (self.immutable_watermark_ms // MINUTE_MS + 1) * MINUTE_MS)
         if end <= lower:
             return {"minutes": 0, "higher_buckets": 0}
         generated_at = now_ms()
+        errors: list[dict[str, str]] = []
         with self._source() as source, self._canonical() as output:
             for bucket in range(lower, end, MINUTE_MS):
-                self._append_cvd(source, output, instrument, bucket, generated_at)
-                self._append_oi(source, output, instrument, bucket, generated_at)
+                self._isolated(
+                    output, f"cvd_{bucket}",
+                    lambda b=bucket: self._append_cvd(
+                        source, output, instrument, b, generated_at), errors,
+                )
+                self._isolated(
+                    output, f"oi_{bucket}",
+                    lambda b=bucket: self._append_oi(
+                        source, output, instrument, b, generated_at), errors,
+                )
             higher = 0
             for resolution, width in RESOLUTION_MS.items():
                 if resolution == "1m":
@@ -241,15 +282,51 @@ class CanonicalRealtimeWriter:
                 first = lower // width * width
                 for bucket in range(first, end, width):
                     if bucket + width <= end:
-                        self._derive(output, instrument, resolution, bucket, generated_at)
+                        self._isolated(
+                            output, f"cvd_{resolution}_{bucket}",
+                            lambda r=resolution, b=bucket: self._derive_cvd(
+                                output, instrument, r, b, generated_at), errors,
+                        )
+                        self._isolated(
+                            output, f"oi_{resolution}_{bucket}",
+                            lambda r=resolution, b=bucket: self._derive_oi(
+                                output, instrument, r, b, generated_at), errors,
+                        )
                         higher += 1
+            sync_bucket_coverage(
+                output, instrument, lower, end, self.generated_commit,
+            )
             output.execute(
                 """INSERT INTO rebuild_checkpoints VALUES(?,?,?,?,?,?)
                    ON CONFLICT(stage,instrument) DO UPDATE SET
                    cursor_ms=excluded.cursor_ms,status=excluded.status,
                    detail_json=excluded.detail_json,updated_at_ms=excluded.updated_at_ms""",
-                ("realtime-continuation", instrument, end, "COMPLETE",
-                 json.dumps({"start_ms": lower, "end_ms": end}, sort_keys=True),
+                ("realtime-continuation", instrument, end,
+                 "PARTIAL" if errors else "COMPLETE",
+                 json.dumps({"start_ms": lower, "end_ms": end,
+                             "errors": errors}, sort_keys=True),
                  generated_at),
             )
-        return {"minutes": (end - lower) // MINUTE_MS, "higher_buckets": higher}
+            latest_by_series = {
+                "cvd": output.execute(
+                    "SELECT MAX(bucket_ms) FROM cvd_1m WHERE instrument=? AND signed_delta IS NOT NULL",
+                    (instrument,),
+                ).fetchone()[0],
+                "oi": output.execute(
+                    "SELECT MAX(bucket_ms) FROM oi_1m WHERE instrument=? AND confirmed_oi IS NOT NULL",
+                    (instrument,),
+                ).fetchone()[0],
+            }
+            for series, table in (("cvd", "cvd_higher_timeframes"),
+                                  ("oi", "oi_higher_timeframes")):
+                for resolution in RESOLUTION_MS:
+                    if resolution == "1m":
+                        continue
+                    row = output.execute(
+                        f"SELECT MAX(bucket_ms) FROM {table} WHERE instrument=? AND resolution=?",
+                        (instrument, resolution),
+                    ).fetchone()
+                    latest_by_series[f"{series}:{resolution}"] = row[0] if row else None
+        return {"minutes": (end - lower) // MINUTE_MS,
+                "higher_buckets": higher, "errors": errors,
+                "latest_by_series": latest_by_series}

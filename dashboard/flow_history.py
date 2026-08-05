@@ -34,7 +34,7 @@ DEFAULT_MAX_POINTS = 1200
 MAX_POINT_BUDGET = 5000
 MIGRATION_BATCH_SECONDS = 7 * 86400
 STALE_AFTER_SECONDS = 90
-CANONICAL_HISTORY_SCHEMA_VERSION = "canonical-microstructure-schema-v1"
+CANONICAL_HISTORY_SCHEMA_VERSION = "canonical-microstructure-schema-v2"
 TIMEFRAME_SECONDS = {
     "1m": 60, "5m": 300, "15m": 900, "1h": 3600,
     "4h": 14_400, "1D": 86_400,
@@ -42,6 +42,10 @@ TIMEFRAME_SECONDS = {
 CANONICAL_RESOLUTIONS = (60, 300, 900, 3600, 14400, 86400)
 POINT_STATUSES = {
     "VALID", "WHITESPACE", "PARTIAL_AFTER_GAP", "ARCHIVED_CONFIRMED",
+}
+STALE_GRACE_SECONDS = {
+    "1m": 90, "5m": 120, "15m": 180, "1h": 300,
+    "4h": 600, "1D": 1800,
 }
 
 
@@ -151,11 +155,6 @@ class CanonicalFlowHistoryStore:
                 runs[-1]["end"] = timestamp
         return runs
 
-    @staticmethod
-    def _stale_buckets(timeframe: str) -> int:
-        value = int(os.getenv(f"FLOW_HISTORY_STALE_BUCKETS_{timeframe}", "3"))
-        return max(1, min(value, 20))
-
     def _query_canonical_v1(
         self, connection: sqlite3.Connection, instrument: str, series: str,
         *, timeframe: str, requested_start: int, requested_end: int,
@@ -240,6 +239,10 @@ class CanonicalFlowHistoryStore:
                 }
                 if series == "cvd":
                     point["delta"] = float(row["delta"])
+                    point["segment_start"] = (
+                        bucket % 86_400 == 0
+                        or bool(points and points[-1]["status"] == "WHITESPACE")
+                    )
                 points.append(point)
         gaps = self._gap_runs(points, resolution)
         history_version_row = connection.execute(
@@ -247,8 +250,13 @@ class CanonicalFlowHistoryStore:
         ).fetchone()
         history_version = (json.loads(history_version_row[0])
                            if history_version_row else None)
-        stale_after = resolution * self._stale_buckets(timeframe)
-        stale = available_end is None or now - (available_end + resolution) > stale_after
+        commit_row = connection.execute(
+            "SELECT value_json FROM canonical_metadata WHERE key='generated_commit'"
+        ).fetchone()
+        generated_commit = json.loads(commit_row[0]) if commit_row else "unknown"
+        canonical_version = f"{history_version}:{str(generated_commit)[:12]}"
+        stale_after = resolution + STALE_GRACE_SECONDS[timeframe]
+        stale = available_end is None or now > available_end + stale_after
         statuses = {str(point.get("quality_status")) for point in points}
         overall_status = (
             "CONFLICT" if "CONFLICT" in statuses else
@@ -261,10 +269,17 @@ class CanonicalFlowHistoryStore:
         )
         first = points[0]["time"] if points else None
         last = points[-1]["time"] if points else None
+        observed_points = sum("value" in point for point in points)
+        quality_counts: dict[str, int] = {}
+        for point in points:
+            quality = str(point.get("quality_status") or point["status"])
+            quality_counts[quality] = quality_counts.get(quality, 0) + 1
         return {
             "api_version": HISTORY_API_VERSION,
             "schema_version": CANONICAL_HISTORY_SCHEMA_VERSION,
             "history_version": history_version,
+            "canonical_version": canonical_version,
+            "canonical_generation": str(generated_commit),
             "instrument": instrument, "canonical_instrument": canonical,
             "series": series, "cvd_mode": cvd_mode if series == "cvd" else None,
             "timeframe": timeframe, "requested_resolution": timeframe,
@@ -281,6 +296,14 @@ class CanonicalFlowHistoryStore:
             "gap_reason": gaps[0]["gap_reason"] if gaps else None,
             "source_coverage": {"start": available_start, "end": available_end,
                                 "confirmed_end": confirmed_end},
+            "coverage": {
+                "expected_buckets": len(points),
+                "observed_buckets": observed_points,
+                "missing_buckets": len(points) - observed_points,
+                "quality_counts": quality_counts,
+                "resolution": timeframe,
+                "canonical_version": canonical_version,
+            },
             "returned_point_count": len(points),
             "has_history": any("value" in point for point in points),
             "has_more_before": bool(first is not None and available_start is not None
@@ -290,7 +313,7 @@ class CanonicalFlowHistoryStore:
             "next_before_cursor": (_encode_cursor(instrument, series, int(first), timeframe)
                                    if first is not None and available_start is not None
                                    and available_start < int(first) else None),
-            "source": "canonical-microstructure-history-v1",
+            "source": history_version,
             "aggregate_available": True, "has_gaps": bool(gaps),
             "gap_count": len(gaps), "gaps": gaps[:100],
             "fallback": False, "points": points,

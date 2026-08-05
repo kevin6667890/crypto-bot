@@ -782,11 +782,14 @@ export interface components {
             source_fingerprint?: string | null;
             source_complete: boolean;
             partial_after_gap: boolean;
+            segment_start?: boolean;
         };
         FlowHistoryResponse: {
             api_version: string;
             schema_version: string;
             history_version: string;
+            canonical_version?: string;
+            canonical_generation?: string;
             instrument: string;
             /** @enum {string} */
             series: "cvd" | "oi";
@@ -810,6 +813,9 @@ export interface components {
             status: string;
             gap_reason: string | null;
             source_coverage: {
+                [key: string]: unknown;
+            };
+            coverage?: {
                 [key: string]: unknown;
             };
             data_as_of: components["schemas"]["UnixSeconds"] | null;

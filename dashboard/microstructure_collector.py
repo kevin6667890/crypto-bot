@@ -170,6 +170,9 @@ class Collector:
             realtime_aggregation_task_exception=None,
             realtime_aggregation_task_restart_count=0,
             realtime_aggregation_consecutive_failures=0,
+            canonical_task_status_by_instrument_series={},
+            canonical_timestamp_by_instrument_series={},
+            canonical_last_exception_by_instrument_series={},
         )
         self.stop_event = asyncio.Event()
         self.realtime_catchup_event = asyncio.Event()
@@ -195,6 +198,9 @@ class Collector:
         self.raw_timestamp_by_instrument_series: dict[str, dict[str, int]] = {}
         self.aggregated_timestamp_by_instrument_series: dict[
             str, dict[str, int]] = {}
+        self.canonical_timestamp_by_instrument_series: dict[str, dict[str, int]] = {}
+        self.canonical_task_status_by_instrument_series: dict[str, dict[str, str]] = {}
+        self.canonical_last_exception_by_instrument_series: dict[str, dict[str, str | None]] = {}
         self.pressure = PressureHysteresis()
         canonical_path = os.getenv("CANONICAL_MICROSTRUCTURE_HISTORY_DB_PATH")
         self.canonical_realtime_writer = (
@@ -427,6 +433,29 @@ class Collector:
                 result["canonical"] = await asyncio.to_thread(
                     self.canonical_realtime_writer.sync,
                     instrument, position, batch_end,
+                )
+                canonical = result["canonical"]
+                lane_errors = {
+                    str(item.get("lane")): str(item.get("exception"))
+                    for item in canonical.get("errors", [])
+                }
+                timestamps = self.canonical_timestamp_by_instrument_series.setdefault(instrument, {})
+                statuses = self.canonical_task_status_by_instrument_series.setdefault(instrument, {})
+                exceptions = self.canonical_last_exception_by_instrument_series.setdefault(instrument, {})
+                for series, timestamp in canonical.get("latest_by_series", {}).items():
+                    if timestamp is not None:
+                        timestamps[str(series)] = int(timestamp)
+                    matching = [value for lane, value in lane_errors.items()
+                                if lane.startswith(f"{series.split(':')[0]}_")]
+                    statuses[str(series)] = "ERROR" if matching else "LIVE"
+                    exceptions[str(series)] = matching[0] if matching else None
+                self.store.update_operational_metrics(
+                    canonical_timestamp_by_instrument_series={
+                        key: dict(value) for key, value in self.canonical_timestamp_by_instrument_series.items()},
+                    canonical_task_status_by_instrument_series={
+                        key: dict(value) for key, value in self.canonical_task_status_by_instrument_series.items()},
+                    canonical_last_exception_by_instrument_series={
+                        key: dict(value) for key, value in self.canonical_last_exception_by_instrument_series.items()},
                 )
             duration_ms = int((time.monotonic() - started) * 1000)
             if duration_ms > 1_000:

@@ -231,6 +231,39 @@ def test_liveness_reports_canonical_cvd_lane_failure_independently(
     assert health["canonical_lagged_series"] == [f"{INSTRUMENT}:cvd"]
 
 
+def test_liveness_does_not_age_current_completed_higher_timeframes(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    current = 10 * DAY_MS + 12 * 3_600_000 + 30_000
+    monkeypatch.setattr("dashboard.microstructure.now_ms", lambda: current)
+    widths = {
+        "cvd": 60_000, "oi": 60_000, "cvd:5m": 300_000,
+        "oi:5m": 300_000, "cvd:15m": 900_000, "oi:15m": 900_000,
+        "cvd:1h": 3_600_000, "oi:1h": 3_600_000,
+        "cvd:4h": 14_400_000, "oi:4h": 14_400_000,
+        "cvd:1D": DAY_MS, "oi:1D": DAY_MS,
+    }
+    timestamps = {
+        series: current // width * width - width
+        for series, width in widths.items()
+    }
+    value = store(tmp_path)
+    value.update_operational_metrics(
+        realtime_aggregation_enabled=True,
+        realtime_aggregation_task_alive=True,
+        realtime_aggregation_status="LIVE",
+        canonical_task_status_by_instrument_series={
+            INSTRUMENT: {series: "LIVE" for series in timestamps}},
+        canonical_timestamp_by_instrument_series={INSTRUMENT: timestamps},
+    )
+
+    health = value.liveness()
+
+    assert health["realtime_aggregation_health"] == "HEALTHY"
+    assert health["canonical_lagged_series"] == []
+    assert set(health["canonical_lag_seconds_by_series"].values()) == {0}
+
+
 def test_liveness_detects_dead_task_as_degraded(tmp_path: Path) -> None:
     value = store(tmp_path)
     value.update_operational_metrics(

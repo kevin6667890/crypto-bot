@@ -15,6 +15,9 @@ from typing import Any, Iterable, Mapping
 ROUTER_VERSION = "strategy-router-v2"
 DEFINITIONS_VERSION = "strategy-family-definitions-v2.1"
 PARAMETER_SET_VERSION = "strategy-router-parameters-v2.1"
+LIFECYCLE_IDENTITY_CONTRACT_VERSION = "lifecycle-identity-contract-v1"
+SETUP_ANCHOR_VERSION = "strategy-setup-anchor-v1"
+LEVEL_CONTINUITY_IDENTITY_VERSION = "level-continuity-identity-v1"
 FAMILY_VERSIONS = {
     "TREND_PULLBACK": "trend-pullback-v2",
     "MA200_MEAN_REVERSION": "ma200-mean-reversion-v2",
@@ -98,6 +101,50 @@ class StrategyIdentityV2:
     level_identity: str
     setup_started_at: int | None
     trigger_timestamp: int | None
+    strategy_setup_anchor_id: str | None = None
+    level_continuity_id: str | None = None
+    lifecycle_setup_key: str | None = None
+    lifecycle_identity_contract_version: str = LIFECYCLE_IDENTITY_CONTRACT_VERSION
+    segment_identity: str | None = None
+
+
+def exact_level_identity(level: Mapping[str, Any] | None) -> str:
+    """Snapshot-exact level identity retained for audit compatibility."""
+    return stable_hash({"type": level.get("level_type"), "timeframe": level.get("timeframe"),
+                        "boundary": level.get("boundary"), "sources": level.get("source_timestamps")}) \
+        if level else stable_hash({"level": "NONE"})
+
+
+def level_continuity_identity(instrument: str, level: Mapping[str, Any] | None) -> str:
+    """Structural identity that deliberately excludes moving snapshot facts."""
+    if not level:
+        payload: dict[str, Any] = {"level": "NONE"}
+    else:
+        level_type = str(level.get("level_type", "UNKNOWN"))
+        timeframe = str(level.get("timeframe", "UNKNOWN"))
+        members = tuple(sorted(str(item) for item in
+                               level.get("level_continuity_sources", ()) if item))
+        if level_type == "CONFLUENCE_ZONE" and members:
+            payload = {"kind": "CONFLUENCE_ZONE", "members": members}
+        elif level_type.startswith(("EMA", "MA", "BOLLINGER_", "VPVR_")):
+            payload = {"kind": "DYNAMIC_INDICATOR", "type": level_type,
+                       "timeframe": timeframe}
+        elif level_type in {"SWING_HIGH", "SWING_LOW"}:
+            sources = tuple(int(item) for item in level.get("source_timestamps", ()) if item is not None)
+            payload = {"kind": "CONFIRMED_SWING", "type": level_type,
+                       "timeframe": timeframe,
+                       "anchor_timestamp": min(sources) if sources else None}
+        elif level_type == "PSYCHOLOGICAL_ROUND":
+            payload = {"kind": "PSYCHOLOGICAL", "price": level.get("boundary")}
+        elif members:
+            payload = {"kind": "STRUCTURAL_MEMBERS", "type": level_type,
+                       "timeframe": timeframe, "members": members}
+        else:
+            payload = {"kind": "STRUCTURAL_LEVEL", "type": level_type,
+                       "timeframe": timeframe,
+                       "sources": tuple(level.get("source_timestamps", ()))}
+    return stable_hash({"version": LEVEL_CONTINUITY_IDENTITY_VERSION,
+                        "instrument": instrument, "level": payload})
 
 
 @dataclass(frozen=True)
@@ -469,8 +516,13 @@ class StrategyLifecycleV2:
                                 expires_at, int(rearm_after) if rearm_after else None)
         transition = None
         if prior != desired:
-            key = stable_hash({"setup": candidate.identity.strategy_setup_id, "from": prior, "to": desired, "at": now})
-            transition = StrategyTransitionV2(candidate.identity.strategy_setup_id, prior, desired, now, reason, key)
+            setup_key = (candidate.identity.lifecycle_setup_key or
+                         candidate.identity.strategy_setup_anchor_id or
+                         candidate.identity.strategy_setup_id)
+            key = stable_hash({"setup": setup_key, "from": prior, "to": desired, "at": now})
+            transition = StrategyTransitionV2(
+                candidate.identity.strategy_setup_anchor_id or candidate.identity.strategy_setup_id,
+                prior, desired, now, reason, key)
         return stage, transition
 
 
@@ -482,7 +534,8 @@ class StrategyRouterV2:
               previous_route: Mapping[str, Any] | None = None,
               family: str | None = None, direction: str | None = None,
               parameter_set_id: str | None = None,
-              parameter_set: Mapping[str, Any] | None = None) -> dict[str, Any]:
+              parameter_set: Mapping[str, Any] | None = None,
+              segment_identity: str | None = None) -> dict[str, Any]:
         if context.get("version") != "market-analysis-context-v2":
             raise ValueError("context version must be market-analysis-context-v2")
         if state.get("version") != "market-state-engine-v2":
@@ -513,12 +566,21 @@ class StrategyRouterV2:
             (item_family, item_direction) for item_family in TRADE_FAMILIES for item_direction in ("LONG", "SHORT"))
         for item_family, item_direction in requested:
             prior = previous_candidates.get((item_family, item_direction))
+            prior_state = str((prior or {}).get("state", "INELIGIBLE"))
+            rearm_after = (prior or {}).get("stage", {}).get("rearm_after")
+            terminal = prior_state in {"INVALIDATED", "EXPIRED"} or (
+                prior_state == "COOLDOWN_RESEARCH_ONLY" and rearm_after is not None
+                and as_of >= int(rearm_after))
             candidate = self._evaluate(item_family, item_direction, context, state,
                                        parameter_set_id=parameter_set_id,
                                        parameter_set=parameter_set,
-                                       previous_candidate=prior)
-            if prior and (
-                prior.get("identity", {}).get("level_identity") != candidate.identity.level_identity
+                                       previous_candidate=None if terminal else prior,
+                                       segment_identity=segment_identity)
+            prior_identity = (prior or {}).get("identity", {})
+            prior_level_continuity = (prior_identity.get("level_continuity_id") or
+                                      prior_identity.get("level_identity"))
+            if prior and (terminal or
+                prior_level_continuity != candidate.identity.level_continuity_id
                 or prior.get("identity", {}).get("configuration_hash") != candidate.identity.configuration_hash
                 or prior.get("identity", {}).get("instrument") != candidate.identity.instrument
             ):
@@ -526,14 +588,19 @@ class StrategyRouterV2:
             if prior:
                     prior_identity = prior["identity"]
                     started = prior.get("stage", {}).get("setup_started_at")
+                    anchor_id = (prior_identity.get("strategy_setup_anchor_id") or
+                                 prior_identity["strategy_setup_id"])
+                    lifecycle_key = (prior_identity.get("lifecycle_setup_key") or anchor_id)
                     evaluation_id = stable_hash({
-                        "setup_id": prior_identity["strategy_setup_id"], "as_of": as_of,
+                        "setup_anchor_id": anchor_id, "as_of": as_of,
                         "source_timestamps": candidate.source_timestamps,
                         "trigger_timestamp": candidate.stage.trigger_timestamp,
                     })
                     identity = StrategyIdentityV2(**{
                         **candidate.identity.__dict__,
-                        "strategy_setup_id": prior_identity["strategy_setup_id"],
+                        "strategy_setup_id": anchor_id,
+                        "strategy_setup_anchor_id": anchor_id,
+                        "lifecycle_setup_key": lifecycle_key,
                         "strategy_evaluation_id": evaluation_id,
                         "setup_started_at": started,
                     })
@@ -586,7 +653,8 @@ class StrategyRouterV2:
     def _evaluate(self, family: str, direction: str, context: Mapping[str, Any], state: Mapping[str, Any], *,
                   parameter_set_id: str | None = None,
                   parameter_set: Mapping[str, Any] | None = None,
-                  previous_candidate: Mapping[str, Any] | None = None) -> StrategyCandidateV2:
+                  previous_candidate: Mapping[str, Any] | None = None,
+                  segment_identity: str | None = None) -> StrategyCandidateV2:
         effective_parameters = dict(PARAMETERS)
         if parameter_set:
             effective_parameters.update(parameter_set)
@@ -642,8 +710,10 @@ class StrategyRouterV2:
             oversold = _momentum(state, "15m") == ("OVERSOLD" if direction == "LONG" else "OVERBOUGHT") or _momentum(state, "1H") == ("OVERSOLD" if direction == "LONG" else "OVERBOUGHT")
             recovered = _momentum(state, "15m") in ({"RECOVERING_FROM_OVERSOLD", "BULLISH"} if direction == "LONG" else {"ROLLING_OVER_FROM_OVERBOUGHT", "BEARISH"})
             raw_reclaimed = bool(level and (level.get("reclaim_status") not in {None, "", "NOT_RECLAIMED"} or level.get("interaction_type") == "REJECTED"))
-            current_level_identity = stable_hash({"type": level.get("level_type"), "timeframe": level.get("timeframe"), "boundary": level.get("boundary"), "sources": level.get("source_timestamps")}) if level else stable_hash({"level": "NONE"})
-            same_level = bool(previous_candidate and previous_candidate.get("identity", {}).get("level_identity") == current_level_identity)
+            current_level_identity = level_continuity_identity(str(context["instrument"]), level)
+            prior_level_identity = ((previous_candidate or {}).get("identity", {}).get("level_continuity_id") or
+                                    (previous_candidate or {}).get("identity", {}).get("level_identity"))
+            same_level = bool(previous_candidate and prior_level_identity == current_level_identity)
             prior_reclaims = int((previous_candidate or {}).get("parameter_progress", {}).get("reclaim_confirmations", 0)) if same_level else 0
             reclaim_confirmations = prior_reclaims + 1 if raw_reclaimed else 0
             required_reclaims = int(effective_parameters.get("reclaim_bars", 1))
@@ -727,23 +797,42 @@ class StrategyRouterV2:
         if not geometry.valid and desired == "TRIGGER_READY":
             desired = "WATCH"
         sources = _all_source_timestamps(context, state)
-        level_identity = stable_hash({"type": level.get("level_type"), "timeframe": level.get("timeframe"), "boundary": level.get("boundary"), "sources": level.get("source_timestamps")}) if level else stable_hash({"level": "NONE"})
-        event_timestamps = [int((level or {})[key]) for key in
-                            ("breakout_timestamp", "confirmation_timestamp", "reclaim_timestamp")
-                            if (level or {}).get(key) is not None]
-        setup_started = (max(event_timestamps) if event_timestamps else int(context["as_of"])) if desired not in {"INELIGIBLE", "INVALIDATED"} else None
+        level_identity = exact_level_identity(level)
+        level_continuity_id = level_continuity_identity(str(context["instrument"]), level)
+        setup_started = int(context["as_of"]) if desired not in {"INELIGIBLE", "INVALIDATED"} else None
         trigger_ts = int(context["as_of"]) if desired == "TRIGGER_READY" else None
         configuration_hash = stable_hash({"definitions": DEFINITIONS_VERSION, "parameters": effective_parameters,
                                           "parameter_set_id": parameter_set_id, "family": family,
                                           "direction": direction})
         family_id = stable_hash({"family": family, "direction": direction, "strategy_version": FAMILY_VERSIONS[family], "definitions": DEFINITIONS_VERSION, "parameters": PARAMETER_SET_VERSION})
-        setup_id = stable_hash({"family_id": family_id, "instrument": context["instrument"], "timeframes": TIMEFRAME_ROLES, "level_identity": level_identity, "setup_started_at": setup_started, "configuration_hash": configuration_hash,
-                                "parameter_set_id": parameter_set_id})
-        evaluation_id = stable_hash({"setup_id": setup_id, "as_of": context["as_of"], "source_timestamps": sources, "trigger_timestamp": trigger_ts})
+        setup_anchor = stable_hash({
+            "version": SETUP_ANCHOR_VERSION, "family_id": family_id,
+            "instrument": context["instrument"], "family": family, "direction": direction,
+            "strategy_version": FAMILY_VERSIONS[family], "timeframes": TIMEFRAME_ROLES,
+            "level_continuity_id": level_continuity_id,
+            "setup_first_confirmed_at": setup_started,
+            "configuration_hash": configuration_hash, "parameter_set_id": parameter_set_id,
+            "segment_identity": segment_identity,
+        }) if setup_started is not None else None
+        # New snapshots use the stable anchor as setup_id so legacy event/dedup
+        # consumers also receive continuity without losing exact level evidence.
+        setup_id = setup_anchor or stable_hash({
+            "family_id": family_id, "instrument": context["instrument"],
+            "timeframes": TIMEFRAME_ROLES, "level_identity": level_identity,
+            "setup_started_at": setup_started, "configuration_hash": configuration_hash,
+            "parameter_set_id": parameter_set_id})
+        lifecycle_key = stable_hash({"version": LIFECYCLE_IDENTITY_CONTRACT_VERSION,
+                                     "setup_anchor": setup_anchor}) if setup_anchor else None
+        evaluation_id = stable_hash({"setup_anchor_id": setup_anchor or setup_id,
+                                     "as_of": context["as_of"],
+                                     "source_timestamps": sources,
+                                     "trigger_timestamp": trigger_ts})
         identity = StrategyIdentityV2(family_id, setup_id, evaluation_id, configuration_hash, family, direction,
                                       FAMILY_VERSIONS[family], DEFINITIONS_VERSION, PARAMETER_SET_VERSION,
                                       str(context["instrument"]), "15m", "1H", "4H", ("1D", "1W"), sources,
-                                      level_identity, setup_started, trigger_ts)
+                                      level_identity, setup_started, trigger_ts,
+                                      setup_anchor, level_continuity_id, lifecycle_key,
+                                      LIFECYCLE_IDENTITY_CONTRACT_VERSION, segment_identity)
         available_evidence = supporting + conflicting
         agreement = len(supporting) / len(available_evidence) if available_evidence else 0
         completeness = score / 100

@@ -932,6 +932,10 @@ class CanonicalHistoryBuilder:
     def _source_bounds(
         self, source: sqlite3.Connection, table: str, instrument: str,
     ) -> tuple[int, int, int] | None:
+        if source.execute(
+            "SELECT 1 FROM sqlite_schema WHERE type='table' AND name=?", (table,),
+        ).fetchone() is None:
+            return None
         row = source.execute(
             f"""SELECT MIN(source_ts_ms),MAX(source_ts_ms),COUNT(*)
                 FROM {table} WHERE instrument=? AND state='confirmed'""", (instrument,),
@@ -953,12 +957,6 @@ class CanonicalHistoryBuilder:
         source_instrument = self._source_instrument(source_name, instrument)
         with _readonly(self.source_path) as source, self.destination.connect() as out:
             bounds = self._source_bounds(source, table, source_instrument)
-            state_counts = {
-                str(row[0]): int(row[1]) for row in source.execute(
-                    f"SELECT state,COUNT(*) FROM {table} WHERE instrument=? GROUP BY state",
-                    (source_instrument,),
-                )
-            }
             out.execute(
                 "DELETE FROM coverage_ledger WHERE instrument=? AND source=?",
                 (instrument, source_name),
@@ -976,6 +974,12 @@ class CanonicalHistoryBuilder:
                 )
                 return {"instrument": instrument, "source": source_name,
                         "row_count": 0, "status": "SOURCE_UNAVAILABLE"}
+            state_counts = {
+                str(row[0]): int(row[1]) for row in source.execute(
+                    f"SELECT state,COUNT(*) FROM {table} WHERE instrument=? GROUP BY state",
+                    (source_instrument,),
+                )
+            }
             earliest, latest, total_rows = bounds
             rows = source.execute(
                 f"""SELECT *
@@ -1212,9 +1216,17 @@ class CanonicalHistoryBuilder:
             }
             if not ledger:
                 raise ValueError(f"trade coverage is not built for {instrument}")
+            conflicts = out.execute(
+                "SELECT trade_id_conflict_count FROM source_assets "
+                "WHERE instrument=? AND source='trades'",
+                (instrument,),
+            ).fetchone()
+            if conflicts is not None and int(conflicts[0]) != 0:
+                raise ValueError(
+                    f"trade coverage contains identity conflicts for {instrument}"
+                )
             out.execute("DELETE FROM cvd_1m WHERE instrument=?", (instrument,))
             grouped: dict[int, dict[str, Any]] = official
-            local_seen: dict[str, tuple[Any, ...]] = {}
             trade_select = """SELECT source_ts_ms,trade_id,side,notional,
                                       uniqueness_key,state
                                FROM trade_flow_observations
@@ -1246,41 +1258,39 @@ class CanonicalHistoryBuilder:
                 for raw_row in rows:
                     timestamp = int(raw_row[0])
                     if pending_ts is not None and timestamp != pending_ts:
-                        yield from sorted(
+                        seen: set[str] = set()
+                        for item in sorted(
                             pending,
-                            key=lambda item: (
-                                str(item[1]) if item[1] is not None else "",
-                                str(item[4]),
+                            key=lambda value: (
+                                str(value[1]) if value[1] is not None else "",
+                                str(value[4]),
                             ),
-                        )
+                        ):
+                            identity = (str(item[1]) if item[1] is not None
+                                        else str(item[4]))
+                            if identity not in seen:
+                                seen.add(identity)
+                                yield item
                         pending.clear()
                     pending_ts = timestamp
                     pending.append(raw_row)
                 if pending:
-                    yield from sorted(
+                    seen = set()
+                    for item in sorted(
                         pending,
-                        key=lambda item: (
-                            str(item[1]) if item[1] is not None else "", str(item[4]),
+                        key=lambda value: (
+                            str(value[1]) if value[1] is not None else "",
+                            str(value[4]),
                         ),
-                    )
+                    ):
+                        identity = (str(item[1]) if item[1] is not None
+                                    else str(item[4]))
+                        if identity not in seen:
+                            seen.add(identity)
+                            yield item
 
             for row in stable_local_rows():
                 bucket = minute_floor(int(row[0]))
-                identity = str(row[1]) if row[1] is not None else str(row[4])
-                fact = tuple(row)
-                prior = local_seen.get(identity)
-                if prior is not None:
-                    if prior != fact:
-                        cell = grouped.setdefault(bucket, {
-                            "buy": Decimal(0), "sell": Decimal(0), "count": 0,
-                            "first": int(row[0]), "last": int(row[0]),
-                            "hash": hashlib.sha256(), "status": "CONFLICT",
-                            "gap_reason": "TRADE_ID_CONTENT_CONFLICT",
-                        })
-                        cell["status"] = "CONFLICT"
-                        cell["gap_reason"] = "TRADE_ID_CONTENT_CONFLICT"
-                    continue
-                local_seen[identity] = fact
                 cell = grouped.setdefault(bucket, {
                     "buy": Decimal(0), "sell": Decimal(0), "count": 0,
                     "first": int(row[0]), "last": int(row[0]),
@@ -1326,8 +1336,6 @@ class CanonicalHistoryBuilder:
                            WHERE instrument=? AND source='trades' AND bucket_ms=?""",
                         (status, reason, instrument, bucket),
                     )
-                if cell is not None and cell.get("status") == "CONFLICT":
-                    status, reason = "CONFLICT", cell["gap_reason"]
                 if cell is None or status not in {
                     "VALID", "BACKFILLED_OFFICIAL", "ARCHIVED_CONFIRMED"
                 }:

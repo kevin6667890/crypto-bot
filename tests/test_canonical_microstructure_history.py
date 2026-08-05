@@ -146,6 +146,72 @@ def test_coverage_streams_observed_and_missing_minutes(tmp_path: Path) -> None:
     ]
 
 
+def test_coverage_records_absent_optional_source_as_unavailable(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source.db"
+    sqlite3.connect(source).close()
+    builder = CanonicalHistoryBuilder(
+        source, tmp_path / "canonical.db",
+        BuildIdentity("a" * 64, "commit", 240_000, 123),
+    )
+
+    report = builder.build_coverage("mark", "BTC-USDT-SWAP")
+
+    assert report == {
+        "instrument": "BTC-USDT-SWAP", "source": "mark",
+        "row_count": 0, "status": "SOURCE_UNAVAILABLE",
+    }
+    with builder.destination.connect() as connection:
+        asset = connection.execute(
+            "SELECT row_count,gap_status FROM source_assets "
+            "WHERE instrument=? AND source=?",
+            ("BTC-USDT-SWAP", "mark"),
+        ).fetchone()
+    assert tuple(asset) == (0, "SOURCE_UNAVAILABLE")
+
+
+def test_cvd_deduplicates_same_trade_identity_without_false_conflict(
+    tmp_path: Path,
+) -> None:
+    source = tmp_path / "source.db"
+    connection = sqlite3.connect(source)
+    connection.execute(
+        """CREATE TABLE trade_flow_observations(
+        source TEXT,source_version TEXT,instrument TEXT,source_ts_ms INTEGER,
+        ingested_at_ms INTEGER,resolution TEXT,state TEXT,source_identity TEXT,
+        uniqueness_key TEXT PRIMARY KEY,trade_id TEXT,side TEXT,price REAL,
+        size REAL,contract_value REAL,notional REAL,provenance_table TEXT)"""
+    )
+    rows = [
+        ("OKX", "v1", "BTC-USDT-SWAP", 1_000, 1_000, "tick", "confirmed",
+         key, key, "trade-1", "buy", 100.0, 1.0, 1.0, 100.0, None)
+        for key in ("capture-a", "capture-b")
+    ]
+    connection.executemany(
+        "INSERT INTO trade_flow_observations VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        rows,
+    )
+    connection.commit()
+    connection.close()
+    builder = CanonicalHistoryBuilder(
+        source, tmp_path / "canonical.db",
+        BuildIdentity("a" * 64, "commit", 60_000, 123),
+    )
+
+    coverage = builder.build_coverage("trades", "BTC-USDT-SWAP")
+    result = builder.build_cvd_1m("BTC-USDT-SWAP")
+
+    assert coverage["duplicate_count"] == 1
+    assert coverage["trade_id_conflict_count"] == 0
+    assert result["rows"] == 1
+    with builder.destination.connect() as connection:
+        row = connection.execute(
+            "SELECT buy_volume,signed_delta,trade_count,status FROM cvd_1m"
+        ).fetchone()
+    assert tuple(row) == (100.0, 100.0, 1, "VALID")
+
+
 def test_official_trade_file_dedupes_identical_adjacent_trade_id(
     tmp_path: Path,
 ) -> None:

@@ -305,7 +305,11 @@ def scan_event_ledger(path: Path) -> dict[str, Any]:
             p[0]=row["strategy_setup_id"]; p[1]=row["level_identity"]
             parameter_behavior[row["parameter_set_id"]][(row["lifecycle_to"],codes,geo.get("valid"))]+=1
     elapsed=time.perf_counter()-started; comparisons=sum(x[2] for x in prior.values())
-    serial=lambda counter:{"|".join(map(str,k if isinstance(k,tuple) else (k,))):v for k,v in sorted(counter.items(),key=lambda x:str(x[0]))}
+    def parts(value: Any) -> list[str]:
+        if isinstance(value, tuple):
+            return [piece for item in value for piece in parts(item)]
+        return [str(value)]
+    serial=lambda counter:{"|".join(parts(k)):v for k,v in sorted(counter.items(),key=lambda x:str(x[0]))}
     return {"event_count":total,"wall_seconds":elapsed,"events_per_second":total/elapsed,
             "stages":serial(stages),"transitions":serial(transitions),"blocker_combinations":serial(blockers),
             "only_blockers":serial(only),"geometry":serial(geometry),"extreme_structural_r":serial(extreme),

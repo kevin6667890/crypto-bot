@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import gzip
 from pathlib import Path
 
 import pytest
@@ -10,6 +11,7 @@ from dashboard.strategy_router_reachability_audit import (
     AUDIT_VERSION, CONTRACT_VERSION, EXPECTED_ARTIFACT_SHA, EXPECTED_DATASET_ID,
     FUNNEL_VERSION, contract_matrix, full_chain_witnesses, router_witnesses,
     source_parameter_effectiveness, static_reachability_graph,
+    scan_event_ledger,
 )
 
 MANIFEST=Path("research/phase4a_research_manifest_v1.json")
@@ -120,3 +122,14 @@ def test_old_decisions_paper_collector_and_frontend_are_not_audit_outputs():
 def test_final_decision_is_single_and_deterministic():
     graph=static_reachability_graph()
     assert graph["global_finding"]=="FORMAL_REPLAY_OMITS_STATE_COMPARE_CONFIRMATION_PATH"
+
+
+def test_ledger_dimensions_are_flattened_for_funnel_lookup(tmp_path):
+    row={"family":"TREND_PULLBACK","direction":"LONG","lifecycle_from":"INELIGIBLE","lifecycle_to":"WATCH",
+         "blockers":[],"geometry":{"valid":True,"structural_reward_risk":2},"instrument":"BTC-USDT-SWAP",
+         "parameter_set_id":"p","strategy_setup_id":"s","level_identity":"l"}
+    path=tmp_path/"events.jsonl.gz"
+    with gzip.open(path,"wt",encoding="utf-8") as stream: stream.write(json.dumps(row)+"\n")
+    result=scan_event_ledger(path)
+    assert result["stages"]["TREND_PULLBACK|LONG|WATCH"]==1
+    assert result["transitions"]["TREND_PULLBACK|LONG|INELIGIBLE|WATCH"]==1

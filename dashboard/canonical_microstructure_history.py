@@ -452,6 +452,7 @@ def _recoverability(status: str) -> str:
 def sync_bucket_coverage(
     connection: sqlite3.Connection, instrument: str, start_ms: int,
     end_ms: int, generated_commit: str,
+    resolutions: set[str] | None = None,
 ) -> None:
     """Mirror canonical value/status rows into the complete bucket ledger."""
     sources = (
@@ -461,6 +462,8 @@ def sync_bucket_coverage(
          "observation_ts_ms", "source_fingerprint", ""),
     )
     for series, resolution, table, value, first, last, source_hash, clause in sources:
+        if resolutions is not None and resolution not in resolutions:
+            continue
         rows = connection.execute(
             f"""SELECT bucket_ms,{value} value,status,gap_reason,{first} first_ms,
                        {last} last_ms,{source_hash} source_hash,generated_at_ms
@@ -503,6 +506,8 @@ def sync_bucket_coverage(
             (instrument, start_ms, end_ms),
         )
         for row in rows:
+            if resolutions is not None and str(row["resolution"]) not in resolutions:
+                continue
             status = str(row["status"])
             connection.execute(
                 """INSERT INTO bucket_coverage VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)

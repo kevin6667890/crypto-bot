@@ -1395,7 +1395,7 @@ class Handler(BaseHTTPRequestHandler):
                     end=history_int("end"),
                     max_points=max_points_resolved,
                     cursor=query.get("cursor", [None])[0],
-                    cvd_mode=query.get("cvd_mode", ["CONTINUOUS"])[0],
+                    cvd_mode=query.get("cvd_mode", ["UTC_DAILY_RESET"])[0],
                     timeframe=query.get("timeframe", [None])[0],
                 )
                 

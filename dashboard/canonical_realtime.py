@@ -295,6 +295,14 @@ class CanonicalRealtimeWriter:
                         higher += 1
             sync_bucket_coverage(
                 output, instrument, lower, end, self.generated_commit,
+                resolutions={"1m"},
+            )
+            sync_bucket_coverage(
+                output, instrument,
+                min(lower // width * width for resolution, width in RESOLUTION_MS.items()
+                    if resolution != "1m"),
+                end, self.generated_commit,
+                resolutions=set(RESOLUTION_MS) - {"1m"},
             )
             output.execute(
                 """INSERT INTO rebuild_checkpoints VALUES(?,?,?,?,?,?)

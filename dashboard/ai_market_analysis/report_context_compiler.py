@@ -5,7 +5,7 @@ from .canonical import canonical_json, stable_hash
 from .versions import AI_REPORT_CONTEXT_COMPILER_VERSION
 
 MODE_INPUT_BUDGETS = {"QUICK": 5000, "FULL": 10000, "POSITION_AWARE": 12000}
-CATEGORY_ORDER = {"WARNING":0,"TIMELINE":1,"ORDER_FLOW":2,"LEVEL":3,"SCENARIO":4,"TIMEFRAME":5,"POSITION":6,"MACRO":7}
+CATEGORY_ORDER = {"WARNING":0,"TIMELINE":1,"ORDER_FLOW":2,"TIMEFRAME":3,"LEVEL":4,"SCENARIO":5,"POSITION":6,"MACRO":7}
 
 
 def estimate_tokens(value: Any) -> int:
@@ -17,7 +17,7 @@ def compile_report_context(registry: dict[str, Any], mode: str, max_tokens: int 
     if mode not in MODE_INPUT_BUDGETS: raise ValueError("invalid report mode")
     budget = min(max_tokens or MODE_INPUT_BUDGETS[mode], MODE_INPUT_BUDGETS[mode], 12000)
     fact_budget=max(1,budget-900)  # reserve response metadata and versioned instructions
-    ordered = sorted(registry["facts"], key=lambda f:(-int(f.get("priority",0)==100),CATEGORY_ORDER.get(f["category"],99),-f.get("priority",0),f["fact_id"]))
+    ordered = sorted(registry["facts"], key=lambda f:(-int(f.get("priority",0)==100),-f.get("priority",0),CATEGORY_ORDER.get(f["category"],99),f["fact_id"]))
     kept, omitted = [], []
     envelope = {k:registry[k] for k in ("version","context_id","instrument","decision_time","allowed_directional_biases","max_confidence","allowed_market_phases")}
     for fact in ordered:

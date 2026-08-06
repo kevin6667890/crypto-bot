@@ -1,0 +1,29 @@
+"""Context-to-claim semantic and modality protection."""
+from __future__ import annotations
+from typing import Any
+from .report_semantic_registry import SEMANTIC_REGISTRY
+from .versions import AI_REPORT_SEMANTIC_AUDIT_VERSION
+
+UNKNOWN_VALUES={"UNKNOWN","NOT_AVAILABLE","NOT_IMPLEMENTED","INSUFFICIENT_EVIDENCE","PARTIAL","GAP_AFFECTED","UNAVAILABLE"}
+
+def audit_semantics(claims:list[dict[str,Any]],facts:list[dict[str,Any]])->dict[str,Any]:
+    lookup={f["fact_id"]:f for f in facts};audits=[];failures=[]
+    for claim in claims:
+        text=claim["original_text"];refs=[lookup[r] for r in claim.get("fact_refs",[]) if r in lookup];codes=[]
+        values=[f.get("value") for f in refs]
+        flat=" ".join(str(v) for v in values)
+        if any(v in flat for v in UNKNOWN_VALUES) and any(x in text for x in SEMANTIC_REGISTRY["UNKNOWN"]["forbidden_certainty"]):codes.append("UNKNOWN_PROMOTED_TO_FACT")
+        if ("LIKELY" in flat or "likely" in flat.lower()) and any(x in text for x in SEMANTIC_REGISTRY["LIKELY"]["forbidden_certainty"]):codes.append("LIKELY_PROMOTED_TO_CONFIRMED")
+        for value in ("POST_BREAKOUT_PULLBACK","SHORT_COVERING_DOMINANT","STRONG_BEAR"):
+            if value in flat and any(x in text for x in SEMANTIC_REGISTRY[value]["forbidden"]):
+                codes.append("ORDER_FLOW_CONTRADICTION" if value=="SHORT_COVERING_DOMINANT" else "CRITICAL_CONTRADICTION")
+        if any(f["category"]=="ORDER_FLOW" and isinstance(f["value"],dict) and f["value"].get("cvd_status") in {"GAP_AFFECTED","PARTIAL"} for f in refs) and "完整确认" in text:codes.append("ORDER_FLOW_CONTRADICTION")
+        if any(x in text for x in ("已结算","结算资金费率")) and "predicted" in flat.lower():codes.append("UNSUPPORTED_CLAIM")
+        if "没有发生强平" in text and not any("liquidation" in str(v).lower() for v in values):codes.append("UNSUPPORTED_CLAIM")
+        if any(x in text for x in ("现货买盘已确认","现货资金进场已确认")):codes.append("LIKELY_PROMOTED_TO_CONFIRMED")
+        if any(x in text for x in ("唯一机制","唯一推动","纯空头回补")):codes.append("ORDER_FLOW_CONTRADICTION")
+        if any(x in text for x in ("新增多头主导","纯新增多头主导")):codes.append("ORDER_FLOW_CONTRADICTION")
+        if "数据不足" in text and any(x in text for x in ("HIGH confidence","高置信","明确结论")):codes.append("UNKNOWN_PROMOTED_TO_FACT")
+        if "已结算" in text and any(x.lower() in text.lower() for x in ("funding","资金费率")):codes.append("UNSUPPORTED_CLAIM")
+        failures.extend(codes);audits.append({"version":AI_REPORT_SEMANTIC_AUDIT_VERSION,"claim_id":claim["claim_id"],"result":"FAILED" if codes else "SUPPORTED","codes":sorted(set(codes))})
+    return {"version":AI_REPORT_SEMANTIC_AUDIT_VERSION,"audits":audits,"failure_codes":sorted(set(failures))}

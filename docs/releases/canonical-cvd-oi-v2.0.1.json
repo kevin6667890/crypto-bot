@@ -1,0 +1,75 @@
+{
+  "manifest_version": "crypto-bot-release-provenance-v1",
+  "release_tag": "canonical-cvd-oi-v2.0.1",
+  "release_commit": "TAG_TARGET",
+  "validated_feature_release": {
+    "tag": "canonical-cvd-oi-v2.0.0",
+    "commit": "2a1e5d5f9e44a81d91f25576b17d61ee471903c6",
+    "feature_commit": "35a5b29dc2b7d29be4910f323d61edc63b9613e9"
+  },
+  "governance": {
+    "overlay_origin_commit": "a3efe9b4c31f89776eb08fcafef68438c7e3b050",
+    "manifest_origin_commit": "3ee06aa1ab12657367867772f61f6e65f5217209",
+    "integration_merge_commit": "556407a2b1135e8f541c27a6e40d4858c46f5581"
+  },
+  "deployed_images": {
+    "paper-api": {
+      "reference": "crypto-bot-canonical-app:35a5b29",
+      "digest": "sha256:e921ca0ccf6631293d948867bdbee205b9cad3d6dd6faa86ca8ffdc2b915ebe1"
+    },
+    "microstructure-collector": {
+      "reference": "crypto-bot-canonical-app:35a5b29",
+      "digest": "sha256:e921ca0ccf6631293d948867bdbee205b9cad3d6dd6faa86ca8ffdc2b915ebe1"
+    },
+    "frontend": {
+      "reference": "crypto-bot-frontend:canonical-35a5b29",
+      "digest": "sha256:73b5f692bc0ada2094609f247b03916bcad36cedb8f9297706f118fb9c213cbc"
+    }
+  },
+  "compose": {
+    "base": {
+      "path": "docker-compose.yml",
+      "commit": "TAG_TARGET"
+    },
+    "deployment_overlay": {
+      "path": "deploy/compose/canonical-cvd-oi-v2.0.0.production.yml",
+      "origin_commit": "a3efe9b4c31f89776eb08fcafef68438c7e3b050",
+      "git_blob": "92b7d9fc957d4dc2b927a8cfae99a93b65f66831",
+      "sha256": "2d11c2bb3b6f1cd0d9d36e260393d70fea17f36d8399e2258d987e4124002fc2"
+    },
+    "service_start_allowlist": [
+      "paper-api",
+      "microstructure-collector",
+      "frontend"
+    ],
+    "profile_isolation": {
+      "crypto-bot": "ultimate-bot",
+      "dashboard": "legacy-dashboard"
+    }
+  },
+  "required_environment_names": [
+    "CRYPTO_BOT_ENV_FILE",
+    "CRYPTO_BOT_DATA_DIR"
+  ],
+  "supported_override_environment_names": [
+    "CVD_OI_APP_IMAGE",
+    "CVD_OI_FRONTEND_IMAGE",
+    "CVD_OI_SOURCE_COMMIT",
+    "CRYPTO_BOT_NETWORK"
+  ],
+  "runtime_secret_names_are_environment_injected": true,
+  "data_volumes": [
+    {
+      "source": "${CRYPTO_BOT_DATA_DIR}",
+      "target": "/app/data_cache",
+      "mode": "rw"
+    }
+  ],
+  "rollback_manifest": "docs/releases/canonical-cvd-oi-v2.0.1.rollback.json",
+  "release_policy": {
+    "image_rebuild_required": false,
+    "production_redeployment_required": false,
+    "database_change_required": false,
+    "allowed_compose_lifecycle_commands_during_validation": []
+  }
+}

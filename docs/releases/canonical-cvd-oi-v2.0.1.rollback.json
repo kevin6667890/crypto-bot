@@ -1,0 +1,66 @@
+{
+  "manifest_version": "crypto-bot-rollback-v1",
+  "release_tag": "canonical-cvd-oi-v2.0.1",
+  "release_commit": "TAG_TARGET",
+  "compose_base": "docker-compose.yml",
+  "deployment_overlay": "deploy/compose/canonical-cvd-oi-v2.0.0.production.yml",
+  "required_environment_names": [
+    "CRYPTO_BOT_ENV_FILE",
+    "CRYPTO_BOT_DATA_DIR"
+  ],
+  "service_start_allowlist": [
+    "paper-api",
+    "microstructure-collector",
+    "frontend"
+  ],
+  "release_images": {
+    "paper-api": {
+      "reference": "crypto-bot-canonical-app:35a5b29",
+      "digest": "sha256:e921ca0ccf6631293d948867bdbee205b9cad3d6dd6faa86ca8ffdc2b915ebe1"
+    },
+    "microstructure-collector": {
+      "reference": "crypto-bot-canonical-app:35a5b29",
+      "digest": "sha256:e921ca0ccf6631293d948867bdbee205b9cad3d6dd6faa86ca8ffdc2b915ebe1"
+    },
+    "frontend": {
+      "reference": "crypto-bot-frontend:canonical-35a5b29",
+      "digest": "sha256:73b5f692bc0ada2094609f247b03916bcad36cedb8f9297706f118fb9c213cbc"
+    }
+  },
+  "rollback_images_retained_on_production": {
+    "paper-api": {
+      "reference": "crypto-bot-microstructure-collector:rollback-b2effa9",
+      "digest": "sha256:465991caa7e336983481b1c2a329015db2e32337c2d9fdb74ddbc7d468dc76bd"
+    },
+    "microstructure-collector": {
+      "reference": "crypto-bot-microstructure-collector:realtime-series-health-499ad63",
+      "digest": "sha256:6b22c861205445542654a302957f6fd6d076a9e8a96aff6852857b367348f275"
+    },
+    "frontend": {
+      "reference": "crypto-bot-frontend:flow-contract-d760078",
+      "digest": "sha256:3406c049d7b8fee386e338b7d232190a79474d79f99dff6cc1bc3bbe04b67fef"
+    }
+  },
+  "data_policy": {
+    "volume": "${CRYPTO_BOT_DATA_DIR}:/app/data_cache",
+    "migrate": false,
+    "rebuild": false,
+    "delete": false,
+    "restore": false
+  },
+  "rollback_steps": [
+    "Record the running image IDs, health, restart counts, Paper order count and repository release tag.",
+    "Verify all rollback image references resolve to the recorded digests; abort on mismatch.",
+    "Retain CRYPTO_BOT_ENV_FILE, CRYPTO_BOT_DATA_DIR and CRYPTO_BOT_NETWORK; change only approved image override names.",
+    "Run docker compose config --quiet with the versioned base and overlay; abort on validation failure.",
+    "Under separate deployment approval, replace only allowlisted services, one at a time and with --no-deps; never activate the ultimate-bot or legacy-dashboard profiles.",
+    "Require healthy status, bounded restart count and unchanged Paper orders after each service.",
+    "Restore release image references if rollback validation fails; never modify or restore databases."
+  ],
+  "prohibited_actions": [
+    "unscoped docker compose up",
+    "ultimate-bot or legacy-dashboard profile activation",
+    "database migration, rebuild, deletion or restore",
+    "credential or runtime environment value capture"
+  ]
+}

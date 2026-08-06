@@ -17,8 +17,8 @@ def _fact(fact_id: str, category: str, label: str, value: Any, pointer: str, *, 
     if isinstance(value, float): display = f"{value:.4f}".rstrip("0").rstrip(".")
     return {"fact_id": fact_id, "category": category, "label": label, "value": value, "unit": unit,
         "timestamp": timestamp, "source": source, "quality": quality, "context_pointer": pointer,
-        "display_value": str(display), "allowed_rounding": {"decimal_places": 4, "absolute_tolerance": .51},
-        "claim_scope": claim_scope, "provenance": {"version": AI_REPORT_FACT_REGISTRY_VERSION},
+        "display_value": str(display), "allowed_rounding": .51,
+        "claim_scope": claim_scope, "provenance": AI_REPORT_FACT_REGISTRY_VERSION,
         "priority": priority}
 
 
@@ -32,11 +32,7 @@ def build_fact_registry(enriched: dict[str, Any]) -> dict[str, Any]:
     for index, frame in enumerate(base.get("timeframe_structures", [])):
         tf = frame.get("timeframe"); prefix = TIMEFRAME_IDS.get(tf, f"TF{index}")
         close = frame.get("last_confirmed_close") or {}
-        facts.extend([
-            _fact(f"{prefix}_CLOSE", "TIMEFRAME", f"{tf}收盘", close.get("value"), f"/timeframe_structures/{index}/last_confirmed_close", unit=close.get("unit"), timestamp=close.get("timestamp"), quality=close.get("quality", "UNKNOWN"), priority=85),
-            _fact(f"{prefix}_TREND", "TIMEFRAME", f"{tf}结构", frame.get("trend") or frame.get("moving_average_ordering") or frame.get("swing_structure"), f"/timeframe_structures/{index}", timestamp=decision, priority=84),
-            _fact(f"{prefix}_SWING", "TIMEFRAME", f"{tf}摆动", frame.get("swing_structure"), f"/timeframe_structures/{index}/swing_structure", timestamp=decision, priority=78),
-        ])
+        facts.append(_fact(f"{prefix}_SUMMARY", "TIMEFRAME", f"{tf}结构摘要", {"close":close.get("value"),"moving_average_ordering":frame.get("moving_average_ordering"),"swing_structure":frame.get("swing_structure"),"price_position":frame.get("price_position")}, f"/timeframe_structures/{index}", unit=close.get("unit"), timestamp=close.get("timestamp"), quality=close.get("quality", "UNKNOWN"), priority=85))
         for name in ("ma20", "ma60", "ma200"):
             item = (frame.get("moving_averages") or {}).get(name) or {}
             if item.get("value") is not None:
@@ -46,25 +42,28 @@ def build_fact_registry(enriched: dict[str, Any]) -> dict[str, Any]:
         item = timeline.get(key) or {}
         if item.get("value") is not None: facts.append(_fact(fid, "TIMELINE", label, item["value"], f"/market_timeline/{key}", unit=item.get("unit"), timestamp=item.get("timestamp"), priority=96))
     facts.append(_fact("TIMELINE_CURRENT_PHASE", "TIMELINE", "当前阶段", timeline.get("current_phase"), "/market_timeline/current_phase", timestamp=decision, priority=100))
-    for index, event in enumerate(base.get("structure_events", [])[-12:]):
-        facts.append(_fact(f"EVENT_{index+1:02d}", "TIMELINE", event.get("event_type", "事件"), {k:event.get(k) for k in ("event_type","timeframe","direction","confirmation_status","invalidation")}, f"/structure_events/{len(base.get('structure_events', []))-min(12,len(base.get('structure_events', [])))+index}", timestamp=event.get("end"), priority=90-index))
+    for index, event in enumerate(base.get("structure_events", [])[-2:]):
+        facts.append(_fact(f"EVENT_{index+1:02d}", "TIMELINE", event.get("event_type", "事件"), {k:event.get(k) for k in ("event_type","timeframe","direction","confirmation_status","invalidation")}, f"/structure_events/{len(base.get('structure_events', []))-min(2,len(base.get('structure_events', [])))+index}", timestamp=event.get("end"), priority=90-index))
     phases = base.get("order_flow_phases", [])
     for index, phase in enumerate(phases[-4:]):
         metrics = phase.get("metrics", {}); cvd = metrics.get("cvd", {}); oi = metrics.get("oi", {})
-        value = {"phase": phase.get("phase"), "attribution": phase.get("attribution"), "price_change": metrics.get("price_change"),
+        attribution=phase.get("attribution") or {}
+        value = {"phase": phase.get("phase"), "attribution": {k:attribution.get(k) for k in ("primary","confidence")}, "price_change": metrics.get("price_change"),
                  "price_change_pct": metrics.get("price_change_pct"), "volume": metrics.get("volume"), "volume_regime": metrics.get("volume_regime"),
                  "cvd_delta": cvd.get("signed_delta"), "cvd_status": cvd.get("status"), "oi_change": oi.get("change"), "oi_change_pct": oi.get("change_pct"), "oi_status": oi.get("status"), "quality": phase.get("quality")}
         facts.append(_fact(f"FLOW_PHASE_{index+1:02d}", "ORDER_FLOW", f"{phase.get('phase')}订单流", value,
                            f"/order_flow_phases/{len(phases)-min(4,len(phases))+index}", timestamp=phase.get("end"), quality=phase.get("quality", "UNKNOWN"), priority=95-index))
-    for index, transition in enumerate(base.get("phase_transitions", [])[-4:]):
-        facts.append(_fact(f"FLOW_TRANSITION_{index+1:02d}", "ORDER_FLOW", "订单流转变", transition,
-            f"/phase_transitions/{len(base.get('phase_transitions', []))-min(4,len(base.get('phase_transitions', [])))+index}", timestamp=decision, priority=83-index))
-    for index, level in enumerate(base.get("key_levels", [])[:MAX_KEY_LEVELS]):
-        facts.append(_fact(f"LEVEL_{index+1:02d}", "LEVEL", f"{level.get('role')} {level.get('state')}",
-            {k:level.get(k) for k in ("level_id","representative_price","zone_low","zone_high","role","state","strength","invalidation")},
-            f"/key_levels/{index}", unit="USDT", timestamp=level.get("last_tested"), priority=94-index))
+    for index, transition in enumerate(base.get("phase_transitions", [])[-1:]):
+        facts.append(_fact(f"FLOW_TRANSITION_{index+1:02d}", "ORDER_FLOW", "订单流转变", {k:transition.get(k) for k in ("price_change","oi_behavior","cvd_behavior","volume_change","interpretation","confidence","counterevidence")},
+            f"/phase_transitions/{len(base.get('phase_transitions', []))-1+index}", timestamp=decision, priority=83-index))
+    selected_levels=[(i,level) for i,level in enumerate(base.get("key_levels", [])[:MAX_KEY_LEVELS]) if i in {0,1,2,3,5,7}]
+    for display_index, (index, level) in enumerate(selected_levels):
+        facts.append(_fact(f"LEVEL_{display_index+1:02d}", "LEVEL", f"{level.get('role')} {level.get('state')}",
+            {k:level.get(k) for k in ("level_id","zone_low","zone_high","role","state","strength")},
+            f"/key_levels/{index}", unit="USDT", timestamp=level.get("last_tested"), priority=94-display_index))
     for index, scenario in enumerate(base.get("scenario_tree", {}).get("scenarios", [])):
-        facts.append(_fact(f"SCENARIO_{index+1:02d}", "SCENARIO", scenario.get("type", "情景"), scenario,
+        trigger=scenario.get("trigger") or {}; invalidation=scenario.get("invalidation") or {}
+        facts.append(_fact(f"SCENARIO_{index+1:02d}", "SCENARIO", scenario.get("type", "情景"), {"scenario_id":scenario.get("scenario_id"),"type":scenario.get("type"),"direction":scenario.get("direction"),"likelihood":scenario.get("likelihood"),"trigger":{"rule":trigger.get("rule"),"level_ids":trigger.get("level_ids")},"invalidation":{"rule":invalidation.get("rule"),"level_id":invalidation.get("level_id"),"timeframe":invalidation.get("timeframe")},"contradicting_evidence":scenario.get("contradicting_evidence")},
             f"/scenario_tree/scenarios/{index}", timestamp=decision, priority=97-index))
     pos = enriched["position_context"]
     facts.append(_fact("POSITION_SOURCE", "POSITION", "持仓来源", pos.get("source"), "/position_context/source", timestamp=decision, claim_scope="POSITION", priority=100))
@@ -72,26 +71,29 @@ def build_fact_registry(enriched: dict[str, Any]) -> dict[str, Any]:
         if pos.get(key) is not None: facts.append(_fact(fid,"POSITION",label,pos[key],f"/position_context/{key}",unit="USDT" if "COST" in fid or "STOP" in fid else None,timestamp=decision,claim_scope="POSITION",priority=96))
     macro = enriched["macro_context"]
     for index, item in enumerate(macro.get("items", [])):
-        facts.append(_fact(f"MACRO_{index+1:02d}", "MACRO", item["title"], {"evidence_id":item["evidence_id"],"category":item["category"],"factual_summary":item["factual_summary"],"publisher":item["publisher"],"published_at":item["published_at"]}, f"/macro_context/items/{index}", timestamp=item["published_at"], source=item["source_type"], claim_scope="MACRO", priority=65))
+        facts.append(_fact(f"MACRO_{index+1:02d}", "MACRO", item["title"], {"evidence_id":item["evidence_id"],"category":item["category"],"factual_summary":item["factual_summary"],"publisher":item["publisher"],"published_at":item["published_at"]}, f"/macro_context/items/{index}", timestamp=item["published_at"], source=item["source_type"], claim_scope="MACRO", priority=100))
     if not macro.get("items"):
         facts.append(_fact("MACRO_UNAVAILABLE", "WARNING", "宏观证据", "本次未加入已验证宏观证据。", "/macro_context/warnings", timestamp=decision, priority=100))
     for index, claim in enumerate(base.get("unsupported_claims", [])):
         facts.append(_fact(f"UNSUPPORTED_{index+1:02d}", "WARNING", "禁止断言", claim, f"/unsupported_claims/{index}", timestamp=decision, priority=100))
     facts = facts[:MAX_FACTS]
     numeric = []
-    def collect(value: Any, fact_id: str, unit: str | None):
+    def collect(value: Any, fact_id: str, unit: str | None, key: str = ""):
         if isinstance(value, bool): return
         if isinstance(value, (int,float)):
+            if value > 100_000_000 or any(x in key.lower() for x in ("count","timestamp","duration","bucket")): return
             numeric.append({"canonical_value": value, "unit": unit, "exact_display": str(value),
                             "allowed_decimal_places": 4, "allow_percent": unit in {"percent","ratio"},
                             "allow_range": unit == "USDT", "absolute_tolerance": .51, "source_fact_id": fact_id})
         elif isinstance(value, dict):
-            for v in value.values(): collect(v, fact_id, unit)
+            for k,v in value.items(): collect(v, fact_id, unit, k)
         elif isinstance(value, list):
-            for v in value: collect(v, fact_id, unit)
+            for v in value: collect(v, fact_id, unit, key)
     for fact in facts: collect(fact["value"], fact["fact_id"], fact["unit"])
     # Stable de-duplication.
-    unique = {(str(item["canonical_value"]), item["unit"], item["source_fact_id"]): item for item in numeric}
+    unique = {}
+    for item in numeric:
+        unique.setdefault((str(item["canonical_value"]), item["unit"]),item)
     numeric = [unique[k] for k in sorted(unique)]
     core = {"version": AI_REPORT_FACT_REGISTRY_VERSION, "context_id": enriched["enriched_context_id"],
             "instrument": enriched["instrument"], "decision_time": decision, "facts": facts,

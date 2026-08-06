@@ -48,7 +48,7 @@ class FakeAIReportProvider:
         if self.behavior == "429": raise ProviderError("RATE_LIMIT", retryable=True, http_status=429)
         if self.behavior == "500": raise ProviderError("SERVER_ERROR", retryable=True, http_status=500)
         if self.behavior == "401": raise ProviderError("AUTHENTICATION", retryable=False, http_status=401)
-        if self.behavior == "invalid_json": raw="{not-json"
+        if self.behavior in {"invalid_json","repair_failure"} or (self.behavior=="repair_success" and self.calls==1): raw="{not-json"
         else:
             report=self._report(request)
             if self.behavior == "missing_section": report["sections"].pop()
@@ -108,5 +108,5 @@ class FakeAIReportProvider:
             "mode":mode,"language":request["language"],"headline":"突破后回踩验证，短强长压",
             "market_phase":registry["allowed_market_phases"][0],"directional_bias":"BULLISH","confidence":registry["max_confidence"],
             "sections":sections,"key_levels":[],"scenarios":[],"position_guidance":({"source":facts.get("POSITION_SOURCE",{}).get("value"),"fact_refs":position_ids} if mode=="POSITION_AWARE" else None),
-            "unsupported_claims":[],"data_warnings":registry.get("context_warnings",[]),"citations":[],
+            "unsupported_claims":[],"data_warnings":registry.get("context_warnings",[]),"citations":[{"evidence_id":facts[x]["value"]["evidence_id"]} for x in macro_ids],
             "model":self.model,"prompt_version":request["prompt_version"],"audit_status":"PENDING"}

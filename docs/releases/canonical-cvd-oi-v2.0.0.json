@@ -1,0 +1,44 @@
+{
+  "manifest_version": "crypto-bot-release-provenance-v1",
+  "release_tag": "canonical-cvd-oi-v2.0.0",
+  "release_commit": "TAG_TARGET",
+  "integration_base": "ab698e5940158c01f7fc8c2cfaf32668c14eb0a7",
+  "validated_feature_commit": "35a5b29dc2b7d29be4910f323d61edc63b9613e9",
+  "validated_release_archive": {
+    "name": "crypto-bot-release-35a5b29.tar.gz",
+    "sha256": "cf33a85dc93369a69dd03bc44c178a1ff106a5f1b9bca74b750c42c45a431e4e"
+  },
+  "deployed_images": {
+    "paper_api": {
+      "reference": "crypto-bot-canonical-app:35a5b29",
+      "digest": "sha256:e921ca0ccf6631293d948867bdbee205b9cad3d6dd6faa86ca8ffdc2b915ebe1"
+    },
+    "microstructure_collector": {
+      "reference": "crypto-bot-canonical-app:35a5b29",
+      "digest": "sha256:e921ca0ccf6631293d948867bdbee205b9cad3d6dd6faa86ca8ffdc2b915ebe1"
+    },
+    "frontend": {
+      "reference": "crypto-bot-frontend:canonical-35a5b29",
+      "digest": "sha256:73b5f692bc0ada2094609f247b03916bcad36cedb8f9297706f118fb9c213cbc"
+    }
+  },
+  "source_reproduction": {
+    "policy": "The release tag records the validated feature commit as an ancestor. Reproduce the deployed source tree with git archive of validated_feature_commit.",
+    "database_rebuild_required": false,
+    "production_redeployment_required": false
+  },
+  "frozen_contracts": [
+    "CVD_PARTIAL_AFTER_GAP_RECOVERY",
+    "CVD_UTC_DAILY_RESET",
+    "CANONICAL_HISTORY_COVERAGE_GAP_SINGLE_SOURCE",
+    "FRONTEND_WHITESPACE_SEGMENTS",
+    "TIMEFRAME_AND_RESOLUTION_AWARE_STALE",
+    "TASK_LEVEL_CANONICAL_HEALTH"
+  ],
+  "production_safety": {
+    "canonical_database_modified": false,
+    "production_services_redeployed": false,
+    "paper_orders_expected": 7,
+    "ultimate_bot_expected": "STOPPED"
+  }
+}

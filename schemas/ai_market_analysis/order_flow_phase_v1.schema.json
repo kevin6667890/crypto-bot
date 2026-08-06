@@ -1,0 +1,21 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema", "$id": "order_flow_phase_v1.schema.json", "title": "OrderFlowPhase v1",
+  "type": "object", "additionalProperties": false,
+  "required": ["phase", "start", "end", "price_change", "volume", "volume_ratio", "cvd_delta", "oi_start", "oi_end", "oi_change", "liquidation", "funding", "basis", "data_quality", "gap_flags", "cross_gap_change", "primary_classification", "alternative_classification", "confidence", "evidence", "counterevidence"],
+  "properties": {
+    "phase": {"enum": ["BEFORE_BREAKOUT", "BREAKOUT_IMPULSE", "POST_BREAKOUT_HIGH", "CURRENT_PULLBACK"]}, "start": {"$ref": "common_defs_v1.schema.json#/$defs/timestamp"}, "end": {"$ref": "common_defs_v1.schema.json#/$defs/timestamp"},
+    "price_change": {"$ref": "common_defs_v1.schema.json#/$defs/traced_number"}, "volume": {"$ref": "common_defs_v1.schema.json#/$defs/traced_number"}, "volume_ratio": {"$ref": "common_defs_v1.schema.json#/$defs/traced_number"}, "cvd_delta": {"$ref": "common_defs_v1.schema.json#/$defs/traced_number"}, "oi_start": {"$ref": "common_defs_v1.schema.json#/$defs/traced_number"}, "oi_end": {"$ref": "common_defs_v1.schema.json#/$defs/traced_number"}, "oi_change": {"$ref": "common_defs_v1.schema.json#/$defs/traced_number"}, "liquidation": {"$ref": "common_defs_v1.schema.json#/$defs/traced_number"}, "funding": {"$ref": "common_defs_v1.schema.json#/$defs/traced_number"}, "basis": {"$ref": "common_defs_v1.schema.json#/$defs/traced_number"},
+    "data_quality": {"$ref": "common_defs_v1.schema.json#/$defs/data_quality"}, "gap_flags": {"type": "array", "items": {"enum": ["CVD_GAP", "OI_GAP"]}, "uniqueItems": true}, "cross_gap_change": {"type": "boolean"},
+    "primary_classification": {"enum": ["NEW_LONGS_DOMINANT", "SHORT_COVERING_DOMINANT", "NEW_SHORTS_DOMINANT", "LONG_LIQUIDATION_DOMINANT", "TWO_SIDED_DELEVERAGING", "SPOT_BUYING_LIKELY", "MIXED_POSITIONING", "INSUFFICIENT_EVIDENCE"]}, "alternative_classification": {"type": ["string", "null"], "enum": ["NEW_LONGS_DOMINANT", "SHORT_COVERING_DOMINANT", "NEW_SHORTS_DOMINANT", "LONG_LIQUIDATION_DOMINANT", "TWO_SIDED_DELEVERAGING", "SPOT_BUYING_LIKELY", "MIXED_POSITIONING", "INSUFFICIENT_EVIDENCE", null]}, "confidence": {"enum": ["HIGH", "MEDIUM", "LOW", "INSUFFICIENT"]}, "evidence": {"type": "array", "minItems": 1, "items": {"$ref": "common_defs_v1.schema.json#/$defs/evidence"}}, "counterevidence": {"type": "array", "minItems": 1, "items": {"$ref": "common_defs_v1.schema.json#/$defs/evidence"}}
+  },
+  "allOf": [
+    {
+      "if": {"properties": {"gap_flags": {"contains": {"const": "CVD_GAP"}}}, "required": ["gap_flags"]},
+      "then": {"properties": {"cvd_delta": {"properties": {"quality": {"not": {"const": "VALID"}}}}, "data_quality": {"properties": {"overall": {"not": {"const": "VALID"}}}}, "cross_gap_change": {"const": false}}}
+    },
+    {
+      "if": {"properties": {"gap_flags": {"contains": {"const": "OI_GAP"}}}, "required": ["gap_flags"]},
+      "then": {"properties": {"oi_change": {"properties": {"value": {"type": "null"}}}, "data_quality": {"properties": {"overall": {"not": {"const": "VALID"}}}}, "cross_gap_change": {"const": false}}}
+    }
+  ]
+}

@@ -1,0 +1,150 @@
+{
+  "phase": "BREAKOUT_IMPULSE",
+  "start": "2026-01-15T04:00:00Z",
+  "end": "2026-01-15T12:00:00Z",
+  "price_change": {
+    "value": 1,
+    "unit": "percent",
+    "timestamp": "2026-01-15T12:00:00Z",
+    "source": "fixture",
+    "status": "DERIVED",
+    "quality": "MISSING",
+    "derivation": "static golden fixture; not live market data",
+    "version": "fixture-v1"
+  },
+  "volume": {
+    "value": 1000000,
+    "unit": "USDT",
+    "timestamp": "2026-01-15T12:00:00Z",
+    "source": "fixture",
+    "status": "DERIVED",
+    "quality": "MISSING",
+    "derivation": "static golden fixture; not live market data",
+    "version": "fixture-v1"
+  },
+  "volume_ratio": {
+    "value": 1.1,
+    "unit": "ratio",
+    "timestamp": "2026-01-15T12:00:00Z",
+    "source": "fixture",
+    "status": "DERIVED",
+    "quality": "MISSING",
+    "derivation": "static golden fixture; not live market data",
+    "version": "fixture-v1"
+  },
+  "cvd_delta": {
+    "value": null,
+    "unit": "USDT",
+    "timestamp": "2026-01-15T12:00:00Z",
+    "source": "fixture",
+    "status": "UNAVAILABLE",
+    "quality": "MISSING",
+    "derivation": "static golden fixture; not live market data",
+    "version": "fixture-v1"
+  },
+  "oi_start": {
+    "value": null,
+    "unit": "contracts",
+    "timestamp": "2026-01-15T04:00:00Z",
+    "source": "fixture",
+    "status": "UNAVAILABLE",
+    "quality": "MISSING",
+    "derivation": "static golden fixture; not live market data",
+    "version": "fixture-v1"
+  },
+  "oi_end": {
+    "value": null,
+    "unit": "contracts",
+    "timestamp": "2026-01-15T12:00:00Z",
+    "source": "fixture",
+    "status": "UNAVAILABLE",
+    "quality": "MISSING",
+    "derivation": "static golden fixture; not live market data",
+    "version": "fixture-v1"
+  },
+  "oi_change": {
+    "value": null,
+    "unit": "percent",
+    "timestamp": "2026-01-15T12:00:00Z",
+    "source": "fixture",
+    "status": "UNAVAILABLE",
+    "quality": "MISSING",
+    "derivation": "static golden fixture; not live market data",
+    "version": "fixture-v1"
+  },
+  "liquidation": {
+    "value": 300000,
+    "unit": "USDT",
+    "timestamp": "2026-01-15T12:00:00Z",
+    "source": "fixture",
+    "status": "DERIVED",
+    "quality": "MISSING",
+    "derivation": "static golden fixture; not live market data",
+    "version": "fixture-v1"
+  },
+  "funding": {
+    "value": 0.005,
+    "unit": "percent",
+    "timestamp": "2026-01-15T12:00:00Z",
+    "source": "fixture",
+    "status": "DERIVED",
+    "quality": "MISSING",
+    "derivation": "static golden fixture; not live market data",
+    "version": "fixture-v1"
+  },
+  "basis": {
+    "value": 0.08,
+    "unit": "percent",
+    "timestamp": "2026-01-15T12:00:00Z",
+    "source": "fixture",
+    "status": "DERIVED",
+    "quality": "MISSING",
+    "derivation": "static golden fixture; not live market data",
+    "version": "fixture-v1"
+  },
+  "data_quality": {
+    "overall": "MISSING",
+    "gaps": [
+      {
+        "source": "CVD_GAP",
+        "start": "2026-01-15T06:00:00Z",
+        "end": "2026-01-15T07:00:00Z"
+      },
+      {
+        "source": "OI_GAP",
+        "start": "2026-01-15T08:00:00Z",
+        "end": "2026-01-15T09:00:00Z"
+      }
+    ],
+    "stale_sources": [],
+    "missing_sources": [
+      "cvd",
+      "oi"
+    ],
+    "watermark_mismatches": []
+  },
+  "gap_flags": [
+    "CVD_GAP",
+    "OI_GAP"
+  ],
+  "cross_gap_change": false,
+  "primary_classification": "INSUFFICIENT_EVIDENCE",
+  "alternative_classification": "MIXED_POSITIONING",
+  "confidence": "INSUFFICIENT",
+  "evidence": [
+    {
+      "claim": "classification is grounded by price, CVD and OI paths",
+      "evidence_paths": [
+        "/order_flow_phases/0/price_change"
+      ]
+    }
+  ],
+  "counterevidence": [
+    {
+      "claim": "the available signals do not isolate every venue participant",
+      "evidence_paths": [
+        "/data_quality"
+      ]
+    }
+  ]
+}

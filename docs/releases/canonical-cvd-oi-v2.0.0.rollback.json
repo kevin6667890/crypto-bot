@@ -1,0 +1,62 @@
+{
+  "manifest_version": "crypto-bot-rollback-v1",
+  "release_tag": "canonical-cvd-oi-v2.0.0",
+  "release_commit": "2a1e5d5f9e44a81d91f25576b17d61ee471903c6",
+  "compose_base": "docker-compose.yml",
+  "deployment_overlay": "deploy/compose/canonical-cvd-oi-v2.0.0.production.yml",
+  "service_start_allowlist": [
+    "paper-api",
+    "microstructure-collector",
+    "frontend"
+  ],
+  "release_images": {
+    "paper-api": {
+      "reference": "crypto-bot-canonical-app:35a5b29",
+      "digest": "sha256:e921ca0ccf6631293d948867bdbee205b9cad3d6dd6faa86ca8ffdc2b915ebe1"
+    },
+    "microstructure-collector": {
+      "reference": "crypto-bot-canonical-app:35a5b29",
+      "digest": "sha256:e921ca0ccf6631293d948867bdbee205b9cad3d6dd6faa86ca8ffdc2b915ebe1"
+    },
+    "frontend": {
+      "reference": "crypto-bot-frontend:canonical-35a5b29",
+      "digest": "sha256:73b5f692bc0ada2094609f247b03916bcad36cedb8f9297706f118fb9c213cbc"
+    }
+  },
+  "rollback_images_retained_on_production": {
+    "paper-api": {
+      "reference": "crypto-bot-microstructure-collector:rollback-b2effa9",
+      "digest": "sha256:465991caa7e336983481b1c2a329015db2e32337c2d9fdb74ddbc7d468dc76bd"
+    },
+    "microstructure-collector": {
+      "reference": "crypto-bot-microstructure-collector:realtime-series-health-499ad63",
+      "digest": "sha256:6b22c861205445542654a302957f6fd6d076a9e8a96aff6852857b367348f275"
+    },
+    "frontend": {
+      "reference": "crypto-bot-frontend:flow-contract-d760078",
+      "digest": "sha256:3406c049d7b8fee386e338b7d232190a79474d79f99dff6cc1bc3bbe04b67fef"
+    }
+  },
+  "data_policy": {
+    "reuse_existing_data_volume": "${CRYPTO_BOT_DATA_DIR}:/app/data_cache",
+    "database_migration": false,
+    "database_rebuild": false,
+    "database_delete_or_restore": false
+  },
+  "rollback_steps": [
+    "Record repository HEAD, running image IDs, health, restart counts, Paper order counts and database file hashes before any approved rollback.",
+    "Verify each rollback image reference resolves to the recorded digest; abort on any mismatch.",
+    "Set only CVD_OI_APP_IMAGE and CVD_OI_FRONTEND_IMAGE to the approved rollback references; retain CRYPTO_BOT_ENV_FILE, CRYPTO_BOT_DATA_DIR and CRYPTO_BOT_NETWORK.",
+    "Run docker compose config --quiet with the versioned base and deployment overlay; do not continue if validation fails.",
+    "During an separately approved maintenance action, replace only allowlisted services, one service at a time, with --no-deps; never enable the ultimate-bot or legacy-dashboard profiles.",
+    "After each service replacement, require healthy status and bounded restart count before proceeding; verify Paper orders remain unchanged.",
+    "If rollback verification fails, restore the release image references from this manifest without modifying or restoring databases."
+  ],
+  "prohibited_actions": [
+    "docker compose up without an explicit service allowlist",
+    "enabling the ultimate-bot profile",
+    "database rebuild, migration, deletion or restore",
+    "removing the production stash or external governance backup",
+    "printing or committing runtime environment values"
+  ]
+}

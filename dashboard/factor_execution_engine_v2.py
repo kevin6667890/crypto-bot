@@ -1151,11 +1151,18 @@ class FactorExecutionEngineV2:
                                 result.worker_rss_bytes
                             )
                             buffered.append(result)
+                    while len(buffered) >= self.chunk_size:
+                        self.ledger.commit_chunk(
+                            self.manifest.run_id,
+                            buffered[: self.chunk_size],
+                            self.worker_config,
+                            reason="CHUNK_SIZE",
+                        )
+                        del buffered[: self.chunk_size]
+                        last_commit = self.clock()
                     elapsed = self.clock() - last_commit
                     reason = None
-                    if len(buffered) >= self.chunk_size:
-                        reason = "CHUNK_SIZE"
-                    elif buffered and elapsed >= self.checkpoint_seconds:
+                    if buffered and elapsed >= self.checkpoint_seconds:
                         reason = "WALL_CLOCK"
                     elif self._stop_requested and buffered:
                         reason = "INTERRUPT_SIGNAL"

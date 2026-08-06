@@ -241,6 +241,8 @@ def build_market_analysis_context(datasets: dict[str, list[dict[str, Any]]], ins
     quality_values = set(qualities.values())
     overall = "MISSING" if quality_values == {"MISSING"} else "PARTIAL" if any(
         value != "COMPLETE" for value in quality_values) else "VALID"
+    if ai3_requested and ai3["quality"] != "VALID":
+        overall = "PARTIAL" if overall != "MISSING" else overall
     range_fact, breakout, impulse = timeline["range"], timeline["breakout"], timeline["impulse"]
     stamp = latest
     null_or = lambda value, derivation: _traced(value, "USDT", stamp,
@@ -253,15 +255,20 @@ def build_market_analysis_context(datasets: dict[str, list[dict[str, Any]]], ins
         "instrument": instrument, "generated_at": iso(decision_time), "decision_time": iso(decision_time),
         "latest_confirmed_market_time": iso(latest), "requested_analysis_mode": mode,
         "source_versions": source_versions,
-        "data_watermarks": {tf: iso(facts[tf]["latest_confirmed_bar_timestamp"] or decision_time)
+        "data_watermarks": {**{tf: iso(facts[tf]["latest_confirmed_bar_timestamp"] or decision_time)
                             for tf in SUPPORTED_TIMEFRAMES},
+                            **({name: iso(stamp or decision_time) for name,stamp in ai3["source_watermarks"].items()} if ai3_requested else {})},
         "data_quality": {
             "overall": overall,
-            "gaps": [{"source": tf, "start": iso(gap["start"]), "end": iso(gap["end"])}
-                     for tf in SUPPORTED_TIMEFRAMES for gap in facts[tf]["quality"]["gaps"]],
+            "gaps": ([{"source": tf, "start": iso(gap["start"]), "end": iso(gap["end"])}
+                     for tf in SUPPORTED_TIMEFRAMES for gap in facts[tf]["quality"]["gaps"]] +
+                     ([{"source": "orderflow", "start": iso(p["start"]), "end": iso(p["end"])}
+                       for p in ai3["order_flow_phases"] if p["gap_count"]] if ai3_requested else [])),
             "stale_sources": [tf for tf in SUPPORTED_TIMEFRAMES if facts[tf]["quality"]["source_stale"]],
-            "missing_sources": [tf for tf in SUPPORTED_TIMEFRAMES if not facts[tf]["confirmed_bars"]],
-            "watermark_mismatches": [],
+            "missing_sources": ([tf for tf in SUPPORTED_TIMEFRAMES if not facts[tf]["confirmed_bars"]] +
+                                ([name for name in ("cvd","oi") if not (orderflow or {}).get(name)] if ai3_requested else [])),
+            "watermark_mismatches": ([p["phase_id"] for p in ai3["order_flow_phases"]
+                                      if p["metrics"]["quality"]["watermark_mismatch"]] if ai3_requested else []),
         },
         "timeframe_structures": structures, "structure_events": events,
         "multi_timeframe_summary": summary,
@@ -301,7 +308,7 @@ def build_market_analysis_context(datasets: dict[str, list[dict[str, Any]]], ins
                                 "scenario_tree:NOT_IMPLEMENTED", "macro_context:NOT_REQUESTED",
                                 "AI prose generation:NOT_IMPLEMENTED"]),
         "provenance": {"builder": "dashboard.ai_market_analysis.context_adapter",
-                       "builder_version": AI_CONTEXT_ADAPTER_VERSION,
+                       "builder_version": AI_CONTEXT_ORDERFLOW_ADAPTER_VERSION if ai3_requested else AI_CONTEXT_ADAPTER_VERSION,
                        "input_snapshot_ids": [*[fingerprints[tf] for tf in SUPPORTED_TIMEFRAMES],
                                               *[ai3["source_fingerprints"][k] for k in sorted(ai3["source_fingerprints"])]],
                        "causal_cutoff": iso(decision_time), "content_hash": stable_hash(identity_input)},

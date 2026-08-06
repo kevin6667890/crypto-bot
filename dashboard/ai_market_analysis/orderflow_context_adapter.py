@@ -39,8 +39,11 @@ def build_ai3_facts(*, facts: dict[str,dict[str,Any]], timelines: dict[str,dict[
         return value//1000 if value>10_000_000_000 else value
     fingerprints={key:stable_hash(sorted((row for row in rows if row_time(row)<watermark),key=lambda r:stable_hash(r)))
                   for key,rows in orderflow.items() if isinstance(rows,list)}
+    source_watermarks={key:max((row_time(row) for row in rows if row_time(row)<watermark),default=None)
+                       for key,rows in orderflow.items() if isinstance(rows,list)}
     return {"order_flow_phases":phases,"phase_transitions":phase_transitions(phases),"key_level_candidates":candidates,
             "key_levels":levels,"scenario_tree":scenarios,"source_fingerprints":fingerprints,"watermark":watermark,
+            "source_watermarks":source_watermarks,
             "quality":_quality(phases),"not_implemented_sources":[name for name in ("vpvr","funding_extreme_prices","basis_extreme_prices") if not (auxiliary or {}).get(name)]}
 
 

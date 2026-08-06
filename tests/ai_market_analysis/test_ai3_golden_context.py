@@ -3,6 +3,7 @@ from __future__ import annotations
 from copy import deepcopy
 import json
 from pathlib import Path
+import time
 
 from jsonschema import Draft202012Validator, FormatChecker
 from referencing import Registry, Resource
@@ -79,3 +80,9 @@ def test_quality_change_changes_context_identity():
     source["cvd"][10]["status"]="PARTIAL_AFTER_GAP"
     after=build_market_analysis_context(data,"ETH-USDT-SWAP",decision,orderflow=source)
     assert before["context_id"]!=after["context_id"]
+
+
+def test_ai3_cold_context_performance_and_size_budget():
+    started=time.perf_counter(); value=context(); elapsed=(time.perf_counter()-started)*1000
+    assert elapsed<=1200
+    assert len(json.dumps(value,sort_keys=True,allow_nan=False).encode("utf-8"))<=500_000

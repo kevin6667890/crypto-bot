@@ -88,16 +88,19 @@ class FakeAIReportProvider:
           "SCENARIOS":"路径一是突破压力后延续；路径二是回踩支撑后确认；路径三是跌回核心 zone 且反抽失败，构成失败突破路径。触发前均不是已确认结果。",
           "LIMITATIONS":"数据 gap 与未知字段限制置信度；核心 zone 失守且反抽失败会使当前偏强判断失效。本次未加入已验证宏观证据。" if not macro_ids else "宏观证据仅作背景且不覆盖盘面；数据 gap 与未知字段限制置信度，核心结构失效条件必须继续观察。",
           "MACRO_BACKGROUND":"只依据冻结证据说明背景，不扩写政策结论，也不编造来源。",
-          "POSITION_PLAN":"原计划主要任务已经完成，剩余持仓属于需要重新决策的部分；不能因行情继续上涨自动改变原计划，也不能把短线反弹计划自动升级为长期仓位。结构失效只引用既有关键位与情景，不虚构减仓比例或数量。",
+          "POSITION_PLAN":"该 USER_DECLARED 计划的平均成本为1835 USDT，原计划主要任务已经完成，剩余持仓属于需要重新决策的部分；不能因行情继续上涨自动改变原计划，也不能把短线反弹计划自动升级为长期仓位。结构失效只引用既有关键位与情景，不虚构减仓比例或数量。",
           "QUICK_SUMMARY":"突破已经发生且处于回踩验证；首段含空头回补与主动买盘，后续接力尚未确认。支撑、压力与失效条件仅采用引用事实；数据限制约束置信度。"}
         sections=[]
         for sid in ids:
             refs=(tfrefs.get(sid) or [])
-            if sid in {"CONCLUSION","RECENT_PROCESS","MOVE_NATURE","QUICK_SUMMARY"}: refs=(all_ids[:3]+flow_ids[:2]+level_ids[:2])[:7]
+            if sid in {"CONCLUSION","QUICK_SUMMARY"}: refs=([x for x in all_ids if x.startswith(("TIMELINE_","STRUCT_","EVENT_"))][:5]+flow_ids[:2]+level_ids[:2]+[x for values in tfrefs.values() for x in values])[:24]
+            if sid=="QUICK_SUMMARY": refs=([x for x in all_ids if x.startswith(("DATA_","MACRO_UNAVAILABLE","TIMELINE_","STRUCT_","EVENT_"))][:7]+flow_ids[:2]+level_ids[:2]+scenario_ids[:1]+[x for values in tfrefs.values() for x in values])[:24]
+            if sid=="RECENT_PROCESS": refs=[x for x in all_ids if x.startswith(("TIMELINE_","STRUCT_","EVENT_"))][:8]+level_ids[:2]
+            if sid=="MOVE_NATURE": refs=flow_ids[:4]
             if sid=="ORDER_FLOW": refs=flow_ids[:4]
             if sid=="KEY_LEVELS": refs=level_ids[:4]
             if sid=="SCENARIOS": refs=scenario_ids[:3]
-            if sid=="LIMITATIONS": refs=[x for x in all_ids if x.startswith(("DATA_","UNSUPPORTED_","MACRO_UNAVAILABLE"))][:6]
+            if sid=="LIMITATIONS": refs=([x for x in all_ids if x.startswith(("DATA_","UNSUPPORTED_","MACRO_UNAVAILABLE"))][:6]+macro_ids[:4])
             if sid=="MACRO_BACKGROUND": refs=macro_ids[:4]
             if sid=="POSITION_PLAN": refs=position_ids[:7]+scenario_ids[:1]+level_ids[:1]
             sections.append({"section_id":sid,"title":TITLES[sid],"body":bodies[sid],"fact_refs":refs,

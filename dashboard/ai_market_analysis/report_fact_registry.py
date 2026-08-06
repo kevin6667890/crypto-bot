@@ -66,7 +66,7 @@ def build_fact_registry(enriched: dict[str, Any]) -> dict[str, Any]:
         if not isinstance(trigger,dict):trigger={"rule":str(trigger),"level_ids":scenario.get("trigger_level_ids",[])}
         if not isinstance(invalidation,dict):invalidation={"rule":str(invalidation),"level_id":None,"timeframe":None}
         facts.append(_fact(f"SCENARIO_{index+1:02d}", "SCENARIO", scenario.get("type", "情景"), {"scenario_id":scenario.get("scenario_id"),"type":scenario.get("type"),"direction":scenario.get("direction"),"likelihood":scenario.get("likelihood"),"trigger":{"rule":trigger.get("rule"),"level_ids":trigger.get("level_ids")},"invalidation":{"rule":invalidation.get("rule"),"level_id":invalidation.get("level_id"),"timeframe":invalidation.get("timeframe")},"contradicting_evidence":scenario.get("contradicting_evidence")},
-            f"/scenario_tree/scenarios/{index}", timestamp=decision, priority=97-index))
+            f"/scenario_tree/scenarios/{index}", timestamp=decision, priority=100))
     pos = enriched["position_context"]
     facts.append(_fact("POSITION_SOURCE", "POSITION", "持仓来源", pos.get("source"), "/position_context/source", timestamp=decision, claim_scope="POSITION", priority=100))
     for fid,key,label in (("POSITION_SIDE","side","方向"),("POSITION_AVERAGE_COST","average_cost","平均成本"),("POSITION_ORIGINAL_QUANTITY","original_quantity","原始数量"),("POSITION_REMAINING_QUANTITY","remaining_quantity","剩余数量"),("POSITION_ORIGINAL_STOP","original_stop","原始止损"),("POSITION_PLAN_COMPLETION","plan_completion_ratio","计划完成度"),("POSITION_WARNINGS","discipline_warnings","纪律警告")):
@@ -77,7 +77,7 @@ def build_fact_registry(enriched: dict[str, Any]) -> dict[str, Any]:
     if not macro.get("items"):
         facts.append(_fact("MACRO_UNAVAILABLE", "WARNING", "宏观证据", "本次未加入已验证宏观证据。", "/macro_context/warnings", timestamp=decision, priority=100))
     for index, claim in enumerate(base.get("unsupported_claims", [])):
-        facts.append(_fact(f"UNSUPPORTED_{index+1:02d}", "WARNING", "禁止断言", claim, f"/unsupported_claims/{index}", timestamp=decision, priority=100))
+        facts.append(_fact(f"UNSUPPORTED_{index+1:02d}", "WARNING", "禁止断言", claim, f"/unsupported_claims/{index}", timestamp=decision, priority=10))
     facts = facts[:MAX_FACTS]
     numeric = []
     def collect(value: Any, fact_id: str, unit: str | None, key: str = ""):

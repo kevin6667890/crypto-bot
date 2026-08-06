@@ -1,38 +1,8 @@
 {
-  "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "scenario_tree_v1.schema.json",
-  "title": "ScenarioTree v1",
-  "type": "object",
-  "additionalProperties": false,
-  "required": ["scenarios"],
-  "properties": {
-    "status": {"enum": ["AVAILABLE", "NOT_IMPLEMENTED"]},
-    "scenarios": {
-      "type": "array",
-      "maxItems": 3,
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": ["scenario_type", "likelihood", "trigger", "confirmation", "expected_path", "targets", "invalidation", "volume_confirmation", "cvd_confirmation", "oi_confirmation", "contradictory_evidence"],
-        "properties": {
-          "scenario_type": {"enum": ["BULLISH_CONTINUATION", "NORMAL_RETEST", "FAILED_BREAKOUT"]},
-          "likelihood": {"enum": ["HIGH", "MEDIUM", "LOW", "UNRANKED"]},
-          "trigger": {"type": "string", "minLength": 1},
-          "confirmation": {"type": "string", "minLength": 1},
-          "expected_path": {"type": "array", "minItems": 1, "items": {"type": "string"}},
-          "targets": {"type": "array", "minItems": 1, "items": {"type": "string", "pattern": "^/"}},
-          "invalidation": {"type": "string", "minLength": 1},
-          "volume_confirmation": {"type": "string", "minLength": 1},
-          "cvd_confirmation": {"type": "string", "minLength": 1},
-          "oi_confirmation": {"type": "string", "minLength": 1},
-          "contradictory_evidence": {"type": "array", "minItems": 1, "items": {"$ref": "common_defs_v1.schema.json#/$defs/evidence"}}
-        }
-      }
-    }
-  },
-  "allOf": [{
-    "if": {"properties": {"status": {"const": "NOT_IMPLEMENTED"}}, "required": ["status"]},
-    "then": {"properties": {"scenarios": {"maxItems": 0}}},
-    "else": {"properties": {"scenarios": {"minItems": 3, "maxItems": 3, "contains": {"properties": {"scenario_type": {"const": "FAILED_BREAKOUT"}}, "required": ["scenario_type"]}}}}
-  }]
+ "$schema":"https://json-schema.org/draft/2020-12/schema","$id":"scenario_tree_v1.schema.json","title":"ScenarioTree v1 / AI-3","type":"object","required":["scenarios"],
+ "properties":{"status":{"enum":["AVAILABLE","NOT_IMPLEMENTED"]},"direction":{"enum":["UP","DOWN","NONE"]},"version":{"type":"string"},"scenarios":{"type":"array","maxItems":3,"items":{"oneOf":[
+  {"type":"object","additionalProperties":false,"required":["scenario_type","likelihood","trigger","confirmation","expected_path","targets","invalidation","volume_confirmation","cvd_confirmation","oi_confirmation","contradictory_evidence"],"properties":{"scenario_type":{"enum":["BULLISH_CONTINUATION","NORMAL_RETEST","FAILED_BREAKOUT"]},"likelihood":{"type":"string"},"trigger":{"type":"string"},"confirmation":{"type":"string"},"expected_path":{"type":"array","minItems":1},"targets":{"type":"array","minItems":1},"invalidation":{"type":"string"},"volume_confirmation":{"type":"string"},"cvd_confirmation":{"type":"string"},"oi_confirmation":{"type":"string"},"contradictory_evidence":{"type":"array","minItems":1}}},
+  {"type":"object","additionalProperties":false,"required":["scenario_id","type","direction","likelihood","trigger","confirmation","expected_path","target_level_ids","invalidation","volume_confirmation","cvd_confirmation","oi_confirmation","funding_basis_confirmation","contradicting_evidence","required_data_quality","source_event_ids","source_phase_ids","source_level_ids","version"],"properties":{"scenario_id":{"type":"string"},"type":{"enum":["BULLISH_CONTINUATION","NORMAL_RETEST","FAILED_BREAKOUT","BEARISH_CONTINUATION","NORMAL_BEARISH_RETEST","FAILED_BREAKDOWN"]},"direction":{"enum":["UP","DOWN"]},"likelihood":{"enum":["LOW","MEDIUM","HIGH"]},"trigger":{"type":"object","required":["rule","level_ids"]},"confirmation":{"type":"object","required":["rule","timeframe"]},"expected_path":{"type":"array","minItems":1},"target_level_ids":{"type":"array","minItems":1},"invalidation":{"type":"object","required":["rule","level_id","timeframe"]},"volume_confirmation":{"type":"string"},"cvd_confirmation":{"type":"string"},"oi_confirmation":{"type":"string"},"funding_basis_confirmation":{"type":"string"},"contradicting_evidence":{"type":"array","minItems":1},"required_data_quality":{"type":"string"},"source_event_ids":{"type":"array"},"source_phase_ids":{"type":"array"},"source_level_ids":{"type":"array","minItems":1},"version":{"const":"ai-scenario-tree-v1"}}}
+ ]}}},"additionalProperties":false,
+ "allOf":[{"if":{"properties":{"status":{"const":"NOT_IMPLEMENTED"}},"required":["status"]},"then":{"properties":{"scenarios":{"maxItems":0}}},"else":{"properties":{"scenarios":{"minItems":3,"maxItems":3}}}}]
 }

@@ -1,0 +1,54 @@
+# Production overlay for the canonical CVD/OI v2 release.
+#
+# Static validation:
+#   CRYPTO_BOT_ENV_FILE=/path/to/runtime.env \
+#   CRYPTO_BOT_DATA_DIR=/path/to/data_cache \
+#   docker compose -f docker-compose.yml \
+#     -f deploy/compose/canonical-cvd-oi-v2.0.0.production.yml config --quiet
+#
+# Deployment automation must explicitly select only the three services named in
+# the release manifest. This file intentionally does not contain credentials.
+services:
+  crypto-bot:
+    profiles:
+      - ultimate-bot
+
+  dashboard:
+    profiles:
+      - legacy-dashboard
+
+  paper-api:
+    build: !reset null
+    image: ${CVD_OI_APP_IMAGE:-crypto-bot-canonical-app:35a5b29}
+    env_file: !override
+      - ${CRYPTO_BOT_ENV_FILE:?CRYPTO_BOT_ENV_FILE must reference the production runtime env file}
+    environment:
+      PAPER_API_HOST: 0.0.0.0
+      GIT_COMMIT: ${CVD_OI_SOURCE_COMMIT:-35a5b29dc2b7d29be4910f323d61edc63b9613e9}
+      MICROSTRUCTURE_DB_PATH: /app/data_cache/market_microstructure.db
+      CANONICAL_MICROSTRUCTURE_HISTORY_DB_PATH: /app/data_cache/canonical_api_active.db
+    volumes: !override
+      - ${CRYPTO_BOT_DATA_DIR:?CRYPTO_BOT_DATA_DIR must reference the production data directory}:/app/data_cache
+
+  microstructure-collector:
+    build: !reset null
+    image: ${CVD_OI_APP_IMAGE:-crypto-bot-canonical-app:35a5b29}
+    environment:
+      MICROSTRUCTURE_DB_PATH: /app/data_cache/market_microstructure.db
+      CANONICAL_MICROSTRUCTURE_HISTORY_DB_PATH: /app/data_cache/canonical_microstructure_history_v1.db
+      GIT_COMMIT: ${CVD_OI_SOURCE_COMMIT:-35a5b29dc2b7d29be4910f323d61edc63b9613e9}
+      MICROSTRUCTURE_MAINTENANCE_ENABLED: "false"
+      MICROSTRUCTURE_REALTIME_AGGREGATION_ENABLED: "true"
+      PYTHONUNBUFFERED: "1"
+    volumes: !override
+      - ${CRYPTO_BOT_DATA_DIR:?CRYPTO_BOT_DATA_DIR must reference the production data directory}:/app/data_cache
+
+  frontend:
+    build: !reset null
+    image: ${CVD_OI_FRONTEND_IMAGE:-crypto-bot-frontend:canonical-35a5b29}
+    depends_on: !reset []
+
+networks:
+  default:
+    external: true
+    name: ${CRYPTO_BOT_NETWORK:-crypto-bot_default}

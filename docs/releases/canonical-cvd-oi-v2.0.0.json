@@ -27,6 +27,98 @@
     "database_rebuild_required": false,
     "production_redeployment_required": false
   },
+  "deployment": {
+    "production_stash_audit": {
+      "stash_commit": "ccb2d1555121b6a01a4e53d7739527cd44089613",
+      "preserved": true,
+      "necessary_concepts_migrated_to_overlay": [
+        "use pinned release images instead of production-side builds",
+        "MICROSTRUCTURE_MAINTENANCE_ENABLED=false",
+        "MICROSTRUCTURE_REALTIME_AGGREGATION_ENABLED=true"
+      ],
+      "non_reusable_differences": [
+        "obsolete pre-release image tags",
+        "image overrides for profile-isolated ultimate-bot and legacy-dashboard services",
+        "runtime io_monitor files and logs"
+      ],
+      "missing_from_stash_patch_but_required_in_overlay": [
+        "canonical API active database path",
+        "versioned source commit",
+        "external production data volume",
+        "external compose network",
+        "three-service startup allowlist",
+        "current release image references and digests"
+      ]
+    },
+    "compose_base": {
+      "path": "docker-compose.yml",
+      "commit": "2a1e5d5f9e44a81d91f25576b17d61ee471903c6"
+    },
+    "overlay": {
+      "path": "deploy/compose/canonical-cvd-oi-v2.0.0.production.yml",
+      "commit": "a3efe9b4c31f89776eb08fcafef68438c7e3b050"
+    },
+    "required_environment_names": [
+      "CRYPTO_BOT_ENV_FILE",
+      "CRYPTO_BOT_DATA_DIR"
+    ],
+    "supported_override_environment_names": [
+      "CVD_OI_APP_IMAGE",
+      "CVD_OI_FRONTEND_IMAGE",
+      "CVD_OI_SOURCE_COMMIT",
+      "CRYPTO_BOT_NETWORK"
+    ],
+    "runtime_secret_names_injected_by_env_file": [
+      "ADMIN_TOKEN",
+      "BINANCE_KEY",
+      "BINANCE_SECRET",
+      "BYBIT_API_KEY",
+      "BYBIT_SECRET",
+      "DEEPSEEK_API_KEY",
+      "DING_SECRET",
+      "DING_TOKEN",
+      "DISCORD_WEBHOOK",
+      "SERVERCHAN_KEY",
+      "TELEGRAM_CHAT_ID",
+      "TELEGRAM_TOKEN"
+    ],
+    "runtime_non_secret_environment_names": [
+      "PAPER_API_URL"
+    ],
+    "data_volumes": [
+      {
+        "source": "${CRYPTO_BOT_DATA_DIR}",
+        "target": "/app/data_cache",
+        "mode": "rw",
+        "contains": [
+          "market_microstructure.db",
+          "canonical_api_active.db",
+          "canonical_microstructure_history_v1.db",
+          "paper_trades.db"
+        ]
+      }
+    ],
+    "service_start_allowlist": [
+      "paper-api",
+      "microstructure-collector",
+      "frontend"
+    ],
+    "profile_isolation": {
+      "crypto-bot": "ultimate-bot",
+      "dashboard": "legacy-dashboard"
+    },
+    "static_validation": {
+      "command": "docker compose -f docker-compose.yml -f deploy/compose/canonical-cvd-oi-v2.0.0.production.yml config --quiet",
+      "result": "PASS",
+      "service_config_hashes": {
+        "paper-api": "cb50b4bf6fd3cdad165973726600c4519622bca118a0a47bec02302a94e2f057",
+        "microstructure-collector": "c63d704f3c2c7a43af5bde5badff3f96b7c30bd0dd1f0e425ea0d375c66e3be1",
+        "frontend": "8ce0d7fc0aa9adc4486eb6ca1139ebe5dbf615a8dcde5bcd4340bb782dbb2e36"
+      },
+      "paper_api_runtime_hash_note": "The running container label predates runtime env-file value rotation. Variable names and the no-env-resolution compose hash match; secret values are intentionally not captured."
+    },
+    "rollback_manifest": "docs/releases/canonical-cvd-oi-v2.0.0.rollback.json"
+  },
   "frozen_contracts": [
     "CVD_PARTIAL_AFTER_GAP_RECOVERY",
     "CVD_UTC_DAILY_RESET",

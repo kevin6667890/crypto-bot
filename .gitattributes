@@ -3,3 +3,4 @@
 *.jpg binary
 *.jpeg binary
 *.zip binary
+/.runtime/strategy-phase4a6d-bounded-identity-gate/** -text

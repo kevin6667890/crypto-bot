@@ -8,6 +8,10 @@ from .versions import AI_ENRICHED_CONTEXT_VERSION, AI_POSITION_CONTEXT_VERSION, 
 
 
 def build_enriched_context(base: dict[str, Any], position: dict[str, Any], macro_set: dict[str, Any]) -> dict[str, Any]:
+    if position.get("instrument") != base.get("instrument"):
+        raise ValueError("position instrument mismatch")
+    if any(item.get("relevant_instruments") and base.get("instrument") not in item["relevant_instruments"] for item in macro_set.get("items",[])):
+        raise ValueError("macro evidence instrument mismatch")
     frozen_base = deepcopy(base)
     base_hash = stable_hash(frozen_base)
     source_versions = {**base.get("source_versions", {}), "position_context": AI_POSITION_CONTEXT_VERSION,

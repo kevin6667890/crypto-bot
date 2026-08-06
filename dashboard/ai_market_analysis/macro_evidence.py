@@ -4,6 +4,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 from urllib.parse import urlparse
+import ipaddress
 
 from .canonical import identity, stable_hash
 from .versions import AI_MACRO_EVIDENCE_SET_VERSION, AI_MACRO_EVIDENCE_VERSION
@@ -30,6 +31,14 @@ def normalize_macro_evidence(payload: dict[str, Any], decision_time: str) -> dic
     url = str(payload.get("source_url") or "")
     parsed = urlparse(url)
     if parsed.scheme not in {"https", "http"} or not parsed.hostname: raise ValueError("invalid source URL")
+    host=parsed.hostname.lower()
+    if host in {"localhost","localhost.localdomain"} or host.endswith(".local"):
+        raise ValueError("private source URL is forbidden")
+    try:
+        address=ipaddress.ip_address(host)
+        if not address.is_global:raise ValueError("private source URL is forbidden")
+    except ValueError as error:
+        if str(error)=="private source URL is forbidden":raise
     summary = str(payload.get("factual_summary") or "").strip()
     if not summary: raise ValueError("factual_summary required")
     quote = payload.get("direct_quote")

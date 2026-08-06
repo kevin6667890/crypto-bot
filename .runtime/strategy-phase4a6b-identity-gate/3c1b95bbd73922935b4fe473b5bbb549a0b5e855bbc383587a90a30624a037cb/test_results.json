@@ -1,0 +1,1 @@
+{"compileall":"PASS","git_diff_check":"PASS","integration_worktree_before_artifacts":"CLEAN","pytest":{"passed":1044,"seconds":177.88,"skipped":1,"status":"PASS"}}

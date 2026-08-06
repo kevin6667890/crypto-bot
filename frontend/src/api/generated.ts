@@ -4,6 +4,120 @@
  */
 
 export interface paths {
+    "/api/ai-market-analysis/v1/reports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Freeze facts and enqueue a shadow-only, audit-pending report. */
+        post: operations["createShadowAiMarketReport"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/ai-market-analysis/v1/requests/{request_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getShadowAiMarketReportRequest"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/ai-market-analysis/v1/reports/{report_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getShadowAiMarketReport"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/ai-market-analysis/v1/reports/latest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getLatestShadowAiMarketReport"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/ai-market-analysis/v1/position-plans": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** @description Admin-only append-only user-declared position plan. */
+        post: operations["createShadowAiPositionPlan"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/ai-market-analysis/v1/position-plans/{plan_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getShadowAiPositionPlan"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/ai-market-analysis/v1/health": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getShadowAiMarketReportHealth"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/operations/summary": {
         parameters: {
             query?: never;
@@ -205,6 +319,103 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** @enum {string} */
+        AiMarketInstrument: "BTC-USDT-SWAP" | "ETH-USDT-SWAP" | "SOL-USDT-SWAP";
+        /** @enum {string} */
+        AiMarketReportMode: "QUICK" | "FULL" | "POSITION_AWARE";
+        AiMarketReportRequest: {
+            instrument: components["schemas"]["AiMarketInstrument"];
+            /** Format: date-time */
+            decision_time: string;
+            mode: components["schemas"]["AiMarketReportMode"];
+            /** @enum {string} */
+            language: "zh-CN";
+            /** @enum {string} */
+            position_source: "NONE" | "PAPER" | "USER_DECLARED";
+            position_plan_id?: string;
+            inline_position_plan?: {
+                [key: string]: unknown;
+            };
+            macro_evidence_set_id?: string;
+            inline_macro_evidence?: {
+                [key: string]: unknown;
+            }[];
+            /** @enum {string} */
+            provider?: "fake" | "deepseek";
+            model?: string;
+        };
+        AiMarketReportRequestStatus: {
+            request_id: string;
+            context_id?: string;
+            status?: string;
+            downgraded_reason?: string | null;
+        } & {
+            [key: string]: unknown;
+        };
+        AiMarketReportSection: {
+            section_id: string;
+            title: string;
+            body: string;
+            fact_refs: string[];
+            level_refs: string[];
+            scenario_refs: string[];
+            macro_refs: string[];
+            position_refs: string[];
+            uncertainties: string[];
+        };
+        AiMarketReportResponse: {
+            schema_version: string;
+            source_versions: {
+                [key: string]: string;
+            };
+            context_id: string;
+            request_id: string;
+            mode: components["schemas"]["AiMarketReportMode"];
+            /** @enum {string} */
+            language: "zh-CN";
+            headline: string;
+            market_phase: string;
+            directional_bias: string;
+            /** @enum {string} */
+            confidence: "LOW" | "MEDIUM" | "HIGH";
+            sections: components["schemas"]["AiMarketReportSection"][];
+            key_levels: unknown[];
+            scenarios: unknown[];
+            position_guidance?: unknown;
+            unsupported_claims: string[];
+            data_warnings: string[];
+            citations: unknown[];
+            model: string;
+            prompt_version: string;
+            /** @enum {string} */
+            audit_status: "PENDING";
+        };
+        AiMarketReport: {
+            report_id: string;
+            request_id: string;
+            context_id: string;
+            mode: components["schemas"]["AiMarketReportMode"];
+            language: string;
+            generated_text: string;
+            /** @enum {string} */
+            audit_status: "PENDING";
+            response: components["schemas"]["AiMarketReportResponse"];
+        } & {
+            [key: string]: unknown;
+        };
+        AiMarketReportHealth: {
+            enabled: boolean;
+            shadow_only: boolean;
+            worker_enabled: boolean;
+            queue_depth: number;
+            active_requests?: number;
+            completed_count?: number;
+            failed_count?: number;
+            budget_blocked_count?: number;
+            schema_version: string | null;
+        } & {
+            [key: string]: unknown;
+        };
         /**
          * Format: int64
          * @description Unix timestamp in whole seconds.
@@ -851,6 +1062,170 @@ export interface components {
 }
 export type $defs = Record<string, never>;
 export interface operations {
+    createShadowAiMarketReport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AiMarketReportRequest"];
+            };
+        };
+        responses: {
+            /** @description Queued or reused */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiMarketReportRequestStatus"];
+                };
+            };
+        };
+    };
+    getShadowAiMarketReportRequest: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                request_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Append-only derived request status */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiMarketReportRequestStatus"];
+                };
+            };
+        };
+    };
+    getShadowAiMarketReport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                report_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Validated immutable shadow report */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiMarketReport"];
+                };
+            };
+        };
+    };
+    getLatestShadowAiMarketReport: {
+        parameters: {
+            query: {
+                instrument: components["schemas"]["AiMarketInstrument"];
+                mode?: components["schemas"]["AiMarketReportMode"];
+                language?: "zh-CN";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Latest isolated report */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiMarketReport"];
+                };
+            };
+        };
+    };
+    createShadowAiPositionPlan: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": {
+                    [key: string]: unknown;
+                };
+            };
+        };
+        responses: {
+            /** @description Versioned plan metadata */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    getShadowAiPositionPlan: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                plan_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Admin-only private plan */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        [key: string]: unknown;
+                    };
+                };
+            };
+        };
+    };
+    getShadowAiMarketReportHealth: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Sanitized independent report health */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiMarketReportHealth"];
+                };
+            };
+        };
+    };
     getOperationsSummary: {
         parameters: {
             query?: never;

@@ -37,21 +37,36 @@ def detect_range(candles: list[dict[str, Any]], timeframe: str, atr: float | Non
         return None
     best = None
     max_size = min(RANGE_PARAMETERS["max_lookback"], end)
+    initial = candles[end-RANGE_PARAMETERS["min_lookback"]:end]
+    high = max(row["high"] for row in initial)
+    low = min(row["low"] for row in initial)
     for size in range(RANGE_PARAMETERS["min_lookback"], max_size + 1):
         window = candles[end-size:end]
-        high, low = max(row["high"] for row in window), min(row["low"] for row in window)
+        if size > RANGE_PARAMETERS["min_lookback"]:
+            added = window[0]
+            high = max(high, added["high"])
+            low = min(low, added["low"])
         width = high-low
         if width <= 0 or width/atr > RANGE_PARAMETERS["max_width_atr"]:
             continue
         zone = width * RANGE_PARAMETERS["boundary_zone_fraction"]
-        upper = sum(row["high"] >= high-zone for row in window)
-        lower = sum(row["low"] <= low+zone for row in window)
-        inside = sum(low <= row["close"] <= high for row in window) / size
-        closes = [row["close"] for row in window]
-        normalized_slope = abs(_slope(closes)) / width
+        upper = lower = inside_count = crossings = 0
         midpoint = (high+low)/2
-        crossings = sum((a-midpoint)*(b-midpoint) <= 0 for a, b in zip(closes, closes[1:]))
-        if upper < 2 or lower < 2 or inside < .8 or normalized_slope > .08 or crossings < 2:
+        previous_close = None
+        for row in window:
+            close = row["close"]
+            upper += row["high"] >= high-zone
+            lower += row["low"] <= low+zone
+            inside_count += low <= close <= high
+            if previous_close is not None:
+                crossings += (previous_close-midpoint)*(close-midpoint) <= 0
+            previous_close = close
+        inside = inside_count / size
+        if upper < 2 or lower < 2 or inside < .8 or crossings < 2:
+            continue
+        slope = _slope([row["close"] for row in window])
+        normalized_slope = abs(slope) / width
+        if normalized_slope > .08:
             continue
         score = inside + min(upper, 4)/10 + min(lower, 4)/10 + min(crossings, 6)/20 - normalized_slope
         payload = {"timeframe": timeframe, "start": window[0]["open_time"],
@@ -59,7 +74,7 @@ def detect_range(candles: list[dict[str, Any]], timeframe: str, atr: float | Non
         candidate = {
             **payload, "midpoint": midpoint, "width": width, "width_atr": width/atr,
             "upper_touches": upper, "lower_touches": lower, "bars_inside_ratio": inside,
-            "slope": _slope(closes), "confidence": "HIGH" if score >= 1.55 else "MEDIUM",
+            "slope": slope, "confidence": "HIGH" if score >= 1.55 else "MEDIUM",
             "source_bar_timestamps": [row["close_time"] for row in window],
             "invalidation": f"confirmed close outside [{low}, {high}]",
             "version": AI_RANGE_COMPRESSION_VERSION, "_score": score,
@@ -77,8 +92,11 @@ def detect_compression(candles: list[dict[str, Any]], timeframe: str,
                        quality: dict[str, Any]) -> dict[str, Any]:
     if len(candles) < 40 or quality["status"] in {"INVALID", "MISSING", "GAP_AFFECTED"}:
         return {"state": "INSUFFICIENT_EVIDENCE", "version": AI_RANGE_COMPRESSION_VERSION}
-    features = build_features(candles, {"ma_periods": [20], "atr_period": 14, "bb_period": 20,
-                                        "rsi_period": 14, "volume_period": 20})
+    features = build_features(candles, {"ma_periods": [], "atr_period": 14, "bb_period": 20,
+                                        "rsi_period": 14, "volume_period": 20,
+                                        "include_rsi": False, "include_volume_ratio": False,
+                                        "include_body_range_ratio": False,
+                                        "include_recent_extremes": False})
     atrs = [item["atr"] for item in features[-100:] if item.get("atr") is not None]
     widths = [item["bb_width"] for item in features[-100:] if item.get("bb_width") is not None]
     if len(atrs) < 20 or len(widths) < 20:

@@ -14,6 +14,8 @@ def _mean(xs: list[float]) -> float: return sum(xs) / len(xs)
 def build_features(candles: list[dict[str, Any]], config: dict[str, Any] | None = None) -> list[dict[str, float | None]]:
     config = config or {}; ma_periods = config.get("ma_periods", [6,20,60,200])
     atr_period = int(config.get("atr_period", 14)); bb_period = int(config.get("bb_period", 20)); rsi_period = int(config.get("rsi_period", 14)); volume_period = int(config.get("volume_period", 20))
+    include_rsi = bool(config.get("include_rsi", True)); include_volume_ratio = bool(config.get("include_volume_ratio", True))
+    include_body_range_ratio = bool(config.get("include_body_range_ratio", True)); include_recent_extremes = bool(config.get("include_recent_extremes", True))
     closes=[float(x["close"]) for x in candles]; volumes=[float(x["volume"]) for x in candles]; out=[]; emas={p:None for p in ma_periods}; atr=None
     for i,row in enumerate(candles):
         result: dict[str,float|None]={"warm": None}; close=closes[i]
@@ -31,16 +33,19 @@ def build_features(candles: list[dict[str, Any]], config: dict[str, Any] | None 
             sample=closes[i-bb_period+1:i+1]; mid=_mean(sample); sd=sqrt(_mean([(x-mid)**2 for x in sample])); upper=mid+2*sd; lower=mid-2*sd
             result.update({"bb_mid":mid,"bb_upper":upper,"bb_lower":lower,"bb_width":(upper-lower)/mid if mid else None,"bb_pct":(close-lower)/(upper-lower) if upper>lower else .5})
         else: result.update({"bb_mid":None,"bb_upper":None,"bb_lower":None,"bb_width":None,"bb_pct":None})
-        if i>=rsi_period:
+        if include_rsi and i>=rsi_period:
             changes=[closes[j]-closes[j-1] for j in range(i-rsi_period+1,i+1)]; gain=_mean([max(0,x) for x in changes]); loss=_mean([max(0,-x) for x in changes]); result["rsi"]=100 if loss==0 else 100-100/(1+gain/loss)
         else: result["rsi"]=None
-        result["volume_ratio"]=volumes[i]/_mean(volumes[i-volume_period:i]) if i>=volume_period and _mean(volumes[i-volume_period:i]) else None
-        result["body_range_ratio"]=abs(float(row["close"])-float(row["open"]))/max(float(row["high"])-float(row["low"]),1e-12)
+        volume_mean = _mean(volumes[i-volume_period:i]) if include_volume_ratio and i>=volume_period else None
+        result["volume_ratio"]=volumes[i]/volume_mean if volume_mean else None
+        if include_body_range_ratio:
+            result["body_range_ratio"]=abs(float(row["close"])-float(row["open"]))/max(float(row["high"])-float(row["low"]),1e-12)
         # Breakout levels are formed from completed *previous* candles.  Including
         # the current bar would let it redefine the threshold it is tested against.
         # The empty early-history window deliberately remains unavailable.
-        prior = candles[max(0, i - 20):i]
-        result["recent_high"] = max((float(x["high"]) for x in prior), default=None)
-        result["recent_low"] = min((float(x["low"]) for x in prior), default=None)
-        result["warm"] = i+1 >= max(max(ma_periods), atr_period+1, bb_period, rsi_period+1, volume_period+1); out.append(result)
+        if include_recent_extremes:
+            prior = candles[max(0, i - 20):i]
+            result["recent_high"] = max((float(x["high"]) for x in prior), default=None)
+            result["recent_low"] = min((float(x["low"]) for x in prior), default=None)
+        result["warm"] = i+1 >= max(max(ma_periods, default=0), atr_period+1, bb_period, rsi_period+1, volume_period+1); out.append(result)
     return out

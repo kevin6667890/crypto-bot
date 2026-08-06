@@ -4,6 +4,7 @@ import re
 from typing import Any
 from .versions import AI_REPORT_BASIC_VALIDATION_VERSION, AI_REPORT_RESPONSE_VERSION
 from .report_provider import FULL_SECTION_IDS
+from .report_identity import REPORT_PIPELINE_VERSIONS
 
 NUMBER_RE=re.compile(r"(?<![A-Za-z_\d])[-+]?\d+(?:\.\d+)?%?(?![A-Za-z_\d])")
 TIMEFRAME_RE=re.compile(r"(?i)(?:15m|1H|4H|1D|1W|15分钟|1小时|4小时)")
@@ -46,6 +47,7 @@ def validate_report(report: dict[str,Any], request: dict[str,Any], registry: dic
            ("mode",request["mode"]),("language",request["language"]),("prompt_version",request["prompt_version"]),("model",request["model"]),("audit_status","PENDING"))
     for field,want in exact:
         if report.get(field)!=want: raise ReportValidationError(f"{field.upper()}_MISMATCH")
+    if report.get("source_versions")!=request.get("source_versions",REPORT_PIPELINE_VERSIONS):raise ReportValidationError("SOURCE_VERSIONS_MISMATCH")
     if not str(report.get("headline") or "").strip(): raise ReportValidationError("EMPTY_HEADLINE")
     allowed_phases=set(registry["allowed_market_phases"])
     if report["market_phase"] not in allowed_phases: raise ReportValidationError("MARKET_PHASE_NOT_ALLOWED")

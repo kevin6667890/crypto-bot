@@ -11,6 +11,7 @@ from .report_provider import AIReportProvider, ProviderError
 from .report_response_parser import parse_report_response, ReportParseError
 from .report_fact_registry import build_fact_registry
 from .report_repository import ReportRepository, utc_now
+from .report_identity import REPORT_PIPELINE_VERSIONS
 
 EVENT_TYPES=("QUEUED","RUNNING","RETRY_SCHEDULED","COMPLETED","FAILED_RETRYABLE","FAILED_FINAL","CANCEL_REQUESTED","CANCELLED","INTERRUPTED","BUDGET_BLOCKED","VALIDATION_FAILED")
 RETRY_DELAYS=(2,5,10)
@@ -57,8 +58,10 @@ class ReportWorker:
         number=self._attempt_count(request["request_id"])+1
         if number>3:self.repository.event(request["request_id"],"FAILED_FINAL",{"code":"MAX_ATTEMPTS"});return
         self.repository.event(request["request_id"],"RUNNING",{"attempt":number})
-        provider=self.provider_factory(request);prompt=compile_prompt(compiled,request["mode"])
-        provider_request={**request,"compiled_context":compiled,"token_estimate":compiled["token_estimate"],"messages":prompt["messages"],"max_output_tokens":request["max_output_tokens"],"macro_items":context["macro_context"]["items"],"position_source":context["position_context"]["source"]}
+        provider=self.provider_factory(request);source_versions={**context["source_versions"],**REPORT_PIPELINE_VERSIONS}
+        response_metadata={"context_id":request["context_id"],"request_id":request["request_id"],"mode":request["mode"],"language":request["language"],"model":request["model"],"prompt_version":request["prompt_version"],"source_versions":source_versions,"audit_status":"PENDING"}
+        prompt=compile_prompt({**compiled,"required_response_metadata":response_metadata},request["mode"])
+        provider_request={**request,"source_versions":source_versions,"compiled_context":compiled,"token_estimate":compiled["token_estimate"],"messages":prompt["messages"],"max_output_tokens":request["max_output_tokens"],"macro_items":context["macro_context"]["items"],"position_source":context["position_context"]["source"]}
         try:result=provider.generate(provider_request)
         except ProviderError as error:
             self._record_attempt(request,number,failure_code=error.code,error=error.code)

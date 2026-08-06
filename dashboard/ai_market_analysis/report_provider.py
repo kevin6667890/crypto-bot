@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol
 from .canonical import stable_hash
 from .versions import AI_REPORT_PROVIDER_VERSION, AI_REPORT_RESPONSE_VERSION
+from .report_identity import REPORT_PIPELINE_VERSIONS
 
 
 @dataclass(frozen=True)
@@ -104,7 +105,7 @@ class FakeAIReportProvider:
                 "scenario_refs":[facts[x]["value"].get("scenario_id") for x in refs if x in facts and isinstance(facts[x]["value"],dict) and facts[x]["value"].get("scenario_id")],
                 "macro_refs":[facts[x]["value"].get("evidence_id") for x in refs if x in facts and isinstance(facts[x]["value"],dict) and facts[x]["value"].get("evidence_id")],
                 "position_refs":[x for x in refs if x.startswith("POSITION_")],"uncertainties":[]})
-        return {"schema_version":AI_REPORT_RESPONSE_VERSION,"context_id":request["context_id"],"request_id":request["request_id"],
+        return {"schema_version":AI_REPORT_RESPONSE_VERSION,"source_versions":request.get("source_versions",REPORT_PIPELINE_VERSIONS),"context_id":request["context_id"],"request_id":request["request_id"],
             "mode":mode,"language":request["language"],"headline":"突破后回踩验证，短强长压",
             "market_phase":registry["allowed_market_phases"][0],"directional_bias":"BULLISH","confidence":registry["max_confidence"],
             "sections":sections,"key_levels":[],"scenarios":[],"position_guidance":({"source":facts.get("POSITION_SOURCE",{}).get("value"),"fact_refs":position_ids} if mode=="POSITION_AWARE" else None),

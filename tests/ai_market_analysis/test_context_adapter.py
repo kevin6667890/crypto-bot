@@ -13,7 +13,7 @@ from referencing import Registry, Resource
 from dashboard.ai_market_analysis.context_adapter import build_market_analysis_context
 from dashboard.ai_market_analysis.versions import SUPPORTED_TIMEFRAMES
 
-from .helpers import BASE, breakout_path, candles, datasets
+from .helpers import BASE, candles, datasets, golden_datasets
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -80,18 +80,24 @@ def test_multitimeframe_bull_alignment_and_conflict():
 
 def test_golden_eth_price_structure_matches_ai1_expectations():
     expectations = json.loads((ROOT/"fixtures"/"ai_market_analysis"/"golden_eth_breakout_expectations_v1.json").read_text(encoding="utf-8"))
-    data = datasets(); data["15m"] = breakout_path()
-    decision = data["15m"][-1]["ts"]+900
+    data, decision = golden_datasets()
     context = build_market_analysis_context(data, "ETH-USDT-SWAP", decision)
-    frame = context["timeframe_structures"][0]
-    assert frame["structure_classification"] == "POST_BREAKOUT_PULLBACK"
+    frames = {item["timeframe"]: item for item in context["timeframe_structures"]}
+    assert frames["15m"]["structure_classification"] == "POST_BREAKOUT_PULLBACK"
+    assert frames["1H"]["trend_classification"] == "STRONG_BULL"
+    assert frames["4H"]["structure_classification"] == "POST_BREAKOUT_PULLBACK"
+    assert frames["1D"]["trend_classification"] == "BULL"
+    assert frames["1W"]["trend_classification"] == "STRONG_BEAR"
     # AI-1 golden contract records the same structural facts; AI-2 does not use its order-flow attribution.
     assert expectations["fixture_notice"] == "DESIGN_TEST_DATA_NOT_LIVE_MARKET"
     assert len(expectations["required_conclusions"]) >= 5
     timeline = context["market_timeline"]
-    if timeline["breakout_direction"] != "UP":  # dominant timeframe can be higher; 15m event remains explicit.
-        assert any(event["timeframe"] == "15m" and event["event_type"] == "POST_BREAKOUT_PULLBACK"
-                   for event in context["structure_events"])
+    assert timeline["breakout_direction"] == "UP"
+    assert timeline["range_low"]["value"] == 1845
+    assert timeline["range_high"]["value"] == 1890
+    assert timeline["impulse_high"]["value"] == 1928
+    assert timeline["current_phase"] == "POST_BREAKOUT_PULLBACK"
+    assert context["multi_timeframe_summary"]["pair_relationships"][-1]["relationship"] == "LOWER_TF_BULL_HIGHER_TF_BEAR"
 
 
 def test_import_has_no_database_network_thread_or_llm_side_effect(monkeypatch):

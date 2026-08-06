@@ -46,6 +46,7 @@ def build_timeline(facts: dict[str, Any], swings: list[dict[str, Any]]) -> dict[
     selected_range = None
     breakout_index = None
     direction = "NONE"
+    breakout_candidate_score = float("-inf")
     if atr and len(candles) >= 21:
         for end in range(20, len(candles)):
             candidate = detect_range(candles, timeframe, atr, end_index=end)
@@ -54,12 +55,19 @@ def build_timeline(facts: dict[str, Any], swings: list[dict[str, Any]]) -> dict[
             bar = candles[end]
             up_distance = (bar["close"]-candidate["high"])/atr
             down_distance = (candidate["low"]-bar["close"])/atr
+            normalized_slope = abs(candidate["slope"])/candidate["width"] if candidate["width"] else 1.0
+            candidate_score = (candidate["upper_touches"]+candidate["lower_touches"]+
+                               10*candidate["bars_inside_ratio"]-100*normalized_slope+end*1e-6)
             if up_distance >= TIMELINE_PARAMETERS["attempt_distance_atr"]:
-                selected_range, breakout_index, direction = candidate, end, "UP"
+                if candidate_score > breakout_candidate_score:
+                    selected_range, breakout_index, direction = candidate, end, "UP"
+                    breakout_candidate_score = candidate_score
             elif down_distance >= TIMELINE_PARAMETERS["attempt_distance_atr"]:
-                selected_range, breakout_index, direction = candidate, end, "DOWN"
-            if breakout_index is not None:
-                break
+                if candidate_score > breakout_candidate_score:
+                    selected_range, breakout_index, direction = candidate, end, "DOWN"
+                    breakout_candidate_score = candidate_score
+            # Keep scanning so the bounded timeline represents the most recent
+            # pre-existing structure break, not an older event in the window.
     if selected_range is None:
         selected_range = detect_range(candles, timeframe, atr)
     if selected_range:

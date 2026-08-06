@@ -1,0 +1,24 @@
+{
+  "instrument": "ETH-USDT-SWAP",
+  "source": "USER_DECLARED",
+  "side": "LONG",
+  "entries": [{"price": 1835, "quantity": 10, "timestamp": "2027-10-01T00:00:00Z", "source": "USER_DECLARED", "note": "short-term rebound"}],
+  "original_thesis": "short-term rebound",
+  "original_timeframe": "short-term rebound",
+  "original_stop": 1810,
+  "original_targets": [
+    {"target_id": "TARGET_01", "price": 1855, "quantity": 3, "status": "COMPLETED", "completed_at": "2027-10-10T00:00:00Z"},
+    {"target_id": "TARGET_02", "price": 1865, "quantity": 3, "status": "COMPLETED", "completed_at": "2027-10-15T00:00:00Z"},
+    {"target_id": "TARGET_03", "price": 1890, "quantity": 2, "status": "COMPLETED", "completed_at": "2027-10-25T00:00:00Z"}
+  ],
+  "realised_exits": [
+    {"price": 1855, "quantity": 3, "timestamp": "2027-10-10T00:00:00Z", "reason": "target", "target_reference": "TARGET_01"},
+    {"price": 1865, "quantity": 3, "timestamp": "2027-10-15T00:00:00Z", "reason": "target", "target_reference": "TARGET_02"},
+    {"price": 1890, "quantity": 2, "timestamp": "2027-10-25T00:00:00Z", "reason": "final target", "target_reference": "TARGET_03"}
+  ],
+  "created_at": "2027-10-01T00:00:00Z",
+  "effective_at": "2027-10-01T00:00:00Z",
+  "status": "ACTIVE",
+  "user_notes": "No authorization to turn this into a long-term position",
+  "provenance": {"fixture": true}
+}

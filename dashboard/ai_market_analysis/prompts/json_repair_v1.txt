@@ -1,0 +1,1 @@
+只修复输入 JSON 的语法和 Schema 形状。保持相同 context_id、request_id、mode、language、model、prompt_version 和事实内容；不得添加、删除或改变市场事实。只输出 JSON。

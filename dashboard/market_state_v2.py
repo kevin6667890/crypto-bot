@@ -111,6 +111,7 @@ class LevelInteractionV2:
     cvd_oi_quality: str = "UNAVAILABLE"
     current_stage: str = "OBSERVING"
     invalidation_reason: str | None = None
+    level_continuity_sources: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -641,6 +642,7 @@ class MarketStateEngineV2:
                 None, "NOT_RECLAIMED", (int(level.get("source_timestamp", 0)),),
                 "AVAILABLE" if confirmed else "PARTIAL", None, confirmation_ts, None,
                 volume_ratio, flow_quality, stage, invalidation,
+                tuple(level.get("continuity_sources", ())),
             ))
         return output, overlays
 

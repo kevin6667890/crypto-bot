@@ -218,3 +218,26 @@ def test_request_and_response_schemas_pass():
     validator("ai_market_report_request_v1.schema.json").validate(request)
     validator("ai_market_report_response_v1.schema.json").validate(response)
     assert report_errors(request, response) == []
+
+
+def test_phase_context_may_explicitly_defer_later_phase_sections():
+    value = golden()
+    value["order_flow_phases"] = []
+    value["key_levels"] = []
+    value["scenario_tree"] = {"status": "NOT_IMPLEMENTED", "scenarios": []}
+    value["unsupported_claims"] = ["order_flow_phases:NOT_IMPLEMENTED", "key_levels:NOT_IMPLEMENTED", "scenario_tree:NOT_IMPLEMENTED"]
+    validator("market_analysis_context_v1.schema.json").validate(value)
+
+
+def test_available_scenario_tree_still_requires_three_scenarios():
+    value = {"status": "AVAILABLE", "scenarios": golden()["scenario_tree"]["scenarios"][:2]}
+    with pytest.raises(ValidationError):
+        validator("scenario_tree_v1.schema.json").validate(value)
+
+
+def test_phase_two_enums_and_empty_missing_timeframe_evidence_are_legal():
+    value = golden()["timeframe_structures"][0]
+    value["volume_regime"] = "CONTRACTING"
+    value["trend_classification"] = "STRONG_BULL"
+    value["source_bar_timestamps"] = []
+    validator("timeframe_structure_v1.schema.json").validate(value)

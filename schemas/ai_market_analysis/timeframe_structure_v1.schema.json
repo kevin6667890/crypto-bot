@@ -10,10 +10,10 @@
     "slopes": {"type": "object", "additionalProperties": {"$ref": "common_defs_v1.schema.json#/$defs/traced_number"}},
     "price_position": {"type": "string"}, "moving_average_ordering": {"type": "string"}, "swing_structure": {"enum": ["HH_HL", "LH_LL", "MIXED", "RANGE", "UNKNOWN"]},
     "rsi": {"$ref": "common_defs_v1.schema.json#/$defs/traced_number"}, "stoch_rsi": {"$ref": "common_defs_v1.schema.json#/$defs/traced_number"}, "atr": {"$ref": "common_defs_v1.schema.json#/$defs/traced_number"},
-    "volume_regime": {"enum": ["EXPANSION", "CONTRACTION", "NORMAL", "UNKNOWN"]}, "trend_classification": {"enum": ["UP", "DOWN", "RANGE", "TRANSITION_UP", "TRANSITION_DOWN", "MIXED", "UNKNOWN"]},
+    "volume_regime": {"enum": ["VERY_LOW", "CONTRACTING", "NORMAL", "EXPANDING", "CLIMACTIC", "NOT_AVAILABLE", "EXPANSION", "CONTRACTION", "UNKNOWN"]}, "trend_classification": {"enum": ["STRONG_BULL", "BULL", "NEUTRAL", "BEAR", "STRONG_BEAR", "INSUFFICIENT_DATA", "UP", "DOWN", "RANGE", "TRANSITION_UP", "TRANSITION_DOWN", "MIXED", "UNKNOWN"]},
     "structure_classification": {"type": "string"}, "nearest_support": {"type": ["string", "null"], "pattern": "^/"}, "nearest_resistance": {"type": ["string", "null"], "pattern": "^/"},
     "invalidation": {"type": "object", "required": ["rule", "evidence_paths"], "properties": {"rule": {"type": "string", "minLength": 1}, "evidence_paths": {"type": "array", "minItems": 1, "items": {"type": "string", "pattern": "^/"}}}, "additionalProperties": false},
     "confidence": {"enum": ["HIGH", "MEDIUM", "LOW", "INSUFFICIENT"]}, "supporting_facts": {"type": "array", "items": {"$ref": "common_defs_v1.schema.json#/$defs/evidence"}}, "contradicting_facts": {"type": "array", "items": {"$ref": "common_defs_v1.schema.json#/$defs/evidence"}},
-    "source_bar_timestamps": {"type": "array", "minItems": 1, "items": {"$ref": "common_defs_v1.schema.json#/$defs/timestamp"}}
+    "source_bar_timestamps": {"type": "array", "items": {"$ref": "common_defs_v1.schema.json#/$defs/timestamp"}}
   }
 }

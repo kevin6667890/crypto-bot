@@ -1,0 +1,4 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema", "$id": "macro_evidence_v1.schema.json", "title": "MacroEvidence v1", "type": "object", "additionalProperties": false,
+  "required": ["status", "items"], "properties": {"status": {"enum": ["AVAILABLE", "PARTIAL", "MISSING", "NOT_REQUESTED"]}, "items": {"type": "array", "items": {"type": "object", "additionalProperties": false, "required": ["title", "source", "published_at", "retrieved_at", "relevance", "claim"], "properties": {"title": {"type": "string", "minLength": 1}, "source": {"type": "string", "format": "uri"}, "published_at": {"$ref": "common_defs_v1.schema.json#/$defs/timestamp"}, "retrieved_at": {"$ref": "common_defs_v1.schema.json#/$defs/timestamp"}, "relevance": {"enum": ["DIRECT", "INDIRECT", "BACKGROUND"]}, "claim": {"type": "string", "minLength": 1}}}}}
+}

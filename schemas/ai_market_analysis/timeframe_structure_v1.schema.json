@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema", "$id": "timeframe_structure_v1.schema.json",
+  "title": "TimeframeStructure v1", "type": "object", "additionalProperties": false,
+  "required": ["timeframe", "last_confirmed_close", "current_incomplete_candle", "moving_averages", "slopes", "price_position", "moving_average_ordering", "swing_structure", "rsi", "stoch_rsi", "atr", "volume_regime", "trend_classification", "structure_classification", "nearest_support", "nearest_resistance", "invalidation", "confidence", "supporting_facts", "contradicting_facts", "source_bar_timestamps"],
+  "properties": {
+    "timeframe": {"enum": ["15m", "1H", "4H", "1D", "1W"]},
+    "last_confirmed_close": {"$ref": "common_defs_v1.schema.json#/$defs/traced_number"},
+    "current_incomplete_candle": {"type": ["object", "null"], "properties": {"open_time": {"$ref": "common_defs_v1.schema.json#/$defs/timestamp"}, "confirmed": {"const": false}}, "required": ["open_time", "confirmed"], "additionalProperties": true},
+    "moving_averages": {"type": "object", "required": ["ma20", "ma30", "ma60", "ma200", "ema20"], "properties": {"ma20": {"$ref": "common_defs_v1.schema.json#/$defs/traced_number"}, "ma30": {"$ref": "common_defs_v1.schema.json#/$defs/traced_number"}, "ma60": {"$ref": "common_defs_v1.schema.json#/$defs/traced_number"}, "ma200": {"$ref": "common_defs_v1.schema.json#/$defs/traced_number"}, "ema20": {"$ref": "common_defs_v1.schema.json#/$defs/traced_number"}}, "additionalProperties": false},
+    "slopes": {"type": "object", "additionalProperties": {"$ref": "common_defs_v1.schema.json#/$defs/traced_number"}},
+    "price_position": {"type": "string"}, "moving_average_ordering": {"type": "string"}, "swing_structure": {"enum": ["HH_HL", "LH_LL", "MIXED", "RANGE", "UNKNOWN"]},
+    "rsi": {"$ref": "common_defs_v1.schema.json#/$defs/traced_number"}, "stoch_rsi": {"$ref": "common_defs_v1.schema.json#/$defs/traced_number"}, "atr": {"$ref": "common_defs_v1.schema.json#/$defs/traced_number"},
+    "volume_regime": {"enum": ["EXPANSION", "CONTRACTION", "NORMAL", "UNKNOWN"]}, "trend_classification": {"enum": ["UP", "DOWN", "RANGE", "TRANSITION_UP", "TRANSITION_DOWN", "MIXED", "UNKNOWN"]},
+    "structure_classification": {"type": "string"}, "nearest_support": {"type": ["string", "null"], "pattern": "^/"}, "nearest_resistance": {"type": ["string", "null"], "pattern": "^/"},
+    "invalidation": {"type": "object", "required": ["rule", "evidence_paths"], "properties": {"rule": {"type": "string", "minLength": 1}, "evidence_paths": {"type": "array", "minItems": 1, "items": {"type": "string", "pattern": "^/"}}}, "additionalProperties": false},
+    "confidence": {"enum": ["HIGH", "MEDIUM", "LOW", "INSUFFICIENT"]}, "supporting_facts": {"type": "array", "items": {"$ref": "common_defs_v1.schema.json#/$defs/evidence"}}, "contradicting_facts": {"type": "array", "items": {"$ref": "common_defs_v1.schema.json#/$defs/evidence"}},
+    "source_bar_timestamps": {"type": "array", "minItems": 1, "items": {"$ref": "common_defs_v1.schema.json#/$defs/timestamp"}}
+  }
+}

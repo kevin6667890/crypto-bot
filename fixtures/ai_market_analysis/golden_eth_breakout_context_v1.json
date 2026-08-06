@@ -1,0 +1,1633 @@
+{
+  "schema_version": "market-analysis-context-v1",
+  "context_id": "ctx_eth_golden_breakout_v1",
+  "instrument": "ETH-USDT-SWAP",
+  "generated_at": "2026-01-15T12:00:00Z",
+  "decision_time": "2026-01-15T12:00:00Z",
+  "latest_confirmed_market_time": "2026-01-15T11:45:00Z",
+  "requested_analysis_mode": "FULL",
+  "source_versions": {
+    "candles": "fixture-ohlcv-v1",
+    "flow": "fixture-flow-v1",
+    "structure": "fixture-structure-v1"
+  },
+  "data_watermarks": {
+    "candles": "2026-01-15T11:45:00Z",
+    "cvd": "2026-01-15T11:59:00Z",
+    "oi": "2026-01-15T11:59:00Z"
+  },
+  "data_quality": {
+    "overall": "VALID",
+    "gaps": [],
+    "stale_sources": [],
+    "missing_sources": [],
+    "watermark_mismatches": []
+  },
+  "timeframe_structures": [
+    {
+      "timeframe": "15m",
+      "last_confirmed_close": {
+        "value": 1902,
+        "unit": "USDT",
+        "timestamp": "2026-01-15T12:00:00Z",
+        "source": "fixture",
+        "status": "DERIVED",
+        "quality": "VALID",
+        "derivation": "static golden fixture; not live market data",
+        "version": "fixture-v1"
+      },
+      "current_incomplete_candle": {
+        "open_time": "2026-01-15T12:00:00Z",
+        "confirmed": false
+      },
+      "moving_averages": {
+        "ma20": {
+          "value": 1897,
+          "unit": "USDT",
+          "timestamp": "2026-01-15T12:00:00Z",
+          "source": "fixture",
+          "status": "DERIVED",
+          "quality": "VALID",
+          "derivation": "static golden fixture; not live market data",
+          "version": "fixture-v1"
+        },
+        "ma30": {
+          "value": 1893,
+          "unit": "USDT",
+          "timestamp": "2026-01-15T12:00:00Z",
+          "source": "fixture",
+          "status": "DERIVED",
+          "quality": "VALID",
+          "derivation": "static golden fixture; not live market data",
+          "version": "fixture-v1"
+        },
+        "ma60": {
+          "value": 1884,
+          "unit": "USDT",
+          "timestamp": "2026-01-15T12:00:00Z",
+          "source": "fixture",
+          "status": "DERIVED",
+          "quality": "VALID",
+          "derivation": "static golden fixture; not live market data",
+          "version": "fixture-v1"
+        },
+        "ma200": {
+          "value": 1862,
+          "unit": "USDT",
+          "timestamp": "2026-01-15T12:00:00Z",
+          "source": "fixture",
+          "status": "DERIVED",
+          "quality": "VALID",
+          "derivation": "static golden fixture; not live market data",
+          "version": "fixture-v1"
+        },
+        "ema20": {
+          "value": 1898,
+          "unit": "USDT",
+          "timestamp": "2026-01-15T12:00:00Z",
+          "source": "fixture",
+          "status": "DERIVED",
+          "quality": "VALID",
+          "derivation": "static golden fixture; not live market data",
+          "version": "fixture-v1"
+        }
+      },
+      "slopes": {
+        "ema20": {
+          "value": -0.2,
+          "unit": "percent/4bars",
+          "timestamp": "2026-01-15T12:00:00Z",
+          "source": "fixture",
+          "status": "DERIVED",
+          "quality": "VALID",
+          "derivation": "static golden fixture; not live market data",
+          "version": "fixture-v1"
+        }
+      },
+      "price_position": "ABOVE_SHORT_MA",
+      "moving_average_ordering": "MIXED",
+      "swing_structure": "MIXED",
+      "rsi": {
+        "value": 48,
+        "unit": "index",
+        "timestamp": "2026-01-15T12:00:00Z",
+        "source": "fixture",
+        "status": "DERIVED",
+        "quality": "VALID",
+        "derivation": "static golden fixture; not live market data",
+        "version": "fixture-v1"
+      },
+      "stoch_rsi": {
+        "value": 55,
+        "unit": "index",
+        "timestamp": "2026-01-15T12:00:00Z",
+        "source": "fixture",
+        "status": "DERIVED",
+        "quality": "VALID",
+        "derivation": "static golden fixture; not live market data",
+        "version": "fixture-v1"
+      },
+      "atr": {
+        "value": 11,
+        "unit": "USDT",
+        "timestamp": "2026-01-15T12:00:00Z",
+        "source": "fixture",
+        "status": "DERIVED",
+        "quality": "VALID",
+        "derivation": "static golden fixture; not live market data",
+        "version": "fixture-v1"
+      },
+      "volume_regime": "CONTRACTION",
+      "trend_classification": "TRANSITION_UP",
+      "structure_classification": "POST_BREAKOUT_PULLBACK",
+      "nearest_support": "/key_levels/0",
+      "nearest_resistance": "/key_levels/1",
+      "invalidation": {
+        "rule": "confirmed close below 1885 invalidates the breakout hold",
+        "evidence_paths": [
+          "/key_levels/0"
+        ]
+      },
+      "confidence": "MEDIUM",
+      "supporting_facts": [
+        {
+          "claim": "confirmed close retains breakout area",
+          "evidence_paths": [
+            "/market_timeline/range_high"
+          ]
+        }
+      ],
+      "contradicting_facts": [
+        {
+          "claim": "pullback momentum is incomplete",
+          "evidence_paths": [
+            "/timeframe_structures/0/stoch_rsi"
+          ]
+        }
+      ],
+      "source_bar_timestamps": [
+        "2026-01-15T11:45:00Z"
+      ]
+    },
+    {
+      "timeframe": "1H",
+      "last_confirmed_close": {
+        "value": 1902,
+        "unit": "USDT",
+        "timestamp": "2026-01-15T12:00:00Z",
+        "source": "fixture",
+        "status": "DERIVED",
+        "quality": "VALID",
+        "derivation": "static golden fixture; not live market data",
+        "version": "fixture-v1"
+      },
+      "current_incomplete_candle": {
+        "open_time": "2026-01-15T12:00:00Z",
+        "confirmed": false
+      },
+      "moving_averages": {
+        "ma20": {
+          "value": 1897,
+          "unit": "USDT",
+          "timestamp": "2026-01-15T12:00:00Z",
+          "source": "fixture",
+          "status": "DERIVED",
+          "quality": "VALID",
+          "derivation": "static golden fixture; not live market data",
+          "version": "fixture-v1"
+        },
+        "ma30": {
+          "value": 1893,
+          "unit": "USDT",
+          "timestamp": "2026-01-15T12:00:00Z",
+          "source": "fixture",
+          "status": "DERIVED",
+          "quality": "VALID",
+          "derivation": "static golden fixture; not live market data",
+          "version": "fixture-v1"
+        },
+        "ma60": {
+          "value": 1884,
+          "unit": "USDT",
+          "timestamp": "2026-01-15T12:00:00Z",
+          "source": "fixture",
+          "status": "DERIVED",
+          "quality": "VALID",
+          "derivation": "static golden fixture; not live market data",
+          "version": "fixture-v1"
+        },
+        "ma200": {
+          "value": 1862,
+          "unit": "USDT",
+          "timestamp": "2026-01-15T12:00:00Z",
+          "source": "fixture",
+          "status": "DERIVED",
+          "quality": "VALID",
+          "derivation": "static golden fixture; not live market data",
+          "version": "fixture-v1"
+        },
+        "ema20": {
+          "value": 1898,
+          "unit": "USDT",
+          "timestamp": "2026-01-15T12:00:00Z",
+          "source": "fixture",
+          "status": "DERIVED",
+          "quality": "VALID",
+          "derivation": "static golden fixture; not live market data",
+          "version": "fixture-v1"
+        }
+      },
+      "slopes": {
+        "ema20": {
+          "value": 0.8,
+          "unit": "percent/4bars",
+          "timestamp": "2026-01-15T12:00:00Z",
+          "source": "fixture",
+          "status": "DERIVED",
+          "quality": "VALID",
+          "derivation": "static golden fixture; not live market data",
+          "version": "fixture-v1"
+        }
+      },
+      "price_position": "ABOVE_SHORT_MA",
+      "moving_average_ordering": "EMA20_GT_MA30_GT_MA60",
+      "swing_structure": "HH_HL",
+      "rsi": {
+        "value": 62,
+        "unit": "index",
+        "timestamp": "2026-01-15T12:00:00Z",
+        "source": "fixture",
+        "status": "DERIVED",
+        "quality": "VALID",
+        "derivation": "static golden fixture; not live market data",
+        "version": "fixture-v1"
+      },
+      "stoch_rsi": {
+        "value": 55,
+        "unit": "index",
+        "timestamp": "2026-01-15T12:00:00Z",
+        "source": "fixture",
+        "status": "DERIVED",
+        "quality": "VALID",
+        "derivation": "static golden fixture; not live market data",
+        "version": "fixture-v1"
+      },
+      "atr": {
+        "value": 35,
+        "unit": "USDT",
+        "timestamp": "2026-01-15T12:00:00Z",
+        "source": "fixture",
+        "status": "DERIVED",
+        "quality": "VALID",
+        "derivation": "static golden fixture; not live market data",
+        "version": "fixture-v1"
+      },
+      "volume_regime": "NORMAL",
+      "trend_classification": "UP",
+      "structure_classification": "BREAKOUT_CONFIRMED",
+      "nearest_support": "/key_levels/0",
+      "nearest_resistance": "/key_levels/1",
+      "invalidation": {
+        "rule": "confirmed close below 1885 invalidates the breakout hold",
+        "evidence_paths": [
+          "/key_levels/0"
+        ]
+      },
+      "confidence": "MEDIUM",
+      "supporting_facts": [
+        {
+          "claim": "confirmed close retains breakout area",
+          "evidence_paths": [
+            "/market_timeline/range_high"
+          ]
+        }
+      ],
+      "contradicting_facts": [
+        {
+          "claim": "pullback momentum is incomplete",
+          "evidence_paths": [
+            "/timeframe_structures/0/stoch_rsi"
+          ]
+        }
+      ],
+      "source_bar_timestamps": [
+        "2026-01-15T11:45:00Z"
+      ]
+    },
+    {
+      "timeframe": "4H",
+      "last_confirmed_close": {
+        "value": 1902,
+        "unit": "USDT",
+        "timestamp": "2026-01-15T12:00:00Z",
+        "source": "fixture",
+        "status": "DERIVED",
+        "quality": "VALID",
+        "derivation": "static golden fixture; not live market data",
+        "version": "fixture-v1"
+      },
+      "current_incomplete_candle": {
+        "open_time": "2026-01-15T12:00:00Z",
+        "confirmed": false
+      },
+      "moving_averages": {
+        "ma20": {
+          "value": 1897,
+          "unit": "USDT",
+          "timestamp": "2026-01-15T12:00:00Z",
+          "source": "fixture",
+          "status": "DERIVED",
+          "quality": "VALID",
+          "derivation": "static golden fixture; not live market data",
+          "version": "fixture-v1"
+        },
+        "ma30": {
+          "value": 1893,
+          "unit": "USDT",
+          "timestamp": "2026-01-15T12:00:00Z",
+          "source": "fixture",
+          "status": "DERIVED",
+          "quality": "VALID",
+          "derivation": "static golden fixture; not live market data",
+          "version": "fixture-v1"
+        },
+        "ma60": {
+          "value": 1884,
+          "unit": "USDT",
+          "timestamp": "2026-01-15T12:00:00Z",
+          "source": "fixture",
+          "status": "DERIVED",
+          "quality": "VALID",
+          "derivation": "static golden fixture; not live market data",
+          "version": "fixture-v1"
+        },
+        "ma200": {
+          "value": 1862,
+          "unit": "USDT",
+          "timestamp": "2026-01-15T12:00:00Z",
+          "source": "fixture",
+          "status": "DERIVED",
+          "quality": "VALID",
+          "derivation": "static golden fixture; not live market data",
+          "version": "fixture-v1"
+        },
+        "ema20": {
+          "value": 1898,
+          "unit": "USDT",
+          "timestamp": "2026-01-15T12:00:00Z",
+          "source": "fixture",
+          "status": "DERIVED",
+          "quality": "VALID",
+          "derivation": "static golden fixture; not live market data",
+          "version": "fixture-v1"
+        }
+      },
+      "slopes": {
+        "ema20": {
+          "value": -0.2,
+          "unit": "percent/4bars",
+          "timestamp": "2026-01-15T12:00:00Z",
+          "source": "fixture",
+          "status": "DERIVED",
+          "quality": "VALID",
+          "derivation": "static golden fixture; not live market data",
+          "version": "fixture-v1"
+        }
+      },
+      "price_position": "ABOVE_SHORT_MA",
+      "moving_average_ordering": "MIXED",
+      "swing_structure": "HH_HL",
+      "rsi": {
+        "value": 48,
+        "unit": "index",
+        "timestamp": "2026-01-15T12:00:00Z",
+        "source": "fixture",
+        "status": "DERIVED",
+        "quality": "VALID",
+        "derivation": "static golden fixture; not live market data",
+        "version": "fixture-v1"
+      },
+      "stoch_rsi": {
+        "value": 55,
+        "unit": "index",
+        "timestamp": "2026-01-15T12:00:00Z",
+        "source": "fixture",
+        "status": "DERIVED",
+        "quality": "VALID",
+        "derivation": "static golden fixture; not live market data",
+        "version": "fixture-v1"
+      },
+      "atr": {
+        "value": 35,
+        "unit": "USDT",
+        "timestamp": "2026-01-15T12:00:00Z",
+        "source": "fixture",
+        "status": "DERIVED",
+        "quality": "VALID",
+        "derivation": "static golden fixture; not live market data",
+        "version": "fixture-v1"
+      },
+      "volume_regime": "NORMAL",
+      "trend_classification": "TRANSITION_UP",
+      "structure_classification": "BREAKOUT_ATTEMPT",
+      "nearest_support": "/key_levels/0",
+      "nearest_resistance": "/key_levels/1",
+      "invalidation": {
+        "rule": "confirmed close below 1885 invalidates the breakout hold",
+        "evidence_paths": [
+          "/key_levels/0"
+        ]
+      },
+      "confidence": "MEDIUM",
+      "supporting_facts": [
+        {
+          "claim": "confirmed close retains breakout area",
+          "evidence_paths": [
+            "/market_timeline/range_high"
+          ]
+        }
+      ],
+      "contradicting_facts": [
+        {
+          "claim": "pullback momentum is incomplete",
+          "evidence_paths": [
+            "/timeframe_structures/0/stoch_rsi"
+          ]
+        }
+      ],
+      "source_bar_timestamps": [
+        "2026-01-15T11:45:00Z"
+      ]
+    },
+    {
+      "timeframe": "1D",
+      "last_confirmed_close": {
+        "value": 1902,
+        "unit": "USDT",
+        "timestamp": "2026-01-15T12:00:00Z",
+        "source": "fixture",
+        "status": "DERIVED",
+        "quality": "VALID",
+        "derivation": "static golden fixture; not live market data",
+        "version": "fixture-v1"
+      },
+      "current_incomplete_candle": {
+        "open_time": "2026-01-15T12:00:00Z",
+        "confirmed": false
+      },
+      "moving_averages": {
+        "ma20": {
+          "value": 1897,
+          "unit": "USDT",
+          "timestamp": "2026-01-15T12:00:00Z",
+          "source": "fixture",
+          "status": "DERIVED",
+          "quality": "VALID",
+          "derivation": "static golden fixture; not live market data",
+          "version": "fixture-v1"
+        },
+        "ma30": {
+          "value": 1893,
+          "unit": "USDT",
+          "timestamp": "2026-01-15T12:00:00Z",
+          "source": "fixture",
+          "status": "DERIVED",
+          "quality": "VALID",
+          "derivation": "static golden fixture; not live market data",
+          "version": "fixture-v1"
+        },
+        "ma60": {
+          "value": 1884,
+          "unit": "USDT",
+          "timestamp": "2026-01-15T12:00:00Z",
+          "source": "fixture",
+          "status": "DERIVED",
+          "quality": "VALID",
+          "derivation": "static golden fixture; not live market data",
+          "version": "fixture-v1"
+        },
+        "ma200": {
+          "value": 1862,
+          "unit": "USDT",
+          "timestamp": "2026-01-15T12:00:00Z",
+          "source": "fixture",
+          "status": "DERIVED",
+          "quality": "VALID",
+          "derivation": "static golden fixture; not live market data",
+          "version": "fixture-v1"
+        },
+        "ema20": {
+          "value": 1898,
+          "unit": "USDT",
+          "timestamp": "2026-01-15T12:00:00Z",
+          "source": "fixture",
+          "status": "DERIVED",
+          "quality": "VALID",
+          "derivation": "static golden fixture; not live market data",
+          "version": "fixture-v1"
+        }
+      },
+      "slopes": {
+        "ema20": {
+          "value": -0.2,
+          "unit": "percent/4bars",
+          "timestamp": "2026-01-15T12:00:00Z",
+          "source": "fixture",
+          "status": "DERIVED",
+          "quality": "VALID",
+          "derivation": "static golden fixture; not live market data",
+          "version": "fixture-v1"
+        }
+      },
+      "price_position": "ABOVE_SHORT_MA",
+      "moving_average_ordering": "MIXED",
+      "swing_structure": "MIXED",
+      "rsi": {
+        "value": 48,
+        "unit": "index",
+        "timestamp": "2026-01-15T12:00:00Z",
+        "source": "fixture",
+        "status": "DERIVED",
+        "quality": "VALID",
+        "derivation": "static golden fixture; not live market data",
+        "version": "fixture-v1"
+      },
+      "stoch_rsi": {
+        "value": 55,
+        "unit": "index",
+        "timestamp": "2026-01-15T12:00:00Z",
+        "source": "fixture",
+        "status": "DERIVED",
+        "quality": "VALID",
+        "derivation": "static golden fixture; not live market data",
+        "version": "fixture-v1"
+      },
+      "atr": {
+        "value": 35,
+        "unit": "USDT",
+        "timestamp": "2026-01-15T12:00:00Z",
+        "source": "fixture",
+        "status": "DERIVED",
+        "quality": "VALID",
+        "derivation": "static golden fixture; not live market data",
+        "version": "fixture-v1"
+      },
+      "volume_regime": "NORMAL",
+      "trend_classification": "TRANSITION_UP",
+      "structure_classification": "REPAIR",
+      "nearest_support": "/key_levels/0",
+      "nearest_resistance": "/key_levels/1",
+      "invalidation": {
+        "rule": "confirmed close below 1885 invalidates the breakout hold",
+        "evidence_paths": [
+          "/key_levels/0"
+        ]
+      },
+      "confidence": "MEDIUM",
+      "supporting_facts": [
+        {
+          "claim": "confirmed close retains breakout area",
+          "evidence_paths": [
+            "/market_timeline/range_high"
+          ]
+        }
+      ],
+      "contradicting_facts": [
+        {
+          "claim": "pullback momentum is incomplete",
+          "evidence_paths": [
+            "/timeframe_structures/0/stoch_rsi"
+          ]
+        }
+      ],
+      "source_bar_timestamps": [
+        "2026-01-15T11:45:00Z"
+      ]
+    },
+    {
+      "timeframe": "1W",
+      "last_confirmed_close": {
+        "value": 1902,
+        "unit": "USDT",
+        "timestamp": "2026-01-15T12:00:00Z",
+        "source": "fixture",
+        "status": "DERIVED",
+        "quality": "VALID",
+        "derivation": "static golden fixture; not live market data",
+        "version": "fixture-v1"
+      },
+      "current_incomplete_candle": {
+        "open_time": "2026-01-15T12:00:00Z",
+        "confirmed": false
+      },
+      "moving_averages": {
+        "ma20": {
+          "value": 1897,
+          "unit": "USDT",
+          "timestamp": "2026-01-15T12:00:00Z",
+          "source": "fixture",
+          "status": "DERIVED",
+          "quality": "VALID",
+          "derivation": "static golden fixture; not live market data",
+          "version": "fixture-v1"
+        },
+        "ma30": {
+          "value": 1893,
+          "unit": "USDT",
+          "timestamp": "2026-01-15T12:00:00Z",
+          "source": "fixture",
+          "status": "DERIVED",
+          "quality": "VALID",
+          "derivation": "static golden fixture; not live market data",
+          "version": "fixture-v1"
+        },
+        "ma60": {
+          "value": 1884,
+          "unit": "USDT",
+          "timestamp": "2026-01-15T12:00:00Z",
+          "source": "fixture",
+          "status": "DERIVED",
+          "quality": "VALID",
+          "derivation": "static golden fixture; not live market data",
+          "version": "fixture-v1"
+        },
+        "ma200": {
+          "value": 1960,
+          "unit": "USDT",
+          "timestamp": "2026-01-15T12:00:00Z",
+          "source": "fixture",
+          "status": "DERIVED",
+          "quality": "VALID",
+          "derivation": "static golden fixture; not live market data",
+          "version": "fixture-v1"
+        },
+        "ema20": {
+          "value": 1898,
+          "unit": "USDT",
+          "timestamp": "2026-01-15T12:00:00Z",
+          "source": "fixture",
+          "status": "DERIVED",
+          "quality": "VALID",
+          "derivation": "static golden fixture; not live market data",
+          "version": "fixture-v1"
+        }
+      },
+      "slopes": {
+        "ema20": {
+          "value": -0.2,
+          "unit": "percent/4bars",
+          "timestamp": "2026-01-15T12:00:00Z",
+          "source": "fixture",
+          "status": "DERIVED",
+          "quality": "VALID",
+          "derivation": "static golden fixture; not live market data",
+          "version": "fixture-v1"
+        }
+      },
+      "price_position": "ABOVE_SHORT_MA",
+      "moving_average_ordering": "MIXED",
+      "swing_structure": "MIXED",
+      "rsi": {
+        "value": 48,
+        "unit": "index",
+        "timestamp": "2026-01-15T12:00:00Z",
+        "source": "fixture",
+        "status": "DERIVED",
+        "quality": "VALID",
+        "derivation": "static golden fixture; not live market data",
+        "version": "fixture-v1"
+      },
+      "stoch_rsi": {
+        "value": 55,
+        "unit": "index",
+        "timestamp": "2026-01-15T12:00:00Z",
+        "source": "fixture",
+        "status": "DERIVED",
+        "quality": "VALID",
+        "derivation": "static golden fixture; not live market data",
+        "version": "fixture-v1"
+      },
+      "atr": {
+        "value": 35,
+        "unit": "USDT",
+        "timestamp": "2026-01-15T12:00:00Z",
+        "source": "fixture",
+        "status": "DERIVED",
+        "quality": "VALID",
+        "derivation": "static golden fixture; not live market data",
+        "version": "fixture-v1"
+      },
+      "volume_regime": "NORMAL",
+      "trend_classification": "MIXED",
+      "structure_classification": "REPAIR",
+      "nearest_support": "/key_levels/0",
+      "nearest_resistance": "/key_levels/1",
+      "invalidation": {
+        "rule": "confirmed close below 1885 invalidates the breakout hold",
+        "evidence_paths": [
+          "/key_levels/0"
+        ]
+      },
+      "confidence": "LOW",
+      "supporting_facts": [
+        {
+          "claim": "confirmed close retains breakout area",
+          "evidence_paths": [
+            "/market_timeline/range_high"
+          ]
+        }
+      ],
+      "contradicting_facts": [
+        {
+          "claim": "long-term MA200 remains overhead",
+          "evidence_paths": [
+            "/timeframe_structures/0/stoch_rsi"
+          ]
+        }
+      ],
+      "source_bar_timestamps": [
+        "2026-01-15T11:45:00Z"
+      ]
+    }
+  ],
+  "structure_events": [
+    {
+      "event_id": "evt_breakout",
+      "event_type": "BREAKOUT_CONFIRMED",
+      "timeframe": "1H",
+      "start": "2026-01-15T04:00:00Z",
+      "end": "2026-01-15T05:00:00Z",
+      "direction": "UP",
+      "confirmation_status": "CONFIRMED",
+      "source_bar_timestamps": [
+        "2026-01-15T05:00:00Z"
+      ],
+      "evidence": [
+        {
+          "claim": "1H confirmed close exceeded 1890",
+          "evidence_paths": [
+            "/market_timeline/range_high"
+          ]
+        }
+      ],
+      "invalidation": "confirmed 1H close below 1885"
+    }
+  ],
+  "market_timeline": {
+    "observation_window": {
+      "start": "2026-01-13T00:00:00Z",
+      "end": "2026-01-15T12:00:00Z"
+    },
+    "compression_start": "2026-01-13T00:00:00Z",
+    "compression_end": "2026-01-15T04:00:00Z",
+    "range_low": {
+      "value": 1845,
+      "unit": "USDT",
+      "timestamp": "2026-01-15T12:00:00Z",
+      "source": "fixture",
+      "status": "DERIVED",
+      "quality": "VALID",
+      "derivation": "static golden fixture; not live market data",
+      "version": "fixture-v1"
+    },
+    "range_high": {
+      "value": 1890,
+      "unit": "USDT",
+      "timestamp": "2026-01-15T12:00:00Z",
+      "source": "fixture",
+      "status": "DERIVED",
+      "quality": "VALID",
+      "derivation": "static golden fixture; not live market data",
+      "version": "fixture-v1"
+    },
+    "breakout_timestamp": "2026-01-15T05:00:00Z",
+    "breakout_direction": "UP",
+    "breakout_candle": "/structure_events/0",
+    "breakout_volume_ratio": {
+      "value": 1.8,
+      "unit": "ratio",
+      "timestamp": "2026-01-15T12:00:00Z",
+      "source": "fixture",
+      "status": "DERIVED",
+      "quality": "VALID",
+      "derivation": "static golden fixture; not live market data",
+      "version": "fixture-v1"
+    },
+    "impulse_high": {
+      "value": 1928,
+      "unit": "USDT",
+      "timestamp": "2026-01-15T12:00:00Z",
+      "source": "fixture",
+      "status": "DERIVED",
+      "quality": "VALID",
+      "derivation": "static golden fixture; not live market data",
+      "version": "fixture-v1"
+    },
+    "impulse_low": {
+      "value": 1888,
+      "unit": "USDT",
+      "timestamp": "2026-01-15T12:00:00Z",
+      "source": "fixture",
+      "status": "DERIVED",
+      "quality": "VALID",
+      "derivation": "static golden fixture; not live market data",
+      "version": "fixture-v1"
+    },
+    "pullback_start": "2026-01-15T09:00:00Z",
+    "current_phase": "POST_BREAKOUT_PULLBACK"
+  },
+  "order_flow_phases": [
+    {
+      "phase": "BEFORE_BREAKOUT",
+      "start": "2026-01-15T00:00:00Z",
+      "end": "2026-01-15T04:00:00Z",
+      "price_change": {
+        "value": 0.4,
+        "unit": "percent",
+        "timestamp": "2026-01-15T04:00:00Z",
+        "source": "fixture",
+        "status": "DERIVED",
+        "quality": "VALID",
+        "derivation": "static golden fixture; not live market data",
+        "version": "fixture-v1"
+      },
+      "volume": {
+        "value": 1000000,
+        "unit": "USDT",
+        "timestamp": "2026-01-15T04:00:00Z",
+        "source": "fixture",
+        "status": "DERIVED",
+        "quality": "VALID",
+        "derivation": "static golden fixture; not live market data",
+        "version": "fixture-v1"
+      },
+      "volume_ratio": {
+        "value": 0.8,
+        "unit": "ratio",
+        "timestamp": "2026-01-15T04:00:00Z",
+        "source": "fixture",
+        "status": "DERIVED",
+        "quality": "VALID",
+        "derivation": "static golden fixture; not live market data",
+        "version": "fixture-v1"
+      },
+      "cvd_delta": {
+        "value": 50000,
+        "unit": "USDT",
+        "timestamp": "2026-01-15T04:00:00Z",
+        "source": "fixture",
+        "status": "DERIVED",
+        "quality": "VALID",
+        "derivation": "static golden fixture; not live market data",
+        "version": "fixture-v1"
+      },
+      "oi_start": {
+        "value": 1000000,
+        "unit": "contracts",
+        "timestamp": "2026-01-15T00:00:00Z",
+        "source": "fixture",
+        "status": "DERIVED",
+        "quality": "VALID",
+        "derivation": "static golden fixture; not live market data",
+        "version": "fixture-v1"
+      },
+      "oi_end": {
+        "value": 1005000,
+        "unit": "contracts",
+        "timestamp": "2026-01-15T04:00:00Z",
+        "source": "fixture",
+        "status": "DERIVED",
+        "quality": "VALID",
+        "derivation": "static golden fixture; not live market data",
+        "version": "fixture-v1"
+      },
+      "oi_change": {
+        "value": 0.5,
+        "unit": "percent",
+        "timestamp": "2026-01-15T04:00:00Z",
+        "source": "fixture",
+        "status": "DERIVED",
+        "quality": "VALID",
+        "derivation": "static golden fixture; not live market data",
+        "version": "fixture-v1"
+      },
+      "liquidation": {
+        "value": 300000,
+        "unit": "USDT",
+        "timestamp": "2026-01-15T04:00:00Z",
+        "source": "fixture",
+        "status": "DERIVED",
+        "quality": "VALID",
+        "derivation": "static golden fixture; not live market data",
+        "version": "fixture-v1"
+      },
+      "funding": {
+        "value": 0.005,
+        "unit": "percent",
+        "timestamp": "2026-01-15T04:00:00Z",
+        "source": "fixture",
+        "status": "DERIVED",
+        "quality": "VALID",
+        "derivation": "static golden fixture; not live market data",
+        "version": "fixture-v1"
+      },
+      "basis": {
+        "value": 0.08,
+        "unit": "percent",
+        "timestamp": "2026-01-15T04:00:00Z",
+        "source": "fixture",
+        "status": "DERIVED",
+        "quality": "VALID",
+        "derivation": "static golden fixture; not live market data",
+        "version": "fixture-v1"
+      },
+      "data_quality": {
+        "overall": "VALID",
+        "gaps": [],
+        "stale_sources": [],
+        "missing_sources": [],
+        "watermark_mismatches": []
+      },
+      "gap_flags": [],
+      "cross_gap_change": false,
+      "primary_classification": "MIXED_POSITIONING",
+      "alternative_classification": "MIXED_POSITIONING",
+      "confidence": "MEDIUM",
+      "evidence": [
+        {
+          "claim": "classification is grounded by price, CVD and OI paths",
+          "evidence_paths": [
+            "/order_flow_phases/0/price_change"
+          ]
+        }
+      ],
+      "counterevidence": [
+        {
+          "claim": "the available signals do not isolate every venue participant",
+          "evidence_paths": [
+            "/data_quality"
+          ]
+        }
+      ]
+    },
+    {
+      "phase": "BREAKOUT_IMPULSE",
+      "start": "2026-01-15T04:00:00Z",
+      "end": "2026-01-15T07:00:00Z",
+      "price_change": {
+        "value": 2,
+        "unit": "percent",
+        "timestamp": "2026-01-15T07:00:00Z",
+        "source": "fixture",
+        "status": "DERIVED",
+        "quality": "VALID",
+        "derivation": "static golden fixture; not live market data",
+        "version": "fixture-v1"
+      },
+      "volume": {
+        "value": 1000000,
+        "unit": "USDT",
+        "timestamp": "2026-01-15T07:00:00Z",
+        "source": "fixture",
+        "status": "DERIVED",
+        "quality": "VALID",
+        "derivation": "static golden fixture; not live market data",
+        "version": "fixture-v1"
+      },
+      "volume_ratio": {
+        "value": 1.8,
+        "unit": "ratio",
+        "timestamp": "2026-01-15T07:00:00Z",
+        "source": "fixture",
+        "status": "DERIVED",
+        "quality": "VALID",
+        "derivation": "static golden fixture; not live market data",
+        "version": "fixture-v1"
+      },
+      "cvd_delta": {
+        "value": 420000,
+        "unit": "USDT",
+        "timestamp": "2026-01-15T07:00:00Z",
+        "source": "fixture",
+        "status": "DERIVED",
+        "quality": "VALID",
+        "derivation": "static golden fixture; not live market data",
+        "version": "fixture-v1"
+      },
+      "oi_start": {
+        "value": 1005000,
+        "unit": "contracts",
+        "timestamp": "2026-01-15T04:00:00Z",
+        "source": "fixture",
+        "status": "DERIVED",
+        "quality": "VALID",
+        "derivation": "static golden fixture; not live market data",
+        "version": "fixture-v1"
+      },
+      "oi_end": {
+        "value": 950000,
+        "unit": "contracts",
+        "timestamp": "2026-01-15T07:00:00Z",
+        "source": "fixture",
+        "status": "DERIVED",
+        "quality": "VALID",
+        "derivation": "static golden fixture; not live market data",
+        "version": "fixture-v1"
+      },
+      "oi_change": {
+        "value": -5.47,
+        "unit": "percent",
+        "timestamp": "2026-01-15T07:00:00Z",
+        "source": "fixture",
+        "status": "DERIVED",
+        "quality": "VALID",
+        "derivation": "static golden fixture; not live market data",
+        "version": "fixture-v1"
+      },
+      "liquidation": {
+        "value": 300000,
+        "unit": "USDT",
+        "timestamp": "2026-01-15T07:00:00Z",
+        "source": "fixture",
+        "status": "DERIVED",
+        "quality": "VALID",
+        "derivation": "static golden fixture; not live market data",
+        "version": "fixture-v1"
+      },
+      "funding": {
+        "value": 0.005,
+        "unit": "percent",
+        "timestamp": "2026-01-15T07:00:00Z",
+        "source": "fixture",
+        "status": "DERIVED",
+        "quality": "VALID",
+        "derivation": "static golden fixture; not live market data",
+        "version": "fixture-v1"
+      },
+      "basis": {
+        "value": 0.08,
+        "unit": "percent",
+        "timestamp": "2026-01-15T07:00:00Z",
+        "source": "fixture",
+        "status": "DERIVED",
+        "quality": "VALID",
+        "derivation": "static golden fixture; not live market data",
+        "version": "fixture-v1"
+      },
+      "data_quality": {
+        "overall": "VALID",
+        "gaps": [],
+        "stale_sources": [],
+        "missing_sources": [],
+        "watermark_mismatches": []
+      },
+      "gap_flags": [],
+      "cross_gap_change": false,
+      "primary_classification": "SHORT_COVERING_DOMINANT",
+      "alternative_classification": "SPOT_BUYING_LIKELY",
+      "confidence": "MEDIUM",
+      "evidence": [
+        {
+          "claim": "classification is grounded by price, CVD and OI paths",
+          "evidence_paths": [
+            "/order_flow_phases/0/price_change"
+          ]
+        }
+      ],
+      "counterevidence": [
+        {
+          "claim": "the available signals do not isolate every venue participant",
+          "evidence_paths": [
+            "/data_quality"
+          ]
+        }
+      ]
+    },
+    {
+      "phase": "POST_BREAKOUT_HIGH",
+      "start": "2026-01-15T07:00:00Z",
+      "end": "2026-01-15T09:00:00Z",
+      "price_change": {
+        "value": 0.6,
+        "unit": "percent",
+        "timestamp": "2026-01-15T09:00:00Z",
+        "source": "fixture",
+        "status": "DERIVED",
+        "quality": "VALID",
+        "derivation": "static golden fixture; not live market data",
+        "version": "fixture-v1"
+      },
+      "volume": {
+        "value": 1000000,
+        "unit": "USDT",
+        "timestamp": "2026-01-15T09:00:00Z",
+        "source": "fixture",
+        "status": "DERIVED",
+        "quality": "VALID",
+        "derivation": "static golden fixture; not live market data",
+        "version": "fixture-v1"
+      },
+      "volume_ratio": {
+        "value": 1.3,
+        "unit": "ratio",
+        "timestamp": "2026-01-15T09:00:00Z",
+        "source": "fixture",
+        "status": "DERIVED",
+        "quality": "VALID",
+        "derivation": "static golden fixture; not live market data",
+        "version": "fixture-v1"
+      },
+      "cvd_delta": {
+        "value": 120000,
+        "unit": "USDT",
+        "timestamp": "2026-01-15T09:00:00Z",
+        "source": "fixture",
+        "status": "DERIVED",
+        "quality": "VALID",
+        "derivation": "static golden fixture; not live market data",
+        "version": "fixture-v1"
+      },
+      "oi_start": {
+        "value": 950000,
+        "unit": "contracts",
+        "timestamp": "2026-01-15T07:00:00Z",
+        "source": "fixture",
+        "status": "DERIVED",
+        "quality": "VALID",
+        "derivation": "static golden fixture; not live market data",
+        "version": "fixture-v1"
+      },
+      "oi_end": {
+        "value": 940000,
+        "unit": "contracts",
+        "timestamp": "2026-01-15T09:00:00Z",
+        "source": "fixture",
+        "status": "DERIVED",
+        "quality": "VALID",
+        "derivation": "static golden fixture; not live market data",
+        "version": "fixture-v1"
+      },
+      "oi_change": {
+        "value": -1.05,
+        "unit": "percent",
+        "timestamp": "2026-01-15T09:00:00Z",
+        "source": "fixture",
+        "status": "DERIVED",
+        "quality": "VALID",
+        "derivation": "static golden fixture; not live market data",
+        "version": "fixture-v1"
+      },
+      "liquidation": {
+        "value": 300000,
+        "unit": "USDT",
+        "timestamp": "2026-01-15T09:00:00Z",
+        "source": "fixture",
+        "status": "DERIVED",
+        "quality": "VALID",
+        "derivation": "static golden fixture; not live market data",
+        "version": "fixture-v1"
+      },
+      "funding": {
+        "value": 0.005,
+        "unit": "percent",
+        "timestamp": "2026-01-15T09:00:00Z",
+        "source": "fixture",
+        "status": "DERIVED",
+        "quality": "VALID",
+        "derivation": "static golden fixture; not live market data",
+        "version": "fixture-v1"
+      },
+      "basis": {
+        "value": 0.08,
+        "unit": "percent",
+        "timestamp": "2026-01-15T09:00:00Z",
+        "source": "fixture",
+        "status": "DERIVED",
+        "quality": "VALID",
+        "derivation": "static golden fixture; not live market data",
+        "version": "fixture-v1"
+      },
+      "data_quality": {
+        "overall": "VALID",
+        "gaps": [],
+        "stale_sources": [],
+        "missing_sources": [],
+        "watermark_mismatches": []
+      },
+      "gap_flags": [],
+      "cross_gap_change": false,
+      "primary_classification": "SHORT_COVERING_DOMINANT",
+      "alternative_classification": "SPOT_BUYING_LIKELY",
+      "confidence": "MEDIUM",
+      "evidence": [
+        {
+          "claim": "classification is grounded by price, CVD and OI paths",
+          "evidence_paths": [
+            "/order_flow_phases/0/price_change"
+          ]
+        }
+      ],
+      "counterevidence": [
+        {
+          "claim": "the available signals do not isolate every venue participant",
+          "evidence_paths": [
+            "/data_quality"
+          ]
+        }
+      ]
+    },
+    {
+      "phase": "CURRENT_PULLBACK",
+      "start": "2026-01-15T09:00:00Z",
+      "end": "2026-01-15T12:00:00Z",
+      "price_change": {
+        "value": -1.35,
+        "unit": "percent",
+        "timestamp": "2026-01-15T12:00:00Z",
+        "source": "fixture",
+        "status": "DERIVED",
+        "quality": "VALID",
+        "derivation": "static golden fixture; not live market data",
+        "version": "fixture-v1"
+      },
+      "volume": {
+        "value": 1000000,
+        "unit": "USDT",
+        "timestamp": "2026-01-15T12:00:00Z",
+        "source": "fixture",
+        "status": "DERIVED",
+        "quality": "VALID",
+        "derivation": "static golden fixture; not live market data",
+        "version": "fixture-v1"
+      },
+      "volume_ratio": {
+        "value": 0.9,
+        "unit": "ratio",
+        "timestamp": "2026-01-15T12:00:00Z",
+        "source": "fixture",
+        "status": "DERIVED",
+        "quality": "VALID",
+        "derivation": "static golden fixture; not live market data",
+        "version": "fixture-v1"
+      },
+      "cvd_delta": {
+        "value": -60000,
+        "unit": "USDT",
+        "timestamp": "2026-01-15T12:00:00Z",
+        "source": "fixture",
+        "status": "DERIVED",
+        "quality": "VALID",
+        "derivation": "static golden fixture; not live market data",
+        "version": "fixture-v1"
+      },
+      "oi_start": {
+        "value": 940000,
+        "unit": "contracts",
+        "timestamp": "2026-01-15T09:00:00Z",
+        "source": "fixture",
+        "status": "DERIVED",
+        "quality": "VALID",
+        "derivation": "static golden fixture; not live market data",
+        "version": "fixture-v1"
+      },
+      "oi_end": {
+        "value": 955000,
+        "unit": "contracts",
+        "timestamp": "2026-01-15T12:00:00Z",
+        "source": "fixture",
+        "status": "DERIVED",
+        "quality": "VALID",
+        "derivation": "static golden fixture; not live market data",
+        "version": "fixture-v1"
+      },
+      "oi_change": {
+        "value": 1.6,
+        "unit": "percent",
+        "timestamp": "2026-01-15T12:00:00Z",
+        "source": "fixture",
+        "status": "DERIVED",
+        "quality": "VALID",
+        "derivation": "static golden fixture; not live market data",
+        "version": "fixture-v1"
+      },
+      "liquidation": {
+        "value": 300000,
+        "unit": "USDT",
+        "timestamp": "2026-01-15T12:00:00Z",
+        "source": "fixture",
+        "status": "DERIVED",
+        "quality": "VALID",
+        "derivation": "static golden fixture; not live market data",
+        "version": "fixture-v1"
+      },
+      "funding": {
+        "value": 0.005,
+        "unit": "percent",
+        "timestamp": "2026-01-15T12:00:00Z",
+        "source": "fixture",
+        "status": "DERIVED",
+        "quality": "VALID",
+        "derivation": "static golden fixture; not live market data",
+        "version": "fixture-v1"
+      },
+      "basis": {
+        "value": 0.08,
+        "unit": "percent",
+        "timestamp": "2026-01-15T12:00:00Z",
+        "source": "fixture",
+        "status": "DERIVED",
+        "quality": "VALID",
+        "derivation": "static golden fixture; not live market data",
+        "version": "fixture-v1"
+      },
+      "data_quality": {
+        "overall": "VALID",
+        "gaps": [],
+        "stale_sources": [],
+        "missing_sources": [],
+        "watermark_mismatches": []
+      },
+      "gap_flags": [],
+      "cross_gap_change": false,
+      "primary_classification": "MIXED_POSITIONING",
+      "alternative_classification": "MIXED_POSITIONING",
+      "confidence": "MEDIUM",
+      "evidence": [
+        {
+          "claim": "classification is grounded by price, CVD and OI paths",
+          "evidence_paths": [
+            "/order_flow_phases/0/price_change"
+          ]
+        }
+      ],
+      "counterevidence": [
+        {
+          "claim": "the available signals do not isolate every venue participant",
+          "evidence_paths": [
+            "/data_quality"
+          ]
+        }
+      ]
+    }
+  ],
+  "key_levels": [
+    {
+      "level_id": "lvl_defense",
+      "price": {
+        "value": 1888.5,
+        "unit": "USDT",
+        "timestamp": "2026-01-15T12:00:00Z",
+        "source": "fixture",
+        "status": "DERIVED",
+        "quality": "VALID",
+        "derivation": "static golden fixture; not live market data",
+        "version": "fixture-v1"
+      },
+      "zone_low": {
+        "value": 1885,
+        "unit": "USDT",
+        "timestamp": "2026-01-15T12:00:00Z",
+        "source": "fixture",
+        "status": "DERIVED",
+        "quality": "VALID",
+        "derivation": "static golden fixture; not live market data",
+        "version": "fixture-v1"
+      },
+      "zone_high": {
+        "value": 1892,
+        "unit": "USDT",
+        "timestamp": "2026-01-15T12:00:00Z",
+        "source": "fixture",
+        "status": "DERIVED",
+        "quality": "VALID",
+        "derivation": "static golden fixture; not live market data",
+        "version": "fixture-v1"
+      },
+      "source_type": "BREAKOUT_PLATFORM",
+      "timeframe": "MULTI",
+      "first_detected": "2026-01-14T00:00:00Z",
+      "last_tested": "2026-01-15T11:30:00Z",
+      "touches": 3,
+      "strength": "STRONG",
+      "role": "SUPPORT",
+      "state": "FLIPPED",
+      "confluences": [
+        "range",
+        "EMA20"
+      ],
+      "invalidation_rule": "confirmed 1H close below zone",
+      "evidence_paths": [
+        "/market_timeline/range_high"
+      ]
+    },
+    {
+      "level_id": "lvl_confirm",
+      "price": {
+        "value": 1928,
+        "unit": "USDT",
+        "timestamp": "2026-01-15T12:00:00Z",
+        "source": "fixture",
+        "status": "DERIVED",
+        "quality": "VALID",
+        "derivation": "static golden fixture; not live market data",
+        "version": "fixture-v1"
+      },
+      "zone_low": {
+        "value": 1925,
+        "unit": "USDT",
+        "timestamp": "2026-01-15T12:00:00Z",
+        "source": "fixture",
+        "status": "DERIVED",
+        "quality": "VALID",
+        "derivation": "static golden fixture; not live market data",
+        "version": "fixture-v1"
+      },
+      "zone_high": {
+        "value": 1930,
+        "unit": "USDT",
+        "timestamp": "2026-01-15T12:00:00Z",
+        "source": "fixture",
+        "status": "DERIVED",
+        "quality": "VALID",
+        "derivation": "static golden fixture; not live market data",
+        "version": "fixture-v1"
+      },
+      "source_type": "PRIOR_HIGH",
+      "timeframe": "1H",
+      "first_detected": "2026-01-14T00:00:00Z",
+      "last_tested": "2026-01-15T11:30:00Z",
+      "touches": 3,
+      "strength": "STRONG",
+      "role": "RESISTANCE",
+      "state": "ACTIVE",
+      "confluences": [
+        "range",
+        "EMA20"
+      ],
+      "invalidation_rule": "confirmed 1H close above zone",
+      "evidence_paths": [
+        "/market_timeline/range_high"
+      ]
+    },
+    {
+      "level_id": "lvl_range_low",
+      "price": {
+        "value": 1845,
+        "unit": "USDT",
+        "timestamp": "2026-01-15T12:00:00Z",
+        "source": "fixture",
+        "status": "DERIVED",
+        "quality": "VALID",
+        "derivation": "static golden fixture; not live market data",
+        "version": "fixture-v1"
+      },
+      "zone_low": {
+        "value": 1842,
+        "unit": "USDT",
+        "timestamp": "2026-01-15T12:00:00Z",
+        "source": "fixture",
+        "status": "DERIVED",
+        "quality": "VALID",
+        "derivation": "static golden fixture; not live market data",
+        "version": "fixture-v1"
+      },
+      "zone_high": {
+        "value": 1848,
+        "unit": "USDT",
+        "timestamp": "2026-01-15T12:00:00Z",
+        "source": "fixture",
+        "status": "DERIVED",
+        "quality": "VALID",
+        "derivation": "static golden fixture; not live market data",
+        "version": "fixture-v1"
+      },
+      "source_type": "RANGE_LOW",
+      "timeframe": "MULTI",
+      "first_detected": "2026-01-14T00:00:00Z",
+      "last_tested": "2026-01-15T11:30:00Z",
+      "touches": 3,
+      "strength": "STRONG",
+      "role": "SUPPORT",
+      "state": "ACTIVE",
+      "confluences": [
+        "range",
+        "EMA20"
+      ],
+      "invalidation_rule": "confirmed 1H close below zone",
+      "evidence_paths": [
+        "/market_timeline/range_high"
+      ]
+    }
+  ],
+  "scenario_tree": {
+    "scenarios": [
+      {
+        "scenario_type": "BULLISH_CONTINUATION",
+        "likelihood": "MEDIUM",
+        "trigger": "confirmed move above 1928",
+        "confirmation": "volume and CVD expand without OI collapse",
+        "expected_path": [
+          "1928 reclaim",
+          "continuation toward next resistance"
+        ],
+        "targets": [
+          "/key_levels/1"
+        ],
+        "invalidation": "confirmed return below 1885",
+        "volume_confirmation": "ratio above baseline",
+        "cvd_confirmation": "positive delta without a gap",
+        "oi_confirmation": "stable or rising OI",
+        "contradictory_evidence": [
+          {
+            "claim": "weekly MA200 remains resistance",
+            "evidence_paths": [
+              "/timeframe_structures/4/moving_averages/ma200"
+            ]
+          }
+        ]
+      },
+      {
+        "scenario_type": "NORMAL_RETEST",
+        "likelihood": "HIGH",
+        "trigger": "price holds 1885-1892",
+        "confirmation": "15m higher low and CVD stabilisation",
+        "expected_path": [
+          "test breakout platform",
+          "recover 1900",
+          "retest 1928"
+        ],
+        "targets": [
+          "/key_levels/1"
+        ],
+        "invalidation": "confirmed 1H close below 1885",
+        "volume_confirmation": "sell volume contracts",
+        "cvd_confirmation": "negative delta decelerates",
+        "oi_confirmation": "OI rebuild is orderly",
+        "contradictory_evidence": [
+          {
+            "claim": "current 15m momentum is still soft",
+            "evidence_paths": [
+              "/timeframe_structures/0/stoch_rsi"
+            ]
+          }
+        ]
+      },
+      {
+        "scenario_type": "FAILED_BREAKOUT",
+        "likelihood": "LOW",
+        "trigger": "confirmed close below 1885",
+        "confirmation": "failed reclaim of 1890 with negative CVD",
+        "expected_path": [
+          "lose breakout platform",
+          "rotate into old range"
+        ],
+        "targets": [
+          "/key_levels/2"
+        ],
+        "invalidation": "reclaim and hold above 1892",
+        "volume_confirmation": "sell volume expands",
+        "cvd_confirmation": "negative CVD confirms",
+        "oi_confirmation": "OI rise would support new shorts",
+        "contradictory_evidence": [
+          {
+            "claim": "1H structure has already strengthened",
+            "evidence_paths": [
+              "/timeframe_structures/1/trend_classification"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "position_context": {
+    "source": "NONE",
+    "side": null,
+    "entry": null,
+    "average_cost": null,
+    "quantity": null,
+    "original_thesis": null,
+    "original_timeframe": null,
+    "original_stop": null,
+    "original_targets": [],
+    "realised_exits": [],
+    "remaining_position": null,
+    "current_risk": null,
+    "plan_completed": null,
+    "discipline_warning": null
+  },
+  "macro_context": {
+    "status": "NOT_REQUESTED",
+    "items": []
+  },
+  "current_core_question": "1890突破由何种资金推动，1900附近回踩能否保持结构？",
+  "unsupported_claims": [],
+  "provenance": {
+    "builder": "static-fixture-builder",
+    "builder_version": "v1",
+    "input_snapshot_ids": [
+      "fixture_eth_breakout"
+    ],
+    "causal_cutoff": "2026-01-15T12:00:00Z",
+    "content_hash": "0000000000000000000000000000000000000000000000000000000000000000"
+  }
+}

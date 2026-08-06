@@ -1,0 +1,5 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema", "$id": "ai_market_report_request_v1.schema.json", "title": "AI Market Report Request v1", "type": "object", "additionalProperties": false,
+  "required": ["schema_version", "request_id", "context_id", "mode", "requested_at", "language", "context", "generation_policy"],
+  "properties": {"schema_version": {"const": "ai-market-report-request-v1"}, "request_id": {"type": "string", "minLength": 1}, "context_id": {"type": "string", "pattern": "^ctx_"}, "mode": {"enum": ["QUICK", "FULL", "POSITION_AWARE"]}, "requested_at": {"$ref": "common_defs_v1.schema.json#/$defs/timestamp"}, "language": {"const": "zh-CN"}, "context": {"$ref": "market_analysis_context_v1.schema.json"}, "generation_policy": {"type": "object", "additionalProperties": false, "required": ["may_create_numbers", "must_preserve_unknown", "max_input_tokens", "max_output_tokens"], "properties": {"may_create_numbers": {"const": false}, "must_preserve_unknown": {"const": true}, "max_input_tokens": {"type": "integer", "minimum": 1, "maximum": 20000}, "max_output_tokens": {"type": "integer", "minimum": 1, "maximum": 8000}}}}
+}

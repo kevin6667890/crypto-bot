@@ -1,0 +1,1044 @@
+{
+  "watermark": 1825027200,
+  "liquidation_complete": false,
+  "cvd": [
+    {
+      "timestamp": 1824364800,
+      "signed_delta": 8,
+      "cumulative": 8,
+      "buy_notional": 1008,
+      "sell_notional": 800,
+      "trade_count": 120,
+      "status": "VALID",
+      "source_fingerprint": "cvd-0"
+    },
+    {
+      "timestamp": 1824379200,
+      "signed_delta": -8,
+      "cumulative": 0,
+      "buy_notional": 800,
+      "sell_notional": 1008,
+      "trade_count": 120,
+      "status": "VALID",
+      "source_fingerprint": "cvd-1"
+    },
+    {
+      "timestamp": 1824393600,
+      "signed_delta": 8,
+      "cumulative": 8,
+      "buy_notional": 1008,
+      "sell_notional": 800,
+      "trade_count": 120,
+      "status": "VALID",
+      "source_fingerprint": "cvd-2"
+    },
+    {
+      "timestamp": 1824408000,
+      "signed_delta": -8,
+      "cumulative": 0,
+      "buy_notional": 800,
+      "sell_notional": 1008,
+      "trade_count": 120,
+      "status": "VALID",
+      "source_fingerprint": "cvd-3"
+    },
+    {
+      "timestamp": 1824422400,
+      "signed_delta": 8,
+      "cumulative": 8,
+      "buy_notional": 1008,
+      "sell_notional": 800,
+      "trade_count": 120,
+      "status": "VALID",
+      "source_fingerprint": "cvd-4"
+    },
+    {
+      "timestamp": 1824436800,
+      "signed_delta": -8,
+      "cumulative": 0,
+      "buy_notional": 800,
+      "sell_notional": 1008,
+      "trade_count": 120,
+      "status": "VALID",
+      "source_fingerprint": "cvd-5"
+    },
+    {
+      "timestamp": 1824451200,
+      "signed_delta": 8,
+      "cumulative": 8,
+      "buy_notional": 1008,
+      "sell_notional": 800,
+      "trade_count": 120,
+      "status": "VALID",
+      "source_fingerprint": "cvd-6"
+    },
+    {
+      "timestamp": 1824465600,
+      "signed_delta": -8,
+      "cumulative": 0,
+      "buy_notional": 800,
+      "sell_notional": 1008,
+      "trade_count": 120,
+      "status": "VALID",
+      "source_fingerprint": "cvd-7"
+    },
+    {
+      "timestamp": 1824480000,
+      "signed_delta": 8,
+      "cumulative": 8,
+      "buy_notional": 1008,
+      "sell_notional": 800,
+      "trade_count": 120,
+      "status": "VALID",
+      "source_fingerprint": "cvd-8"
+    },
+    {
+      "timestamp": 1824494400,
+      "signed_delta": -8,
+      "cumulative": 0,
+      "buy_notional": 800,
+      "sell_notional": 1008,
+      "trade_count": 120,
+      "status": "VALID",
+      "source_fingerprint": "cvd-9"
+    },
+    {
+      "timestamp": 1824508800,
+      "signed_delta": 8,
+      "cumulative": 8,
+      "buy_notional": 1008,
+      "sell_notional": 800,
+      "trade_count": 120,
+      "status": "VALID",
+      "source_fingerprint": "cvd-10"
+    },
+    {
+      "timestamp": 1824523200,
+      "signed_delta": -8,
+      "cumulative": 0,
+      "buy_notional": 800,
+      "sell_notional": 1008,
+      "trade_count": 120,
+      "status": "VALID",
+      "source_fingerprint": "cvd-11"
+    },
+    {
+      "timestamp": 1824537600,
+      "signed_delta": 8,
+      "cumulative": 8,
+      "buy_notional": 1008,
+      "sell_notional": 800,
+      "trade_count": 120,
+      "status": "VALID",
+      "source_fingerprint": "cvd-12"
+    },
+    {
+      "timestamp": 1824552000,
+      "signed_delta": -8,
+      "cumulative": 0,
+      "buy_notional": 800,
+      "sell_notional": 1008,
+      "trade_count": 120,
+      "status": "VALID",
+      "source_fingerprint": "cvd-13"
+    },
+    {
+      "timestamp": 1824566400,
+      "signed_delta": 8,
+      "cumulative": 8,
+      "buy_notional": 1008,
+      "sell_notional": 800,
+      "trade_count": 120,
+      "status": "VALID",
+      "source_fingerprint": "cvd-14"
+    },
+    {
+      "timestamp": 1824580800,
+      "signed_delta": -8,
+      "cumulative": 0,
+      "buy_notional": 800,
+      "sell_notional": 1008,
+      "trade_count": 120,
+      "status": "VALID",
+      "source_fingerprint": "cvd-15"
+    },
+    {
+      "timestamp": 1824595200,
+      "signed_delta": 8,
+      "cumulative": 8,
+      "buy_notional": 1008,
+      "sell_notional": 800,
+      "trade_count": 120,
+      "status": "VALID",
+      "source_fingerprint": "cvd-16"
+    },
+    {
+      "timestamp": 1824609600,
+      "signed_delta": -8,
+      "cumulative": 0,
+      "buy_notional": 800,
+      "sell_notional": 1008,
+      "trade_count": 120,
+      "status": "VALID",
+      "source_fingerprint": "cvd-17"
+    },
+    {
+      "timestamp": 1824624000,
+      "signed_delta": 8,
+      "cumulative": 8,
+      "buy_notional": 1008,
+      "sell_notional": 800,
+      "trade_count": 120,
+      "status": "VALID",
+      "source_fingerprint": "cvd-18"
+    },
+    {
+      "timestamp": 1824638400,
+      "signed_delta": -8,
+      "cumulative": 0,
+      "buy_notional": 800,
+      "sell_notional": 1008,
+      "trade_count": 120,
+      "status": "VALID",
+      "source_fingerprint": "cvd-19"
+    },
+    {
+      "timestamp": 1824652800,
+      "signed_delta": 8,
+      "cumulative": 8,
+      "buy_notional": 1008,
+      "sell_notional": 800,
+      "trade_count": 120,
+      "status": "VALID",
+      "source_fingerprint": "cvd-20"
+    },
+    {
+      "timestamp": 1824667200,
+      "signed_delta": -8,
+      "cumulative": 0,
+      "buy_notional": 800,
+      "sell_notional": 1008,
+      "trade_count": 120,
+      "status": "VALID",
+      "source_fingerprint": "cvd-21"
+    },
+    {
+      "timestamp": 1824681600,
+      "signed_delta": 8,
+      "cumulative": 8,
+      "buy_notional": 1008,
+      "sell_notional": 800,
+      "trade_count": 120,
+      "status": "VALID",
+      "source_fingerprint": "cvd-22"
+    },
+    {
+      "timestamp": 1824696000,
+      "signed_delta": -8,
+      "cumulative": 0,
+      "buy_notional": 800,
+      "sell_notional": 1008,
+      "trade_count": 120,
+      "status": "VALID",
+      "source_fingerprint": "cvd-23"
+    },
+    {
+      "timestamp": 1824710400,
+      "signed_delta": 8,
+      "cumulative": 8,
+      "buy_notional": 1008,
+      "sell_notional": 800,
+      "trade_count": 120,
+      "status": "VALID",
+      "source_fingerprint": "cvd-24"
+    },
+    {
+      "timestamp": 1824724800,
+      "signed_delta": -8,
+      "cumulative": 0,
+      "buy_notional": 800,
+      "sell_notional": 1008,
+      "trade_count": 120,
+      "status": "VALID",
+      "source_fingerprint": "cvd-25"
+    },
+    {
+      "timestamp": 1824739200,
+      "signed_delta": 8,
+      "cumulative": 8,
+      "buy_notional": 1008,
+      "sell_notional": 800,
+      "trade_count": 120,
+      "status": "VALID",
+      "source_fingerprint": "cvd-26"
+    },
+    {
+      "timestamp": 1824753600,
+      "signed_delta": -8,
+      "cumulative": 0,
+      "buy_notional": 800,
+      "sell_notional": 1008,
+      "trade_count": 120,
+      "status": "VALID",
+      "source_fingerprint": "cvd-27"
+    },
+    {
+      "timestamp": 1824768000,
+      "signed_delta": 8,
+      "cumulative": 8,
+      "buy_notional": 1008,
+      "sell_notional": 800,
+      "trade_count": 120,
+      "status": "VALID",
+      "source_fingerprint": "cvd-28"
+    },
+    {
+      "timestamp": 1824782400,
+      "signed_delta": -8,
+      "cumulative": 0,
+      "buy_notional": 800,
+      "sell_notional": 1008,
+      "trade_count": 120,
+      "status": "VALID",
+      "source_fingerprint": "cvd-29"
+    },
+    {
+      "timestamp": 1824796800,
+      "signed_delta": 8,
+      "cumulative": 8,
+      "buy_notional": 1008,
+      "sell_notional": 800,
+      "trade_count": 120,
+      "status": "VALID",
+      "source_fingerprint": "cvd-30"
+    },
+    {
+      "timestamp": 1824811200,
+      "signed_delta": -8,
+      "cumulative": 0,
+      "buy_notional": 800,
+      "sell_notional": 1008,
+      "trade_count": 120,
+      "status": "VALID",
+      "source_fingerprint": "cvd-31"
+    },
+    {
+      "timestamp": 1824825600,
+      "signed_delta": 8,
+      "cumulative": 8,
+      "buy_notional": 1008,
+      "sell_notional": 800,
+      "trade_count": 120,
+      "status": "VALID",
+      "source_fingerprint": "cvd-32"
+    },
+    {
+      "timestamp": 1824840000,
+      "signed_delta": -8,
+      "cumulative": 0,
+      "buy_notional": 800,
+      "sell_notional": 1008,
+      "trade_count": 120,
+      "status": "VALID",
+      "source_fingerprint": "cvd-33"
+    },
+    {
+      "timestamp": 1824854400,
+      "signed_delta": 8,
+      "cumulative": 8,
+      "buy_notional": 1008,
+      "sell_notional": 800,
+      "trade_count": 120,
+      "status": "VALID",
+      "source_fingerprint": "cvd-34"
+    },
+    {
+      "timestamp": 1824868800,
+      "signed_delta": -8,
+      "cumulative": 0,
+      "buy_notional": 800,
+      "sell_notional": 1008,
+      "trade_count": 120,
+      "status": "VALID",
+      "source_fingerprint": "cvd-35"
+    },
+    {
+      "timestamp": 1824883200,
+      "signed_delta": 8,
+      "cumulative": 8,
+      "buy_notional": 1008,
+      "sell_notional": 800,
+      "trade_count": 120,
+      "status": "VALID",
+      "source_fingerprint": "cvd-36"
+    },
+    {
+      "timestamp": 1824897600,
+      "signed_delta": -8,
+      "cumulative": 0,
+      "buy_notional": 800,
+      "sell_notional": 1008,
+      "trade_count": 120,
+      "status": "VALID",
+      "source_fingerprint": "cvd-37"
+    },
+    {
+      "timestamp": 1824912000,
+      "signed_delta": 8,
+      "cumulative": 8,
+      "buy_notional": 1008,
+      "sell_notional": 800,
+      "trade_count": 120,
+      "status": "VALID",
+      "source_fingerprint": "cvd-38"
+    },
+    {
+      "timestamp": 1824926400,
+      "signed_delta": 120,
+      "cumulative": 128,
+      "buy_notional": 1120,
+      "sell_notional": 800,
+      "trade_count": 120,
+      "status": "VALID",
+      "source_fingerprint": "cvd-39"
+    },
+    {
+      "timestamp": 1824940800,
+      "signed_delta": 120,
+      "cumulative": 248,
+      "buy_notional": 1120,
+      "sell_notional": 800,
+      "trade_count": 120,
+      "status": "VALID",
+      "source_fingerprint": "cvd-40"
+    },
+    {
+      "timestamp": 1824955200,
+      "signed_delta": 120,
+      "cumulative": 368,
+      "buy_notional": 1120,
+      "sell_notional": 800,
+      "trade_count": 120,
+      "status": "VALID",
+      "source_fingerprint": "cvd-41"
+    },
+    {
+      "timestamp": 1824969600,
+      "signed_delta": 120,
+      "cumulative": 488,
+      "buy_notional": 1120,
+      "sell_notional": 800,
+      "trade_count": 120,
+      "status": "VALID",
+      "source_fingerprint": "cvd-42"
+    },
+    {
+      "timestamp": 1824984000,
+      "signed_delta": 120,
+      "cumulative": 608,
+      "buy_notional": 1120,
+      "sell_notional": 800,
+      "trade_count": 120,
+      "status": "VALID",
+      "source_fingerprint": "cvd-43"
+    },
+    {
+      "timestamp": 1824998400,
+      "signed_delta": -25,
+      "cumulative": 583,
+      "buy_notional": 800,
+      "sell_notional": 1025,
+      "trade_count": 120,
+      "status": "VALID",
+      "source_fingerprint": "cvd-44"
+    },
+    {
+      "timestamp": 1825012800,
+      "signed_delta": 25,
+      "cumulative": 608,
+      "buy_notional": 1025,
+      "sell_notional": 800,
+      "trade_count": 120,
+      "status": "VALID",
+      "source_fingerprint": "cvd-45"
+    }
+  ],
+  "oi": [
+    {
+      "timestamp": 1824364800,
+      "value": 1000,
+      "unit": "USD",
+      "status": "VALID",
+      "source_fingerprint": "oi-0"
+    },
+    {
+      "timestamp": 1824379200,
+      "value": 1001,
+      "unit": "USD",
+      "status": "VALID",
+      "source_fingerprint": "oi-1"
+    },
+    {
+      "timestamp": 1824393600,
+      "value": 1002,
+      "unit": "USD",
+      "status": "VALID",
+      "source_fingerprint": "oi-2"
+    },
+    {
+      "timestamp": 1824408000,
+      "value": 1000,
+      "unit": "USD",
+      "status": "VALID",
+      "source_fingerprint": "oi-3"
+    },
+    {
+      "timestamp": 1824422400,
+      "value": 1001,
+      "unit": "USD",
+      "status": "VALID",
+      "source_fingerprint": "oi-4"
+    },
+    {
+      "timestamp": 1824436800,
+      "value": 1002,
+      "unit": "USD",
+      "status": "VALID",
+      "source_fingerprint": "oi-5"
+    },
+    {
+      "timestamp": 1824451200,
+      "value": 1000,
+      "unit": "USD",
+      "status": "VALID",
+      "source_fingerprint": "oi-6"
+    },
+    {
+      "timestamp": 1824465600,
+      "value": 1001,
+      "unit": "USD",
+      "status": "VALID",
+      "source_fingerprint": "oi-7"
+    },
+    {
+      "timestamp": 1824480000,
+      "value": 1002,
+      "unit": "USD",
+      "status": "VALID",
+      "source_fingerprint": "oi-8"
+    },
+    {
+      "timestamp": 1824494400,
+      "value": 1000,
+      "unit": "USD",
+      "status": "VALID",
+      "source_fingerprint": "oi-9"
+    },
+    {
+      "timestamp": 1824508800,
+      "value": 1001,
+      "unit": "USD",
+      "status": "VALID",
+      "source_fingerprint": "oi-10"
+    },
+    {
+      "timestamp": 1824523200,
+      "value": 1002,
+      "unit": "USD",
+      "status": "VALID",
+      "source_fingerprint": "oi-11"
+    },
+    {
+      "timestamp": 1824537600,
+      "value": 1000,
+      "unit": "USD",
+      "status": "VALID",
+      "source_fingerprint": "oi-12"
+    },
+    {
+      "timestamp": 1824552000,
+      "value": 1001,
+      "unit": "USD",
+      "status": "VALID",
+      "source_fingerprint": "oi-13"
+    },
+    {
+      "timestamp": 1824566400,
+      "value": 1002,
+      "unit": "USD",
+      "status": "VALID",
+      "source_fingerprint": "oi-14"
+    },
+    {
+      "timestamp": 1824580800,
+      "value": 1000,
+      "unit": "USD",
+      "status": "VALID",
+      "source_fingerprint": "oi-15"
+    },
+    {
+      "timestamp": 1824595200,
+      "value": 1001,
+      "unit": "USD",
+      "status": "VALID",
+      "source_fingerprint": "oi-16"
+    },
+    {
+      "timestamp": 1824609600,
+      "value": 1002,
+      "unit": "USD",
+      "status": "VALID",
+      "source_fingerprint": "oi-17"
+    },
+    {
+      "timestamp": 1824624000,
+      "value": 1000,
+      "unit": "USD",
+      "status": "VALID",
+      "source_fingerprint": "oi-18"
+    },
+    {
+      "timestamp": 1824638400,
+      "value": 1001,
+      "unit": "USD",
+      "status": "VALID",
+      "source_fingerprint": "oi-19"
+    },
+    {
+      "timestamp": 1824652800,
+      "value": 1002,
+      "unit": "USD",
+      "status": "VALID",
+      "source_fingerprint": "oi-20"
+    },
+    {
+      "timestamp": 1824667200,
+      "value": 1000,
+      "unit": "USD",
+      "status": "VALID",
+      "source_fingerprint": "oi-21"
+    },
+    {
+      "timestamp": 1824681600,
+      "value": 1001,
+      "unit": "USD",
+      "status": "VALID",
+      "source_fingerprint": "oi-22"
+    },
+    {
+      "timestamp": 1824696000,
+      "value": 1002,
+      "unit": "USD",
+      "status": "VALID",
+      "source_fingerprint": "oi-23"
+    },
+    {
+      "timestamp": 1824710400,
+      "value": 1000,
+      "unit": "USD",
+      "status": "VALID",
+      "source_fingerprint": "oi-24"
+    },
+    {
+      "timestamp": 1824724800,
+      "value": 1001,
+      "unit": "USD",
+      "status": "VALID",
+      "source_fingerprint": "oi-25"
+    },
+    {
+      "timestamp": 1824739200,
+      "value": 1002,
+      "unit": "USD",
+      "status": "VALID",
+      "source_fingerprint": "oi-26"
+    },
+    {
+      "timestamp": 1824753600,
+      "value": 1000,
+      "unit": "USD",
+      "status": "VALID",
+      "source_fingerprint": "oi-27"
+    },
+    {
+      "timestamp": 1824768000,
+      "value": 1001,
+      "unit": "USD",
+      "status": "VALID",
+      "source_fingerprint": "oi-28"
+    },
+    {
+      "timestamp": 1824782400,
+      "value": 1002,
+      "unit": "USD",
+      "status": "VALID",
+      "source_fingerprint": "oi-29"
+    },
+    {
+      "timestamp": 1824796800,
+      "value": 1000,
+      "unit": "USD",
+      "status": "VALID",
+      "source_fingerprint": "oi-30"
+    },
+    {
+      "timestamp": 1824811200,
+      "value": 1001,
+      "unit": "USD",
+      "status": "VALID",
+      "source_fingerprint": "oi-31"
+    },
+    {
+      "timestamp": 1824825600,
+      "value": 1002,
+      "unit": "USD",
+      "status": "VALID",
+      "source_fingerprint": "oi-32"
+    },
+    {
+      "timestamp": 1824840000,
+      "value": 1000,
+      "unit": "USD",
+      "status": "VALID",
+      "source_fingerprint": "oi-33"
+    },
+    {
+      "timestamp": 1824854400,
+      "value": 1001,
+      "unit": "USD",
+      "status": "VALID",
+      "source_fingerprint": "oi-34"
+    },
+    {
+      "timestamp": 1824868800,
+      "value": 1002,
+      "unit": "USD",
+      "status": "VALID",
+      "source_fingerprint": "oi-35"
+    },
+    {
+      "timestamp": 1824883200,
+      "value": 1000,
+      "unit": "USD",
+      "status": "VALID",
+      "source_fingerprint": "oi-36"
+    },
+    {
+      "timestamp": 1824897600,
+      "value": 1001,
+      "unit": "USD",
+      "status": "VALID",
+      "source_fingerprint": "oi-37"
+    },
+    {
+      "timestamp": 1824912000,
+      "value": 1002,
+      "unit": "USD",
+      "status": "VALID",
+      "source_fingerprint": "oi-38"
+    },
+    {
+      "timestamp": 1824926400,
+      "value": 1000,
+      "unit": "USD",
+      "status": "VALID",
+      "source_fingerprint": "oi-39"
+    },
+    {
+      "timestamp": 1824940800,
+      "value": 965,
+      "unit": "USD",
+      "status": "VALID",
+      "source_fingerprint": "oi-40"
+    },
+    {
+      "timestamp": 1824955200,
+      "value": 930,
+      "unit": "USD",
+      "status": "VALID",
+      "source_fingerprint": "oi-41"
+    },
+    {
+      "timestamp": 1824969600,
+      "value": 895,
+      "unit": "USD",
+      "status": "VALID",
+      "source_fingerprint": "oi-42"
+    },
+    {
+      "timestamp": 1824984000,
+      "value": 830,
+      "unit": "USD",
+      "status": "VALID",
+      "source_fingerprint": "oi-43"
+    },
+    {
+      "timestamp": 1824998400,
+      "value": 842,
+      "unit": "USD",
+      "status": "VALID",
+      "source_fingerprint": "oi-44"
+    },
+    {
+      "timestamp": 1825012800,
+      "value": 854,
+      "unit": "USD",
+      "status": "VALID",
+      "source_fingerprint": "oi-45"
+    }
+  ],
+  "basis": [
+    {
+      "timestamp": 1824364800,
+      "percentage_basis": 0.001,
+      "status": "VALID"
+    },
+    {
+      "timestamp": 1824379200,
+      "percentage_basis": 0.001,
+      "status": "VALID"
+    },
+    {
+      "timestamp": 1824393600,
+      "percentage_basis": 0.001,
+      "status": "VALID"
+    },
+    {
+      "timestamp": 1824408000,
+      "percentage_basis": 0.001,
+      "status": "VALID"
+    },
+    {
+      "timestamp": 1824422400,
+      "percentage_basis": 0.001,
+      "status": "VALID"
+    },
+    {
+      "timestamp": 1824436800,
+      "percentage_basis": 0.001,
+      "status": "VALID"
+    },
+    {
+      "timestamp": 1824451200,
+      "percentage_basis": 0.001,
+      "status": "VALID"
+    },
+    {
+      "timestamp": 1824465600,
+      "percentage_basis": 0.001,
+      "status": "VALID"
+    },
+    {
+      "timestamp": 1824480000,
+      "percentage_basis": 0.001,
+      "status": "VALID"
+    },
+    {
+      "timestamp": 1824494400,
+      "percentage_basis": 0.001,
+      "status": "VALID"
+    },
+    {
+      "timestamp": 1824508800,
+      "percentage_basis": 0.001,
+      "status": "VALID"
+    },
+    {
+      "timestamp": 1824523200,
+      "percentage_basis": 0.001,
+      "status": "VALID"
+    },
+    {
+      "timestamp": 1824537600,
+      "percentage_basis": 0.001,
+      "status": "VALID"
+    },
+    {
+      "timestamp": 1824552000,
+      "percentage_basis": 0.001,
+      "status": "VALID"
+    },
+    {
+      "timestamp": 1824566400,
+      "percentage_basis": 0.001,
+      "status": "VALID"
+    },
+    {
+      "timestamp": 1824580800,
+      "percentage_basis": 0.001,
+      "status": "VALID"
+    },
+    {
+      "timestamp": 1824595200,
+      "percentage_basis": 0.001,
+      "status": "VALID"
+    },
+    {
+      "timestamp": 1824609600,
+      "percentage_basis": 0.001,
+      "status": "VALID"
+    },
+    {
+      "timestamp": 1824624000,
+      "percentage_basis": 0.001,
+      "status": "VALID"
+    },
+    {
+      "timestamp": 1824638400,
+      "percentage_basis": 0.001,
+      "status": "VALID"
+    },
+    {
+      "timestamp": 1824652800,
+      "percentage_basis": 0.001,
+      "status": "VALID"
+    },
+    {
+      "timestamp": 1824667200,
+      "percentage_basis": 0.001,
+      "status": "VALID"
+    },
+    {
+      "timestamp": 1824681600,
+      "percentage_basis": 0.001,
+      "status": "VALID"
+    },
+    {
+      "timestamp": 1824696000,
+      "percentage_basis": 0.001,
+      "status": "VALID"
+    },
+    {
+      "timestamp": 1824710400,
+      "percentage_basis": 0.001,
+      "status": "VALID"
+    },
+    {
+      "timestamp": 1824724800,
+      "percentage_basis": 0.001,
+      "status": "VALID"
+    },
+    {
+      "timestamp": 1824739200,
+      "percentage_basis": 0.001,
+      "status": "VALID"
+    },
+    {
+      "timestamp": 1824753600,
+      "percentage_basis": 0.001,
+      "status": "VALID"
+    },
+    {
+      "timestamp": 1824768000,
+      "percentage_basis": 0.001,
+      "status": "VALID"
+    },
+    {
+      "timestamp": 1824782400,
+      "percentage_basis": 0.001,
+      "status": "VALID"
+    },
+    {
+      "timestamp": 1824796800,
+      "percentage_basis": 0.001,
+      "status": "VALID"
+    },
+    {
+      "timestamp": 1824811200,
+      "percentage_basis": 0.001,
+      "status": "VALID"
+    },
+    {
+      "timestamp": 1824825600,
+      "percentage_basis": 0.001,
+      "status": "VALID"
+    },
+    {
+      "timestamp": 1824840000,
+      "percentage_basis": 0.001,
+      "status": "VALID"
+    },
+    {
+      "timestamp": 1824854400,
+      "percentage_basis": 0.001,
+      "status": "VALID"
+    },
+    {
+      "timestamp": 1824868800,
+      "percentage_basis": 0.001,
+      "status": "VALID"
+    },
+    {
+      "timestamp": 1824883200,
+      "percentage_basis": 0.001,
+      "status": "VALID"
+    },
+    {
+      "timestamp": 1824897600,
+      "percentage_basis": 0.001,
+      "status": "VALID"
+    },
+    {
+      "timestamp": 1824912000,
+      "percentage_basis": 0.001,
+      "status": "VALID"
+    },
+    {
+      "timestamp": 1824926400,
+      "percentage_basis": 0.0015,
+      "status": "VALID"
+    },
+    {
+      "timestamp": 1824940800,
+      "percentage_basis": 0.0015,
+      "status": "VALID"
+    },
+    {
+      "timestamp": 1824955200,
+      "percentage_basis": 0.0015,
+      "status": "VALID"
+    },
+    {
+      "timestamp": 1824969600,
+      "percentage_basis": 0.0015,
+      "status": "VALID"
+    },
+    {
+      "timestamp": 1824984000,
+      "percentage_basis": 0.0015,
+      "status": "VALID"
+    },
+    {
+      "timestamp": 1824998400,
+      "percentage_basis": 0.0015,
+      "status": "VALID"
+    },
+    {
+      "timestamp": 1825012800,
+      "percentage_basis": 0.0015,
+      "status": "VALID"
+    }
+  ],
+  "funding": [
+    {
+      "timestamp": 1824897600,
+      "state": "SETTLED",
+      "rate": 0.0001,
+      "source_type": "SETTLED"
+    },
+    {
+      "timestamp": 1824984000,
+      "state": "PREDICTED",
+      "rate": 0.0002,
+      "source_type": "PREDICTED"
+    }
+  ],
+  "liquidation": [
+    {
+      "timestamp": 1824955200,
+      "side": "SHORT",
+      "notional": 250000,
+      "size": 125
+    }
+  ]
+}

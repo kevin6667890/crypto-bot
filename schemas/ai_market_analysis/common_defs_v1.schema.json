@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "common_defs_v1.schema.json",
+  "title": "AI market analysis common definitions v1",
+  "$defs": {
+    "timestamp": {"type": "string", "format": "date-time", "pattern": "^\\d{4}-\\d{2}-\\d{2}T\\d{2}:\\d{2}:\\d{2}(?:\\.\\d+)?(?:Z|[+-]\\d{2}:\\d{2})$"},
+    "quality": {"type": "string", "enum": ["VALID", "PARTIAL", "PARTIAL_AFTER_GAP", "STALE", "MISSING", "UNKNOWN"]},
+    "status": {"type": "string", "enum": ["OBSERVED", "DERIVED", "UNAVAILABLE", "UNKNOWN"]},
+    "traced_number": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["value", "unit", "timestamp", "source", "status", "quality", "derivation", "version"],
+      "properties": {
+        "value": {"type": ["number", "null"]},
+        "unit": {"type": "string", "minLength": 1},
+        "timestamp": {"$ref": "#/$defs/timestamp"},
+        "source": {"type": "string", "minLength": 1},
+        "status": {"$ref": "#/$defs/status"},
+        "quality": {"$ref": "#/$defs/quality"},
+        "derivation": {"type": "string", "minLength": 1},
+        "version": {"type": "string", "minLength": 1},
+        "evidence_path": {"type": "string", "pattern": "^/"}
+      }
+    },
+    "evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["claim", "evidence_paths"],
+      "properties": {
+        "claim": {"type": "string", "minLength": 1},
+        "evidence_paths": {"type": "array", "minItems": 1, "items": {"type": "string", "pattern": "^/"}}
+      }
+    },
+    "data_quality": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["overall", "gaps", "stale_sources", "missing_sources", "watermark_mismatches"],
+      "properties": {
+        "overall": {"$ref": "#/$defs/quality"},
+        "gaps": {"type": "array", "items": {"type": "object", "required": ["source", "start", "end"], "properties": {"source": {"type": "string"}, "start": {"$ref": "#/$defs/timestamp"}, "end": {"$ref": "#/$defs/timestamp"}}, "additionalProperties": true}},
+        "stale_sources": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "missing_sources": {"type": "array", "items": {"type": "string"}, "uniqueItems": true},
+        "watermark_mismatches": {"type": "array", "items": {"type": "string"}}
+      }
+    }
+  }
+}

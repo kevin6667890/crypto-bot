@@ -96,16 +96,22 @@ def test_sqlite_wait_does_not_block_websocket_event_loop(
     started = threading.Event()
     finished = threading.Event()
 
-    def slow_insert(items):
-        started.set()
-        time.sleep(0.15)
-        result = original(items)
-        finished.set()
-        return result
+    release = threading.Event()
 
-    monkeypatch.setattr(store, "insert_trade_batch", slow_insert)
+    async def scenario() -> tuple[bool, bool]:
+        loop = asyncio.get_running_loop()
+        writer_entered = asyncio.Event()
 
-    async def scenario() -> bool:
+        def blocked_insert(items):
+            started.set()
+            loop.call_soon_threadsafe(writer_entered.set)
+            if not release.wait(timeout=2):
+                raise TimeoutError("test did not release blocked SQLite write")
+            result = original(items)
+            finished.set()
+            return result
+
+        monkeypatch.setattr(store, "insert_trade_batch", blocked_insert)
         writer = asyncio.create_task(collector._writer())
         await collector.queue.put(("trade", {
             "instrument": "BTC-USDT-SWAP",
@@ -114,14 +120,18 @@ def test_sqlite_wait_does_not_block_websocket_event_loop(
                 "side": "buy", "ts": str(now_ms())},
             "received_at_ms": now_ms(),
         }))
-        await asyncio.sleep(0.25)
-        event_loop_advanced_while_sqlite_waited = started.is_set() and not finished.is_set()
-        await collector.queue.join()
-        writer.cancel()
-        await asyncio.gather(writer, return_exceptions=True)
-        return event_loop_advanced_while_sqlite_waited
+        try:
+            await asyncio.wait_for(writer_entered.wait(), timeout=1)
+            event_loop_advanced_while_sqlite_waited = started.is_set() and not finished.is_set()
+            release.set()
+            await collector.queue.join()
+            return event_loop_advanced_while_sqlite_waited, finished.is_set()
+        finally:
+            release.set()
+            writer.cancel()
+            await asyncio.gather(writer, return_exceptions=True)
 
-    assert asyncio.run(scenario()) is True
+    assert asyncio.run(scenario()) == (True, True)
 
 
 def test_stalled_trade_lane_supervision_is_instrument_local(

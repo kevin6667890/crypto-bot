@@ -130,7 +130,7 @@ def test_checkpoint_resume_is_idempotent_and_segment_bound():
     resumed = engine.replay(instrument="BTC-USDT-SWAP", confirmed_close_timestamps=timestamps,
                             trials=trial, segment=segment(), checkpoint=first["checkpoint"])
     assert resumed["event_count"] == 0 and resumed["intents"] == []
-    with pytest.raises(ValueError, match="segment identity"):
+    with pytest.raises(ValueError, match="CHECKPOINT_SEGMENT_MISMATCH"):
         engine.replay(instrument="BTC-USDT-SWAP", confirmed_close_timestamps=timestamps,
                       trials=trial, segment=segment(identity="other"), checkpoint=first["checkpoint"])
 

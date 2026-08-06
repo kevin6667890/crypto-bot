@@ -365,6 +365,9 @@ export interface components {
         };
         AiMarketReportResponse: {
             schema_version: string;
+            source_versions: {
+                [key: string]: string;
+            };
             context_id: string;
             request_id: string;
             mode: components["schemas"]["AiMarketReportMode"];

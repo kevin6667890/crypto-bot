@@ -42,8 +42,8 @@ def build_fact_registry(enriched: dict[str, Any]) -> dict[str, Any]:
         item = timeline.get(key) or {}
         if item.get("value") is not None: facts.append(_fact(fid, "TIMELINE", label, item["value"], f"/market_timeline/{key}", unit=item.get("unit"), timestamp=item.get("timestamp"), priority=96))
     facts.append(_fact("TIMELINE_CURRENT_PHASE", "TIMELINE", "当前阶段", timeline.get("current_phase"), "/market_timeline/current_phase", timestamp=decision, priority=100))
-    for index, event in enumerate(base.get("structure_events", [])[-2:]):
-        facts.append(_fact(f"EVENT_{index+1:02d}", "TIMELINE", event.get("event_type", "事件"), {k:event.get(k) for k in ("event_type","timeframe","direction","confirmation_status","invalidation")}, f"/structure_events/{len(base.get('structure_events', []))-min(2,len(base.get('structure_events', [])))+index}", timestamp=event.get("end"), priority=90-index))
+    for index, event in enumerate(base.get("structure_events", [])[-1:]):
+        facts.append(_fact(f"EVENT_{index+1:02d}", "TIMELINE", event.get("event_type", "事件"), {k:event.get(k) for k in ("event_type","timeframe","direction","confirmation_status","invalidation")}, f"/structure_events/{len(base.get('structure_events', []))-1+index}", timestamp=event.get("end"), priority=90-index))
     phases = base.get("order_flow_phases", [])
     for index, phase in enumerate(phases[-4:]):
         metrics = phase.get("metrics", {}); cvd = metrics.get("cvd", {}); oi = metrics.get("oi", {})

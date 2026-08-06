@@ -16,7 +16,7 @@ def estimate_tokens(value: Any) -> int:
 def compile_report_context(registry: dict[str, Any], mode: str, max_tokens: int | None = None) -> dict[str, Any]:
     if mode not in MODE_INPUT_BUDGETS: raise ValueError("invalid report mode")
     budget = min(max_tokens or MODE_INPUT_BUDGETS[mode], MODE_INPUT_BUDGETS[mode], 12000)
-    fact_budget=max(1,budget-500)  # reserve mode instructions and omission metadata
+    fact_budget=max(1,budget-900)  # reserve response metadata and versioned instructions
     ordered = sorted(registry["facts"], key=lambda f:(-int(f.get("priority",0)==100),CATEGORY_ORDER.get(f["category"],99),-f.get("priority",0),f["fact_id"]))
     kept, omitted = [], []
     envelope = {k:registry[k] for k in ("version","context_id","instrument","decision_time","allowed_directional_biases","max_confidence","allowed_market_phases")}

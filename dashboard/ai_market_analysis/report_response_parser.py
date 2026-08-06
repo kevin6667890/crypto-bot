@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
-TOP_FIELDS={"schema_version","context_id","request_id","mode","language","headline","market_phase","directional_bias","confidence","sections","key_levels","scenarios","position_guidance","unsupported_claims","data_warnings","citations","model","prompt_version","audit_status"}
+TOP_FIELDS={"schema_version","source_versions","context_id","request_id","mode","language","headline","market_phase","directional_bias","confidence","sections","key_levels","scenarios","position_guidance","unsupported_claims","data_warnings","citations","model","prompt_version","audit_status"}
 SECTION_FIELDS={"section_id","title","body","fact_refs","level_refs","scenario_refs","macro_refs","position_refs","uncertainties"}
 
 

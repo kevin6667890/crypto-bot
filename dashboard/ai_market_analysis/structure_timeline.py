@@ -49,10 +49,16 @@ def build_timeline(facts: dict[str, Any], swings: list[dict[str, Any]]) -> dict[
     breakout_candidate_score = float("-inf")
     if atr and len(candles) >= 21:
         for end in range(20, len(candles)):
+            bar = candles[end]
+            minimum_window = candles[end-20:end]
+            minimum_high = max(row["high"] for row in minimum_window)
+            minimum_low = min(row["low"] for row in minimum_window)
+            if (bar["close"]-minimum_high)/atr < TIMELINE_PARAMETERS["attempt_distance_atr"] and \
+                    (minimum_low-bar["close"])/atr < TIMELINE_PARAMETERS["attempt_distance_atr"]:
+                continue
             candidate = detect_range(candles, timeframe, atr, end_index=end)
             if not candidate:
                 continue
-            bar = candles[end]
             up_distance = (bar["close"]-candidate["high"])/atr
             down_distance = (candidate["low"]-bar["close"])/atr
             normalized_slope = abs(candidate["slope"])/candidate["width"] if candidate["width"] else 1.0

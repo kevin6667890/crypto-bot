@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import sqlite3
+import time
 from pathlib import Path
 
 import pytest
@@ -13,6 +15,10 @@ from dashboard.realtime_aggregation import (
     MINUTE_MS,
     RealtimeAggregationEngine,
 )
+from dashboard.canonical_microstructure_history import (
+    BuildIdentity, CanonicalHistoryStore,
+)
+from dashboard.canonical_realtime import CanonicalRealtimeWriter
 
 
 INSTRUMENT = "BTC-USDT-SWAP"
@@ -204,6 +210,60 @@ def test_liveness_does_not_let_oi_mask_missing_cvd(tmp_path: Path) -> None:
     assert health["aggregate_missing_series"] == [f"{INSTRUMENT}:cvd"]
 
 
+def test_liveness_reports_canonical_cvd_lane_failure_independently(
+    tmp_path: Path,
+) -> None:
+    value = store(tmp_path); current = int(time.time() * 1000)
+    value.update_operational_metrics(
+        realtime_aggregation_enabled=True,
+        realtime_aggregation_task_alive=True,
+        realtime_aggregation_status="LIVE",
+        canonical_task_status_by_instrument_series={
+            INSTRUMENT: {"cvd": "ERROR", "oi": "LIVE"}},
+        canonical_timestamp_by_instrument_series={
+            INSTRUMENT: {"cvd": current - 240_000, "oi": current}},
+        canonical_last_exception_by_instrument_series={
+            INSTRUMENT: {"cvd": "RuntimeError: cvd stopped", "oi": None}},
+    )
+    health = value.liveness()
+    assert health["realtime_aggregation_health"] == "DEGRADED"
+    assert health["canonical_failed_series"] == [f"{INSTRUMENT}:cvd"]
+    assert health["canonical_lagged_series"] == [f"{INSTRUMENT}:cvd"]
+
+
+def test_liveness_does_not_age_current_completed_higher_timeframes(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    current = 10 * DAY_MS + 12 * 3_600_000 + 30_000
+    monkeypatch.setattr("dashboard.microstructure.now_ms", lambda: current)
+    widths = {
+        "cvd": 60_000, "oi": 60_000, "cvd:5m": 300_000,
+        "oi:5m": 300_000, "cvd:15m": 900_000, "oi:15m": 900_000,
+        "cvd:1h": 3_600_000, "oi:1h": 3_600_000,
+        "cvd:4h": 14_400_000, "oi:4h": 14_400_000,
+        "cvd:1D": DAY_MS, "oi:1D": DAY_MS,
+    }
+    timestamps = {
+        series: current // width * width - width
+        for series, width in widths.items()
+    }
+    value = store(tmp_path)
+    value.update_operational_metrics(
+        realtime_aggregation_enabled=True,
+        realtime_aggregation_task_alive=True,
+        realtime_aggregation_status="LIVE",
+        canonical_task_status_by_instrument_series={
+            INSTRUMENT: {series: "LIVE" for series in timestamps}},
+        canonical_timestamp_by_instrument_series={INSTRUMENT: timestamps},
+    )
+
+    health = value.liveness()
+
+    assert health["realtime_aggregation_health"] == "HEALTHY"
+    assert health["canonical_lagged_series"] == []
+    assert set(health["canonical_lag_seconds_by_series"].values()) == {0}
+
+
 def test_liveness_detects_dead_task_as_degraded(tmp_path: Path) -> None:
     value = store(tmp_path)
     value.update_operational_metrics(
@@ -253,6 +313,111 @@ def test_one_minute_cvd_and_oi_are_real_and_idempotent(tmp_path: Path) -> None:
                 10, 12, 2, 2)
 
 
+def test_realtime_writer_continues_prebuilt_canonical_db(tmp_path: Path) -> None:
+    value = store(tmp_path); start = BASE_DAY + 30 * DAY_MS
+    trade(value, start + 1_000, "a", "buy", 2)
+    trade(value, start + 2_000, "b", "sell", 1)
+    oi(value, start + 5_000, "o1", 10)
+    RealtimeAggregationEngine(value).process(
+        INSTRUMENT, start, start + MINUTE_MS
+    )
+    canonical = tmp_path / "canonical.db"
+    CanonicalHistoryStore(canonical).initialise(
+        BuildIdentity("a" * 64, "history", start - 1, 1)
+    )
+    writer = CanonicalRealtimeWriter(value.path, canonical, "realtime")
+    assert writer.sync(INSTRUMENT, start, start + MINUTE_MS)["minutes"] == 1
+    assert writer.sync(INSTRUMENT, start, start + MINUTE_MS)["minutes"] == 1
+    with sqlite3.connect(canonical) as connection:
+        cvd = connection.execute(
+            "SELECT signed_delta,daily_cumulative,status,trade_count FROM cvd_1m"
+        ).fetchone()
+        stored_oi = connection.execute(
+            "SELECT confirmed_oi,status,observation_count FROM oi_1m"
+        ).fetchone()
+    assert cvd == (100.0, 100.0, "VALID", 2)
+    assert stored_oi == (10.0, "VALID", 1)
+
+
+def test_canonical_cvd_gap_keeps_real_delta_partial_and_next_day_recovers(
+    tmp_path: Path,
+) -> None:
+    value = store(tmp_path); midnight = BASE_DAY + 31 * DAY_MS
+    trade(value, midnight + 1_000, "m0")
+    oi(value, midnight + 1_000, "o0", 10)
+    for minute in range(2, 10):
+        trade(value, midnight + minute * MINUTE_MS + 1_000, f"m{minute}")
+        oi(value, midnight + minute * MINUTE_MS + 1_000, f"o{minute}", 10 + minute)
+    next_day = midnight + DAY_MS
+    trade(value, next_day + 1_000, "next")
+    oi(value, next_day + 1_000, "on", 15)
+    engine = RealtimeAggregationEngine(value)
+    engine.process(INSTRUMENT, midnight, midnight + 10 * MINUTE_MS)
+    engine.process(INSTRUMENT, next_day, next_day + MINUTE_MS)
+    canonical = tmp_path / "canonical-gap.db"
+    CanonicalHistoryStore(canonical).initialise(
+        BuildIdentity("a" * 64, "history", midnight - 1, 1)
+    )
+    result = CanonicalRealtimeWriter(value.path, canonical, "realtime").sync(
+        INSTRUMENT, midnight, next_day + MINUTE_MS
+    )
+    assert result["errors"] == []
+    with sqlite3.connect(canonical) as connection:
+        rows = connection.execute(
+            "SELECT bucket_ms,signed_delta,daily_cumulative,status FROM cvd_1m "
+            "WHERE instrument=? AND bucket_ms IN (?,?,?,?) ORDER BY bucket_ms",
+            (INSTRUMENT, midnight, midnight + MINUTE_MS,
+             midnight + 2 * MINUTE_MS, next_day),
+        ).fetchall()
+        oi_rows = connection.execute(
+            "SELECT bucket_ms,confirmed_oi,status FROM oi_1m WHERE instrument=? "
+            "AND bucket_ms IN (?,?) ORDER BY bucket_ms",
+            (INSTRUMENT, midnight + 2 * MINUTE_MS, next_day),
+        ).fetchall()
+        higher = connection.execute(
+            "SELECT signed_delta,cumulative_close,status FROM cvd_higher_timeframes "
+            "WHERE instrument=? AND resolution='5m' AND bucket_ms=?",
+            (INSTRUMENT, midnight + 5 * MINUTE_MS),
+        ).fetchone()
+        higher_coverage = connection.execute(
+            "SELECT observed,status FROM bucket_coverage WHERE instrument=? "
+            "AND series='cvd' AND resolution='5m' AND bucket_ms=?",
+            (INSTRUMENT, midnight + 5 * MINUTE_MS),
+        ).fetchone()
+    assert rows == [
+        (midnight, 100.0, 100.0, "VALID"),
+        (midnight + MINUTE_MS, None, None, "MISSING"),
+        (midnight + 2 * MINUTE_MS, 100.0, 200.0, "PARTIAL_AFTER_GAP"),
+        (next_day, 100.0, 100.0, "VALID"),
+    ]
+    assert oi_rows == [
+        (midnight + 2 * MINUTE_MS, 12.0, "VALID"),
+        (next_day, 15.0, "VALID"),
+    ]
+    assert higher == (500.0, 900.0, "PARTIAL_AFTER_GAP")
+    assert higher_coverage == (1, "PARTIAL_AFTER_GAP")
+
+
+def test_canonical_cvd_failure_does_not_block_oi(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    value = store(tmp_path); start = BASE_DAY + 32 * DAY_MS
+    trade(value, start + 1_000, "trade")
+    oi(value, start + 1_000, "oi", 7)
+    RealtimeAggregationEngine(value).process(INSTRUMENT, start, start + MINUTE_MS)
+    canonical = tmp_path / "canonical-isolation.db"
+    CanonicalHistoryStore(canonical).initialise(
+        BuildIdentity("a" * 64, "history", start - 1, 1)
+    )
+    writer = CanonicalRealtimeWriter(value.path, canonical, "realtime")
+    monkeypatch.setattr(writer, "_append_cvd", lambda *_args: (_ for _ in ()).throw(RuntimeError("cvd boom")))
+    result = writer.sync(INSTRUMENT, start, start + MINUTE_MS)
+    assert any("cvd boom" in error["exception"] for error in result["errors"])
+    with sqlite3.connect(canonical) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM cvd_1m").fetchone()[0] == 0
+        assert connection.execute("SELECT confirmed_oi,status FROM oi_1m").fetchone() == (7.0, "VALID")
+
+
 def test_missing_raw_stays_missing_and_unclosed_minute_is_not_requested(
     tmp_path: Path,
 ) -> None:
@@ -285,7 +450,7 @@ def test_cvd_resets_at_utc_midnight(tmp_path: Path) -> None:
         (midnight - MINUTE_MS, 100), (midnight, 100)]
 
 
-def test_cvd_does_not_reset_at_an_artificial_lookback_boundary(
+def test_cvd_continues_delta_at_an_artificial_lookback_boundary(
     tmp_path: Path,
 ) -> None:
     value = store(tmp_path); start = BASE_DAY + 12 * DAY_MS
@@ -295,13 +460,13 @@ def test_cvd_does_not_reset_at_an_artificial_lookback_boundary(
     RealtimeAggregationEngine(value).process(
         INSTRUMENT, start + MINUTE_MS, start + 2 * MINUTE_MS)
     with value.connect(readonly=True) as connection:
-        assert connection.execute(
-            "SELECT 1 FROM cvd_aggregates").fetchone() is None
+        aggregate = connection.execute(
+            "SELECT delta,cumulative_anchored,gap_flag FROM cvd_aggregates").fetchone()
         status = connection.execute(
             """SELECT status,detail_json FROM realtime_aggregate_fingerprints
                WHERE series='cvd' AND resolution='1m'""").fetchone()
-    assert status[0] == "MISSING"
-    assert "prior minute aggregate pending" in status[1]
+    assert tuple(aggregate) == (100.0, 100.0, 1)
+    assert status[0] == "VALID"
 
 
 def test_fingerprint_conflict_pauses_without_overwrite_or_cursor_advance(

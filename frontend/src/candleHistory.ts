@@ -135,8 +135,9 @@ export function exponentialMovingAverageSeries(candles: Candle[], period: number
 /**
  * Projects flow observations onto candle-open timestamps. The last confirmed
  * value inside each candle bucket is rendered; buckets with no observation are
- * explicit whitespace. Flow timestamps can therefore never add points to or
- * widen the master candle time scale.
+ * explicit whitespace. If candle history itself is sparse, authoritative API
+ * bucket states are added to the union timeline so a missing candle cannot
+ * make the chart bridge a confirmed flow gap.
  */
 export function flowOnCandleTimeline(
   candles: Candle[],
@@ -145,7 +146,7 @@ export function flowOnCandleTimeline(
 ): Array<{ time: UTCTimestamp; value: number } | WhitespaceData<UTCTimestamp>> {
   const sorted = [...points].sort((a, b) => a.time - b.time);
   let pointIndex = 0;
-  return candles.map(candle => {
+  const projected = candles.map(candle => {
     const start = Number(candle.time);
     const end = start + timeframeSeconds;
     while (pointIndex < sorted.length && sorted[pointIndex].time < start) pointIndex += 1;
@@ -158,6 +159,17 @@ export function flowOnCandleTimeline(
       ? { time: candle.time, value: Number(latest.value) }
       : { time: candle.time };
   });
+  const candleBuckets = new Set(candles.map(candle => Number(candle.time)));
+  for (const point of sorted) {
+    const bucket = Math.floor(point.time / timeframeSeconds) * timeframeSeconds;
+    if (candleBuckets.has(bucket)) continue;
+    projected.push(
+      point.status !== "WHITESPACE" && Number.isFinite(point.value)
+        ? { time: point.time as UTCTimestamp, value: Number(point.value) }
+        : { time: point.time as UTCTimestamp },
+    );
+  }
+  return projected.sort((left, right) => Number(left.time) - Number(right.time));
 }
 
 export function withPreservedTimeRange<T>(

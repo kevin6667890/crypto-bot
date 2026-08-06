@@ -229,33 +229,20 @@ class RealtimeAggregationEngine:
         buy = sum(float(row["notional"]) for row in rows if row["side"] == "buy")
         sell = sum(float(row["notional"]) for row in rows if row["side"] == "sell")
         first_ms, last_ms = int(rows[0]["source_ts_ms"]), int(rows[-1]["source_ts_ms"])
+        day_start = bucket_ms - bucket_ms % DAY_MS
         prior = None if bucket_ms % DAY_MS == 0 else connection.execute(
             """SELECT cumulative_anchored FROM cvd_aggregates
+               WHERE instrument=? AND resolution='1m' AND bucket_ms>=? AND bucket_ms<?
+               ORDER BY bucket_ms DESC LIMIT 1""",
+            (result.instrument, day_start, bucket_ms),
+        ).fetchone()
+        immediate = None if bucket_ms % DAY_MS == 0 else connection.execute(
+            """SELECT 1 FROM cvd_aggregates
                WHERE instrument=? AND resolution='1m' AND bucket_ms=?""",
             (result.instrument, bucket_ms - MINUTE_MS),
         ).fetchone()
-        if bucket_ms % DAY_MS != 0 and prior is None:
-            prior_raw = connection.execute(
-                """SELECT 1 FROM trade_flow_observations
-                   WHERE instrument=? AND state='confirmed'
-                     AND source_ts_ms>=? AND source_ts_ms<? LIMIT 1""",
-                (result.instrument, bucket_ms - MINUTE_MS, bucket_ms),
-            ).fetchone()
-            prior_gap = self._raw_gap(
-                connection, "trades", result.instrument,
-                bucket_ms - MINUTE_MS, bucket_ms)
-            if prior_raw is not None and not prior_gap:
-                # The raw predecessor exists but its canonical aggregate has
-                # not committed yet.  Preserve ordering instead of inventing a
-                # new cumulative segment at an arbitrary lookback boundary.
-                self._put_metadata(
-                    connection, result.instrument, "cvd", "1m", bucket_ms,
-                    fingerprint, "MISSING", first_ms, last_ms, len(rows),
-                    {"reason": "prior minute aggregate pending"})
-                result.bump("cvd:1m", "missing")
-                return True
         cumulative = (float(prior[0]) if prior is not None else 0.0) + buy - sell
-        gap_flag = int(bucket_ms % DAY_MS != 0 and prior is None)
+        gap_flag = int(bucket_ms % DAY_MS != 0 and immediate is None)
         expected = (
             buy, sell, buy - sell, cumulative, len(rows), first_ms, last_ms,
             gap_flag, MICROSTRUCTURE_SOURCE_VERSION)

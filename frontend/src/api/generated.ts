@@ -752,6 +752,7 @@ export interface components {
             usable_days: number;
             gap_adjusted_sample_days: number;
             status: string;
+            gap_reason?: string | null;
             blocking_reason?: string | null;
             next_eligibility_date?: string | null;
         } & {
@@ -775,16 +776,27 @@ export interface components {
             max?: number | null;
             observation_count?: number | null;
             /** @enum {string} */
-            status: "VALID" | "WHITESPACE" | "PARTIAL_AFTER_GAP" | "ARCHIVED_CONFIRMED";
+            status: "VALID" | "WHITESPACE" | "PARTIAL" | "PARTIAL_AFTER_GAP" | "MISSING" | "UNRECOVERABLE_RAW_GAP" | "BACKFILLED_OFFICIAL" | "ARCHIVED_CONFIRMED" | "CONFLICT" | "SOURCE_UNAVAILABLE";
+            quality_status?: string | null;
             gap_reason?: string | null;
+            source_fingerprint?: string | null;
             source_complete: boolean;
             partial_after_gap: boolean;
+            segment_start?: boolean;
         };
         FlowHistoryResponse: {
             api_version: string;
+            schema_version: string;
+            history_version: string;
+            canonical_version?: string;
+            canonical_generation?: string;
             instrument: string;
             /** @enum {string} */
             series: "cvd" | "oi";
+            /** @enum {string} */
+            timeframe: "1m" | "5m" | "15m" | "1h" | "4h" | "1D";
+            requested_resolution: string;
+            actual_resolution: string;
             /** @enum {string|null} */
             cvd_mode?: "CONTINUOUS" | "UTC_DAILY_RESET" | null;
             requested_start: components["schemas"]["UnixSeconds"];
@@ -792,17 +804,29 @@ export interface components {
             available_start: components["schemas"]["UnixSeconds"] | null;
             available_end: components["schemas"]["UnixSeconds"] | null;
             latest_timestamp: components["schemas"]["UnixSeconds"] | null;
-            raw_row_count: number;
+            raw_row_count?: number;
             returned_point_count: number;
             resolution: string | null;
             resolution_seconds: number | null;
             stale: boolean;
+            stale_after_seconds: number;
+            status: string;
+            gap_reason: string | null;
+            source_coverage: {
+                [key: string]: unknown;
+            };
+            coverage?: {
+                [key: string]: unknown;
+            };
+            data_as_of: components["schemas"]["UnixSeconds"] | null;
+            last_completed_bucket: components["schemas"]["UnixSeconds"];
+            next_expected_bucket: components["schemas"]["UnixSeconds"];
             has_history: boolean;
             has_more_before: boolean;
             has_more_after: boolean;
             next_before_cursor: string | null;
             source: string;
-            retention_policy_version: string;
+            retention_policy_version?: string;
             has_gaps: boolean;
             gap_count: number;
             fallback: boolean;
@@ -934,8 +958,14 @@ export interface operations {
             query: {
                 instrument: string;
                 series: "cvd" | "oi";
+                timeframe: "1m" | "5m" | "15m" | "1h" | "4h" | "1D";
                 start?: components["schemas"]["UnixSeconds"];
                 end?: components["schemas"]["UnixSeconds"];
+                max_points?: number;
+                cursor?: string;
+                cvd_mode?: "UTC_DAILY_RESET";
+                schema_version: "canonical-microstructure-schema-v2";
+                history_version: "canonical-microstructure-history-v2";
             };
             header?: never;
             path?: never;

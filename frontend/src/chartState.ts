@@ -1,11 +1,11 @@
 /** Bounded, versioned last-known-good fallback. The server remains authoritative. */
-export const CHART_CACHE_VERSION = 2;
+export const CHART_CACHE_VERSION = 3;
 export const CHART_POINT_LIMIT = 10_000;
 const PREFIX = `crypto-bot.chart-cache.v${CHART_CACHE_VERSION}:`;
 
 export type ChartSeriesType = "candles" | "cvd" | "oi";
 export type ChartCacheKey = { instrument: string; timeframe: string; series: ChartSeriesType };
-type Snapshot<T> = { version: number; savedAt: number; points: T[] };
+type Snapshot<T> = { version: number; savedAt: number; points: T[]; metadata?: unknown };
 
 export function chartCacheKey({ instrument, timeframe, series }: ChartCacheKey) {
   return `${PREFIX}${series}:${instrument}:${timeframe}`;
@@ -22,10 +22,10 @@ export function normalizePoints<T extends { time: number }>(points: unknown, val
   return [...byTime.values()].sort((a, b) => a.time - b.time).slice(-CHART_POINT_LIMIT);
 }
 
-export function saveChartSnapshot<T extends { time: number }>(key: ChartCacheKey, points: T[], valid: (point: unknown) => point is T, now = Date.now()) {
+export function saveChartSnapshot<T extends { time: number }>(key: ChartCacheKey, points: T[], valid: (point: unknown) => point is T, now = Date.now(), metadata?: unknown) {
   const normalized = normalizePoints(points, valid);
-  if (!normalized.length) return false; // Empty refreshes are never destructive.
-  try { storage()?.setItem(chartCacheKey(key), JSON.stringify({ version: CHART_CACHE_VERSION, savedAt: now, points: normalized } satisfies Snapshot<T>)); return true; } catch { return false; }
+  if (!normalized.length && metadata === undefined) return false;
+  try { storage()?.setItem(chartCacheKey(key), JSON.stringify({ version: CHART_CACHE_VERSION, savedAt: now, points: normalized, metadata } satisfies Snapshot<T>)); return true; } catch { return false; }
 }
 
 export function loadChartSnapshot<T extends { time: number }>(key: ChartCacheKey, valid: (point: unknown) => point is T, now = Date.now()): T[] {
@@ -36,6 +36,15 @@ export function loadChartSnapshot<T extends { time: number }>(key: ChartCacheKey
     if (snapshot.version !== CHART_CACHE_VERSION || !Number.isFinite(snapshot.savedAt)) return [];
     return normalizePoints(snapshot.points, valid);
   } catch { return []; }
+}
+
+export function loadChartSnapshotMetadata(key: ChartCacheKey): unknown {
+  try {
+    const raw = storage()?.getItem(chartCacheKey(key));
+    if (!raw) return undefined;
+    const snapshot = JSON.parse(raw) as Snapshot<unknown>;
+    return snapshot.version === CHART_CACHE_VERSION ? snapshot.metadata : undefined;
+  } catch { return undefined; }
 }
 
 export function formatMillions(value: unknown, decimals = 2, noData = "--"): string {

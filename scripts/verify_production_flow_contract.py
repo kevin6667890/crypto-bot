@@ -24,7 +24,10 @@ def main() -> None:
         "instrument": "BTC-USDT",
         "start": midnight - 3_600,
         "end": now,
-        "max_points": 2_000,
+        "max_points": 500,
+        "timeframe": "1m",
+        "schema_version": "canonical-microstructure-schema-v2",
+        "history_version": "canonical-microstructure-history-v2",
     }
     cvd = fetch(
         args.base_url, **common, series="cvd",
@@ -37,10 +40,10 @@ def main() -> None:
         series="cvd", cvd_mode="UTC_DAILY_RESET")
     full_by_time = {point["time"]: point for point in cvd["points"]}
     page_consistent = all(
-        full_by_time[point["time"]]["value"] == point["value"]
-        and full_by_time[point["time"]]["delta"] == point["delta"]
+        full_by_time[point["time"]].get("value") == point.get("value")
+        and full_by_time[point["time"]].get("delta") == point.get("delta")
         for point in partial["points"])
-    first = current_day[0]
+    first = next(point for point in current_day if point.get("value") is not None)
     oi = fetch(args.base_url, **common, series="oi")
     oi_boundary = [
         point for point in oi["points"]
@@ -48,16 +51,21 @@ def main() -> None:
     print(json.dumps({
         "cvd_mode": cvd.get("cvd_mode"),
         "first_utc_bucket_time": first["time"],
-        "first_utc_bucket_value": first["value"],
-        "first_utc_bucket_delta": first["delta"],
-        "first_bucket_is_real_delta": first["value"] == first["delta"],
+        "first_utc_bucket_value": first.get("value"),
+        "first_utc_bucket_delta": first.get("delta"),
+        "first_bucket_is_real_delta": first.get("value") == first.get("delta"),
         "pagination_consistent": page_consistent,
+        "requested_actual_match": (
+            cvd.get("requested_resolution") == cvd.get("actual_resolution") == "1m"),
+        "canonical_version": cvd.get("canonical_version"),
+        "coverage": cvd.get("coverage"),
+        "gaps": cvd.get("gaps"),
         "oi_cvd_mode": oi.get("cvd_mode"),
         "oi_boundary_values": [
-            {"time": point["time"], "value": point["value"]}
+            {"time": point["time"], "value": point.get("value")}
             for point in oi_boundary],
         "oi_nonzero_across_midnight": bool(oi_boundary) and all(
-            point["value"] != 0 for point in oi_boundary),
+            point.get("value") not in (None, 0) for point in oi_boundary),
         "cvd_points": len(cvd["points"]),
         "oi_points": len(oi["points"]),
     }, sort_keys=True))

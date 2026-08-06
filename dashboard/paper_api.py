@@ -1103,7 +1103,9 @@ MARKET_CONTEXT_V2 = MarketContextServiceV2(
 )
 MARKET_STATE_ENGINE_V2 = MarketStateEngineV2()
 STRATEGY_ROUTER_V2 = StrategyRouterV2()
-CANONICAL_FLOW_HISTORY = CanonicalFlowHistoryStore(MICROSTRUCTURE.path)
+CANONICAL_FLOW_HISTORY = CanonicalFlowHistoryStore(Path(os.getenv(
+    "CANONICAL_MICROSTRUCTURE_HISTORY_DB_PATH", MICROSTRUCTURE.path,
+)))
 LIMITER = RateLimiter()
 LOGGER = configure_logging(ROOT)
 
@@ -1372,6 +1374,22 @@ class Handler(BaseHTTPRequestHandler):
         elif parsed.path == "/api/paper/flow/history/v1":
             req_start = time.monotonic()
             try:
+                if "timeframe" not in query:
+                    raise ValueError("timeframe is required")
+                requested_contract = (
+                    query.get("schema_version", [""])[0],
+                    query.get("history_version", [""])[0],
+                )
+                supported_contracts = {
+                    ("canonical-microstructure-schema-v2",
+                     "canonical-microstructure-history-v2"),
+                    # Read-only rollout compatibility for the already-loaded
+                    # frontend while services are replaced one at a time.
+                    ("canonical-microstructure-schema-v1",
+                     "canonical-microstructure-history-v1"),
+                }
+                if requested_contract not in supported_contracts:
+                    raise ValueError("unsupported canonical schema/history version pair")
                 def history_int(name: str) -> int | None:
                     return int(query[name][0]) if name in query else None
                 
@@ -1387,8 +1405,17 @@ class Handler(BaseHTTPRequestHandler):
                     end=history_int("end"),
                     max_points=max_points_resolved,
                     cursor=query.get("cursor", [None])[0],
-                    cvd_mode=query.get("cvd_mode", ["CONTINUOUS"])[0],
+                    cvd_mode=query.get("cvd_mode", ["UTC_DAILY_RESET"])[0],
+                    timeframe=query.get("timeframe", [None])[0],
                 )
+                if requested_contract != (
+                    "canonical-microstructure-schema-v2",
+                    "canonical-microstructure-history-v2",
+                ):
+                    result = {**result,
+                              "schema_version": requested_contract[0],
+                              "history_version": requested_contract[1],
+                              "compatibility_contract": "v1-read-only-wrapper"}
                 
                 self._send(result)
                 

@@ -2433,12 +2433,64 @@ class MicrostructureStore:
         alive = bool(metrics.get("realtime_aggregation_task_alive"))
         exhausted = (
             metrics.get("realtime_aggregation_status") == "FAILED")
+        canonical_status = metrics.get(
+            "canonical_task_status_by_instrument_series") or {}
+        canonical_timestamps = metrics.get(
+            "canonical_timestamp_by_instrument_series") or {}
+        canonical_failed_series = sorted(
+            f"{instrument}:{series}"
+            for instrument, values in canonical_status.items()
+            for series, status in values.items() if status != "LIVE")
+        canonical_widths_ms = {
+            "1m": 60_000, "5m": 300_000, "15m": 900_000,
+            "1h": 3_600_000, "4h": 14_400_000, "1D": 86_400_000,
+        }
+        canonical_grace_ms = {
+            "1m": 120_000, "5m": 120_000, "15m": 180_000,
+            "1h": 600_000, "4h": 600_000, "1D": 1_800_000,
+        }
+        current_ms = now_ms()
+
+        def canonical_resolution(series: str) -> str:
+            suffix = series.rsplit(":", 1)[-1]
+            return suffix if suffix in canonical_widths_ms else "1m"
+
+        def completed_bucket_lag(series: str, timestamp: int) -> int:
+            width = canonical_widths_ms[canonical_resolution(series)]
+            expected = current_ms // width * width - width
+            return max(0, expected - int(timestamp))
+
+        canonical_lag_by_series = {
+            f"{instrument}:{series}": completed_bucket_lag(
+                series, int(timestamp)) // 1000
+            for instrument, values in canonical_timestamps.items()
+            for series, timestamp in values.items() if timestamp is not None
+        }
+        canonical_lagged_series = sorted(
+            f"{instrument}:{series}"
+            for instrument, values in canonical_timestamps.items()
+            for series, timestamp in values.items()
+            if timestamp is not None
+            and (
+                (lag_ms := completed_bucket_lag(series, int(timestamp)))
+                > canonical_widths_ms[canonical_resolution(series)]
+                or (
+                    lag_ms == canonical_widths_ms[canonical_resolution(series)]
+                    and current_ms > (
+                        current_ms // canonical_widths_ms[canonical_resolution(series)]
+                        * canonical_widths_ms[canonical_resolution(series)]
+                        + canonical_grace_ms[canonical_resolution(series)]
+                    )
+                )
+            )
+        )
         lagged = (
             bool(missing_series)
             or bool(lag_by_instrument) and max(lag_by_instrument.values()) > 180)
         aggregation_health = (
             "FAILED" if enabled and exhausted
-            else "DEGRADED" if enabled and (not alive or lagged)
+            else "DEGRADED" if enabled and (
+                not alive or lagged or canonical_failed_series or canonical_lagged_series)
             else "HEALTHY"
         )
         return {
@@ -2458,6 +2510,9 @@ class MicrostructureStore:
                 max(lag_by_instrument.values()) if lag_by_instrument else None),
             "aggregate_lag_seconds_by_instrument": lag_by_instrument,
             "aggregate_missing_series": missing_series,
+            "canonical_failed_series": canonical_failed_series,
+            "canonical_lag_seconds_by_series": canonical_lag_by_series,
+            "canonical_lagged_series": canonical_lagged_series,
         }
 
 

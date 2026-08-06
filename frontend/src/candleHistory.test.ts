@@ -170,6 +170,18 @@ describe("candle master timeline", () => {
     ]);
   });
 
+  it("retains API whitespace when the candle timeline is itself sparse", () => {
+    const projected = flowOnCandleTimeline(
+      [candle(0), candle(120)],
+      [{ time: 0, value: 10 }, { time: 60, status: "WHITESPACE" },
+       { time: 120, value: 30 }],
+      60,
+    );
+    expect(projected).toEqual([
+      { time: 0, value: 10 }, { time: 60 }, { time: 120, value: 30 },
+    ]);
+  });
+
   it("normal refresh preservation never calls fitContent", () => {
     const scale = {
       getVisibleRange: () => ({ from: 1, to: 2 }),

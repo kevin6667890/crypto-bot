@@ -1,4 +1,4 @@
-import { ChartCacheKey, loadChartSnapshot, saveChartSnapshot } from "./chartState";
+import { ChartCacheKey, loadChartSnapshot, loadChartSnapshotMetadata, saveChartSnapshot } from "./chartState";
 import type { components } from "./api/generated";
 
 export type FlowSeriesName = components["schemas"]["FlowHistoryResponse"]["series"];
@@ -8,24 +8,27 @@ export type FlowHistoryPoint =
   & Partial<Pick<
     ContractFlowHistoryPoint,
     "status" | "source_complete" | "partial_after_gap"
-  >>;
+  >> & { segment_start?: boolean };
 type ContractFlowHistoryResponse = components["schemas"]["FlowHistoryResponse"];
 export type FlowHistoryResponse =
   Omit<ContractFlowHistoryResponse, "points">
-  & { points: FlowHistoryPoint[] };
+  & { points: FlowHistoryPoint[]; canonical_version?: string; canonical_generation?: string };
 export type FlowCoverage = Omit<FlowHistoryResponse, "points">;
 export type FlowRangeRequest = {
   instrument: string;
   series: FlowSeriesName;
+  timeframe: string;
   start: number;
   end: number;
   maxPoints?: number;
   cursor?: string | null;
-  cvdMode?: "CONTINUOUS" | "UTC_DAILY_RESET";
+  cvdMode?: "UTC_DAILY_RESET";
 };
 
 const MEMORY_POINT_LIMIT = 50_000;
 export const FLOW_HISTORY_MAX_POINTS = 500;
+export const CANONICAL_FLOW_SCHEMA_VERSION = "canonical-microstructure-schema-v2";
+export const CANONICAL_FLOW_HISTORY_VERSION = "canonical-microstructure-history-v2";
 const memory = new Map<string, FlowHistoryPoint[]>();
 const metadata = new Map<string, FlowCoverage>();
 const inflight = new Map<string, Promise<FlowHistoryResponse>>();
@@ -39,7 +42,7 @@ const validPoint = (point: unknown): point is FlowHistoryPoint => {
 };
 
 export function flowHistoryKey(instrument: string, timeframe: string, series: FlowSeriesName) {
-  return `${series}:${instrument}:${timeframe}`;
+  return `${CANONICAL_FLOW_HISTORY_VERSION}:${series}:${instrument}:${timeframe}`;
 }
 
 export function persistedFlowInstrument(instrument: string) {
@@ -59,6 +62,20 @@ export function mergeHistoryPoints(
   return [...byTime.values()].sort((a, b) => a.time - b.time).slice(-limit);
 }
 
+export function splitFlowSegments(points: FlowHistoryPoint[]): FlowHistoryPoint[][] {
+  const segments: FlowHistoryPoint[][] = [];
+  let current: FlowHistoryPoint[] = [];
+  for (const point of points) {
+    if (point.segment_start && current.length) {
+      segments.push(current);
+      current = [];
+    }
+    current.push(point);
+  }
+  if (current.length) segments.push(current);
+  return segments;
+}
+
 export function flowStatusAtCandle(
   candleTime: number,
   timeframeSeconds: number,
@@ -68,8 +85,16 @@ export function flowStatusAtCandle(
     point.time >= candleTime && point.time < candleTime + timeframeSeconds
   );
   const point = matches[matches.length - 1];
-  if (!point || point.status === "WHITESPACE" || !Number.isFinite(point.value)) {
+  if (!point) {
     return { status: "WHITESPACE" as const, value: null, partial: false };
+  }
+  if (point.status === "WHITESPACE" || !Number.isFinite(point.value)) {
+    const partial = point.quality_status === "PARTIAL_AFTER_GAP" || point.partial_after_gap === true;
+    return {
+      status: partial ? "PARTIAL_AFTER_GAP" as const : "WHITESPACE" as const,
+      value: null,
+      partial,
+    };
   }
   return {
     status: point.status || "VALID",
@@ -87,6 +112,11 @@ export function hydrateFlowHistory(instrument: string, timeframe: string, series
   const retained = memory.get(key);
   if (retained?.length) return retained;
   const local = loadChartSnapshot(localKey(instrument, timeframe, series), validPoint);
+  const retainedMetadata = loadChartSnapshotMetadata(localKey(instrument, timeframe, series)) as FlowCoverage | undefined;
+  if (retainedMetadata?.schema_version === CANONICAL_FLOW_SCHEMA_VERSION
+      && retainedMetadata?.history_version === CANONICAL_FLOW_HISTORY_VERSION) {
+    metadata.set(key, retainedMetadata);
+  }
   if (local.length) memory.set(key, local);
   return local;
 }
@@ -100,8 +130,21 @@ export function retainServerHistory(
   response: FlowHistoryResponse,
 ): FlowHistoryPoint[] {
   const key = flowHistoryKey(response.instrument, timeframe, response.series);
-  const current = memory.get(key) || hydrateFlowHistory(response.instrument, timeframe, response.series);
-  if (!response.points.length) return current; // Empty/stale refreshes are non-destructive.
+  const previousCoverage = metadata.get(key);
+  const versionChanged = Boolean(
+    previousCoverage?.canonical_version && response.canonical_version
+    && previousCoverage.canonical_version !== response.canonical_version
+  );
+  const current = versionChanged
+    ? []
+    : memory.get(key) || hydrateFlowHistory(response.instrument, timeframe, response.series);
+  if (response.actual_resolution !== timeframe || response.timeframe !== timeframe) return current;
+  const { points: _points, ...coverage } = response;
+  metadata.set(key, coverage);
+  if (!response.points.length) {
+    saveChartSnapshot(localKey(response.instrument, timeframe, response.series), current, validPoint, Date.now(), coverage);
+    return current;
+  }
   // One authoritative response uses one deterministic resolution. Replace
   // only its requested range so cached pages outside the range survive while
   // overlapping points from a different resolution cannot mix semantics.
@@ -110,9 +153,7 @@ export function retainServerHistory(
     : current.filter(point => point.time < response.requested_start || point.time > response.requested_end);
   const merged = mergeHistoryPoints(retainedOutsideRange, response.points);
   memory.set(key, merged);
-  const { points: _points, ...coverage } = response;
-  metadata.set(key, coverage);
-  saveChartSnapshot(localKey(response.instrument, timeframe, response.series), merged, validPoint);
+  saveChartSnapshot(localKey(response.instrument, timeframe, response.series), merged, validPoint, Date.now(), coverage);
   return merged;
 }
 
@@ -145,6 +186,9 @@ export function historyRequestUrl(request: FlowRangeRequest) {
     start: String(Math.floor(request.start)),
     end: String(Math.floor(request.end)),
     max_points: String(Math.min(request.maxPoints || FLOW_HISTORY_MAX_POINTS, FLOW_HISTORY_MAX_POINTS)),
+    timeframe: request.timeframe,
+    schema_version: CANONICAL_FLOW_SCHEMA_VERSION,
+    history_version: CANONICAL_FLOW_HISTORY_VERSION,
   });
   if (request.cursor) query.set("cursor", request.cursor);
   if (request.series === "cvd") query.set("cvd_mode", request.cvdMode || "UTC_DAILY_RESET");
@@ -157,7 +201,14 @@ export async function requestFlowHistory(request: FlowRangeRequest): Promise<Flo
   if (existing) return existing;
   const pending = fetch(url, { headers: { Accept: "application/json" } }).then(async response => {
     if (!response.ok) throw new Error(`Flow history request failed: ${response.status}`);
-    return response.json() as Promise<FlowHistoryResponse>;
+    const payload = await response.json() as FlowHistoryResponse;
+    if (
+      payload.actual_resolution !== request.timeframe
+      || payload.timeframe !== request.timeframe
+      || payload.schema_version !== CANONICAL_FLOW_SCHEMA_VERSION
+      || payload.history_version !== CANONICAL_FLOW_HISTORY_VERSION
+    ) throw new Error("Flow history contract mismatch");
+    return payload;
   }).finally(() => inflight.delete(url));
   inflight.set(url, pending);
   return pending;
@@ -214,7 +265,8 @@ export function olderPageRequest(
 }
 
 export function formatFlowCoverage(coverage?: FlowCoverage) {
-  if (!coverage?.has_history || coverage.available_start === null || coverage.available_end === null) return "No persisted coverage";
+  if (!coverage) return "Loading persisted coverage…";
+  if (!coverage.has_history || coverage.available_start === null || coverage.available_end === null) return "No persisted coverage";
   const start = new Date(coverage.available_start * 1000).toISOString().slice(0, 16).replace("T", " ");
   const end = new Date(coverage.available_end * 1000).toISOString().slice(0, 16).replace("T", " ");
   return `${start} – ${end} UTC · ${coverage.resolution || "native"}${coverage.stale ? " · stale" : ""}${coverage.has_gaps ? ` · ${coverage.gap_count} gap${coverage.gap_count === 1 ? "" : "s"}` : ""}`;

@@ -14,6 +14,8 @@ import {
   persistedFlowInstrument,
   requestFlowHistory,
   retainServerHistory,
+  retainedCoverage,
+  splitFlowSegments,
   visibleRangeFromCandles,
   withPreservedLogicalRange,
 } from "./flowHistory";
@@ -35,8 +37,13 @@ Object.defineProperty(globalThis, "window", {
 
 const coverage = (overrides: Partial<FlowCoverage> = {}): FlowCoverage => ({
   api_version: "flow-history-v1",
+  schema_version: "canonical-microstructure-schema-v2",
+  history_version: "canonical-microstructure-history-v2",
   instrument: "BTC-USDT",
   series: "cvd",
+  timeframe: "15m",
+  requested_resolution: "15m",
+  actual_resolution: "15m",
   requested_start: 100,
   requested_end: 300,
   available_start: 0,
@@ -44,9 +51,16 @@ const coverage = (overrides: Partial<FlowCoverage> = {}): FlowCoverage => ({
   latest_timestamp: 300,
   raw_row_count: 3,
   returned_point_count: 3,
-  resolution: "5m",
-  resolution_seconds: 300,
+  resolution: "15m",
+  resolution_seconds: 900,
   stale: false,
+  stale_after_seconds: 1080,
+  status: "VALID",
+  gap_reason: null,
+  source_coverage: { start: 0, end: 300, confirmed_end: 300 },
+  data_as_of: 300,
+  last_completed_bucket: 0,
+  next_expected_bucket: 900,
   has_history: true,
   has_more_before: true,
   has_more_after: false,
@@ -82,14 +96,16 @@ describe("range-driven flow history", () => {
   it("builds a cursor request when scrolling backward", () => {
     const older = olderPageRequest(coverage(), [{ time: 100, value: 1 }], 110, 30);
     expect(older).toEqual({ start: 0, end: 110, maxPoints: FLOW_HISTORY_MAX_POINTS, cursor: "cursor-1" });
-    const url = historyRequestUrl({ instrument: "BTC-USDT", series: "cvd", ...older! });
+    const url = historyRequestUrl({ instrument: "BTC-USDT", timeframe: "15m", series: "cvd", ...older! });
     expect(url).toContain("cursor=cursor-1");
     expect(url).toContain("cvd_mode=UTC_DAILY_RESET");
+    expect(url).toContain("timeframe=15m");
+    expect(url).toContain("schema_version=canonical-microstructure-schema-v2");
   });
 
   it("caps every history request at the Paper API safety limit", () => {
     const url = historyRequestUrl({
-      instrument: "BTC-USDT", series: "cvd", start: 1, end: 2, maxPoints: 1200,
+      instrument: "BTC-USDT", timeframe: "15m", series: "cvd", start: 1, end: 2, maxPoints: 1200,
     });
     expect(url).toContain(`max_points=${FLOW_HISTORY_MAX_POINTS}`);
     expect(url).not.toContain("max_points=1200");
@@ -102,12 +118,26 @@ describe("range-driven flow history", () => {
     )).toEqual([{ time: 1, value: 1 }, { time: 2, value: 20 }, { time: 3, value: 3 }]);
   });
 
+  it("keeps whitespace and splits the CVD series at UTC reset markers", () => {
+    const points = [
+      { time: 1, value: 10 },
+      { time: 2, status: "WHITESPACE" as const },
+      { time: 3, value: 12 },
+      { time: 4, value: 2, segment_start: true },
+      { time: 5, value: 4 },
+    ];
+    expect(splitFlowSegments(points)).toEqual([
+      points.slice(0, 3), points.slice(3),
+    ]);
+    expect(splitFlowSegments(points)[0][1]).toEqual({ time: 2, status: "WHITESPACE" });
+  });
+
   it("preserves retained points after empty and error responses", async () => {
     retainServerHistory("15m", response([{ time: 1, value: 1 }]));
     expect(retainServerHistory("15m", response([]))).toEqual([{ time: 1, value: 1 }]);
     vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("offline")));
     await expect(requestFlowHistory({
-      instrument: "BTC-USDT", series: "cvd", start: 1, end: 2,
+      instrument: "BTC-USDT", timeframe: "15m", series: "cvd", start: 1, end: 2,
     })).rejects.toThrow("offline");
     expect(hydrateFlowHistory("BTC-USDT", "15m", "cvd")).toEqual([{ time: 1, value: 1 }]);
   });
@@ -128,7 +158,9 @@ describe("range-driven flow history", () => {
 
   it("hydrates retained data after a remount", () => {
     retainServerHistory("15m", response([{ time: 1, value: 8 }]));
+    __resetFlowHistoryForTests();
     expect(hydrateFlowHistory("BTC-USDT", "15m", "cvd")).toEqual([{ time: 1, value: 8 }]);
+    expect(retainedCoverage("BTC-USDT", "15m", "cvd")?.has_history).toBe(true);
   });
 
   it("preserves the logical visible range while series data changes", () => {
@@ -143,10 +175,10 @@ describe("range-driven flow history", () => {
 
   it("renders coverage resolution, staleness, and gap state", () => {
     const text = formatFlowCoverage(coverage({ stale: true, has_gaps: true, gap_count: 2 }));
-    expect(text).toContain("5m");
+    expect(text).toContain("15m");
     expect(text).toContain("stale");
     expect(text).toContain("2 gaps");
-    expect(formatFlowCoverage()).toBe("No persisted coverage");
+    expect(formatFlowCoverage()).toBe("Loading persisted coverage…");
   });
 
   it("prefers server history over a no-expiry local fallback", () => {

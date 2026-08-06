@@ -69,4 +69,21 @@ describe("shared historical CVD/OI axis labels", () => {
     ]);
     expect(status).toEqual({ status: "WHITESPACE", value: null, partial: false });
   });
+
+  it("preserves partial-after-gap quality at truthful whitespace", () => {
+    const status = flowStatusAtCandle(220, 60, [
+      {
+        time: 220,
+        status: "WHITESPACE",
+        quality_status: "PARTIAL_AFTER_GAP",
+        source_complete: false,
+        partial_after_gap: true,
+      },
+    ]);
+    expect(status).toEqual({
+      status: "PARTIAL_AFTER_GAP",
+      value: null,
+      partial: true,
+    });
+  });
 });

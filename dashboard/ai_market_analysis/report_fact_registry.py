@@ -63,6 +63,8 @@ def build_fact_registry(enriched: dict[str, Any]) -> dict[str, Any]:
             f"/key_levels/{index}", unit="USDT", timestamp=level.get("last_tested"), priority=94-display_index))
     for index, scenario in enumerate(base.get("scenario_tree", {}).get("scenarios", [])):
         trigger=scenario.get("trigger") or {}; invalidation=scenario.get("invalidation") or {}
+        if not isinstance(trigger,dict):trigger={"rule":str(trigger),"level_ids":scenario.get("trigger_level_ids",[])}
+        if not isinstance(invalidation,dict):invalidation={"rule":str(invalidation),"level_id":None,"timeframe":None}
         facts.append(_fact(f"SCENARIO_{index+1:02d}", "SCENARIO", scenario.get("type", "情景"), {"scenario_id":scenario.get("scenario_id"),"type":scenario.get("type"),"direction":scenario.get("direction"),"likelihood":scenario.get("likelihood"),"trigger":{"rule":trigger.get("rule"),"level_ids":trigger.get("level_ids")},"invalidation":{"rule":invalidation.get("rule"),"level_id":invalidation.get("level_id"),"timeframe":invalidation.get("timeframe")},"contradicting_evidence":scenario.get("contradicting_evidence")},
             f"/scenario_tree/scenarios/{index}", timestamp=decision, priority=97-index))
     pos = enriched["position_context"]

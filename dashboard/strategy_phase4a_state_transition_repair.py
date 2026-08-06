@@ -17,6 +17,7 @@ from .strategy_phase4a_router_repair import (
     DevelopmentAccessGuard, GEOMETRY_VERSION, HistoricalMarketContextV2Provider,
     LIFECYCLE_VERSION, RouterNativeTrialV2, StrategyEventReplayEngineV2_1,
     StrategyBacktestEngineV2_1,
+    replay_checkpoint_payload, validate_replay_checkpoint,
     stable_hash,
 )
 from .strategy_router_v2 import StrategyRouterV2
@@ -181,10 +182,12 @@ class StrategyEventReplayEngineV2_2(StrategyEventReplayEngineV2_1):
                sinks: Mapping[str, Callable[[Mapping[str, Any]], None]] | None = None,
                retain_lineage: bool = True) -> dict[str, Any]:
         DevelopmentAccessGuard.require_segment(segment)
-        if checkpoint and checkpoint.get("segment_identity") != segment.identity:
-            raise ValueError("checkpoint segment identity mismatch")
-        if checkpoint and checkpoint.get("dataset_identity") != self.provider.dataset_identity:
-            raise ValueError("checkpoint dataset identity mismatch")
+        if checkpoint is not None:
+            validate_replay_checkpoint(
+                checkpoint, dataset_identity=self.provider.dataset_identity,
+                segment_identity=segment.identity, instrument=instrument,
+                replay_engine_version=self.version, trials=trials,
+            )
         routes = dict((checkpoint or {}).get("routes", {}))
         last_by_key = {k: int(v) for k, v in (checkpoint or {}).get("last_by_key", {}).items()}
         previous_context = dict(checkpoint["previous_context"]) if checkpoint and checkpoint.get("previous_context") else None
@@ -267,11 +270,11 @@ class StrategyEventReplayEngineV2_2(StrategyEventReplayEngineV2_1):
                     "parameter_set_id": trial.parameter_set_id, "stage": candidate["state"],
                     "previous_stage": (previous_route or {}).get("candidates", [{}])[0].get("state", "INELIGIBLE"),
                     "strategy_setup_id": identity["strategy_setup_id"],
-                    "strategy_setup_anchor_id": identity.get("strategy_setup_anchor_id", identity["strategy_setup_id"]),
+                    "strategy_setup_anchor_id": identity.get("strategy_setup_anchor_id"),
                     "strategy_evaluation_id": identity["strategy_evaluation_id"],
                     "level_identity": identity["level_identity"],
-                    "level_continuity_id": identity.get("level_continuity_id", identity["level_identity"]),
-                    "lifecycle_setup_key": identity.get("lifecycle_setup_key", identity["strategy_setup_id"]),
+                    "level_continuity_id": identity.get("level_continuity_id"),
+                    "lifecycle_setup_key": identity.get("lifecycle_setup_key"),
                     "state_snapshot_identity": current_state["state_snapshot_identity"],
                     "transition_identity": transition_row.get("transition_identity") if transition_row else None,
                     "source_candle_timestamps": identity["source_candle_timestamps"],
@@ -336,12 +339,13 @@ class StrategyEventReplayEngineV2_2(StrategyEventReplayEngineV2_1):
             previous_context = current_context
             previous_state = current_state
         wall = time.perf_counter() - started
-        checkpoint_out = {
-            "version": "phase4a-state-transition-repair-checkpoint-v1",
-            "dataset_identity": self.provider.dataset_identity, "segment_identity": segment.identity,
-            "instrument": instrument, "previous_context": previous_context,
-            "previous_state": previous_state, "routes": routes, "last_by_key": last_by_key,
-        }
+        checkpoint_out = replay_checkpoint_payload(
+            dataset_identity=self.provider.dataset_identity,
+            segment_identity=segment.identity, instrument=instrument,
+            replay_engine_version=self.version, routes=routes,
+            last_by_key=last_by_key, previous_context=previous_context,
+            previous_state=previous_state,
+        )
         return {
             "events": events, "intents": intents,
             **{f"{name}_ledger": rows for name, rows in ledgers.items()},

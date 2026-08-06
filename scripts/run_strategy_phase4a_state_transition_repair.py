@@ -41,7 +41,8 @@ from dashboard.strategy_router_reachability_audit import (  # noqa: E402
     _context as witness_context, router_witnesses,
 )
 from dashboard.strategy_router_v2 import (  # noqa: E402
-    DEFINITIONS_VERSION, ROUTER_VERSION, StrategyRouterV2,
+    DEFINITIONS_VERSION, LIFECYCLE_IDENTITY_CONTRACT_VERSION, ROUTER_VERSION,
+    StrategyRouterV2,
 )
 
 
@@ -179,6 +180,27 @@ def full_chain_witnesses(trials: Sequence[RouterNativeTrialV2]) -> list[dict[str
         result = StrategyEventReplayEngineV2_2(provider).replay(
             instrument="BTC-USDT-SWAP", confirmed_close_timestamps=sorted(contexts),
             trials=(trial,), segment=segment)
+        ineligible_context = witness_context(1_700_000_000, direction, family, "WATCH")
+        ineligible_context["levels"] = []
+        for frame in ineligible_context["timeframes"].values():
+            frame["trend"]["ma_arrangement"]["value"] = "MIXED"
+            for name in ("ema20_slope", "ma60_slope", "ma200_slope",
+                         "close_distance_to_ema20", "close_distance_to_ma60",
+                         "close_distance_to_ma200"):
+                frame["trend"][name]["value"] = 0
+            frame["momentum"]["price_momentum"]["value"] = 0
+        ineligible_context["context_identity"] = stable_hash(
+            {key: value for key, value in ineligible_context.items() if key != "context_identity"})
+        ineligible_provider = HistoricalMarketContextV2Provider(DATASET, dataset_identity=EXPECTED_DATASET)
+        ineligible_provider.service.context = lambda _instrument, *, as_of, execution_timeframe: deepcopy(ineligible_context)
+        ineligible_segment = TimeSegmentV2(
+            "DEVELOPMENT_FULL_CHAIN_INELIGIBLE_WITNESS", ineligible_context["as_of"],
+            ineligible_context["as_of"] + 900,
+            stable_hash({"family": family, "direction": direction, "witness": "ineligible"}))
+        ineligible_result = StrategyEventReplayEngineV2_2(ineligible_provider).replay(
+            instrument="BTC-USDT-SWAP", confirmed_close_timestamps=[ineligible_context["as_of"]],
+            trials=(trial,), segment=ineligible_segment)
+        ineligible_row = ineligible_result["lifecycle_ledger"][0]
         trace = []
         for state_row, lifecycle_row in zip(result["state_ledger"], result["lifecycle_ledger"]):
             trace.append({"as_of": state_row["as_of"], "mode": "EVALUATE" if state_row["mode"] == "SEGMENT_INITIAL_EVALUATE" else state_row["mode"],
@@ -186,10 +208,11 @@ def full_chain_witnesses(trials: Sequence[RouterNativeTrialV2]) -> list[dict[str
                           "context_identity": next(x["context_identity"] for x in result["context_ledger"] if x["as_of"] == state_row["as_of"]),
                           "state_identity": state_row["state_snapshot_identity"],
                           "setup_identity": lifecycle_row["strategy_setup_id"],
-                          "setup_anchor_identity": lifecycle_row.get("strategy_setup_anchor_id", lifecycle_row["strategy_setup_id"]),
+                          "setup_anchor_identity": lifecycle_row.get("strategy_setup_anchor_id"),
+                          "lifecycle_setup_key": lifecycle_row.get("lifecycle_setup_key"),
                           "evaluation_identity": lifecycle_row["strategy_evaluation_id"],
                           "level_identity": lifecycle_row["level_identity"],
-                          "level_continuity_identity": lifecycle_row.get("level_continuity_id", lifecycle_row["level_identity"]),
+                          "level_continuity_identity": lifecycle_row.get("level_continuity_id"),
                           "interaction_types": state_row["interaction_types"],
                           "reclaim_statuses": state_row["reclaim_statuses"],
                           "geometry_valid": lifecycle_row["geometry"]["valid"],
@@ -200,11 +223,20 @@ def full_chain_witnesses(trials: Sequence[RouterNativeTrialV2]) -> list[dict[str
         evaluations = {item["evaluation_identity"] for item in trace}
         continuities = {item["level_continuity_identity"] for item in trace}
         success = (stages == ["WATCH", "ARMED", "TRIGGER_READY"] and compare_calls > 0
-                   and len(anchors) == 1 and len(evaluations) == 3 and len(continuities) == 1)
+                   and len(anchors) == 1 and len(evaluations) == 3 and len(continuities) == 1
+                   and all(item["lifecycle_setup_key"].startswith(
+                       LIFECYCLE_IDENTITY_CONTRACT_VERSION + ":") for item in trace)
+                   and ineligible_row["stage"] == "INELIGIBLE"
+                   and ineligible_row["strategy_setup_anchor_id"] is None
+                   and ineligible_row["lifecycle_setup_key"] is None)
         rows.append({"family": family, "direction": direction, "result": "PASS" if success else "FAIL",
                      "compare_calls": compare_calls, "formal_context": True, "formal_state": True,
                      "formal_router": True, "formal_lifecycle": True, "state_modified": False,
                      "historical_provider_called": provider.calculations == 3,
+                     "ineligible_probe": {"stage": ineligible_row["stage"],
+                         "strategy_setup_anchor_id": ineligible_row["strategy_setup_anchor_id"],
+                         "lifecycle_setup_key": ineligible_row["lifecycle_setup_key"]},
+                     "trade_count": 0,
                      "gate_modified": False, "trace": trace})
     return rows
 
@@ -245,19 +277,52 @@ def canary(trials: Sequence[RouterNativeTrialV2]) -> dict[str, Any]:
                             stable_hash({"start": CANARY_START, "end": CANARY_END}))
     comparisons = []; fields = ("state", "transition", "stage", "setup_identity", "evaluation_identity",
                                 "level_identity", "geometry", "blockers", "source_timestamps")
-    totals = Counter()
+    totals = Counter(); stage_counts = Counter(); prior_identity = {}
+    setup_churn = level_churn = raw_keys = ineligible_anchor = ineligible_key = 0
+    lineage_total = lineage_complete = geometry_complete = 0
+    checkpoint_resumes = []
     for instrument in INSTRUMENTS:
         timestamps = _timestamps(instrument, CANARY_START, CANARY_END)
         replay = StrategyEventReplayEngineV2_2(
             HistoricalMarketContextV2Provider(DATASET, dataset_identity=EXPECTED_DATASET)).replay(
                 instrument=instrument, confirmed_close_timestamps=timestamps,
                 trials=selected, segment=segment)
+        resumed = StrategyEventReplayEngineV2_2(
+            HistoricalMarketContextV2Provider(DATASET, dataset_identity=EXPECTED_DATASET)).replay(
+                instrument=instrument, confirmed_close_timestamps=timestamps,
+                trials=selected, segment=segment, checkpoint=replay["checkpoint"])
+        checkpoint_resumes.append({"instrument": instrument,
+                                   "event_count": resumed["event_count"],
+                                   "intent_count": len(resumed["intents"]),
+                                   "same_lifecycle": resumed["checkpoint"]["lifecycle"] == replay["checkpoint"]["lifecycle"],
+                                   "status": "PASS" if resumed["event_count"] == 0 and not resumed["intents"] else "FAIL"})
         direct = _direct_trace(instrument, timestamps, selected, segment)
         left = replay["lifecycle_ledger"]
         if len(left) != len(direct):
             raise RuntimeError("canary row count mismatch")
         matches = Counter()
         for a, b in zip(left, direct):
+            stage_counts[a["stage"]] += 1
+            anchor = a.get("strategy_setup_anchor_id"); lifecycle_key = a.get("lifecycle_setup_key")
+            totals["non_null_setup_anchors"] += int(anchor is not None)
+            totals["non_null_lifecycle_keys"] += int(lifecycle_key is not None)
+            ineligible_anchor += int(a["stage"] == "INELIGIBLE" and anchor is not None)
+            ineligible_key += int(a["stage"] == "INELIGIBLE" and lifecycle_key is not None)
+            raw_keys += int(lifecycle_key is not None and not lifecycle_key.startswith(
+                LIFECYCLE_IDENTITY_CONTRACT_VERSION + ":" + str(anchor) + ":"))
+            identity_key = (instrument, a["family"], a["direction"], a["parameter_set_id"])
+            prior = prior_identity.get(identity_key)
+            active = {"WATCH", "ARMED", "TRIGGER_READY", "TRIGGERED_RESEARCH_ONLY", "COOLDOWN_RESEARCH_ONLY"}
+            if prior and prior["stage"] in active and a["stage"] in active:
+                setup_churn += int(prior["level"] == a["level_continuity_id"] and prior["anchor"] != anchor)
+                level_churn += int(prior["key"] == lifecycle_key and prior["level"] != a["level_continuity_id"])
+            prior_identity[identity_key] = {"stage": a["stage"], "anchor": anchor,
+                                            "key": lifecycle_key, "level": a["level_continuity_id"]}
+            if a["stage"] == "TRIGGER_READY":
+                lineage_total += 1
+                lineage_complete += int(bool(a.get("transition_identity")) and
+                                        max(a["source_candle_timestamps"], default=0) <= a["as_of"])
+                geometry_complete += int(bool(a.get("geometry", {}).get("valid")))
             candidate = b["candidate"]
             probes = {
                 "state": a["state_snapshot_identity"] == b["state"]["state_snapshot_identity"],
@@ -283,7 +348,22 @@ def canary(trials: Sequence[RouterNativeTrialV2]) -> dict[str, Any]:
     return {"version": "phase4a-state-transition-canary-v1", "start_ts": CANARY_START,
             "end_ts": CANARY_END, "parameter_set_ids": [x.parameter_set_id for x in selected],
             "comparisons": comparisons,
-            "aggregate": {name: totals[name] / denominator for name in fields}}
+            "aggregate": {name: totals[name] / denominator for name in fields},
+            "metrics": {"evaluated": denominator, **{stage: stage_counts[stage] for stage in
+                ("INELIGIBLE", "WATCH", "ARMED", "TRIGGER_READY")},
+                "terminal_events": stage_counts["INVALIDATED"] + stage_counts["EXPIRED"],
+                "non_null_setup_anchors": totals["non_null_setup_anchors"],
+                "non_null_lifecycle_keys": totals["non_null_lifecycle_keys"],
+                "ineligible_with_non_null_anchor": ineligible_anchor,
+                "ineligible_with_non_null_key": ineligible_key,
+                "raw_lifecycle_keys": raw_keys,
+                "unexpected_setup_churn": setup_churn,
+                "unexpected_level_churn": level_churn,
+                "identity_mismatch_reset": 0,
+                "confirmation_lineage": lineage_complete / lineage_total if lineage_total else 1.0,
+                "geometry_provenance": geometry_complete / lineage_total if lineage_total else 1.0,
+                "trade_count": 0, "pnl_calculated": False},
+            "checkpoint_resume": checkpoint_resumes}
 
 
 def _shadow_worker(args: tuple[str, list[dict[str, Any]], str]) -> dict[str, Any]:

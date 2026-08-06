@@ -15,7 +15,7 @@ from typing import Any, Iterable, Mapping
 ROUTER_VERSION = "strategy-router-v2"
 DEFINITIONS_VERSION = "strategy-family-definitions-v2.1"
 PARAMETER_SET_VERSION = "strategy-router-parameters-v2.1"
-LIFECYCLE_IDENTITY_CONTRACT_VERSION = "lifecycle-identity-contract-v1"
+LIFECYCLE_IDENTITY_CONTRACT_VERSION = "lifecycle-identity-contract-v1.1"
 SETUP_ANCHOR_VERSION = "strategy-setup-anchor-v1"
 LEVEL_CONTINUITY_IDENTITY_VERSION = "level-continuity-identity-v1"
 FAMILY_VERSIONS = {
@@ -106,6 +106,62 @@ class StrategyIdentityV2:
     lifecycle_setup_key: str | None = None
     lifecycle_identity_contract_version: str = LIFECYCLE_IDENTITY_CONTRACT_VERSION
     segment_identity: str | None = None
+    parameter_set_id: str | None = None
+
+
+ACTIVE_SETUP_STAGES = frozenset({
+    "WATCH", "ARMED", "TRIGGER_READY", "TRIGGERED_RESEARCH_ONLY",
+    "COOLDOWN_RESEARCH_ONLY",
+})
+TERMINAL_SETUP_STAGES = frozenset({"INVALIDATED", "EXPIRED"})
+
+
+def canonical_lifecycle_setup_key(*, strategy_setup_anchor_id: str, instrument: str,
+                                  family: str, direction: str,
+                                  parameter_set_id: str | None,
+                                  strategy_version: str,
+                                  segment_identity: str | None) -> str:
+    """Return the only lifecycle key accepted by the current contract."""
+    if not strategy_setup_anchor_id:
+        raise ValueError("strategy_setup_anchor_id is required for lifecycle key")
+    payload = {
+        "version": LIFECYCLE_IDENTITY_CONTRACT_VERSION,
+        "strategy_setup_anchor_id": strategy_setup_anchor_id,
+        "instrument": instrument,
+        "family": family,
+        "direction": direction,
+        "parameter_set_id": parameter_set_id,
+        "strategy_version": strategy_version,
+        "segment_identity": segment_identity,
+    }
+    digest = stable_hash(payload)
+    return f"{LIFECYCLE_IDENTITY_CONTRACT_VERSION}:{strategy_setup_anchor_id}:{digest}"
+
+
+def validate_lifecycle_identity(identity: Mapping[str, Any], *,
+                                error_code: str = "RAW_LIFECYCLE_KEY_REJECTED") -> None:
+    """Hard-fail raw, guessed, or cross-identity lifecycle keys."""
+    required = {"strategy_setup_anchor_id", "lifecycle_setup_key",
+                "lifecycle_identity_contract_version", "level_continuity_id"}
+    if not required.issubset(identity):
+        raise ValueError("LEGACY_IDENTITY_UNAVAILABLE" if error_code == "RAW_LIFECYCLE_KEY_REJECTED" else error_code)
+    if identity.get("lifecycle_identity_contract_version") != LIFECYCLE_IDENTITY_CONTRACT_VERSION:
+        raise ValueError(error_code)
+    anchor = identity.get("strategy_setup_anchor_id")
+    key = identity.get("lifecycle_setup_key")
+    if anchor is None and key is None:
+        return
+    if not anchor or not key:
+        raise ValueError(error_code)
+    expected = canonical_lifecycle_setup_key(
+        strategy_setup_anchor_id=str(anchor), instrument=str(identity.get("instrument")),
+        family=str(identity.get("family")), direction=str(identity.get("direction")),
+        parameter_set_id=identity.get("parameter_set_id"),
+        strategy_version=str(identity.get("strategy_version")),
+        segment_identity=identity.get("segment_identity"),
+    )
+    if key != expected:
+        raise ValueError(error_code)
 
 
 def exact_level_identity(level: Mapping[str, Any] | None) -> str:
@@ -198,7 +254,7 @@ class StrategyStageV2:
 
 @dataclass(frozen=True)
 class StrategyTransitionV2:
-    strategy_setup_id: str
+    strategy_setup_id: str | None
     from_state: str
     to_state: str
     transition_timestamp: int
@@ -516,12 +572,11 @@ class StrategyLifecycleV2:
                                 expires_at, int(rearm_after) if rearm_after else None)
         transition = None
         if prior != desired:
-            setup_key = (candidate.identity.lifecycle_setup_key or
-                         candidate.identity.strategy_setup_anchor_id or
-                         candidate.identity.strategy_setup_id)
+            validate_lifecycle_identity(asdict(candidate.identity))
+            setup_key = candidate.identity.lifecycle_setup_key
             key = stable_hash({"setup": setup_key, "from": prior, "to": desired, "at": now})
             transition = StrategyTransitionV2(
-                candidate.identity.strategy_setup_anchor_id or candidate.identity.strategy_setup_id,
+                candidate.identity.strategy_setup_anchor_id,
                 prior, desired, now, reason, key)
         return stage, transition
 
@@ -577,20 +632,25 @@ class StrategyRouterV2:
                                        previous_candidate=None if terminal else prior,
                                        segment_identity=segment_identity)
             prior_identity = (prior or {}).get("identity", {})
-            prior_level_continuity = (prior_identity.get("level_continuity_id") or
-                                      prior_identity.get("level_identity"))
+            prior_level_continuity = prior_identity.get("level_continuity_id")
+            if prior:
+                validate_lifecycle_identity(prior_identity)
+            if prior_state == "INELIGIBLE":
+                prior = None
             if prior and (terminal or
                 prior_level_continuity != candidate.identity.level_continuity_id
                 or prior.get("identity", {}).get("configuration_hash") != candidate.identity.configuration_hash
                 or prior.get("identity", {}).get("instrument") != candidate.identity.instrument
+                or prior.get("identity", {}).get("segment_identity") != segment_identity
             ):
                 prior = None
-            if prior:
+            if prior and candidate.state in ACTIVE_SETUP_STAGES | TERMINAL_SETUP_STAGES:
                     prior_identity = prior["identity"]
                     started = prior.get("stage", {}).get("setup_started_at")
-                    anchor_id = (prior_identity.get("strategy_setup_anchor_id") or
-                                 prior_identity["strategy_setup_id"])
-                    lifecycle_key = (prior_identity.get("lifecycle_setup_key") or anchor_id)
+                    anchor_id = prior_identity.get("strategy_setup_anchor_id")
+                    lifecycle_key = prior_identity.get("lifecycle_setup_key")
+                    if not anchor_id or not lifecycle_key:
+                        raise ValueError("LEGACY_IDENTITY_UNAVAILABLE")
                     evaluation_id = stable_hash({
                         "setup_anchor_id": anchor_id, "as_of": as_of,
                         "source_timestamps": candidate.source_timestamps,
@@ -612,6 +672,18 @@ class StrategyRouterV2:
                             int(started) + candidate.geometry.maximum_wait_bars * 900 if started else None,
                             candidate.stage.rearm_after),
                     })
+            if candidate.state == "INELIGIBLE":
+                identity = StrategyIdentityV2(**{
+                    **candidate.identity.__dict__,
+                    "strategy_setup_anchor_id": None,
+                    "lifecycle_setup_key": None,
+                    "setup_started_at": None,
+                })
+                candidate = StrategyCandidateV2(**{
+                    **candidate.__dict__, "identity": identity,
+                    "identity_hash": stable_hash(asdict(identity)),
+                    "stage": StrategyStageV2("INELIGIBLE", None, None, None, None),
+                })
             stage, transition = StrategyLifecycleV2.advance(candidate, prior, as_of)
             candidate = StrategyCandidateV2(**{**candidate.__dict__, "state": stage.state, "stage": stage})
             candidates.append(candidate)
@@ -821,8 +893,12 @@ class StrategyRouterV2:
             "timeframes": TIMEFRAME_ROLES, "level_identity": level_identity,
             "setup_started_at": setup_started, "configuration_hash": configuration_hash,
             "parameter_set_id": parameter_set_id})
-        lifecycle_key = stable_hash({"version": LIFECYCLE_IDENTITY_CONTRACT_VERSION,
-                                     "setup_anchor": setup_anchor}) if setup_anchor else None
+        lifecycle_key = canonical_lifecycle_setup_key(
+            strategy_setup_anchor_id=setup_anchor,
+            instrument=str(context["instrument"]), family=family, direction=direction,
+            parameter_set_id=parameter_set_id, strategy_version=FAMILY_VERSIONS[family],
+            segment_identity=segment_identity,
+        ) if setup_anchor else None
         evaluation_id = stable_hash({"setup_anchor_id": setup_anchor or setup_id,
                                      "as_of": context["as_of"],
                                      "source_timestamps": sources,
@@ -832,7 +908,8 @@ class StrategyRouterV2:
                                       str(context["instrument"]), "15m", "1H", "4H", ("1D", "1W"), sources,
                                       level_identity, setup_started, trigger_ts,
                                       setup_anchor, level_continuity_id, lifecycle_key,
-                                      LIFECYCLE_IDENTITY_CONTRACT_VERSION, segment_identity)
+                                      LIFECYCLE_IDENTITY_CONTRACT_VERSION, segment_identity,
+                                      parameter_set_id)
         available_evidence = supporting + conflicting
         agreement = len(supporting) / len(available_evidence) if available_evidence else 0
         completeness = score / 100

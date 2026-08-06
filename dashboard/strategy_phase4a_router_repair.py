@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass
 from collections import OrderedDict
+from datetime import datetime, timezone
 import hashlib
 import json
 from pathlib import Path
@@ -22,7 +23,8 @@ from .market_context_v2 import (
 )
 from .market_state_v2 import MarketStateEngineV2, STATE_DEFINITION_VERSION, STATE_ENGINE_VERSION
 from .strategy_router_v2 import (
-    DEFINITIONS_VERSION, ROUTER_VERSION, StrategyLifecycleV2, StrategyRouterV2,
+    DEFINITIONS_VERSION, LIFECYCLE_IDENTITY_CONTRACT_VERSION, ROUTER_VERSION,
+    StrategyLifecycleV2, StrategyRouterV2, validate_lifecycle_identity,
 )
 from .strategy_phase4a import (
     AccountPolicyV2, CostPolicyV2, EntryIntentV2, ReplayEventV2,
@@ -37,10 +39,122 @@ GEOMETRY_VERSION = "strategy-geometry-v2"
 LEDGER_VERSION = "strategy-phase4a-router-native-ledger-v1"
 REPORT_VERSION = "strategy-phase4a-router-repair-report-v1"
 REPAIR_MANIFEST_VERSION = "phase4a-router-repair-manifest-v1"
+CHECKPOINT_SCHEMA_VERSION = "strategy-replay-checkpoint-v3"
 DEVELOPMENT_START = 1_698_365_700
 DEVELOPMENT_END = 1_739_681_100
 OOT_START = 1_753_452_900
 ALLOWED_FAMILIES = frozenset({"TREND_PULLBACK", "MA200_MEAN_REVERSION"})
+
+
+def _checkpoint_error(code: str) -> None:
+    raise ValueError(code)
+
+
+def checkpoint_lifecycle_records(routes: Mapping[str, Mapping[str, Any]]) -> dict[str, dict[str, Any]]:
+    records: dict[str, dict[str, Any]] = {}
+    for key, route in routes.items():
+        candidates = route.get("candidates", [])
+        if not candidates:
+            continue
+        candidate = candidates[0]
+        identity = candidate.get("identity", {})
+        stage = candidate.get("stage", {})
+        records[str(key)] = {
+            "stage": candidate.get("state"),
+            "strategy_setup_anchor_id": identity.get("strategy_setup_anchor_id"),
+            "level_continuity_id": identity.get("level_continuity_id"),
+            "lifecycle_setup_key": identity.get("lifecycle_setup_key"),
+            "setup_started_at": stage.get("setup_started_at"),
+            "trigger_timestamp": stage.get("trigger_timestamp"),
+            "expiry": stage.get("expires_at"),
+            "cooldown": stage.get("rearm_after"),
+            "parameter_set_id": identity.get("parameter_set_id"),
+            "family": candidate.get("family"),
+            "direction": candidate.get("direction"),
+        }
+    return records
+
+
+def validate_replay_checkpoint(checkpoint: Mapping[str, Any], *, dataset_identity: str,
+                               segment_identity: str, instrument: str,
+                               replay_engine_version: str,
+                               trials: Sequence[RouterNativeTrialV2]) -> None:
+    """Validate current checkpoints without migration, defaults, or fallback."""
+    if "schema_version" not in checkpoint:
+        _checkpoint_error("CHECKPOINT_SCHEMA_MISSING")
+    if checkpoint.get("schema_version") != CHECKPOINT_SCHEMA_VERSION:
+        _checkpoint_error("CHECKPOINT_SCHEMA_MISMATCH")
+    if checkpoint.get("lifecycle_identity_contract_version") != LIFECYCLE_IDENTITY_CONTRACT_VERSION:
+        _checkpoint_error("CHECKPOINT_IDENTITY_CONTRACT_MISMATCH")
+    if "created_at" not in checkpoint or "last_evaluated_ts" not in checkpoint:
+        _checkpoint_error("CHECKPOINT_SCHEMA_MISMATCH")
+    if checkpoint.get("dataset_identity") != dataset_identity:
+        _checkpoint_error("CHECKPOINT_DATASET_MISMATCH")
+    if checkpoint.get("segment_identity") != segment_identity:
+        _checkpoint_error("CHECKPOINT_SEGMENT_MISMATCH")
+    if checkpoint.get("instrument") != instrument:
+        _checkpoint_error("CHECKPOINT_INSTRUMENT_MISMATCH")
+    required_versions = {
+        "replay_engine_version": replay_engine_version,
+        "market_context_version": CONTEXT_VERSION,
+        "market_state_version": STATE_ENGINE_VERSION,
+        "router_version": ROUTER_VERSION,
+        "definitions_version": DEFINITIONS_VERSION,
+    }
+    if any(checkpoint.get(name) != expected for name, expected in required_versions.items()):
+        _checkpoint_error("CHECKPOINT_SCHEMA_MISMATCH")
+    lifecycle = checkpoint.get("lifecycle")
+    if not isinstance(lifecycle, Mapping):
+        _checkpoint_error("CHECKPOINT_SCHEMA_MISMATCH")
+    expected = {StrategyEventReplayEngineV2_1._checkpoint_key(instrument, trial): trial
+                for trial in trials}
+    if set(lifecycle) != set(expected):
+        _checkpoint_error("CHECKPOINT_SCHEMA_MISMATCH")
+    routes = checkpoint.get("routes")
+    if not isinstance(routes, Mapping) or set(routes) != set(expected):
+        _checkpoint_error("CHECKPOINT_SCHEMA_MISMATCH")
+    for key, trial in expected.items():
+        record = lifecycle[key]
+        required = {"stage", "strategy_setup_anchor_id", "level_continuity_id",
+                    "lifecycle_setup_key", "setup_started_at", "trigger_timestamp",
+                    "expiry", "cooldown", "parameter_set_id", "family", "direction"}
+        if not isinstance(record, Mapping) or not required.issubset(record):
+            _checkpoint_error("CHECKPOINT_SCHEMA_MISMATCH")
+        if (record.get("parameter_set_id"), record.get("family"), record.get("direction")) != (
+                trial.parameter_set_id, trial.family, trial.direction):
+            _checkpoint_error("CHECKPOINT_SCHEMA_MISMATCH")
+        candidate = routes[key].get("candidates", [{}])[0]
+        identity = candidate.get("identity", {})
+        try:
+            validate_lifecycle_identity(identity, error_code="CHECKPOINT_RAW_LIFECYCLE_KEY")
+        except ValueError:
+            _checkpoint_error("CHECKPOINT_RAW_LIFECYCLE_KEY")
+        if (record.get("strategy_setup_anchor_id") != identity.get("strategy_setup_anchor_id") or
+                record.get("lifecycle_setup_key") != identity.get("lifecycle_setup_key")):
+            _checkpoint_error("CHECKPOINT_SCHEMA_MISMATCH")
+
+
+def replay_checkpoint_payload(*, dataset_identity: str, segment_identity: str,
+                              instrument: str, replay_engine_version: str,
+                              routes: Mapping[str, Mapping[str, Any]],
+                              last_by_key: Mapping[str, int], **state: Any) -> dict[str, Any]:
+    return {
+        "schema_version": CHECKPOINT_SCHEMA_VERSION,
+        "lifecycle_identity_contract_version": LIFECYCLE_IDENTITY_CONTRACT_VERSION,
+        "replay_engine_version": replay_engine_version,
+        "market_context_version": CONTEXT_VERSION,
+        "market_state_version": STATE_ENGINE_VERSION,
+        "router_version": ROUTER_VERSION,
+        "definitions_version": DEFINITIONS_VERSION,
+        "dataset_identity": dataset_identity,
+        "segment_identity": segment_identity,
+        "instrument": instrument,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "last_evaluated_ts": max(last_by_key.values(), default=None),
+        "lifecycle": checkpoint_lifecycle_records(routes),
+        "routes": dict(routes), "last_by_key": dict(last_by_key),
+        **state,
+    }
 
 
 def canonical_json(value: Any) -> str:
@@ -198,10 +312,12 @@ class StrategyEventReplayEngineV2_1:
                sinks: Mapping[str, Callable[[Mapping[str, Any]], None]] | None = None,
                retain_lineage: bool = True) -> dict[str, Any]:
         DevelopmentAccessGuard.require_segment(segment)
-        if checkpoint and checkpoint.get("segment_identity") != segment.identity:
-            raise ValueError("checkpoint segment identity mismatch")
-        if checkpoint and checkpoint.get("dataset_identity") != self.provider.dataset_identity:
-            raise ValueError("checkpoint dataset identity mismatch")
+        if checkpoint is not None:
+            validate_replay_checkpoint(
+                checkpoint, dataset_identity=self.provider.dataset_identity,
+                segment_identity=segment.identity, instrument=instrument,
+                replay_engine_version=self.version, trials=trials,
+            )
         routes: dict[str, dict[str, Any]] = dict((checkpoint or {}).get("routes", {}))
         last_by_key: dict[str, int] = {k: int(v) for k, v in (checkpoint or {}).get("last_by_key", {}).items()}
         prior_state: dict[str, Any] | None = dict(checkpoint["previous_state"]) if checkpoint and checkpoint.get("previous_state") else None
@@ -263,11 +379,11 @@ class StrategyEventReplayEngineV2_1:
                         "route_snapshot_identity": route["route_snapshot_identity"],
                         "strategy_family_id": identity["strategy_family_id"],
                         "strategy_setup_id": identity["strategy_setup_id"],
-                        "strategy_setup_anchor_id": identity.get("strategy_setup_anchor_id", identity["strategy_setup_id"]),
+                        "strategy_setup_anchor_id": identity.get("strategy_setup_anchor_id"),
                         "strategy_evaluation_id": identity["strategy_evaluation_id"],
                         "level_identity": identity["level_identity"],
-                        "level_continuity_id": identity.get("level_continuity_id", identity["level_identity"]),
-                        "lifecycle_setup_key": identity.get("lifecycle_setup_key", identity["strategy_setup_id"]),
+                        "level_continuity_id": identity.get("level_continuity_id"),
+                        "lifecycle_setup_key": identity.get("lifecycle_setup_key"),
                         "context_identity": context["context_identity"],
                         "state_snapshot_identity": state["state_snapshot_identity"],
                         "config_hash": identity["configuration_hash"],
@@ -309,17 +425,15 @@ class StrategyEventReplayEngineV2_1:
                 routes[key] = route
                 last_by_key[key] = as_of
         wall = time.perf_counter() - started
-        checkpoint_out = {
-            "version": "phase4a-router-repair-checkpoint-v1",
-            "dataset_identity": self.provider.dataset_identity,
-            "segment_identity": segment.identity,
-            "instrument": instrument,
-            "previous_context_timestamp": prior_state.get("as_of") if prior_state else None,
-            "previous_state_identity": prior_state.get("state_snapshot_identity") if prior_state else None,
-            "previous_state": prior_state,
-            "routes": routes,
-            "last_by_key": last_by_key,
-        }
+        checkpoint_out = replay_checkpoint_payload(
+            dataset_identity=self.provider.dataset_identity,
+            segment_identity=segment.identity, instrument=instrument,
+            replay_engine_version=self.version, routes=routes,
+            last_by_key=last_by_key,
+            previous_context_timestamp=prior_state.get("as_of") if prior_state else None,
+            previous_state_identity=prior_state.get("state_snapshot_identity") if prior_state else None,
+            previous_state=prior_state,
+        )
         return {
             "events": events, "intents": intents, "context_ledger": context_ledgers,
             "state_ledger": state_ledgers, "route_ledger": route_ledgers,
@@ -345,14 +459,14 @@ class StrategyEventReplayEngineV2_1:
             "lifecycle_to": transition["to_state"], "context_timestamp": int(context["as_of"]),
             "strategy_family_id": identity["strategy_family_id"],
             "strategy_setup_id": identity["strategy_setup_id"],
-            "strategy_setup_anchor_id": identity.get("strategy_setup_anchor_id", identity["strategy_setup_id"]),
+            "strategy_setup_anchor_id": identity.get("strategy_setup_anchor_id"),
             "strategy_evaluation_id": identity["strategy_evaluation_id"],
             "route_snapshot_identity": route["route_snapshot_identity"],
             "state_snapshot_identity": state["state_snapshot_identity"],
             "context_identity": context["context_identity"],
             "level_identity": identity["level_identity"],
-            "level_continuity_id": identity.get("level_continuity_id", identity["level_identity"]),
-            "lifecycle_setup_key": identity.get("lifecycle_setup_key", identity["strategy_setup_id"]),
+            "level_continuity_id": identity.get("level_continuity_id"),
+            "lifecycle_setup_key": identity.get("lifecycle_setup_key"),
             "market_context_version": context["version"], "market_state_version": state["version"],
             "router_version": route["version"], "definitions_version": route["definitions_version"],
             "lifecycle_version": LIFECYCLE_VERSION, "geometry_version": GEOMETRY_VERSION,

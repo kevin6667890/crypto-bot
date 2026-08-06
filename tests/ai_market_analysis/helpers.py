@@ -49,3 +49,33 @@ def datasets() -> dict[str, list[dict]]:
         "4H": candles(240, "4H", slope=.6),
         "1D": candles(1400, "1D", slope=.8),
     }
+
+
+def golden_datasets() -> tuple[dict[str, list[dict]], int]:
+    decision = BASE+1400*86400
+
+    def shifted(rows: list[dict], timeframe: str) -> list[dict]:
+        width = TIMEFRAME_SECONDS[timeframe]
+        start = decision-len(rows)*width
+        return [dict(row, ts=start+i*width, timeframe=timeframe,
+                     source_timestamp=start+(i+1)*width) for i, row in enumerate(rows)]
+
+    def price_structure_with_warmup(timeframe: str) -> list[dict]:
+        width = TIMEFRAME_SECONDS[timeframe]
+        history = candles(210, timeframe, start=decision-(210+47)*width, slope=2)
+        delta = 1840-history[-1]["close"]
+        for row in history:
+            for field in ("open", "high", "low", "close"):
+                row[field] += delta
+        return history+shifted(breakout_path(), timeframe)
+
+    daily = candles(1400, "1D", start=BASE, slope=0)
+    for i, row in enumerate(daily):
+        close = 3000-(2100*i/1369) if i < 1370 else 900+(100*(i-1369)/30)
+        row.update(open=close+2, high=close+5, low=close-5, close=close, volume=100+i%20)
+    return {
+        "15m": price_structure_with_warmup("15m"),
+        "1H": candles(240, "1H", start=decision-240*3600, slope=.4),
+        "4H": price_structure_with_warmup("4H"),
+        "1D": daily,
+    }, decision

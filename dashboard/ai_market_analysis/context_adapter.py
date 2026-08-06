@@ -7,10 +7,15 @@ from .quality import iso
 from .structure_timeline import build_timeline
 from .swing_structure import confirmed_swings, swing_summary
 from .timeframe_facts import build_multi_timeframe_facts
+from .orderflow_context_adapter import build_ai3_facts
 from .versions import (
     AI_CONTEXT_ADAPTER_VERSION, AI_CONTEXT_SCHEMA_VERSION, AI_MARKET_FACTS_VERSION,
     AI_MARKET_TIMELINE_VERSION, AI_RANGE_COMPRESSION_VERSION, AI_SWING_STRUCTURE_VERSION,
     AI_TIMEFRAME_STRUCTURE_VERSION, SUPPORTED_TIMEFRAMES,
+    AI_ORDERFLOW_WINDOW_VERSION, AI_ORDERFLOW_METRICS_VERSION,
+    AI_ORDERFLOW_ATTRIBUTION_VERSION, AI_KEY_LEVEL_ENGINE_VERSION,
+    AI_KEY_LEVEL_ZONE_VERSION, AI_SCENARIO_TREE_VERSION,
+    AI_CONTEXT_ORDERFLOW_ADAPTER_VERSION,
 )
 
 
@@ -189,7 +194,9 @@ def _schema_event(event: dict[str, Any], tf_index: int) -> dict[str, Any]:
 
 
 def build_market_analysis_context(datasets: dict[str, list[dict[str, Any]]], instrument: str,
-                                  decision_time: int, mode: str = "FULL") -> dict[str, Any]:
+                                  decision_time: int, mode: str = "FULL", *,
+                                  orderflow: dict[str, Any] | None = None,
+                                  auxiliary: dict[str, Any] | None = None) -> dict[str, Any]:
     facts = build_multi_timeframe_facts(datasets, instrument, decision_time)
     structures, timelines, all_swings = [], {}, {}
     for index, timeframe in enumerate(SUPPORTED_TIMEFRAMES):
@@ -210,10 +217,26 @@ def build_market_analysis_context(datasets: dict[str, list[dict[str, Any]]], ins
         "facts": AI_MARKET_FACTS_VERSION, "timeframe_structure": AI_TIMEFRAME_STRUCTURE_VERSION,
         "swing": AI_SWING_STRUCTURE_VERSION, "range_compression": AI_RANGE_COMPRESSION_VERSION,
         "timeline": AI_MARKET_TIMELINE_VERSION, "adapter": AI_CONTEXT_ADAPTER_VERSION,
+        "orderflow_window": AI_ORDERFLOW_WINDOW_VERSION,
+        "orderflow_metrics": AI_ORDERFLOW_METRICS_VERSION,
+        "orderflow_attribution": AI_ORDERFLOW_ATTRIBUTION_VERSION,
+        "key_level_engine": AI_KEY_LEVEL_ENGINE_VERSION,
+        "key_level_zone": AI_KEY_LEVEL_ZONE_VERSION,
+        "scenario_tree": AI_SCENARIO_TREE_VERSION,
+        "context_orderflow_adapter": AI_CONTEXT_ORDERFLOW_ADAPTER_VERSION,
     }
+    ai3 = build_ai3_facts(facts=facts, timelines=timelines, swings=all_swings, dominant=dominant,
+                          instrument=instrument, decision_time=decision_time,
+                          orderflow=orderflow, auxiliary=auxiliary)
+    ai3_requested = orderflow is not None
     identity_input = {"instrument": instrument, "decision_time": decision_time,
                       "latest_confirmed_market_time": latest, "input_fingerprints": fingerprints,
-                      "source_versions": source_versions, "quality": qualities}
+                      "source_versions": source_versions, "quality": qualities,
+                      "orderflow_source_fingerprints": ai3["source_fingerprints"],
+                      "phase_window_identities": [p["window_fingerprint"] for p in ai3["order_flow_phases"]],
+                      "key_level_identities": [l["level_id"] for l in ai3["key_levels"]],
+                      "scenario_identities": [s["scenario_id"] for s in ai3["scenario_tree"]["scenarios"]],
+                      "ai3_quality": ai3["quality"]}
     context_id = identity("ctx", identity_input)
     quality_values = set(qualities.values())
     overall = "MISSING" if quality_values == {"MISSING"} else "PARTIAL" if any(
@@ -260,21 +283,27 @@ def build_market_analysis_context(datasets: dict[str, list[dict[str, Any]]], ins
             "pullback_start": iso(timeline["pullback"]["start"]) if timeline.get("pullback") else None,
             "current_phase": timeline["current_phase"] if timeline["current_phase"] != "EXPIRED" else "UNCLASSIFIED",
         },
-        "order_flow_phases": [], "key_levels": [],
-        "scenario_tree": {"status": "NOT_IMPLEMENTED", "scenarios": []},
+        "order_flow_phases": ai3["order_flow_phases"] if ai3_requested else [],
+        "phase_transitions": ai3["phase_transitions"] if ai3_requested else [],
+        "key_levels": ai3["key_levels"] if ai3_requested else [],
+        "scenario_tree": ai3["scenario_tree"] if ai3_requested else {"status": "NOT_IMPLEMENTED", "scenarios": []},
         "position_context": {"source": "NONE", "side": None, "entry": None, "average_cost": None,
                              "quantity": None, "original_thesis": None, "original_timeframe": None,
                              "original_stop": None, "original_targets": [], "realised_exits": [],
                              "remaining_position": None, "current_risk": None,
                              "plan_completed": None, "discipline_warning": None},
         "macro_context": {"status": "NOT_REQUESTED", "items": []},
-        "current_core_question": "NOT_IMPLEMENTED: scenario synthesis belongs to AI-3",
-        "unsupported_claims": ["order_flow_phases:NOT_IMPLEMENTED", "key_levels:NOT_IMPLEMENTED",
-                               "scenario_tree:NOT_IMPLEMENTED", "macro_context:NOT_REQUESTED",
-                               "AI prose generation:NOT_IMPLEMENTED"],
+        "current_core_question": "Which deterministic scenario trigger is confirmed next?" if ai3_requested else "NOT_IMPLEMENTED: scenario synthesis belongs to AI-3",
+        "unsupported_claims": ([*[f"key_level_source:{name}:NOT_IMPLEMENTED" for name in ai3["not_implemented_sources"]],
+                               "macro_context:NOT_REQUESTED", "position_context:NONE",
+                               "AI prose generation:NOT_IMPLEMENTED"] if ai3_requested else
+                               ["order_flow_phases:NOT_IMPLEMENTED", "key_levels:NOT_IMPLEMENTED",
+                                "scenario_tree:NOT_IMPLEMENTED", "macro_context:NOT_REQUESTED",
+                                "AI prose generation:NOT_IMPLEMENTED"]),
         "provenance": {"builder": "dashboard.ai_market_analysis.context_adapter",
                        "builder_version": AI_CONTEXT_ADAPTER_VERSION,
-                       "input_snapshot_ids": [fingerprints[tf] for tf in SUPPORTED_TIMEFRAMES],
+                       "input_snapshot_ids": [*[fingerprints[tf] for tf in SUPPORTED_TIMEFRAMES],
+                                              *[ai3["source_fingerprints"][k] for k in sorted(ai3["source_fingerprints"])]],
                        "causal_cutoff": iso(decision_time), "content_hash": stable_hash(identity_input)},
     }
     return context

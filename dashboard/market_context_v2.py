@@ -87,6 +87,9 @@ class MarketLevelV2:
     confirmed: bool
     confluence_sources: tuple[str, ...] = ()
     calculation_version: str = CONFLUENCE_VERSION
+    # Exact values remain above.  These descriptors identify the structural
+    # members without making a moving average's current value its identity.
+    continuity_sources: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -547,6 +550,20 @@ def _candidate_levels(timeframes: dict[str, TimeframeMarketContextV2],
                       datasets: dict[str, list[dict[str, Any]]], price: float,
                       vpvr: dict[str, IndicatorValueV2]) -> list[MarketLevelV2]:
     candidates: list[MarketLevelV2] = []
+    def continuity_source(level_type: str, timeframe: str, value: float,
+                          source_timestamp: int) -> str:
+        if level_type.startswith(("EMA", "MA", "BOLLINGER_", "VPVR_")):
+            anchor: Any = {"kind": "DYNAMIC_INDICATOR", "type": level_type,
+                           "timeframe": timeframe}
+        elif level_type in {"SWING_HIGH", "SWING_LOW"}:
+            anchor = {"kind": "CONFIRMED_SWING", "type": level_type,
+                      "timeframe": timeframe, "anchor_timestamp": source_timestamp}
+        elif level_type == "PSYCHOLOGICAL_ROUND":
+            anchor = {"kind": "PSYCHOLOGICAL", "price": value}
+        else:
+            anchor = {"kind": "STRUCTURAL_LEVEL", "type": level_type,
+                      "timeframe": timeframe, "anchor_timestamp": source_timestamp}
+        return json.dumps(anchor, sort_keys=True, separators=(",", ":"))
     mappings = {
         "recent_confirmed_swing_high": "SWING_HIGH", "recent_confirmed_swing_low": "SWING_LOW",
         "ema20": "EMA20", "ma60": "MA60", "ma200": "MA200",
@@ -562,19 +579,25 @@ def _candidate_levels(timeframes: dict[str, TimeframeMarketContextV2],
         for source, level_type in mappings.items():
             indicator = next((group[source] for group in collections if source in group), None)
             if indicator and indicator.available and isinstance(indicator.value, (int, float)) and indicator.source_timestamp:
-                candidates.append(MarketLevelV2(level_type, timeframe, float(indicator.value),
+                level_value = float(indicator.value)
+                candidates.append(MarketLevelV2(level_type, timeframe, level_value,
                                                  indicator.source_timestamp,
-                                                 (float(indicator.value)/price-1)*100,
-                                                 touches(timeframe, float(indicator.value)), True,
-                                                 (f"{timeframe}:{level_type}",)))
+                                                 (level_value/price-1)*100,
+                                                 touches(timeframe, level_value), True,
+                                                 (f"{timeframe}:{level_type}",), CONFLUENCE_VERSION,
+                                                 (continuity_source(level_type, timeframe, level_value,
+                                                                    indicator.source_timestamp),)))
     for source, level_type in (("poc", "VPVR_POC"), ("vah", "VPVR_VAH"), ("val", "VPVR_VAL")):
         indicator = vpvr.get(source)
         if indicator and indicator.available and isinstance(indicator.value, (int, float)) and indicator.source_timestamp:
-            candidates.append(MarketLevelV2(level_type, "15m", float(indicator.value),
+            level_value = float(indicator.value)
+            candidates.append(MarketLevelV2(level_type, "15m", level_value,
                                              indicator.source_timestamp,
-                                             (float(indicator.value)/price-1)*100,
-                                             touches("15m", float(indicator.value)), True,
-                                             (f"15m:{level_type}",)))
+                                             (level_value/price-1)*100,
+                                             touches("15m", level_value), True,
+                                             (f"15m:{level_type}",), CONFLUENCE_VERSION,
+                                             (continuity_source(level_type, "15m", level_value,
+                                                                indicator.source_timestamp),)))
     if price > 0:
         step = 10 ** math.floor(math.log10(price)) / 10
         anchor = math.floor(price/step)*step
@@ -583,7 +606,8 @@ def _candidate_levels(timeframes: dict[str, TimeframeMarketContextV2],
                 candidates.append(MarketLevelV2("PSYCHOLOGICAL_ROUND", "GLOBAL", value,
                                                  max(context.candle_close_ts or 0 for context in timeframes.values()),
                                                  (value/price-1)*100, 0, True,
-                                                 ("GLOBAL:PSYCHOLOGICAL_ROUND",)))
+                                                 ("GLOBAL:PSYCHOLOGICAL_ROUND",), CONFLUENCE_VERSION,
+                                                 (continuity_source("PSYCHOLOGICAL_ROUND", "GLOBAL", value, 0),)))
     return sorted(candidates, key=lambda item: (item.value, item.type, item.timeframe))
 
 
@@ -603,11 +627,14 @@ def merge_confluence_levels(candidates: list[MarketLevelV2], price: float,
     for zone in zones:
         center = sum(item.value for item in zone)/len(zone)
         sources = tuple(sorted({source for item in zone for source in item.confluence_sources}))
+        continuity_sources = tuple(sorted({source for item in zone
+                                           for source in item.continuity_sources}))
         output.append(MarketLevelV2("CONFLUENCE_ZONE" if len(sources)>1 else zone[0].type,
                                    "MULTI" if len({item.timeframe for item in zone})>1 else zone[0].timeframe,
                                    center, max(item.source_timestamp for item in zone),
                                    (center/price-1)*100, sum(item.touches for item in zone),
-                                   all(item.confirmed for item in zone), sources))
+                                   all(item.confirmed for item in zone), sources,
+                                   CONFLUENCE_VERSION, continuity_sources))
     return tuple(output)
 
 

@@ -58,6 +58,10 @@ try:
     from market_context_v2 import BoundedMarketDataReaderV2, MarketContextServiceV2
     from market_state_v2 import MarketStateEngineV2
     from strategy_router_v2 import StrategyRouterV2
+    from ai_market_analysis.report_api import submit_report, save_position_plan
+    from ai_market_analysis.report_health import report_health
+    from ai_market_analysis.report_repository import ReportRepository, DEFAULT_REPORT_DB
+    from ai_market_analysis.report_service import enabled as ai_report_flag
 except ImportError:
     from .research_service import ResearchService
     from .strategy_rules import StrategyParameters, calculate_indicators, validate_parameters
@@ -89,6 +93,10 @@ except ImportError:
     from .market_context_v2 import BoundedMarketDataReaderV2, MarketContextServiceV2
     from .market_state_v2 import MarketStateEngineV2
     from .strategy_router_v2 import StrategyRouterV2
+    from .ai_market_analysis.report_api import submit_report, save_position_plan
+    from .ai_market_analysis.report_health import report_health
+    from .ai_market_analysis.report_repository import ReportRepository, DEFAULT_REPORT_DB
+    from .ai_market_analysis.report_service import enabled as ai_report_flag
 
 try:
     from dotenv import load_dotenv
@@ -1103,6 +1111,7 @@ MARKET_CONTEXT_V2 = MarketContextServiceV2(
 )
 MARKET_STATE_ENGINE_V2 = MarketStateEngineV2()
 STRATEGY_ROUTER_V2 = StrategyRouterV2()
+AI_REPORT_REPOSITORY = ReportRepository(Path(os.getenv("AI_MARKET_REPORT_DB_PATH", ROOT / DEFAULT_REPORT_DB)))
 CANONICAL_FLOW_HISTORY = CanonicalFlowHistoryStore(Path(os.getenv(
     "CANONICAL_MICROSTRUCTURE_HISTORY_DB_PATH", MICROSTRUCTURE.path,
 )))
@@ -1296,6 +1305,26 @@ class Handler(BaseHTTPRequestHandler):
         self._request_started = time.monotonic()
         parsed, query = urlparse(self.path), parse_qs(urlparse(self.path).query)
         instrument = query.get("instrument", ["ETH-USDT"])[0]
+        if parsed.path.startswith("/api/ai-market-analysis/v1/"):
+            if parsed.path == "/api/ai-market-analysis/v1/health":
+                self._send(report_health(AI_REPORT_REPOSITORY));return
+            if not ai_report_flag("AI_MARKET_REPORTS_ENABLED"):
+                self._send({"error":"AI market reports are disabled."},HTTPStatus.NOT_FOUND);return
+            if AI_REPORT_REPOSITORY.schema_version() is None:
+                self._send({"error":"AI report database requires explicit migration."},HTTPStatus.SERVICE_UNAVAILABLE);return
+            try:
+                if parsed.path.startswith("/api/ai-market-analysis/v1/requests/"):
+                    self._send(AI_REPORT_REPOSITORY.status(parsed.path.rsplit("/",1)[1]));return
+                if parsed.path.startswith("/api/ai-market-analysis/v1/reports/") and parsed.path != "/api/ai-market-analysis/v1/reports/latest":
+                    item=AI_REPORT_REPOSITORY.get_report(report_id=parsed.path.rsplit("/",1)[1]);self._send(item or {"error":"Report not found"},HTTPStatus.OK if item else HTTPStatus.NOT_FOUND);return
+                if parsed.path == "/api/ai-market-analysis/v1/reports/latest":
+                    requested=query.get("instrument",[""])[0]
+                    item=AI_REPORT_REPOSITORY.latest_report(requested,query.get("mode",[None])[0],query.get("language",["zh-CN"])[0]);self._send(item or {"error":"Report not found"},HTTPStatus.OK if item else HTTPStatus.NOT_FOUND);return
+                if parsed.path.startswith("/api/ai-market-analysis/v1/position-plans/"):
+                    if not self._admin():return
+                    plan=AI_REPORT_REPOSITORY.load_position_plan(parsed.path.rsplit("/",1)[1]);self._send(plan);return
+            except (KeyError,ValueError):self._send({"error":"Shadow resource not found or invalid."},HTTPStatus.NOT_FOUND);return
+            self._send({"error":"Not found"},HTTPStatus.NOT_FOUND);return
         if parsed.path == "/api/status": self._send(SERVICE.status(instrument))
         elif parsed.path == "/api/market/context":
             try:
@@ -1596,6 +1625,27 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
+        if parsed.path in {"/api/ai-market-analysis/v1/reports","/api/ai-market-analysis/v1/position-plans"}:
+            if not ai_report_flag("AI_MARKET_REPORTS_ENABLED"):
+                self._send({"error":"AI market reports are disabled."},HTTPStatus.NOT_FOUND);return
+            if AI_REPORT_REPOSITORY.schema_version() is None:
+                self._send({"error":"AI report database requires explicit migration."},HTTPStatus.SERVICE_UNAVAILABLE);return
+            payload=self._body()
+            if payload is None:return
+            if self._limited("ai-report-minute",3,60) or self._limited("ai-report-day",30,86400):return
+            try:
+                if parsed.path.endswith("position-plans"):
+                    if not ai_report_flag("AI_USER_POSITION_PLANS_ENABLED"):
+                        self._send({"error":"User position plans are disabled."},HTTPStatus.NOT_FOUND);return
+                    if not self._admin():return
+                    self._send(save_position_plan(payload,AI_REPORT_REPOSITORY),HTTPStatus.CREATED);return
+                if payload.get("position_source")=="USER_DECLARED" and not self._admin():return
+                if payload.get("provider","fake")!="fake" and not ai_report_flag("AI_REPORT_LIVE_PROVIDER_ENABLED"):
+                    self._send({"error":"Live report provider is disabled."},HTTPStatus.SERVICE_UNAVAILABLE);return
+                result=submit_report(payload,AI_REPORT_REPOSITORY,DB_PATH,MICROSTRUCTURE.path)
+                self._send(result,HTTPStatus(result.pop("status_code",202)));return
+            except (KeyError,TypeError,ValueError,OverflowError):
+                self._send({"error":"Invalid AI report request."},HTTPStatus.BAD_REQUEST);return
         if parsed.path == "/api/strategy/route/evaluate":
             if os.getenv("ENABLE_STRATEGY_ROUTER_FIXTURE_API", "").lower() not in {"1", "true", "yes"}:
                 self._send({"error": "Strategy Router fixture evaluation is disabled."}, HTTPStatus.NOT_FOUND)

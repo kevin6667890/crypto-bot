@@ -43,6 +43,6 @@
   "direct_audit_performance_ms": {"p50": 6.294, "p95": 6.589, "max": 6.808},
   "evaluation_80_duration_ms": 805.588,
   "audit_payload_bytes": 39096,
-  "artifact_hash": "e4f242bd768a3ff0e6a207ae4175cc80dece5fc37ff993c18a750809ebc19450",
+  "artifact_hash": "dfdc90b9d9d8d48b3e2d4def9aa67cb9e85c001f30dcb4f93f2e573332b2ee2f",
   "baseline_update_policy": "requires --update-baseline and --allow-baseline-update plus an independent commit"
 }

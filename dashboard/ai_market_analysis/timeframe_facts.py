@@ -75,7 +75,9 @@ def build_timeframe_facts(rows: list[dict[str, Any]], instrument: str, timeframe
         confirmed, live, quality = normalize_candles(rows, instrument, timeframe, decision_time)
     timestamp = confirmed[-1]["close_time"] if confirmed else None
     features = build_features(confirmed, {"ma_periods": [20, 30, 60, 200], "atr_period": 14,
-                                          "bb_period": 20, "rsi_period": 14, "volume_period": 20}) if confirmed else []
+                                          "bb_period": 20, "rsi_period": 14, "volume_period": 20,
+                                          "include_body_range_ratio": False,
+                                          "include_recent_extremes": False}) if confirmed else []
     latest = features[-1] if features else {}
     closes = [row["close"] for row in confirmed]
     rsi_series = [item.get("rsi") for item in features]

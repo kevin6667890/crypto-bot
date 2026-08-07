@@ -61,6 +61,8 @@ try:
     from ai_market_analysis.report_api import submit_report, save_position_plan
     from ai_market_analysis.report_health import report_health
     from ai_market_analysis.report_repository import ReportRepository, DEFAULT_REPORT_DB
+    from ai_market_analysis.report_audit_repository import AuditRepository
+    from ai_market_analysis.report_audit_api import trigger_audit,latest_audit,eligibility,create_evaluation_run
     from ai_market_analysis.report_service import enabled as ai_report_flag
 except ImportError:
     from .research_service import ResearchService
@@ -96,6 +98,8 @@ except ImportError:
     from .ai_market_analysis.report_api import submit_report, save_position_plan
     from .ai_market_analysis.report_health import report_health
     from .ai_market_analysis.report_repository import ReportRepository, DEFAULT_REPORT_DB
+    from .ai_market_analysis.report_audit_repository import AuditRepository
+    from .ai_market_analysis.report_audit_api import trigger_audit,latest_audit,eligibility,create_evaluation_run
     from .ai_market_analysis.report_service import enabled as ai_report_flag
 
 try:
@@ -1112,6 +1116,7 @@ MARKET_CONTEXT_V2 = MarketContextServiceV2(
 MARKET_STATE_ENGINE_V2 = MarketStateEngineV2()
 STRATEGY_ROUTER_V2 = StrategyRouterV2()
 AI_REPORT_REPOSITORY = ReportRepository(Path(os.getenv("AI_MARKET_REPORT_DB_PATH", ROOT / DEFAULT_REPORT_DB)))
+AI_AUDIT_REPOSITORY = AuditRepository(Path(os.getenv("AI_MARKET_REPORT_DB_PATH", ROOT / DEFAULT_REPORT_DB)))
 CANONICAL_FLOW_HISTORY = CanonicalFlowHistoryStore(Path(os.getenv(
     "CANONICAL_MICROSTRUCTURE_HISTORY_DB_PATH", MICROSTRUCTURE.path,
 )))
@@ -1315,6 +1320,18 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 if parsed.path.startswith("/api/ai-market-analysis/v1/requests/"):
                     self._send(AI_REPORT_REPOSITORY.status(parsed.path.rsplit("/",1)[1]));return
+                if parsed.path.startswith("/api/ai-market-analysis/v1/audits/"):
+                    if not ai_report_flag("AI_REPORT_AUDIT_ENABLED"):self._send({"error":"AI report audit is disabled."},HTTPStatus.NOT_FOUND);return
+                    self._send(AI_AUDIT_REPOSITORY.get_audit(parsed.path.rsplit("/",1)[1]));return
+                if parsed.path.startswith("/api/ai-market-analysis/v1/evaluation-runs/"):
+                    if not ai_report_flag("AI_REPORT_EVALUATION_ENABLED"):self._send({"error":"AI report evaluation is disabled."},HTTPStatus.NOT_FOUND);return
+                    self._send(AI_AUDIT_REPOSITORY.get_evaluation_run(parsed.path.rsplit("/",1)[1]));return
+                if parsed.path.startswith("/api/ai-market-analysis/v1/reports/") and parsed.path.endswith("/audits/latest"):
+                    if not ai_report_flag("AI_REPORT_AUDIT_ENABLED"):self._send({"error":"AI report audit is disabled."},HTTPStatus.NOT_FOUND);return
+                    rid=parsed.path.split("/")[-3];item=latest_audit(rid,AI_AUDIT_REPOSITORY);self._send(item or {"error":"Audit not found"},HTTPStatus.OK if item else HTTPStatus.NOT_FOUND);return
+                if parsed.path.startswith("/api/ai-market-analysis/v1/reports/") and parsed.path.endswith("/eligibility"):
+                    if not ai_report_flag("AI_REPORT_AUDIT_ENABLED"):self._send({"error":"AI report audit is disabled."},HTTPStatus.NOT_FOUND);return
+                    self._send(eligibility(parsed.path.split("/")[-2],AI_AUDIT_REPOSITORY));return
                 if parsed.path.startswith("/api/ai-market-analysis/v1/reports/") and parsed.path != "/api/ai-market-analysis/v1/reports/latest":
                     item=AI_REPORT_REPOSITORY.get_report(report_id=parsed.path.rsplit("/",1)[1]);self._send(item or {"error":"Report not found"},HTTPStatus.OK if item else HTTPStatus.NOT_FOUND);return
                 if parsed.path == "/api/ai-market-analysis/v1/reports/latest":
@@ -1625,7 +1642,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
-        if parsed.path in {"/api/ai-market-analysis/v1/reports","/api/ai-market-analysis/v1/position-plans"}:
+        if parsed.path in {"/api/ai-market-analysis/v1/reports","/api/ai-market-analysis/v1/position-plans","/api/ai-market-analysis/v1/evaluation-runs"} or (parsed.path.startswith("/api/ai-market-analysis/v1/reports/") and parsed.path.endswith("/audits")):
             if not ai_report_flag("AI_MARKET_REPORTS_ENABLED"):
                 self._send({"error":"AI market reports are disabled."},HTTPStatus.NOT_FOUND);return
             if AI_REPORT_REPOSITORY.schema_version() is None:
@@ -1634,6 +1651,20 @@ class Handler(BaseHTTPRequestHandler):
             if payload is None:return
             if self._limited("ai-report-minute",3,60) or self._limited("ai-report-day",30,86400):return
             try:
+                if parsed.path.endswith("evaluation-runs"):
+                    if not ai_report_flag("AI_REPORT_EVALUATION_ENABLED"):
+                        self._send({"error":"AI report evaluation is disabled."},HTTPStatus.NOT_FOUND);return
+                    if AI_AUDIT_REPOSITORY.schema_version() is None:
+                        self._send({"error":"AI audit database requires explicit migration."},HTTPStatus.SERVICE_UNAVAILABLE);return
+                    if not self._admin():return
+                    self._send(create_evaluation_run(payload,AI_AUDIT_REPOSITORY),HTTPStatus.ACCEPTED);return
+                if parsed.path.endswith("/audits"):
+                    if not ai_report_flag("AI_REPORT_AUDIT_ENABLED"):
+                        self._send({"error":"AI report audit is disabled."},HTTPStatus.NOT_FOUND);return
+                    if AI_AUDIT_REPOSITORY.schema_version() is None:
+                        self._send({"error":"AI audit database requires explicit migration."},HTTPStatus.SERVICE_UNAVAILABLE);return
+                    if not self._admin():return
+                    self._send(trigger_audit(parsed.path.split("/")[-2],AI_REPORT_REPOSITORY,AI_AUDIT_REPOSITORY),HTTPStatus.ACCEPTED);return
                 if parsed.path.endswith("position-plans"):
                     if not ai_report_flag("AI_USER_POSITION_PLANS_ENABLED"):
                         self._send({"error":"User position plans are disabled."},HTTPStatus.NOT_FOUND);return

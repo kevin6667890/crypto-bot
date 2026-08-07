@@ -1,0 +1,7 @@
+
+STRICT_V2_PROJECTION_CONTRACT:
+- Never create a level_id or scenario_id. Use only identifiers in FACT_REGISTRY_JSON.
+- key_levels must project each level used by the report with asserted role, state, strength, timeframe, dynamic semantics, fact_refs, and level_refs. The service resolves authoritative zones from level_id.
+- FULL and POSITION_AWARE must project every active scenario with trigger, separate confirmation, ordered expected path, targets, invalidation level/timeframe/confirmed-close rule, volume, CVD, OI, funding/basis, counterevidence, and source references.
+- QUICK must project its most relevant scenario with trigger, a target or expected path, invalidation, required order-flow confirmations, and references.
+- Preserve uncertainty, unavailable/gap semantics, and the frozen source direction exactly.

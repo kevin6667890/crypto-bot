@@ -11,7 +11,7 @@ MODE_FILES = {"QUICK":"quick_v1.txt","FULL":"full_v1.txt","POSITION_AWARE":"posi
 
 def compile_prompt(compiled_context: dict[str, Any], mode: str) -> dict[str, Any]:
     system = (PROMPT_DIR/"common_system_v1.txt").read_text(encoding="utf-8")
-    mode_prompt = (PROMPT_DIR/MODE_FILES[mode]).read_text(encoding="utf-8")
+    mode_prompt = (PROMPT_DIR/MODE_FILES[mode]).read_text(encoding="utf-8")+(PROMPT_DIR/"strict_projection_v2.txt").read_text(encoding="utf-8")
     messages = [{"role":"system","content":system},{"role":"user","content":mode_prompt+"\nFACT_REGISTRY_JSON:\n"+canonical_json(compiled_context)}]
     return {"prompt_version":AI_REPORT_PROMPT_VERSION,"messages":messages,"prompt_hash":stable_hash(messages)}
 

@@ -1,0 +1,91 @@
+{
+  "fixture_id": "SYNTHETIC_HIGH_TF_PRESSURE_GOLDEN",
+  "fixture": true,
+  "historical_market_fact": false,
+  "production_eligible": false,
+  "purpose": "AI-5C deterministic relevance and strict level/scenario audit only",
+  "version": "synthetic-high-tf-pressure-v1",
+  "level": {
+    "level_id": "level_0823974c2399099a7e566bcb534b2a089e578c0aa33406b4fae8d60e8002988e",
+    "representative_price": 1990.0,
+    "zone_low": 1980.0,
+    "zone_high": 2000.0,
+    "role": "RESISTANCE",
+    "state": "ACTIVE",
+    "strength": "MAJOR",
+    "timeframes": ["1D", "1W"],
+    "first_detected": 1824422400,
+    "last_tested": 1824940800,
+    "broken_at": null,
+    "flipped_at": null,
+    "touch_count": 4,
+    "quality": "VALID",
+    "version": "ai-key-level-zone-v1",
+    "confluences": ["CONFIRMED_SWING_HIGH", "MOVING_AVERAGE", "PREVIOUS_WEEK_HIGH"],
+    "evidence_paths": [
+      "/synthetic_high_timeframe/1D/confirmed_swing_high",
+      "/synthetic_high_timeframe/1W/moving_averages/ma200",
+      "/synthetic_high_timeframe/1W/previous_week_high"
+    ],
+    "invalidation": {
+      "boundary": 2000.0,
+      "rule": "two confirmed 1D closes above zone high",
+      "timeframe": "1D"
+    },
+    "source_candidates": [
+      {
+        "candidate_id": "synthetic_candidate_confirmed_swing_high",
+        "source": "CONFIRMED_SWING_HIGH",
+        "source_family": "CONFIRMED_SWING_HIGH",
+        "timeframe": "1D",
+        "price": 1980.0,
+        "zone_low": 1980.0,
+        "zone_high": 1980.0,
+        "dynamic": false,
+        "slope": null,
+        "valid_until": null,
+        "quality": "VALID",
+        "evidence_paths": ["/synthetic_high_timeframe/1D/confirmed_swing_high"]
+      },
+      {
+        "candidate_id": "synthetic_candidate_weekly_ma200",
+        "source": "MA200",
+        "source_family": "MOVING_AVERAGE",
+        "timeframe": "1W",
+        "price": 1992.0,
+        "zone_low": 1992.0,
+        "zone_high": 1992.0,
+        "dynamic": true,
+        "slope": -0.25,
+        "valid_until": 1825632000,
+        "quality": "VALID",
+        "evidence_paths": ["/synthetic_high_timeframe/1W/moving_averages/ma200"]
+      },
+      {
+        "candidate_id": "synthetic_candidate_previous_week_high",
+        "source": "PREVIOUS_WEEK_HIGH",
+        "source_family": "PREVIOUS_WEEK_HIGH",
+        "timeframe": "1W",
+        "price": 2000.0,
+        "zone_low": 2000.0,
+        "zone_high": 2000.0,
+        "dynamic": false,
+        "slope": null,
+        "valid_until": null,
+        "quality": "VALID",
+        "evidence_paths": ["/synthetic_high_timeframe/1W/previous_week_high"]
+      }
+    ]
+  },
+  "canonical_identity_input": {
+    "zone_low": 1980.0,
+    "zone_high": 2000.0,
+    "role": "RESISTANCE",
+    "state": "ACTIVE",
+    "strength": "MAJOR",
+    "timeframes": ["1D", "1W"],
+    "source_types": ["CONFIRMED_SWING_HIGH", "MA200", "PREVIOUS_WEEK_HIGH"],
+    "fixture": true,
+    "version": "synthetic-high-tf-pressure-v1"
+  }
+}

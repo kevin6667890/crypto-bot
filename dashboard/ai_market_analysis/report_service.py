@@ -9,6 +9,9 @@ from .position_context import none_position_context,user_position_context,paper_
 from .report_context_compiler import compile_report_context
 from .report_fact_registry import build_fact_registry
 from .report_identity import report_request_identity
+from .report_identity import REPORT_PIPELINE_VERSIONS
+from .report_registry_snapshot import build_registry_snapshot
+from .canonical import stable_hash
 from .report_prompt_templates import compile_prompt
 from .report_repository import ReportRepository
 from .versions import AI_REPORT_PROMPT_VERSION,AI_REPORT_REQUEST_VERSION
@@ -40,8 +43,12 @@ class ReportService:
         macro=freeze_macro_evidence_set(macro_evidence or [],decision);enriched=build_enriched_context(base_context,position,macro)
         self.repository.save_context(enriched);self.repository.save_macro_set(macro)
         registry=build_fact_registry(enriched);compiled=compile_report_context(registry,mode);prompt=compile_prompt(compiled,mode)
-        request_id=report_request_identity(enriched["enriched_context_id"],mode,language,AI_REPORT_PROMPT_VERSION,provider,model)
-        value={"request_id":request_id,"request_identity":request_id,"request_version":AI_REPORT_REQUEST_VERSION,"context_id":enriched["enriched_context_id"],"instrument":instrument,"mode":mode,"language":language,"prompt_version":AI_REPORT_PROMPT_VERSION,"provider":provider,"model":model,"max_output_tokens":OUTPUT_LIMITS[mode]}
+        source_versions={**enriched["source_versions"],**REPORT_PIPELINE_VERSIONS};source_hash=stable_hash(source_versions)
+        request_id=report_request_identity(enriched["enriched_context_id"],mode,language,AI_REPORT_PROMPT_VERSION,provider,model,
+          fact_registry_hash=stable_hash(registry),numeric_registry_hash=stable_hash(registry["numeric_registry"]),prompt_hash=prompt["prompt_hash"],registry_source_versions_hash=source_hash)
+        snapshot=build_registry_snapshot(request_id=request_id,report_context_id=compiled["compiled_hash"],enriched_context_id=enriched["enriched_context_id"],fact_registry=registry,prompt_hash=prompt["prompt_hash"],source_versions=source_versions)
+        self.repository.save_registry_snapshot(snapshot)
+        value={"request_id":request_id,"request_identity":request_id,"request_version":AI_REPORT_REQUEST_VERSION,"context_id":enriched["enriched_context_id"],"instrument":instrument,"mode":mode,"language":language,"prompt_version":AI_REPORT_PROMPT_VERSION,"provider":provider,"model":model,"max_output_tokens":OUTPUT_LIMITS[mode],"registry_snapshot_id":snapshot["registry_snapshot_id"]}
         request,created=self.repository.create_request(value)
         completed=self.repository.get_report(request_id=request_id)
         return {"status_code":200 if completed else 202,"request_id":request_id,"context_id":enriched["enriched_context_id"],"base_context_id":base_context["context_id"],"created":created,"downgraded_reason":downgraded,"report":completed,"fact_count":len(registry["facts"]),"numeric_registry_count":len(registry["numeric_registry"]),"prompt_token_estimate":compiled["token_estimate"],"omitted_fact_ids":compiled["omitted_fact_ids"],"prompt_hash":prompt["prompt_hash"]}

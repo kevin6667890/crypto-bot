@@ -27,6 +27,9 @@ CREATE TABLE IF NOT EXISTS ai_report_attempts(attempt_id TEXT PRIMARY KEY,reques
 CREATE TABLE IF NOT EXISTS ai_market_reports(report_id TEXT PRIMARY KEY,request_id TEXT NOT NULL UNIQUE,context_id TEXT NOT NULL,mode TEXT NOT NULL,language TEXT NOT NULL,response_json TEXT NOT NULL,response_hash TEXT NOT NULL,model TEXT NOT NULL,provider TEXT NOT NULL,prompt_version TEXT NOT NULL,generated_text TEXT NOT NULL,audit_status TEXT NOT NULL CHECK(audit_status='PENDING'),created_at TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS idx_report_events_request ON ai_report_request_events(request_id,event_id);
 CREATE INDEX IF NOT EXISTS idx_reports_latest ON ai_market_reports(context_id,created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_ai_requests_presentation ON ai_report_requests(instrument,mode,language,created_at DESC,request_id);
+CREATE INDEX IF NOT EXISTS idx_ai_reports_presentation ON ai_market_reports(mode,language,created_at DESC,report_id);
+CREATE INDEX IF NOT EXISTS idx_ai_contexts_watermark ON ai_market_contexts(instrument,decision_time DESC,context_id);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_registry_snapshot_request ON ai_report_registry_snapshots(request_id);
 CREATE INDEX IF NOT EXISTS idx_ai_registry_snapshot_context ON ai_report_registry_snapshots(enriched_context_id,registry_snapshot_id);
 CREATE TRIGGER IF NOT EXISTS trg_ai_registry_snapshot_no_update BEFORE UPDATE ON ai_report_registry_snapshots BEGIN SELECT RAISE(ABORT,'REGISTRY_SNAPSHOT_MUTATED'); END;

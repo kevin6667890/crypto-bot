@@ -33,7 +33,7 @@ def test_depth_and_string_limits():
     with pytest.raises(ValueError):validate_report_body(body(model="x"*4001))
 
 def test_flags_default_disabled(monkeypatch):
-    for name in ("AI_MARKET_REPORTS_ENABLED","AI_MARKET_REPORT_WORKER_ENABLED","AI_USER_POSITION_PLANS_ENABLED","AI_MACRO_HTTP_FETCH_ENABLED","AI_REPORT_LIVE_PROVIDER_ENABLED","AI_REPORT_AUDIT_ENABLED","AI_REPORT_AUDIT_WORKER_ENABLED","AI_REPORT_AUTO_AUDIT_ENABLED","AI_REPORT_EVALUATION_ENABLED"):monkeypatch.delenv(name,raising=False);assert not enabled(name)
+    for name in ("AI_MARKET_REPORTS_ENABLED","AI_MARKET_REPORT_WORKER_ENABLED","AI_USER_POSITION_PLANS_ENABLED","AI_MACRO_HTTP_FETCH_ENABLED","AI_REPORT_LIVE_PROVIDER_ENABLED","AI_REPORT_AUDIT_ENABLED","AI_REPORT_AUDIT_WORKER_ENABLED","AI_REPORT_AUTO_AUDIT_ENABLED","AI_REPORT_EVALUATION_ENABLED","AI_MARKET_ANALYSIS_PRESENTATION_ENABLED"):monkeypatch.delenv(name,raising=False);assert not enabled(name)
     monkeypatch.delenv("AI_MARKET_REPORT_SHADOW_ONLY",raising=False);assert os.getenv("AI_MARKET_REPORT_SHADOW_ONLY","true")=="true"
 
 def test_disabled_health_sanitized(tmp_path,monkeypatch):

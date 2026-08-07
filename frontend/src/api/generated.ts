@@ -298,6 +298,39 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/ai-market-analysis/v1/presentations/latest": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** @description Admin-only atomic Shadow projection. The report body is null unless eligibility is PASSED_SHADOW_ONLY. */
+        get: operations["getLatestAiMarketPresentation"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/ai-market-analysis/v1/presentations/{report_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get: operations["getAiMarketPresentation"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/strategy/route/evaluate": {
         parameters: {
             query?: never;
@@ -415,6 +448,101 @@ export interface components {
             schema_version: string | null;
         } & {
             [key: string]: unknown;
+        };
+        /** @enum {string} */
+        AiPresentationEligibility: "AUDIT_PENDING" | "AUDIT_PASSED_SHADOW_ONLY" | "AUDIT_FAILED" | "AUDIT_ERROR" | "AUDIT_NOT_FOUND" | "AUDIT_SCHEMA_UPGRADE_REQUIRED";
+        /** @enum {string} */
+        AiPresentationFreshness: "CURRENT" | "AGING" | "STALE" | "SUPERSEDED" | "UNKNOWN";
+        AiCompactEvidence: {
+            fact_id: string;
+            category?: string;
+            label?: string;
+            value?: unknown;
+            display_value?: unknown;
+            unit?: string | null;
+            timestamp?: unknown;
+            quality?: string;
+            source?: string;
+            context_pointer?: string;
+        };
+        AiPresentationAuditSummary: {
+            status: string;
+            overall_score?: number;
+            promotion_eligible: boolean;
+            hard_failure_count: number;
+            hard_failures: string[];
+            warnings?: string[];
+            ratios: {
+                [key: string]: unknown;
+            };
+            policy_version?: string;
+        };
+        AiPresentationHealthSummary: {
+            reports_enabled?: boolean;
+            shadow_only?: boolean;
+            queue_depth?: number;
+            failed_count?: number;
+        } & {
+            [key: string]: unknown;
+        };
+        AiMarketPresentation: {
+            /** @enum {string} */
+            presentation_schema_version: "ai-market-presentation-v1";
+            presentation_id: string;
+            instrument: components["schemas"]["AiMarketInstrument"];
+            mode: components["schemas"]["AiMarketReportMode"];
+            /** @enum {string} */
+            language: "zh-CN" | "en";
+            report_id: string;
+            request_id: string;
+            context_id: string;
+            registry_snapshot_id?: string | null;
+            audit_id?: string | null;
+            report_schema_version?: string;
+            audit_schema_version?: string;
+            decision_time?: string;
+            latest_confirmed_market_time?: unknown;
+            generated_at?: string;
+            audited_at?: string;
+            eligibility: components["schemas"]["AiPresentationEligibility"];
+            freshness: {
+                status: components["schemas"]["AiPresentationFreshness"];
+                policy_version: string;
+                confirmed_15m_bars_behind?: number | null;
+                report_market_time?: number | null;
+                current_market_time?: number | null;
+                quality?: string;
+            };
+            latest_generated?: {
+                [key: string]: unknown;
+            };
+            report: components["schemas"]["AiMarketReportResponse"] | null;
+            audit_summary: components["schemas"]["AiPresentationAuditSummary"] | null;
+            referenced_facts: components["schemas"]["AiCompactEvidence"][];
+            referenced_levels: {
+                [key: string]: unknown;
+            }[];
+            referenced_scenarios: {
+                [key: string]: unknown;
+            }[];
+            referenced_macro: {
+                [key: string]: unknown;
+            }[];
+            position_summary?: {
+                [key: string]: unknown;
+            } | null;
+            data_warnings: string[];
+            health_summary: components["schemas"]["AiPresentationHealthSummary"];
+            source_versions: {
+                [key: string]: string;
+            };
+            presentation_hash: string;
+        };
+        AiPresentationError: {
+            error: {
+                code: string;
+                message: string;
+            };
         };
         /**
          * Format: int64
@@ -1054,7 +1182,17 @@ export interface components {
             items: components["schemas"]["DataCoverageItem"][];
         };
     };
-    responses: never;
+    responses: {
+        /** @description Sanitized Shadow presentation error */
+        AiPresentationError: {
+            headers: {
+                [name: string]: unknown;
+            };
+            content: {
+                "application/json": components["schemas"]["AiPresentationError"];
+            };
+        };
+    };
     parameters: never;
     requestBodies: never;
     headers: never;
@@ -1508,6 +1646,61 @@ export interface operations {
                 };
                 content?: never;
             };
+        };
+    };
+    getLatestAiMarketPresentation: {
+        parameters: {
+            query: {
+                instrument: components["schemas"]["AiMarketInstrument"];
+                mode: components["schemas"]["AiMarketReportMode"];
+                language: "zh-CN" | "en";
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Atomic presentation */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiMarketPresentation"];
+                };
+            };
+            401: components["responses"]["AiPresentationError"];
+            404: components["responses"]["AiPresentationError"];
+            413: components["responses"]["AiPresentationError"];
+        };
+    };
+    getAiMarketPresentation: {
+        parameters: {
+            query: {
+                instrument: components["schemas"]["AiMarketInstrument"];
+                mode: components["schemas"]["AiMarketReportMode"];
+                language: "zh-CN" | "en";
+            };
+            header?: never;
+            path: {
+                report_id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Report-bound atomic presentation */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AiMarketPresentation"];
+                };
+            };
+            401: components["responses"]["AiPresentationError"];
+            404: components["responses"]["AiPresentationError"];
         };
     };
     evaluateStrategyRouteFixtureV2: {

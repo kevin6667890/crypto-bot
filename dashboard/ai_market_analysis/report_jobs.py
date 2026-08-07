@@ -9,7 +9,7 @@ from .report_context_compiler import compile_report_context
 from .report_prompt_templates import compile_prompt, repair_prompt
 from .report_provider import AIReportProvider, ProviderError
 from .report_response_parser import parse_report_response, ReportParseError
-from .report_fact_registry import build_fact_registry
+from .report_registry_snapshot import validate_registry_snapshot
 from .report_repository import ReportRepository, utc_now
 from .report_identity import REPORT_PIPELINE_VERSIONS
 
@@ -51,16 +51,22 @@ class ReportWorker:
         with self.repository.connect() as c:return int(c.execute("SELECT COUNT(*) FROM ai_report_attempts WHERE request_id=?",(request_id,)).fetchone()[0])
     def _record_attempt(self,request:dict[str,Any],number:int,result:Any=None,*,parse_status:str="NOT_RUN",validation_status:str="NOT_RUN",failure_code:str|None=None,error:str|None=None)->None:
         usage=result.usage if result else {}
-        self.repository.save_attempt({"attempt_id":f"attempt_{stable_hash([request['request_id'],number])}","request_id":request["request_id"],"attempt_number":number,"provider":request["provider"],"model":request["model"],"started_at":utc_now(),"completed_at":utc_now(),"latency_ms":getattr(result,"latency_ms",None),"http_status":getattr(result,"http_status",None),"input_tokens":usage.get("prompt_tokens",0),"output_tokens":usage.get("completion_tokens",0),"total_tokens":usage.get("total_tokens",0),"finish_reason":getattr(result,"finish_reason",None),"raw_response_hash":getattr(result,"raw_response_hash",None),"parse_status":parse_status,"validation_status":validation_status,"failure_code":failure_code,"sanitized_error":(error or "")[:200] or None,"cost_status":"REQUIRES_RUNTIME_AUDIT","currency":None,"price_schedule_version":None,"estimated_cost":None})
+        self.repository.save_attempt({"attempt_id":f"attempt_{stable_hash([request['request_id'],number])}","request_id":request["request_id"],"attempt_number":number,"provider":request["provider"],"model":request["model"],"started_at":utc_now(),"completed_at":utc_now(),"latency_ms":getattr(result,"latency_ms",None),"http_status":getattr(result,"http_status",None),"input_tokens":usage.get("prompt_tokens",0),"output_tokens":usage.get("completion_tokens",0),"total_tokens":usage.get("total_tokens",0),"finish_reason":getattr(result,"finish_reason",None),"raw_response_hash":getattr(result,"raw_response_hash",None),"parse_status":parse_status,"validation_status":validation_status,"failure_code":failure_code,"sanitized_error":(error or "")[:200] or None,"cost_status":"REQUIRES_RUNTIME_AUDIT","currency":None,"price_schedule_version":None,"estimated_cost":None,"prompt_hash":request.get("generation_prompt_hash")})
     def _run(self,request:dict[str,Any])->None:
-        context=self.repository.load_context(request["context_id"]);registry=build_fact_registry(context);compiled=compile_report_context(registry,request["mode"])
+        context=self.repository.load_context(request["context_id"])
+        try:snapshot=self.repository.load_registry_snapshot(registry_snapshot_id=request.get("registry_snapshot_id"))
+        except KeyError:self.repository.event(request["request_id"],"FAILED_FINAL",{"code":"REGISTRY_SNAPSHOT_NOT_FOUND"});return
+        failures=validate_registry_snapshot(snapshot)
+        if failures:self.repository.event(request["request_id"],"FAILED_FINAL",{"code":failures[0]});return
+        registry=snapshot["fact_registry"];compiled=compile_report_context(registry,request["mode"]);request={**request,"generation_prompt_hash":snapshot["prompt_hash"]}
         if not self.budget.allows(self.repository,request["instrument"],compiled["token_estimate"],request["max_output_tokens"]):self.repository.event(request["request_id"],"BUDGET_BLOCKED",{});return
         number=self._attempt_count(request["request_id"])+1
         if number>3:self.repository.event(request["request_id"],"FAILED_FINAL",{"code":"MAX_ATTEMPTS"});return
         self.repository.event(request["request_id"],"RUNNING",{"attempt":number})
-        provider=self.provider_factory(request);source_versions={**context["source_versions"],**REPORT_PIPELINE_VERSIONS}
+        provider=self.provider_factory(request);source_versions=snapshot["source_versions"]
         response_metadata={"context_id":request["context_id"],"request_id":request["request_id"],"mode":request["mode"],"language":request["language"],"model":request["model"],"prompt_version":request["prompt_version"],"source_versions":source_versions,"audit_status":"PENDING"}
-        prompt=compile_prompt({**compiled,"required_response_metadata":response_metadata},request["mode"])
+        prompt=compile_prompt(compiled,request["mode"])
+        if prompt["prompt_hash"]!=snapshot["prompt_hash"]:self.repository.event(request["request_id"],"FAILED_FINAL",{"code":"REGISTRY_PROMPT_HASH_MISMATCH"});return
         provider_request={**request,"source_versions":source_versions,"compiled_context":compiled,"token_estimate":compiled["token_estimate"],"messages":prompt["messages"],"max_output_tokens":request["max_output_tokens"],"macro_items":context["macro_context"]["items"],"position_source":context["position_context"]["source"]}
         try:result=provider.generate(provider_request)
         except ProviderError as error:

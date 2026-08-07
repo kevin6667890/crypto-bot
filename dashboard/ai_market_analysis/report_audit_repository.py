@@ -5,22 +5,28 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any,Iterator
 from .canonical import canonical_json,identity,stable_hash
-from .report_fact_registry import build_fact_registry
 from .report_repository import ReportRepository,utc_now
 from .versions import AI_REPORT_AUDIT_DB_VERSION,AI_REPORT_AUDIT_VERSION
 
 MIGRATION_KEY="ai-report-audit-db-v1"
 SQL_PATH=Path(__file__).resolve().parents[2]/"migrations/002_ai_report_audit.sql"
+STRICT_SQL_PATH=Path(__file__).resolve().parents[2]/"migrations/003_ai_report_registry_snapshots_and_strict_audit.sql"
+STRICT_MIGRATION_KEY="ai-report-registry-snapshot-strict-audit-v1"
 AUDIT_EVENTS=("AUDIT_QUEUED","AUDIT_RUNNING","AUDIT_PASSED","AUDIT_FAILED","AUDIT_ERROR","AUDIT_INTERRUPTED","AUDIT_CANCEL_REQUESTED","AUDIT_CANCELLED")
 
 def migrate_audit_database(path:str|Path)->dict[str,Any]:
     path=Path(path);path.parent.mkdir(parents=True,exist_ok=True)
-    sql=SQL_PATH.read_text(encoding="utf-8")
+    sql=SQL_PATH.read_text(encoding="utf-8");strict_sql=STRICT_SQL_PATH.read_text(encoding="utf-8")
     with sqlite3.connect(path) as conn:
         conn.execute("PRAGMA journal_mode=WAL")
         with conn:
-            conn.executescript(sql)
+            conn.executescript(sql);conn.executescript(strict_sql)
+            request_columns={r[1] for r in conn.execute("PRAGMA table_info(ai_report_requests)")}
+            if "registry_snapshot_id" not in request_columns:conn.execute("ALTER TABLE ai_report_requests ADD COLUMN registry_snapshot_id TEXT")
+            attempt_columns={r[1] for r in conn.execute("PRAGMA table_info(ai_report_attempts)")}
+            if "prompt_hash" not in attempt_columns:conn.execute("ALTER TABLE ai_report_attempts ADD COLUMN prompt_hash TEXT")
             conn.execute("INSERT OR IGNORE INTO ai_report_migrations VALUES(?,?,?)",(MIGRATION_KEY,AI_REPORT_AUDIT_DB_VERSION,utc_now()))
+            conn.execute("INSERT OR IGNORE INTO ai_report_migrations VALUES(?,?,?)",(STRICT_MIGRATION_KEY,AI_REPORT_AUDIT_VERSION,utc_now()))
     return {"schema_version":AI_REPORT_AUDIT_DB_VERSION,"database":str(path),"applied":True}
 
 def freeze_report_bundle(repository:ReportRepository,report_id:str)->dict[str,Any]:
@@ -29,12 +35,21 @@ def freeze_report_bundle(repository:ReportRepository,report_id:str)->dict[str,An
     with repository.connect() as conn:
         request=conn.execute("SELECT * FROM ai_report_requests WHERE request_id=?",(report["request_id"],)).fetchone()
     if not request:raise KeyError("request not found")
-    context=repository.load_context(report["context_id"]);registry=build_fact_registry(context);response=report["response"]
+    context=repository.load_context(report["context_id"]);response=report["response"]
+    snapshot_id=request["registry_snapshot_id"] if "registry_snapshot_id" in request.keys() else None
+    if not snapshot_id:raise KeyError("REGISTRY_SNAPSHOT_NOT_FOUND")
+    snapshot=repository.load_registry_snapshot(registry_snapshot_id=snapshot_id)
+    with repository.connect() as conn:
+        attempt=conn.execute("SELECT prompt_hash FROM ai_report_attempts WHERE request_id=? AND validation_status='VALID' ORDER BY attempt_number DESC LIMIT 1",(report["request_id"],)).fetchone()
+    prompt_hash=attempt[0] if attempt else None
     return {"report_id":report_id,"report_hash":report["response_hash"],"report":response,"generated_text":report["generated_text"],
       "request_id":report["request_id"],"request":dict(request),"context_id":report["context_id"],"context_hash":stable_hash(context),"context":context,
-      "fact_registry":registry,"numeric_registry":registry["numeric_registry"],"position_context":context["position_context"],
+      "registry_snapshot_id":snapshot_id,"fact_registry_hash":snapshot["fact_registry_hash"],"numeric_registry_hash":snapshot["numeric_registry_hash"],
+      "registry_source_versions_hash":snapshot["source_versions_hash"],"prompt_hash":snapshot["prompt_hash"],
+      "registry_snapshot":snapshot,"fact_registry":snapshot["fact_registry"],"numeric_registry":snapshot["numeric_registry"],"position_context":context["position_context"],
       "macro_evidence_set":context["macro_context"],"provider_metadata":{"provider":report["provider"],"model":report["model"]},
-      "prompt_version":report["prompt_version"],"source_versions":response["source_versions"]}
+      "prompt_version":report["prompt_version"],"generation_prompt_hash":prompt_hash,"source_versions":response["source_versions"],
+      "frozen_replay_provenance":{"report_lookup":"PRIMARY_KEY","request_lookup":"PRIMARY_KEY","context_lookup":"PRIMARY_KEY","registry_lookup":"PRIMARY_KEY","position_source":"FROZEN_CONTEXT","macro_source":"FROZEN_CONTEXT","external_market_databases_opened":False}}
 
 class AuditRepository:
     def __init__(self,path:str|Path):self.path=Path(path)

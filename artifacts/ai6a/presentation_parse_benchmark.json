@@ -2,22 +2,22 @@
   "benchmark": "AI-6AC presentation JSON.parse + runtime guard + normalization",
   "node": "v24.15.0",
   "os": "win32 10.0.26200 x64",
-  "commit": "5b96491caf3cac90a90d7a49ff52df17aa61ff4d",
-  "measured_at": "2026-08-07T04:03:19.620Z",
+  "commit": "f2d721d814c08b2742ea58e0717d6194ea6ca51a",
+  "measured_at": "2026-08-07T04:10:54.494Z",
   "full_fixture": {
     "payload_bytes": 52507,
     "warmup": 50,
     "iterations": 500,
-    "p50_ms": 0.0403999999999769,
-    "p95_ms": 0.052300000000002456,
-    "max_ms": 0.5971999999999866
+    "p50_ms": 0.039199999999993906,
+    "p95_ms": 0.05099999999998772,
+    "max_ms": 0.4521000000000299
   },
   "target_250kb": {
     "payload_bytes": 245376,
     "warmup": 50,
     "iterations": 500,
-    "p50_ms": 0.175200000000018,
-    "p95_ms": 0.2341000000000122,
-    "max_ms": 0.3686000000000149
+    "p50_ms": 0.17060000000003583,
+    "p95_ms": 0.2441000000000031,
+    "max_ms": 0.336400000000026
   }
 }

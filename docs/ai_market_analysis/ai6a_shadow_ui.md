@@ -46,6 +46,16 @@ Artifacts are written to:
 - `artifacts/ai6a/cached_render_benchmark.json`
 - `artifacts/ai6a/first_render_benchmark.json`
 
+Final AI-6AC integration evidence on tested commit `943eb77d77bf6c6a84d13abda5179ad9624830af`:
+
+- 52,507-byte parse: p50 0.0406ms, p95 0.0515ms, max 0.3836ms (50 warmups, 500 measurements).
+- 245,376-byte parse: p50 0.1795ms, p95 0.2166ms, max 0.3412ms (50 warmups, 500 measurements).
+- cached structured render: p50 7.6ms, p95 11.9ms, max 12.0ms (5 warmups, 30 measurements, zero network requests).
+- first structured render p95: desktop FULL 15.7ms, POSITION_AWARE 7.5ms, critical warning 8.7ms, 390px mobile FULL 7.4ms.
+- backend Presentation matrix: 30/30 required nodes passed; 16/16 additional security nodes passed.
+- full backend: 1507 passed and 1 skipped in each of two serial runs.
+- frontend unit/component: 147 passed; Playwright: 48 passed; Axe critical/serious findings: zero.
+
 Performance measurements are evidence only and never enter report, audit or presentation identity hashes.
 
 ## Presentation backend matrix

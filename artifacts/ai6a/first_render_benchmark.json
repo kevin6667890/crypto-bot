@@ -1,0 +1,58 @@
+{
+  "benchmark": "AI-6AC first structured render after parse/normalization (network excluded)",
+  "iterations_per_case": 5,
+  "payload_bytes": 52507,
+  "viewport_cases": [
+    {
+      "name": "desktop_full",
+      "mode": "FULL",
+      "width": 1440,
+      "warnings": []
+    },
+    {
+      "name": "desktop_position",
+      "mode": "POSITION_AWARE",
+      "width": 1440,
+      "warnings": []
+    },
+    {
+      "name": "desktop_critical",
+      "mode": "FULL",
+      "width": 1440,
+      "warnings": [
+        "CRITICAL"
+      ]
+    },
+    {
+      "name": "mobile_full",
+      "mode": "FULL",
+      "width": 390,
+      "warnings": []
+    }
+  ],
+  "results": {
+    "desktop_full": {
+      "p50_ms": 7.5,
+      "p95_ms": 17.100000008940697,
+      "max_ms": 17.100000008940697
+    },
+    "desktop_position": {
+      "p50_ms": 6.800000011920929,
+      "p95_ms": 7,
+      "max_ms": 7
+    },
+    "desktop_critical": {
+      "p50_ms": 7.600000008940697,
+      "p95_ms": 19.799999997019768,
+      "max_ms": 19.799999997019768
+    },
+    "mobile_full": {
+      "p50_ms": 7.0999999940395355,
+      "p95_ms": 7.5,
+      "max_ms": 7.5
+    }
+  },
+  "chromium_version": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/151.0.0.0 Safari/537.36",
+  "commit": "5b96491caf3cac90a90d7a49ff52df17aa61ff4d",
+  "measured_at": "2026-08-07T04:03:38.021Z"
+}

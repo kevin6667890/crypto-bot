@@ -5,6 +5,10 @@ from pathlib import Path
 from dashboard.ai_market_analysis.canonical import stable_hash
 from dashboard.ai_market_analysis.report_audit_repository import freeze_report_bundle,migrate_audit_database
 from dashboard.ai_market_analysis.report_fact_registry import build_fact_registry
+from dashboard.ai_market_analysis.report_context_compiler import compile_report_context
+from dashboard.ai_market_analysis.report_prompt_templates import compile_prompt
+from dashboard.ai_market_analysis.report_registry_snapshot import build_registry_snapshot
+from dashboard.ai_market_analysis.report_identity import report_request_identity,report_identity
 from dashboard.ai_market_analysis.report_jobs import ReportWorker
 from dashboard.ai_market_analysis.report_provider import FakeAIReportProvider
 from dashboard.ai_market_analysis.report_repository import ReportRepository,migrate_database
@@ -26,7 +30,18 @@ def _append(bundle,section_id,text):_section(bundle,section_id)["body"]+="。"+t
 def _finalize(bundle):
     bundle["report_hash"]=stable_hash(bundle["report"]);bundle["generated_text"]="\n".join(s["body"] for s in bundle["report"]["sections"]);return bundle
 def _rebuild_context(bundle):
-    bundle["context_hash"]=stable_hash(bundle["context"]);registry=build_fact_registry(bundle["context"]);bundle["fact_registry"]=registry;bundle["numeric_registry"]=registry["numeric_registry"]
+    bundle["context_hash"]=stable_hash(bundle["context"]);registry=build_fact_registry(bundle["context"]);compiled=compile_report_context(registry,bundle["report"]["mode"]);prompt=compile_prompt(compiled,bundle["report"]["mode"])
+    snapshot=build_registry_snapshot(request_id=bundle["request_id"],report_context_id=compiled["compiled_hash"],enriched_context_id=bundle["context_id"],fact_registry=registry,prompt_hash=prompt["prompt_hash"],source_versions=bundle["source_versions"])
+    bundle.update({"registry_snapshot_id":snapshot["registry_snapshot_id"],"fact_registry_hash":snapshot["fact_registry_hash"],"numeric_registry_hash":snapshot["numeric_registry_hash"],"registry_source_versions_hash":snapshot["source_versions_hash"],"prompt_hash":snapshot["prompt_hash"],"generation_prompt_hash":snapshot["prompt_hash"],"registry_snapshot":snapshot,"fact_registry":registry,"numeric_registry":registry["numeric_registry"]})
+    bundle["request"]["registry_snapshot_id"]=snapshot["registry_snapshot_id"]
+
+def refreeze_bundle(bundle,reidentify=False):
+    registry=bundle["fact_registry"];compiled=compile_report_context(registry,bundle["report"]["mode"]);prompt=compile_prompt(compiled,bundle["report"]["mode"])
+    if reidentify:
+        request=bundle["request"];request_id=report_request_identity(bundle["context_id"],request["mode"],request["language"],request["prompt_version"],request["provider"],request["model"],fact_registry_hash=stable_hash(registry),numeric_registry_hash=stable_hash(registry["numeric_registry"]),prompt_hash=prompt["prompt_hash"],registry_source_versions_hash=stable_hash(bundle["source_versions"]))
+        bundle["request_id"]=request_id;request["request_id"]=request_id;request["request_identity"]=request_id;bundle["report"]["request_id"]=request_id;bundle["report_hash"]=stable_hash(bundle["report"]);bundle["report_id"]=report_identity(bundle["report"])
+    snapshot=build_registry_snapshot(request_id=bundle["request_id"],report_context_id=compiled["compiled_hash"],enriched_context_id=bundle["context_id"],fact_registry=registry,prompt_hash=prompt["prompt_hash"],source_versions=bundle["source_versions"])
+    bundle.update({"registry_snapshot_id":snapshot["registry_snapshot_id"],"fact_registry_hash":snapshot["fact_registry_hash"],"numeric_registry_hash":snapshot["numeric_registry_hash"],"registry_source_versions_hash":snapshot["source_versions_hash"],"prompt_hash":snapshot["prompt_hash"],"generation_prompt_hash":snapshot["prompt_hash"],"registry_snapshot":snapshot,"numeric_registry":registry["numeric_registry"]});bundle["request"]["registry_snapshot_id"]=snapshot["registry_snapshot_id"];return bundle
 
 def adversarial_bundle(case_id):
     position=case_id in {"undeclared_half","plan_not_started"};bundle=golden_bundle("POSITION_AWARE" if position else "FULL",position)
@@ -44,10 +59,10 @@ def adversarial_bundle(case_id):
     elif case_id in {"support_as_resistance","internal_level_conflict"}:_append(bundle,"KEY_LEVELS","该关键位是当前压力")
     elif case_id=="invent_level":_append(bundle,"KEY_LEVELS","新增关键位1945 USDT")
     elif case_id=="invent_probability":_append(bundle,"CONCLUSION","上涨概率70%")
-    elif case_id=="scenario_no_trigger":_section(bundle,"SCENARIOS")["body"]=_section(bundle,"SCENARIOS")["body"].replace("触发", "条件")
-    elif case_id=="scenario_no_invalidation":_section(bundle,"LIMITATIONS")["body"]=_section(bundle,"LIMITATIONS")["body"].replace("失效","受损")
+    elif case_id=="scenario_no_trigger":_section(bundle,"SCENARIOS")["body"]=_section(bundle,"SCENARIOS")["body"].replace("触发", "条件");bundle["report"]["scenarios"][0]["trigger_text"]=None
+    elif case_id=="scenario_no_invalidation":_section(bundle,"LIMITATIONS")["body"]=_section(bundle,"LIMITATIONS")["body"].replace("失效","受损");bundle["report"]["scenarios"][0]["confirmed_close_required"]=False
     elif case_id=="scenario_unknown_target":_section(bundle,"SCENARIOS")["level_refs"].append("level_missing")
-    elif case_id=="scenario_missing_failed":_section(bundle,"SCENARIOS")["body"]="路径一是突破压力后延续；路径二是回踩支撑后确认；触发前均不是已确认结果"
+    elif case_id=="scenario_missing_failed":_section(bundle,"SCENARIOS")["body"]="路径一是突破压力后延续；路径二是回踩支撑后确认；触发前均不是已确认结果";bundle["report"]["scenarios"].pop()
     elif case_id=="cvd_gap_confirmed":
         for fact in bundle["fact_registry"]["facts"]:
             if fact["category"]=="ORDER_FLOW" and isinstance(fact["value"],dict):fact["value"]["cvd_status"]="GAP_AFFECTED"

@@ -11,6 +11,7 @@ ATTRIBUTIONS = ("NEW_LONGS_DOMINANT", "SHORT_COVERING_DOMINANT", "NEW_SHORTS_DOM
                 "LEVERAGED_LONG_BUILDUP", "LEVERAGED_SHORT_BUILDUP", "MIXED_POSITIONING",
                 "INSUFFICIENT_EVIDENCE")
 ALTERNATIVE_ACTIVE_BUYING = "ACTIVE_BUYING_CONTRIBUTED"
+METRIC_DIRECTIONS = ("RISING", "FALLING", "FLAT", "UNAVAILABLE")
 SCORE_RULES = {"direction": 3, "oi": 3, "cvd": 2, "volume": 1, "liquidation": 1,
                "minimum_evidence": 3, "high_score": 8, "medium_score": 5}
 

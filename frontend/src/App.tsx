@@ -44,12 +44,14 @@ import {
   strategyEvolution,
 } from "./data";
 import { PUBLIC_MARKET_INSTRUMENTS } from "./marketInstruments";
+import { shadowText } from "./aiMarketAnalysis/i18n";
 
 const StrategyResearchRoute = lazy(() => import("./routes/StrategyResearchRoute"));
 const MicrostructureResearch = lazy(() => import("./MicrostructureResearch"));
 const Operations = lazy(() => import("./Operations"));
 const MarketStateResearch = lazy(() => import("./MarketStateResearch"));
 const StrategyRouterResearch = lazy(() => import("./StrategyRouterResearch"));
+const ShadowMarketAnalysisPage = lazy(() => import("./aiMarketAnalysis/ShadowMarketAnalysisPage"));
 
 type RouteErrorBoundaryProps = { name: string; children: React.ReactNode };
 type RouteErrorBoundaryState = { failed: boolean };
@@ -1703,5 +1705,15 @@ function Workspace() {
 }
 
 export default function App() {
+  if (window.location.pathname === "/shadow/ai-market-analysis") {
+    const enabled = import.meta.env.VITE_AI_MARKET_ANALYSIS_SHADOW_ENABLED === "true";
+    if (!enabled) return <ShadowDisabledRoute />;
+    return <DeferredRoute name="AI Market Analysis Shadow"><ShadowMarketAnalysisPage /></DeferredRoute>;
+  }
   return <Workspace />;
+}
+
+function ShadowDisabledRoute() {
+  const { language } = useLanguage(); const labels = shadowText(language);
+  return <main className="ama-disabled" role="main"><h1>{labels.disabled}</h1><a href="/">{labels.back}</a></main>;
 }

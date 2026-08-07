@@ -11,16 +11,17 @@ from .versions import AI_REPORT_AUDIT_DB_VERSION,AI_REPORT_AUDIT_VERSION
 MIGRATION_KEY="ai-report-audit-db-v1"
 SQL_PATH=Path(__file__).resolve().parents[2]/"migrations/002_ai_report_audit.sql"
 STRICT_SQL_PATH=Path(__file__).resolve().parents[2]/"migrations/003_ai_report_registry_snapshots_and_strict_audit.sql"
+PRESENTATION_SQL_PATH=Path(__file__).resolve().parents[2]/"migrations/004_ai_shadow_presentation_indexes.sql"
 STRICT_MIGRATION_KEY="ai-report-registry-snapshot-strict-audit-v1"
 AUDIT_EVENTS=("AUDIT_QUEUED","AUDIT_RUNNING","AUDIT_PASSED","AUDIT_FAILED","AUDIT_ERROR","AUDIT_INTERRUPTED","AUDIT_CANCEL_REQUESTED","AUDIT_CANCELLED")
 
 def migrate_audit_database(path:str|Path)->dict[str,Any]:
     path=Path(path);path.parent.mkdir(parents=True,exist_ok=True)
-    sql=SQL_PATH.read_text(encoding="utf-8");strict_sql=STRICT_SQL_PATH.read_text(encoding="utf-8")
+    sql=SQL_PATH.read_text(encoding="utf-8");strict_sql=STRICT_SQL_PATH.read_text(encoding="utf-8");presentation_sql=PRESENTATION_SQL_PATH.read_text(encoding="utf-8")
     with sqlite3.connect(path) as conn:
         conn.execute("PRAGMA journal_mode=WAL")
         with conn:
-            conn.executescript(sql);conn.executescript(strict_sql)
+            conn.executescript(sql);conn.executescript(strict_sql);conn.executescript(presentation_sql)
             request_columns={r[1] for r in conn.execute("PRAGMA table_info(ai_report_requests)")}
             if "registry_snapshot_id" not in request_columns:conn.execute("ALTER TABLE ai_report_requests ADD COLUMN registry_snapshot_id TEXT")
             attempt_columns={r[1] for r in conn.execute("PRAGMA table_info(ai_report_attempts)")}

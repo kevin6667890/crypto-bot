@@ -64,6 +64,7 @@ try:
     from ai_market_analysis.report_audit_repository import AuditRepository
     from ai_market_analysis.report_audit_api import trigger_audit,latest_audit,eligibility,create_evaluation_run
     from ai_market_analysis.report_service import enabled as ai_report_flag
+    from ai_market_analysis.presentation import build_latest_presentation,build_report_presentation,position_details,PresentationError
 except ImportError:
     from .research_service import ResearchService
     from .strategy_rules import StrategyParameters, calculate_indicators, validate_parameters
@@ -101,6 +102,7 @@ except ImportError:
     from .ai_market_analysis.report_audit_repository import AuditRepository
     from .ai_market_analysis.report_audit_api import trigger_audit,latest_audit,eligibility,create_evaluation_run
     from .ai_market_analysis.report_service import enabled as ai_report_flag
+    from .ai_market_analysis.presentation import build_latest_presentation,build_report_presentation,position_details,PresentationError
 
 try:
     from dotenv import load_dotenv
@@ -1311,6 +1313,25 @@ class Handler(BaseHTTPRequestHandler):
         parsed, query = urlparse(self.path), parse_qs(urlparse(self.path).query)
         instrument = query.get("instrument", ["ETH-USDT"])[0]
         if parsed.path.startswith("/api/ai-market-analysis/v1/"):
+            if parsed.path.startswith("/api/ai-market-analysis/v1/presentations"):
+                if not ai_report_flag("AI_MARKET_ANALYSIS_PRESENTATION_ENABLED"):
+                    self._send({"error":{"code":"PRESENTATION_DISABLED","message":"Shadow presentation is disabled."}},HTTPStatus.NOT_FOUND);return
+                if not self._admin():return
+                if self._limited("ai-presentation-minute",60,60):return
+                if AI_REPORT_REPOSITORY.schema_version() is None:
+                    self._send({"error":{"code":"SCHEMA_UNAVAILABLE","message":"Shadow presentation storage is unavailable."}},HTTPStatus.SERVICE_UNAVAILABLE);return
+                try:
+                    requested=query.get("instrument",[""])[0];mode=query.get("mode",[""])[0];language=query.get("language",["zh-CN"])[0]
+                    if parsed.path == "/api/ai-market-analysis/v1/presentations/latest":
+                        self._send(build_latest_presentation(AI_REPORT_REPOSITORY,requested,mode,language));return
+                    parts=parsed.path.rstrip("/").split("/");report_id=parts[-2] if parts[-1]=="position" else parts[-1]
+                    if parts[-1]=="position":
+                        self._send(position_details(AI_REPORT_REPOSITORY,report_id,instrument=requested,mode=mode));return
+                    self._send(build_report_presentation(AI_REPORT_REPOSITORY,report_id,instrument=requested,mode=mode,language=language));return
+                except PresentationError as error:
+                    self._send({"error":{"code":error.code,"message":"Shadow presentation is unavailable."}},error.status);return
+                except Exception:
+                    self._send({"error":{"code":"PRESENTATION_INTERNAL_ERROR","message":"Shadow presentation is unavailable."}},HTTPStatus.INTERNAL_SERVER_ERROR);return
             if parsed.path == "/api/ai-market-analysis/v1/health":
                 self._send(report_health(AI_REPORT_REPOSITORY));return
             if not ai_report_flag("AI_MARKET_REPORTS_ENABLED"):

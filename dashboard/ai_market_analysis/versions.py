@@ -49,6 +49,9 @@ AI_REPORT_SAFETY_AUDIT_VERSION = "ai-report-safety-audit-v1"
 AI_REPORT_EVALUATION_VERSION = "ai-report-evaluation-v1"
 AI_REPORT_REPLAY_VERSION = "ai-report-replay-v1"
 AI_REPORT_AUDIT_DB_VERSION = "ai-report-audit-db-v1"
+AI_PRESENTATION_SCHEMA_VERSION = "ai-market-presentation-v1"
+AI_PRESENTATION_VERSION = "ai-market-presentation-projection-v1"
+AI_FRESHNESS_POLICY_VERSION = "ai-market-freshness-policy-v1"
 
 SUPPORTED_INSTRUMENTS = ("BTC-USDT-SWAP", "ETH-USDT-SWAP", "SOL-USDT-SWAP")
 ORDERFLOW_RESOLUTIONS = ("1m", "5m", "15m", "1H", "4H", "1D")

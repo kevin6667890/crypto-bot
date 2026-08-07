@@ -1,0 +1,6 @@
+import { translateField } from "./fieldTranslations";
+import type { UiLanguage } from "./enumTranslations";
+import type { ShadowLabels } from "./i18n";
+const groups={feature:["reports_enabled","shadow_only","worker_enabled","audit_enabled","provider_configured","live_provider_allowed"],queue:["queue_depth","active_requests","oldest_queued_age"],outcomes:["last_report_success","last_audit_success","failed_count","budget_blocked"],resources:["daily_tokens","db_size"],versions:["schema_versions"]} as const;
+const display=(value:unknown,labels:ShadowLabels)=>typeof value==="boolean"?(value?labels.enabled:labels.disabledValue):value==null?"—":typeof value==="object"?Object.entries(value as Record<string,unknown>).map(([k,v])=>`${k}: ${String(v)}`).join(" · "):String(value);
+export function HealthPanel({health,labels,language}:{health:Record<string,unknown>;labels:ShadowLabels;language:UiLanguage}){return <details className="ama-panel"><summary>{labels.health}</summary>{Object.entries(groups).map(([group,fields])=><section key={group}><h3>{labels[group as keyof ShadowLabels]}</h3><dl className="ama-ratios">{fields.map(field=><div key={field}><dt>{translateField(field,language)}</dt><dd>{display(health[field],labels)}</dd></div>)}</dl></section>)}</details>;}

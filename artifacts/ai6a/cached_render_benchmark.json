@@ -1,0 +1,18 @@
+{
+  "benchmark": "AI-6AC cached real React structured render",
+  "warmup": 5,
+  "iterations": 30,
+  "p50_ms": 8.100000008940697,
+  "p95_ms": 11.799999997019768,
+  "max_ms": 12.099999994039536,
+  "network_requests_during_measurement": 0,
+  "payload_bytes": 52507,
+  "chromium_version": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/151.0.0.0 Safari/537.36",
+  "browser_name": "chromium",
+  "viewport": {
+    "width": 1280,
+    "height": 720
+  },
+  "commit": "f2d721d814c08b2742ea58e0717d6194ea6ca51a",
+  "measured_at": "2026-08-07T04:08:33.443Z"
+}

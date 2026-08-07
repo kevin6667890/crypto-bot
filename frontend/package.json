@@ -11,6 +11,8 @@
     "api:generate": "node scripts/api-generate.mjs",
     "api:check": "node scripts/api-check.mjs",
     "test": "vitest run",
+    "test:e2e": "playwright test",
+    "benchmark:ai-presentation-parse": "vite-node scripts/benchmarkAiPresentationParse.ts",
     "preview": "vite preview --host 127.0.0.1"
   },
   "dependencies": {
@@ -24,6 +26,8 @@
     "vite": "^6.0.5"
   },
   "devDependencies": {
+    "@axe-core/playwright": "^4.10.2",
+    "@playwright/test": "^1.54.2",
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
     "openapi-typescript": "^7.8.0",

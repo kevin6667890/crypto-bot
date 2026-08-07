@@ -1,0 +1,7 @@
+# AI-6B 24-Hour Acceptance Plan (Template Only)
+
+Status: **NOT_EXECUTED**. Create a write-once evidence directory containing `acceptance-manifest.json`, start/end commit, deployed versions, flag snapshots, migration record, periodic health snapshots, report/audit counts, error distribution, token/cost usage, latency/payload histograms, frontend errors, symbol/mode mismatch checks, order/Router/collector unchanged proof, rollback rehearsal and artifact hashes.
+
+Required thresholds: wrong symbol=0; wrong mode=0; context/audit mismatch=0; registry mismatch=0; unaudited body display=0; legacy-schema misdisplay=0; duplicate provider charge=0; report schema success >=99%; audit success >=99%; production Presentation p95 <=800 ms; stale marking accuracy=100%; critical warning visibility=100%; position leaks=0; order changes=0; Router changes=0; collector changes=0; token budget not exceeded; disk growth within budget; no infinite worker retry; old AI Brief healthy. Record frontend JS error rate and its approved threshold before starting.
+
+Manifest fields: acceptance ID, UTC window, owners, stop authority, commits, artifacts with SHA-256, audience, flags, database backup ID, migration IDs, provider/model/budget, sample report/audit/presentation IDs, measurements, every threshold result, stop events, rollback result and signatures. A missing or unverifiable field is `NOT_READY`, never a pass.

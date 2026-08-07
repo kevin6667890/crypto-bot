@@ -1,0 +1,58 @@
+{
+  "benchmark": "AI-6AC first structured render after parse/normalization (network excluded)",
+  "iterations_per_case": 5,
+  "payload_bytes": 52507,
+  "viewport_cases": [
+    {
+      "name": "desktop_full",
+      "mode": "FULL",
+      "width": 1440,
+      "warnings": []
+    },
+    {
+      "name": "desktop_position",
+      "mode": "POSITION_AWARE",
+      "width": 1440,
+      "warnings": []
+    },
+    {
+      "name": "desktop_critical",
+      "mode": "FULL",
+      "width": 1440,
+      "warnings": [
+        "CRITICAL"
+      ]
+    },
+    {
+      "name": "mobile_full",
+      "mode": "FULL",
+      "width": 390,
+      "warnings": []
+    }
+  ],
+  "results": {
+    "desktop_full": {
+      "p50_ms": 7.799999997019768,
+      "p95_ms": 18.80000001192093,
+      "max_ms": 18.80000001192093
+    },
+    "desktop_position": {
+      "p50_ms": 7.4000000059604645,
+      "p95_ms": 8.099999994039536,
+      "max_ms": 8.099999994039536
+    },
+    "desktop_critical": {
+      "p50_ms": 7.4000000059604645,
+      "p95_ms": 17,
+      "max_ms": 17
+    },
+    "mobile_full": {
+      "p50_ms": 6.799999997019768,
+      "p95_ms": 7.299999997019768,
+      "max_ms": 7.299999997019768
+    }
+  },
+  "chromium_version": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) HeadlessChrome/151.0.0.0 Safari/537.36",
+  "commit": "f2d721d814c08b2742ea58e0717d6194ea6ca51a",
+  "measured_at": "2026-08-07T04:08:45.309Z"
+}

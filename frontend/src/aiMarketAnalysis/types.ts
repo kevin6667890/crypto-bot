@@ -36,6 +36,10 @@ export function parsePresentation(value: unknown): Presentation {
   return value as unknown as Presentation;
 }
 
+export function normalizePresentation(value: Presentation): Presentation {
+  return {...value,referenced_facts:[...value.referenced_facts],referenced_levels:[...value.referenced_levels],referenced_scenarios:[...value.referenced_scenarios],referenced_macro:[...value.referenced_macro],data_warnings:[...value.data_warnings],source_versions:{...value.source_versions},report:value.report?{...value.report,sections:[...value.report.sections],key_levels:[...value.report.key_levels],scenarios:[...value.report.scenarios],data_warnings:[...value.report.data_warnings],source_versions:{...value.report.source_versions}}:null};
+}
+
 export function isSafeHttpUrl(value: unknown): value is string {
   if (typeof value !== "string") return false;
   try { const url = new URL(value); return url.protocol === "http:" || url.protocol === "https:"; } catch { return false; }

@@ -16,6 +16,11 @@ def test_admin_token_is_memory_only_and_not_logged():
     assert "console." not in source and "token=" not in source
 
 
+def test_safe_enum_is_not_used_by_shadow_business_components():
+    users = [path.name for path in ROOT.glob("*.tsx") if ".test." not in path.name and "safeEnum" in path.read_text(encoding="utf-8")]
+    assert users == []
+
+
 def test_position_sensitive_fields_are_not_in_initial_panel_contract():
     source = (ROOT / "ShadowMarketAnalysisPage.tsx").read_text(encoding="utf-8")
     api = (ROOT / "api.ts").read_text(encoding="utf-8")

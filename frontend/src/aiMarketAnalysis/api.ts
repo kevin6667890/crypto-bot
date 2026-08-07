@@ -1,4 +1,4 @@
-import { parsePresentation, type Instrument, type Presentation, type ReportMode } from "./types";
+import { normalizePresentation, parsePresentation, type Instrument, type Presentation, type ReportMode } from "./types";
 
 const base = (window.__PAPER_API_URL__ || import.meta.env.VITE_PAPER_API_URL || "").replace(/\/$/, "");
 export class PresentationApiError extends Error { constructor(public code: string, public status: number) { super(code); } }
@@ -8,7 +8,9 @@ export async function fetchPresentation(input: { instrument: Instrument; mode: R
   const response = await fetch(`${base}${path}?${query}`, { signal: input.signal, cache: "no-store", headers: { Authorization: `Bearer ${input.token}`, Accept: "application/json" } });
   const payload = await response.json().catch(() => ({})) as { error?: { code?: string } };
   if (!response.ok) throw new PresentationApiError(payload.error?.code || `HTTP_${response.status}`, response.status);
-  return parsePresentation(payload);
+  const normalized=normalizePresentation(parsePresentation(payload));
+  if (typeof performance !== "undefined") performance.mark("ama-presentation-normalized");
+  return normalized;
 }
 export async function fetchPositionDetails(input: { reportId: string; instrument: Instrument; mode: ReportMode; token: string; signal?: AbortSignal }) {
   const query = new URLSearchParams({ instrument: input.instrument, mode: input.mode });

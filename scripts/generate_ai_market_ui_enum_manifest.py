@@ -12,7 +12,7 @@ from dashboard.ai_market_analysis.ui_enum_manifest import UI_ENUM_GROUPS, UI_ENU
 
 
 def payload() -> dict[str, object]:
-    return {"version": UI_ENUM_MANIFEST_VERSION, "groups": {key: list(values) for key, values in sorted(UI_ENUM_GROUPS.items())}}
+    return {"$schema": "https://json-schema.org/draft/2020-12/schema", "version": UI_ENUM_MANIFEST_VERSION, "groups": {key: list(values) for key, values in sorted(UI_ENUM_GROUPS.items())}}
 
 
 def main() -> int:

@@ -14,6 +14,8 @@ from dashboard.ai_market_analysis.report_coverage_audit import audit_coverage
 from dashboard.ai_market_analysis.report_position_audit import audit_position
 from dashboard.ai_market_analysis.report_macro_audit import audit_macro
 from dashboard.ai_market_analysis.report_safety_audit import audit_safety
+from dashboard.ai_market_analysis.report_level_audit import audit_report_levels
+from dashboard.ai_market_analysis.report_scenario_audit import audit_report_scenarios
 from dashboard.ai_market_analysis.report_evaluation import default_manifest,evaluate
 from tests.ai_market_analysis.ai5_helpers import golden_bundle
 from tests.ai_market_analysis.test_report_evaluation import case_bundle
@@ -31,6 +33,7 @@ def main():
       "semantic_reference":lambda:(audit_references(claims,b["fact_registry"]),audit_semantics(claims,facts)),
       "contradiction":lambda:audit_contradictions(claims,b["context"],facts),"repetition":lambda:audit_repetition(claims),
       "coverage_position_macro_safety":lambda:(audit_coverage(b["report"],claims,b["context"],facts),audit_position(claims,b["position_context"]),audit_macro(claims,b["macro_evidence_set"],b["context"]["decision_time"]),audit_safety(b["report"],claims)),
+      "level_audit":lambda:audit_report_levels(b["report"],b["fact_registry"]),"scenario_audit":lambda:audit_report_scenarios(b["report"],b["fact_registry"]),
       "full_audit":lambda:audit_report(b,created_at="1970-01-01T00:00:00Z")}
     result={name:measure(fn) for name,fn in components.items()};audit=audit_report(b,created_at="1970-01-01T00:00:00Z")
     start=time.perf_counter();evaluation=evaluate(default_manifest("benchmark"),case_bundle);result["evaluation_80_ms"]=round((time.perf_counter()-start)*1000,3)

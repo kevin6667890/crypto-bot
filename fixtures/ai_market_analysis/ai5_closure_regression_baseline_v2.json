@@ -1,0 +1,88 @@
+{
+  "artifact_hash": "7520fafe1d2da113b7f78ba145be5417bc8e645b25d615d37ef5955050ba3f8f",
+  "audit_payload_bytes": 42187,
+  "audit_policy_version": "ai-report-audit-policy-v2",
+  "baseline_update_policy": "requires --update-baseline and --allow-baseline-update",
+  "baseline_version": "ai5-closure-regression-baseline-v2",
+  "case_count": 124,
+  "case_groups": {
+    "original_ai5": 80,
+    "registry_identity": 10,
+    "sqlite_isolation_replay": 7,
+    "strict_level": 10,
+    "strict_scenario": 17
+  },
+  "evaluation_124_target_ms": 1131.295,
+  "fail_count": 0,
+  "false_negative_count": 0,
+  "false_positive_count": 0,
+  "full_audit_performance_ms": {
+    "max_ms": 9.176,
+    "p50_ms": 8.034,
+    "p95_ms": 8.771
+  },
+  "level_audit_performance_ms": {
+    "max_ms": 0.063,
+    "p50_ms": 0.014,
+    "p95_ms": 0.015
+  },
+  "numeric_grounding": 1.0,
+  "original_80": {
+    "fail_count": 0,
+    "failure_code_distribution": {
+      "CRITICAL_CONTRADICTION": 6,
+      "CRITICAL_WARNING_OMITTED": 1,
+      "EXACT_PROBABILITY": 1,
+      "FACT_REGISTRY_HASH_MISMATCH": 3,
+      "GUARANTEE_OR_CERTAINTY": 1,
+      "INVALIDATION_MISSING": 1,
+      "KEY_LEVEL_CONTRADICTION": 2,
+      "LEVEL_PROJECTION_MISSING": 1,
+      "LIKELY_PROMOTED_TO_CONFIRMED": 1,
+      "NUMERIC_DIRECTION_MISMATCH": 2,
+      "NUMERIC_HALLUCINATION": 4,
+      "NUMERIC_REGISTRY_DIVERGENCE": 2,
+      "NUMERIC_REGISTRY_HASH_MISMATCH": 2,
+      "NUMERIC_UNIT_MISMATCH": 1,
+      "ORDER_FLOW_CONTRADICTION": 4,
+      "ORDER_INSTRUCTION": 1,
+      "REFERENCE_NOT_SUPPORTING_CLAIM": 5,
+      "SCENARIO_INCOMPLETE": 2,
+      "SECRET_OR_INTERNAL_DATA_EXPOSURE": 1,
+      "TIMEFRAME_MISMATCH": 1,
+      "UNKNOWN_PROMOTED_TO_FACT": 2,
+      "UNKNOWN_REFERENCE": 1,
+      "UNSUPPORTED_CLAIM": 5,
+      "UNSUPPORTED_MACRO": 2,
+      "UNSUPPORTED_POSITION": 4
+    },
+    "pass_count": 80
+  },
+  "pass_count": 124,
+  "payload_128kb_hard_limit": "MET",
+  "payload_32kb_target": "TARGET_MISSED_NON_BLOCKING",
+  "reference_support": 1.0,
+  "registry_identity_valid": true,
+  "registry_load_performance_ms": {
+    "max_ms": 1.032,
+    "p50_ms": 0.707,
+    "p95_ms": 0.9
+  },
+  "replay_database_isolation": true,
+  "scenario_audit_performance_ms": {
+    "max_ms": 0.068,
+    "p50_ms": 0.032,
+    "p95_ms": 0.035
+  },
+  "strict_invalidation_coverage": 1.0,
+  "strict_level_coverage": 1.0,
+  "strict_scenario_coverage": 1.0,
+  "v1_difference": {
+    "case_count": 44,
+    "registry_identity": "ADDED",
+    "sqlite_database_isolation": "ADDED",
+    "strict_level_coverage": "ADDED",
+    "strict_scenario_coverage": "ADDED"
+  },
+  "warning_coverage": 1.0
+}

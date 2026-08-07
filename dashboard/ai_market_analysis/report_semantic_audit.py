@@ -12,7 +12,13 @@ def audit_semantics(claims:list[dict[str,Any]],facts:list[dict[str,Any]])->dict[
         text=claim["original_text"];refs=[lookup[r] for r in claim.get("fact_refs",[]) if r in lookup];codes=[]
         values=[f.get("value") for f in refs]
         flat=" ".join(str(v) for v in values)
-        if any(v in flat for v in UNKNOWN_VALUES) and any(x in text for x in SEMANTIC_REGISTRY["UNKNOWN"]["forbidden_certainty"]):codes.append("UNKNOWN_PROMOTED_TO_FACT")
+        def unavailable(fact):
+            value=fact.get("value")
+            if str(fact.get("quality")) in UNKNOWN_VALUES:return True
+            if isinstance(value,str):return value in UNKNOWN_VALUES
+            if isinstance(value,dict):return any(str(value.get(k)) in UNKNOWN_VALUES for k in ("status","quality","cvd_status","oi_status"))
+            return False
+        if any(unavailable(f) for f in refs) and any(x in text for x in SEMANTIC_REGISTRY["UNKNOWN"]["forbidden_certainty"]):codes.append("UNKNOWN_PROMOTED_TO_FACT")
         if ("LIKELY" in flat or "likely" in flat.lower()) and any(x in text for x in SEMANTIC_REGISTRY["LIKELY"]["forbidden_certainty"]):codes.append("LIKELY_PROMOTED_TO_CONFIRMED")
         for value in ("POST_BREAKOUT_PULLBACK","SHORT_COVERING_DOMINANT","STRONG_BEAR"):
             if value in flat and any(x in text for x in SEMANTIC_REGISTRY[value]["forbidden"]):

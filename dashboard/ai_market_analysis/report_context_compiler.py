@@ -18,6 +18,10 @@ def compile_report_context(registry: dict[str, Any], mode: str, max_tokens: int 
     budget = min(max_tokens or MODE_INPUT_BUDGETS[mode], MODE_INPUT_BUDGETS[mode], 12000)
     fact_budget=max(1,budget-900)  # reserve response metadata and versioned instructions
     ordered = sorted(registry["facts"], key=lambda f:(-int(f.get("priority",0)==100),-f.get("priority",0),CATEGORY_ORDER.get(f["category"],99),f["fact_id"]))
+    quick_optional_scenarios=set()
+    if mode=="QUICK":
+        scenario_ids=[f["fact_id"] for f in ordered if f.get("category")=="SCENARIO"]
+        quick_optional_scenarios=set(scenario_ids[1:])
     kept, omitted = [], []
     envelope = {k:registry[k] for k in ("version","context_id","instrument","decision_time","allowed_directional_biases","max_confidence","allowed_market_phases")}
     for fact in ordered:
@@ -28,7 +32,7 @@ def compile_report_context(registry: dict[str, Any], mode: str, max_tokens: int 
         if estimate_tokens(candidate) <= fact_budget: kept.append(fact)
         else: omitted.append(fact["fact_id"])
     # Core warnings and invalidations are priority 100 and must fit; fail instead of cutting them.
-    missing_core = [f["fact_id"] for f in ordered if f.get("priority") == 100 and f not in kept]
+    missing_core = [f["fact_id"] for f in ordered if f.get("priority") == 100 and f not in kept and f["fact_id"] not in quick_optional_scenarios]
     if missing_core: raise ValueError(f"token budget cannot retain core facts: {missing_core}")
     kept_ids={f["fact_id"] for f in kept}
     compiled = {**envelope, "compiler_version": AI_REPORT_CONTEXT_COMPILER_VERSION, "mode": mode,

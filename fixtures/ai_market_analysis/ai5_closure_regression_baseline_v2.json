@@ -1,6 +1,6 @@
 {
-  "artifact_hash": "7520fafe1d2da113b7f78ba145be5417bc8e645b25d615d37ef5955050ba3f8f",
-  "audit_payload_bytes": 42187,
+  "artifact_hash": "f35c5c204395ea1f78449ce94ed40d8101dba9cba49a3625c059b4b7657f89e8",
+  "audit_payload_bytes": 42220,
   "audit_policy_version": "ai-report-audit-policy-v2",
   "baseline_update_policy": "requires --update-baseline and --allow-baseline-update",
   "baseline_version": "ai5-closure-regression-baseline-v2",
@@ -12,19 +12,19 @@
     "strict_level": 10,
     "strict_scenario": 17
   },
-  "evaluation_124_target_ms": 1131.295,
+  "evaluation_124_target_ms": 1111.754,
   "fail_count": 0,
   "false_negative_count": 0,
   "false_positive_count": 0,
   "full_audit_performance_ms": {
-    "max_ms": 9.176,
-    "p50_ms": 8.034,
-    "p95_ms": 8.771
+    "max_ms": 8.986,
+    "p50_ms": 7.913,
+    "p95_ms": 8.645
   },
   "level_audit_performance_ms": {
-    "max_ms": 0.063,
-    "p50_ms": 0.014,
-    "p95_ms": 0.015
+    "max_ms": 0.046,
+    "p50_ms": 0.013,
+    "p95_ms": 0.014
   },
   "numeric_grounding": 1.0,
   "original_80": {
@@ -35,7 +35,7 @@
       "EXACT_PROBABILITY": 1,
       "FACT_REGISTRY_HASH_MISMATCH": 3,
       "GUARANTEE_OR_CERTAINTY": 1,
-      "INVALIDATION_MISSING": 1,
+      "INVALIDATION_MISSING": 2,
       "KEY_LEVEL_CONTRADICTION": 2,
       "LEVEL_PROJECTION_MISSING": 1,
       "LIKELY_PROMOTED_TO_CONFIRMED": 1,
@@ -47,7 +47,10 @@
       "ORDER_FLOW_CONTRADICTION": 4,
       "ORDER_INSTRUCTION": 1,
       "REFERENCE_NOT_SUPPORTING_CLAIM": 5,
-      "SCENARIO_INCOMPLETE": 2,
+      "SCENARIO_CONFIRMED_CLOSE_MISSING": 1,
+      "SCENARIO_INCOMPLETE": 3,
+      "SCENARIO_PROJECTION_MISSING": 1,
+      "SCENARIO_TRIGGER_MISMATCH": 1,
       "SECRET_OR_INTERNAL_DATA_EXPOSURE": 1,
       "TIMEFRAME_MISMATCH": 1,
       "UNKNOWN_PROMOTED_TO_FACT": 2,
@@ -64,15 +67,15 @@
   "reference_support": 1.0,
   "registry_identity_valid": true,
   "registry_load_performance_ms": {
-    "max_ms": 1.032,
-    "p50_ms": 0.707,
-    "p95_ms": 0.9
+    "max_ms": 1.198,
+    "p50_ms": 0.75,
+    "p95_ms": 0.893
   },
   "replay_database_isolation": true,
   "scenario_audit_performance_ms": {
-    "max_ms": 0.068,
-    "p50_ms": 0.032,
-    "p95_ms": 0.035
+    "max_ms": 0.069,
+    "p50_ms": 0.031,
+    "p95_ms": 0.033
   },
   "strict_invalidation_coverage": 1.0,
   "strict_level_coverage": 1.0,

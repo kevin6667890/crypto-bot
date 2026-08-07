@@ -1,0 +1,1 @@
+{"identity":"project_owner","approved_at":"2026-08-07T05:32:34.1926394Z","roles":["Deployment Owner","Database Owner","Security Owner","Privacy Owner","Budget Owner","On-call Owner","Rollback Authority","24h Acceptance Owner","Stop Authority"],"scope":"B0 read-only inspection and isolated local dry-run only","revocation_authority":"project_owner"}

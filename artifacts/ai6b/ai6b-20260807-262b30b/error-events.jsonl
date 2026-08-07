@@ -1,0 +1,2 @@
+{"at":"2026-08-07T05:38:00Z","component":"migration-dry-run","code":"MIGRATION_DRY_RUN_FAILED","detail":"simulated failure retained objects from migrations 002 and 003"}
+{"at":"2026-08-07T05:42:38.2366596Z","component":"gate","code":"AI6B_READINESS_BLOCKED","detail":"B0 hard prerequisites remain open"}

@@ -1,0 +1,2 @@
+{"at":"2026-08-07T05:32:34.1926394Z","gate":"AI6B-B0","event":"STARTED","actor":"project-owner-authorized-codex","scope":"read-only-production-and-isolated-local-dry-run"}
+{"at":"2026-08-07T05:42:38.2366596Z","gate":"AI6B-B0","event":"STOPPED","reason":"AI6B_READINESS_BLOCKED","status":"FAILED","production_writes":0}

@@ -1,0 +1,47 @@
+{
+  "policy_version": "ai6b-alert-policy-v1",
+  "owner": "project_owner",
+  "stop_authority": "project_owner",
+  "notification_channel": "authenticated-local-operations-alerts",
+  "response_sla_seconds": 300,
+  "status": "APPROVAL_REQUIRED",
+  "stop_sequence": [
+    "AI_REPORT_LIVE_PROVIDER_ENABLED=false",
+    "AI_REPORT_AUTO_AUDIT_ENABLED=false",
+    "AI_MARKET_REPORT_WORKER_ENABLED=false",
+    "AI_REPORT_AUDIT_WORKER_ENABLED=false",
+    "VITE_AI_MARKET_ANALYSIS_SHADOW_ENABLED=false",
+    "AI_MARKET_ANALYSIS_PRESENTATION_ENABLED=false",
+    "AI_MARKET_REPORTS_ENABLED=false",
+    "verify_no_new_tasks",
+    "verify_no_provider_calls",
+    "verify_legacy_ai_brief_and_order_router_collector"
+  ],
+  "alerts": [
+    {"id":"queue_growth","metric":"queue_depth","operator":">","threshold":10,"stop":true},
+    {"id":"oldest_queued_age","metric":"oldest_queued_age_seconds","operator":">","threshold":300,"stop":true},
+    {"id":"provider_401","metric":"provider_401_5m","operator":">=","threshold":1,"stop":true},
+    {"id":"provider_429","metric":"provider_429_5m","operator":">=","threshold":3,"stop":true},
+    {"id":"provider_5xx","metric":"provider_5xx_5m","operator":">=","threshold":3,"stop":true},
+    {"id":"timeout","metric":"provider_timeout_5m","operator":">=","threshold":3,"stop":true},
+    {"id":"retry_anomaly","metric":"attempts_per_request_max","operator":">","threshold":3,"stop":true},
+    {"id":"budget_blocked","metric":"budget_blocked_count","operator":">=","threshold":1,"stop":true},
+    {"id":"token_anomaly","metric":"request_input_tokens_max","operator":">","threshold":12000,"stop":true},
+    {"id":"report_failure","metric":"report_failure_count","operator":">=","threshold":1,"stop":true},
+    {"id":"audit_failure","metric":"audit_failure_count","operator":">=","threshold":1,"stop":true},
+    {"id":"presentation_mismatch","metric":"presentation_mismatch_count","operator":">=","threshold":1,"stop":true},
+    {"id":"position_access","metric":"position_access_anomaly_count","operator":">=","threshold":1,"stop":true},
+    {"id":"disk_growth","metric":"disk_free_bytes","operator":"<","threshold":5368709120,"stop":true},
+    {"id":"wal_growth","metric":"ai_report_wal_bytes","operator":">","threshold":536870912,"stop":true},
+    {"id":"worker_crash","metric":"worker_crash_count","operator":">=","threshold":1,"stop":true},
+    {"id":"frontend_security","metric":"frontend_critical_or_serious_count","operator":">=","threshold":1,"stop":true},
+    {"id":"health_lost","metric":"consecutive_health_failures","operator":">=","threshold":2,"stop":true},
+    {"id":"legacy_or_core_change","metric":"legacy_order_router_collector_aggregation_change_count","operator":">=","threshold":1,"stop":true}
+  ],
+  "frontend_error_budget": {
+    "status": "OWNER_APPROVAL_REQUIRED",
+    "js_error_rate_proposed_max": 0.005,
+    "network_error_rate_proposed_max": 0.01,
+    "security_or_authorization_error_max": 0
+  }
+}

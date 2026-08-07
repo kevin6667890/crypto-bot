@@ -1,4 +1,4 @@
--- AI-5 explicit append-only migration for the isolated AI report database.
+-- ai-report-audit-db-v1
 CREATE TABLE IF NOT EXISTS ai_report_audit_inputs(
  audit_input_id TEXT PRIMARY KEY,report_id TEXT NOT NULL UNIQUE,payload_json TEXT NOT NULL,payload_hash TEXT NOT NULL,created_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS ai_report_audits(

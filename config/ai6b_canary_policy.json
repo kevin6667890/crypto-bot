@@ -1,0 +1,33 @@
+{
+  "policy_version": "ai6b-canary-policy-v1",
+  "approved_by": "project_owner",
+  "approval_recorded_at": "2026-08-07T06:01:30Z",
+  "audience": ["project_owner"],
+  "budget": {
+    "live_provider_requests_per_24h": 10,
+    "global_live_provider_concurrency": 1,
+    "per_instrument_concurrency": 1,
+    "queue_max": 10,
+    "per_request_input_tokens": 12000,
+    "quick_output_tokens": 900,
+    "full_output_tokens": 4000,
+    "position_output_tokens": 4000,
+    "daily_input_tokens": 100000,
+    "daily_output_tokens": 25000,
+    "daily_total_tokens": 125000,
+    "daily_currency_cap_usd": 2.0,
+    "cost_status": "REQUIRES_RUNTIME_AUDIT",
+    "on_any_limit": "BLOCK_NEW_LIVE_PROVIDER_CALLS"
+  },
+  "retention": {
+    "context_hot_days": 90,
+    "registry_hot_days": 90,
+    "report_hot_days": 90,
+    "audit_hot_days": 90,
+    "immutable_compressed_archive_max_days": 365,
+    "golden_evaluation": "INDEFINITE",
+    "ai6b_acceptance_evidence": "INDEFINITE",
+    "user_declared_production_canary": "DISABLED"
+  },
+  "provider_price_requirement": "OFFICIAL_DOCUMENT_REVALIDATION_REQUIRED_BEFORE_B3"
+}

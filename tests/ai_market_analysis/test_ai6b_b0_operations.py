@@ -1,0 +1,224 @@
+from __future__ import annotations
+
+import hashlib
+import json
+import sqlite3
+from pathlib import Path
+
+import pytest
+import yaml
+
+from dashboard.ai_market_analysis.backup_restore import create_consistent_backup, verify_isolated_restore
+from dashboard.ai_market_analysis.production_readiness import check_candidate_compose, check_nginx_readiness
+from dashboard.ai_market_analysis.report_alerts import evaluate_alerts, load_alert_policy
+from dashboard.ai_market_analysis.report_jobs import ReportWorker, TokenBudget
+from dashboard.ai_market_analysis.report_migrations import MigrationError, apply_migrations, migration_manifest
+from dashboard.ai_market_analysis.report_repository import ReportRepository, migrate_database
+from dashboard.ai_market_analysis.report_service import ReportService, output_limit
+from dashboard.ai_market_analysis.storage_budget import maximum_ai_bytes_per_request, project_capacity
+from .ai4_helpers import base_context
+
+
+def test_manifest_hashes_every_ai_report_migration():
+    manifest = migration_manifest()
+    assert [item["order"] for item in manifest["migrations"]] == [1, 2, 3, 4]
+    assert all(not item["destructive"] for item in manifest["migrations"])
+    assert all(not item["touches_paper_db"] and not item["touches_microstructure_db"] for item in manifest["migrations"])
+
+
+def test_presentation_query_plans_are_covered_without_temp_sort(tmp_path):
+    database = tmp_path / "plans.db"
+    migrate_database(database)
+    connection = sqlite3.connect(database)
+    cases = [
+        ("idx_ai_requests_presentation", "SELECT * FROM ai_report_requests WHERE instrument=? AND mode=? AND language=? ORDER BY created_at DESC,request_id DESC LIMIT 1", ("BTC", "FULL", "zh-CN")),
+        ("idx_ai_reports_presentation", "SELECT * FROM ai_market_reports WHERE mode=? AND language=? ORDER BY created_at DESC,report_id DESC LIMIT 1", ("FULL", "zh-CN")),
+        ("idx_ai_contexts_watermark", "SELECT * FROM ai_market_contexts WHERE instrument=? ORDER BY decision_time DESC,context_id DESC LIMIT 1", ("BTC",)),
+    ]
+    for index, query, arguments in cases:
+        plan = " ".join(str(row) for row in connection.execute("EXPLAIN QUERY PLAN " + query, arguments))
+        assert index in plan
+        assert "TEMP B-TREE" not in plan
+    connection.close()
+
+
+def test_atomic_batch_rolls_back_every_pending_migration(tmp_path, monkeypatch):
+    root = tmp_path / "migrations"
+    root.mkdir()
+    sql = {
+        "001.sql": "CREATE TABLE ai_report_migrations(migration_key TEXT PRIMARY KEY,schema_version TEXT NOT NULL,file_sha256 TEXT NOT NULL,completed_at TEXT NOT NULL); CREATE TABLE first_step(id INTEGER);",
+        "002.sql": "CREATE TABLE second_step(id INTEGER);",
+        "003.sql": "THIS IS INVALID SQL;",
+    }
+    items = []
+    for order, (name, content) in enumerate(sql.items(), 1):
+        path = root / name
+        path.write_text(content, encoding="utf-8")
+        items.append({"order": order, "key": f"m{order}", "schema_version": f"v{order}", "file": name,
+                      "sha256": hashlib.sha256(path.read_bytes()).hexdigest(), "destructive": False,
+                      "touches_paper_db": False, "touches_microstructure_db": False})
+    manifest = root / "manifest.json"
+    manifest.write_text(json.dumps({"migrations": items}), encoding="utf-8")
+    monkeypatch.setattr("dashboard.ai_market_analysis.report_migrations.MIGRATION_ROOT", root)
+    monkeypatch.setattr("dashboard.ai_market_analysis.report_migrations.MANIFEST_PATH", manifest)
+    database = tmp_path / "atomic.db"
+    with pytest.raises(sqlite3.OperationalError):
+        apply_migrations(database)
+    connection = sqlite3.connect(database)
+    assert connection.execute("SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'").fetchone()[0] == 0
+    connection.close()
+
+
+def _prepare_version(database: Path, through: int) -> sqlite3.Connection:
+    manifest = migration_manifest()
+    root = Path(__file__).resolve().parents[2] / "migrations/ai_report"
+    connection = sqlite3.connect(database)
+    for item in manifest["migrations"][:through]:
+        connection.executescript((root / item["file"]).read_text(encoding="utf-8"))
+        connection.execute("INSERT INTO ai_report_migrations VALUES(?,?,?,?)",
+                           (item["key"], item["schema_version"], item["sha256"], "2026-01-01T00:00:00Z"))
+    connection.commit()
+    return connection
+
+
+def test_ai4_ai5_ai6a_upgrade_paths_preserve_immutable_rows(tmp_path):
+    ai4 = tmp_path / "ai4.db"
+    connection = _prepare_version(ai4, 1)
+    connection.execute("INSERT INTO ai_market_contexts VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", ("ctx","base","v","BTC","2026-01-01T00:00:00Z","none","none","{}","h","{}","OK","2026-01-01T00:00:00Z"))
+    connection.execute("INSERT INTO ai_report_requests VALUES(?,?,?,?,?,?,?,?,?,?,?)", ("req","identity","ctx","BTC","QUICK","zh-CN","p","fake","fake",900,"2026-01-01T00:00:00Z"))
+    connection.execute("INSERT INTO ai_market_reports VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)", ("rep","req","ctx","QUICK","zh-CN","{}","rh","fake","fake","p","legacy body","PENDING","2026-01-01T00:00:00Z"))
+    before_report = connection.execute("SELECT * FROM ai_market_reports").fetchone();connection.commit();connection.close()
+    apply_migrations(ai4);connection=sqlite3.connect(ai4);assert connection.execute("SELECT * FROM ai_market_reports").fetchone()==before_report;connection.close()
+
+    ai5 = tmp_path / "ai5.db"
+    connection = _prepare_version(ai5, 2)
+    connection.execute("INSERT INTO ai_report_audits VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)", ("a","r","q","c","rh","ch","av","pv","PASSED",1.0,1,"{}","ph","2026-01-01T00:00:00Z"))
+    before_audit=connection.execute("SELECT * FROM ai_report_audits").fetchone();connection.commit();connection.close()
+    apply_migrations(ai5);connection=sqlite3.connect(ai5);assert connection.execute("SELECT * FROM ai_report_audits").fetchone()==before_audit;connection.close()
+
+    ai6a = tmp_path / "ai6a.db"
+    connection = _prepare_version(ai6a, 3)
+    snapshot=("s","q","rc","ec","sv","fv","nv","{}","fh","{}","nh","ph","{}","sh","2026-01-01T00:00:00Z")
+    connection.execute("INSERT INTO ai_report_registry_snapshots VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",snapshot)
+    before_snapshot=connection.execute("SELECT * FROM ai_report_registry_snapshots").fetchone();connection.commit();connection.close()
+    apply_migrations(ai6a);connection=sqlite3.connect(ai6a);assert connection.execute("SELECT * FROM ai_report_registry_snapshots").fetchone()==before_snapshot;connection.close()
+
+
+def test_manifest_hash_mismatch_fails_before_database_write(tmp_path, monkeypatch):
+    root = tmp_path / "migrations"
+    root.mkdir()
+    (root / "001.sql").write_text("CREATE TABLE x(id INTEGER);", encoding="utf-8")
+    manifest = root / "manifest.json"
+    manifest.write_text(json.dumps({"migrations": [{"order": 1, "key": "m1", "schema_version": "v1", "file": "001.sql",
+        "sha256": "0" * 64, "destructive": False, "touches_paper_db": False, "touches_microstructure_db": False}]}), encoding="utf-8")
+    monkeypatch.setattr("dashboard.ai_market_analysis.report_migrations.MIGRATION_ROOT", root)
+    monkeypatch.setattr("dashboard.ai_market_analysis.report_migrations.MANIFEST_PATH", manifest)
+    database = tmp_path / "must-not-exist.db"
+    with pytest.raises(MigrationError, match="MIGRATION_HASH_MISMATCH"):
+        apply_migrations(database)
+    assert not database.exists()
+
+
+def test_consistent_backup_and_isolated_restore(tmp_path):
+    database = tmp_path / "ai_market_reports.db"
+    migrate_database(database)
+    config = tmp_path / "flags.json"
+    config.write_text('{"AI_MARKET_REPORTS_ENABLED":false}', encoding="utf-8")
+    backup = tmp_path / "secured-backup"
+    created = create_consistent_backup(database, backup, state_files={"feature_flags": config}, backup_id="backup-test")
+    assert created["consistent"] is True and created["database_status"] == "BACKED_UP"
+    restored = verify_isolated_restore(backup)
+    assert restored["integrity_check"] == "ok"
+    assert restored["artifact_hashes_valid"] is True
+    assert restored["temporary_copy_deleted"] is True
+    assert len(restored["schema_versions"]) == 4
+
+
+def test_absent_database_still_backs_up_deployment_state(tmp_path):
+    state = tmp_path / "deployment.json"
+    state.write_text("{}", encoding="utf-8")
+    backup = tmp_path / "backup"
+    created = create_consistent_backup(tmp_path / "missing-ai-report.db", backup, state_files={"deployment": state})
+    assert created["database_status"] == "DATABASE_NOT_YET_PRESENT"
+    restored = verify_isolated_restore(backup)
+    assert restored["integrity_check"] == "NOT_APPLICABLE_DATABASE_NOT_YET_PRESENT"
+    assert restored["temporary_copy_deleted"] is True
+
+
+@pytest.mark.parametrize("name", ["paper_trades.db", "market_microstructure.db"])
+def test_backup_refuses_legacy_database_targets(tmp_path, name):
+    with pytest.raises(MigrationError, match="LEGACY_DATABASE_TARGET_FORBIDDEN"):
+        create_consistent_backup(tmp_path / name, tmp_path / "backup")
+
+
+def test_candidate_compose_and_nginx_are_fail_closed():
+    root = Path(__file__).resolve().parents[2]
+    compose = check_candidate_compose(root / "deploy/compose/ai6b-production-candidate.yml")
+    nginx = check_nginx_readiness(root / "deploy/nginx-ai6b-production.conf")
+    assert compose["passed"], compose
+    assert nginx["passed"], nginx
+    value = yaml.safe_load((root / "deploy/compose/ai6b-production-candidate.yml").read_text(encoding="utf-8"))
+    assert value["services"]["audit-worker"].get("secrets") is None
+    assert "ai_report_provider_key" not in value["services"]["paper-api"]["secrets"]
+
+
+def test_approved_budget_and_retention_are_frozen():
+    root = Path(__file__).resolve().parents[2]
+    policy = json.loads((root / "config/ai6b_canary_policy.json").read_text(encoding="utf-8"))
+    assert policy["budget"] == {
+        "live_provider_requests_per_24h": 10, "global_live_provider_concurrency": 1,
+        "per_instrument_concurrency": 1, "queue_max": 10, "per_request_input_tokens": 12000,
+        "quick_output_tokens": 900, "full_output_tokens": 4000, "position_output_tokens": 4000,
+        "daily_input_tokens": 100000, "daily_output_tokens": 25000, "daily_total_tokens": 125000,
+        "daily_currency_cap_usd": 2.0, "cost_status": "REQUIRES_RUNTIME_AUDIT",
+        "on_any_limit": "BLOCK_NEW_LIVE_PROVIDER_CALLS"}
+    assert policy["retention"]["context_hot_days"] == 90
+    assert policy["retention"]["immutable_compressed_archive_max_days"] == 365
+    assert policy["retention"]["user_declared_production_canary"] == "DISABLED"
+
+
+def test_live_provider_is_blocked_until_price_audit(tmp_path):
+    path = tmp_path / "reports.db"
+    migrate_database(path)
+    repository = ReportRepository(path)
+    item = ReportService(repository).submit(base_context(), mode="QUICK", provider="deepseek", model="approved-later")
+    worker = ReportWorker(repository, lambda _: pytest.fail("provider must not be constructed"), budget=TokenBudget())
+    assert worker.run_once() is True
+    assert repository.status(item["request_id"])["status"] == "BUDGET_BLOCKED"
+    assert repository.status(item["request_id"])["events"][-1]["payload_json"] == '{"code":"PROVIDER_PRICE_AUDIT_REQUIRED"}'
+
+
+def test_live_request_count_and_currency_caps(tmp_path, monkeypatch):
+    path = tmp_path / "reports.db"
+    migrate_database(path)
+    repository = ReportRepository(path)
+    for number in range(10):
+        repository.save_attempt({"attempt_id":f"a{number}","request_id":f"r{number}","attempt_number":1,"provider":"deepseek","model":"m","started_at":"2099-01-01T00:00:00Z","completed_at":None,"latency_ms":None,"http_status":None,"input_tokens":1,"output_tokens":1,"total_tokens":2,"finish_reason":None,"raw_response_hash":None,"parse_status":"VALID","validation_status":"VALID","failure_code":None,"sanitized_error":None,"cost_status":"AUDITED","currency":"USD","price_schedule_version":"test","estimated_cost":0.1,"prompt_hash":None})
+    # Move the stored attempts into today's UTC day without depending on wall-clock string construction.
+    with repository.connect() as connection:
+        connection.execute("UPDATE ai_report_attempts SET started_at=?", (__import__('datetime').datetime.now(__import__('datetime').timezone.utc).strftime('%Y-%m-%dT00:00:00Z'),))
+    monkeypatch.setenv("AI_REPORT_COST_STATUS","AUDITED");monkeypatch.setenv("AI_REPORT_INPUT_USD_PER_MILLION","1");monkeypatch.setenv("AI_REPORT_OUTPUT_USD_PER_MILLION","1")
+    assert TokenBudget().reason(repository,"BTC",1,1,"deepseek") == "LIVE_PROVIDER_REQUEST_CAP"
+
+
+def test_output_limits_cannot_exceed_approved_values(monkeypatch):
+    monkeypatch.setenv("AI_REPORT_QUICK_OUTPUT_TOKENS", "9999")
+    monkeypatch.setenv("AI_REPORT_FULL_OUTPUT_TOKENS", "9999")
+    assert output_limit("QUICK") == 900
+    assert output_limit("FULL") == 4000
+
+
+def test_alert_policy_is_complete_and_stop_capable():
+    policy = load_alert_policy()
+    assert len(policy["alerts"]) >= 19
+    events = evaluate_alerts({"provider_401_5m": 1, "queue_depth": 11}, policy)
+    assert {item["alert_id"] for item in events} == {"provider_401", "queue_growth"}
+    assert all(item["stop"] for item in events)
+
+
+def test_storage_projection_is_conservative_and_fail_closed():
+    assert maximum_ai_bytes_per_request() > 5_000_000
+    value = project_capacity(filesystem_total_bytes=110_570_917_888, filesystem_used_bytes=34_603_118_592,
+        current_microstructure_bytes=19_059_113_984, microstructure_coverage_days=18.18135)
+    assert value["within_24h_budget"] is True
+    assert value["within_90d_budget"] is False

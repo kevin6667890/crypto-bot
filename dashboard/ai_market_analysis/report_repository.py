@@ -9,41 +9,21 @@ from .canonical import canonical_json, stable_hash
 from .report_identity import report_identity
 from .report_registry_snapshot import snapshot_db_values, validate_registry_snapshot
 from .versions import AI_REPORT_DATABASE_SCHEMA_VERSION, AI_REPORT_REPOSITORY_VERSION
+from .report_migrations import apply_migrations
 
 DEFAULT_REPORT_DB=Path("data_cache/ai_market_reports.db")
 MIGRATION_KEY="ai-market-report-db-v1"
+MAX_CONTEXT_BYTES=524_288
+MAX_POSITION_PLAN_BYTES=131_072
+MAX_MACRO_SET_BYTES=131_072
+MAX_REGISTRY_SNAPSHOT_BYTES=1_048_576
+MAX_REPORT_JSON_BYTES=250_000
+MAX_GENERATED_TEXT_BYTES=250_000
 
 def utc_now()->str: return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00","Z")
 
-SCHEMA="""
-CREATE TABLE IF NOT EXISTS ai_report_migrations(migration_key TEXT PRIMARY KEY,schema_version TEXT NOT NULL,completed_at TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS ai_market_contexts(context_id TEXT PRIMARY KEY,base_context_id TEXT NOT NULL,schema_version TEXT NOT NULL,instrument TEXT NOT NULL,decision_time TEXT NOT NULL,position_fingerprint TEXT NOT NULL,macro_evidence_set_id TEXT NOT NULL,payload_json TEXT NOT NULL,payload_hash TEXT NOT NULL,source_versions_json TEXT NOT NULL,quality TEXT NOT NULL,created_at TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS ai_position_plans(plan_id TEXT PRIMARY KEY,plan_version TEXT NOT NULL,instrument TEXT NOT NULL,source TEXT NOT NULL,effective_at TEXT NOT NULL,supersedes_plan_id TEXT,status TEXT NOT NULL,payload_json TEXT NOT NULL,payload_hash TEXT NOT NULL,created_at TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS ai_macro_evidence_sets(evidence_set_id TEXT PRIMARY KEY,decision_time TEXT NOT NULL,item_count INTEGER NOT NULL,categories_json TEXT NOT NULL,payload_json TEXT NOT NULL,payload_hash TEXT NOT NULL,quality TEXT NOT NULL,created_at TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS ai_report_registry_snapshots(registry_snapshot_id TEXT PRIMARY KEY,request_id TEXT NOT NULL UNIQUE,report_context_id TEXT NOT NULL,enriched_context_id TEXT NOT NULL,snapshot_version TEXT NOT NULL,fact_registry_version TEXT NOT NULL,numeric_registry_version TEXT NOT NULL,fact_registry_json TEXT NOT NULL,fact_registry_hash TEXT NOT NULL,numeric_registry_json TEXT NOT NULL,numeric_registry_hash TEXT NOT NULL,prompt_hash TEXT NOT NULL,source_versions_json TEXT NOT NULL,source_versions_hash TEXT NOT NULL,created_at TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS ai_report_requests(request_id TEXT PRIMARY KEY,request_identity TEXT NOT NULL UNIQUE,context_id TEXT NOT NULL,instrument TEXT NOT NULL,mode TEXT NOT NULL,language TEXT NOT NULL,prompt_version TEXT NOT NULL,provider TEXT NOT NULL,model TEXT NOT NULL,max_output_tokens INTEGER NOT NULL,registry_snapshot_id TEXT,created_at TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS ai_report_request_events(event_id INTEGER PRIMARY KEY AUTOINCREMENT,request_id TEXT NOT NULL,event_type TEXT NOT NULL,payload_json TEXT NOT NULL,created_at TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS ai_report_attempts(attempt_id TEXT PRIMARY KEY,request_id TEXT NOT NULL,attempt_number INTEGER NOT NULL,provider TEXT NOT NULL,model TEXT NOT NULL,started_at TEXT NOT NULL,completed_at TEXT,latency_ms INTEGER,http_status INTEGER,input_tokens INTEGER,output_tokens INTEGER,total_tokens INTEGER,finish_reason TEXT,raw_response_hash TEXT,parse_status TEXT,validation_status TEXT,failure_code TEXT,sanitized_error TEXT,cost_status TEXT NOT NULL,currency TEXT,price_schedule_version TEXT,estimated_cost REAL,prompt_hash TEXT,UNIQUE(request_id,attempt_number));
-CREATE TABLE IF NOT EXISTS ai_market_reports(report_id TEXT PRIMARY KEY,request_id TEXT NOT NULL UNIQUE,context_id TEXT NOT NULL,mode TEXT NOT NULL,language TEXT NOT NULL,response_json TEXT NOT NULL,response_hash TEXT NOT NULL,model TEXT NOT NULL,provider TEXT NOT NULL,prompt_version TEXT NOT NULL,generated_text TEXT NOT NULL,audit_status TEXT NOT NULL CHECK(audit_status='PENDING'),created_at TEXT NOT NULL);
-CREATE INDEX IF NOT EXISTS idx_report_events_request ON ai_report_request_events(request_id,event_id);
-CREATE INDEX IF NOT EXISTS idx_reports_latest ON ai_market_reports(context_id,created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_ai_requests_presentation ON ai_report_requests(instrument,mode,language,created_at DESC,request_id);
-CREATE INDEX IF NOT EXISTS idx_ai_reports_presentation ON ai_market_reports(mode,language,created_at DESC,report_id);
-CREATE INDEX IF NOT EXISTS idx_ai_contexts_watermark ON ai_market_contexts(instrument,decision_time DESC,context_id);
-CREATE UNIQUE INDEX IF NOT EXISTS idx_ai_registry_snapshot_request ON ai_report_registry_snapshots(request_id);
-CREATE INDEX IF NOT EXISTS idx_ai_registry_snapshot_context ON ai_report_registry_snapshots(enriched_context_id,registry_snapshot_id);
-CREATE TRIGGER IF NOT EXISTS trg_ai_registry_snapshot_no_update BEFORE UPDATE ON ai_report_registry_snapshots BEGIN SELECT RAISE(ABORT,'REGISTRY_SNAPSHOT_MUTATED'); END;
-CREATE TRIGGER IF NOT EXISTS trg_ai_registry_snapshot_no_delete BEFORE DELETE ON ai_report_registry_snapshots BEGIN SELECT RAISE(ABORT,'REGISTRY_SNAPSHOT_MUTATED'); END;
-"""
-
 def migrate_database(path: str|Path)->dict[str,Any]:
-    path=Path(path); path.parent.mkdir(parents=True,exist_ok=True)
-    with sqlite3.connect(path) as conn:
-        conn.execute("PRAGMA journal_mode=WAL"); conn.execute("PRAGMA busy_timeout=5000")
-        with conn:
-            conn.executescript(SCHEMA)
-            conn.execute("INSERT OR IGNORE INTO ai_report_migrations VALUES(?,?,?)",(MIGRATION_KEY,AI_REPORT_DATABASE_SCHEMA_VERSION,utc_now()))
-    return {"schema_version":AI_REPORT_DATABASE_SCHEMA_VERSION,"database":str(path),"applied":True}
+    return apply_migrations(path)
 
 
 class ReportRepository:
@@ -62,6 +42,7 @@ class ReportRepository:
         return r[0] if r else None
     def save_context(self,context:dict[str,Any])->None:
         payload=canonical_json(context);h=stable_hash(context)
+        if len(payload.encode("utf-8"))>MAX_CONTEXT_BYTES:raise ValueError("CONTEXT_TOO_LARGE")
         with self.connect() as c:
             row=c.execute("SELECT payload_hash FROM ai_market_contexts WHERE context_id=?",(context["enriched_context_id"],)).fetchone()
             if row and row[0]!=h: raise ValueError("CONTEXT_IDENTITY_CONFLICT")
@@ -71,6 +52,7 @@ class ReportRepository:
         if not r: raise KeyError("context not found")
         return json.loads(r[0])
     def save_position_plan(self,plan:dict[str,Any])->None:
+        if len(canonical_json(plan).encode("utf-8"))>MAX_POSITION_PLAN_BYTES:raise ValueError("POSITION_PLAN_TOO_LARGE")
         with self.connect() as c:
             c.execute("INSERT INTO ai_position_plans VALUES(?,?,?,?,?,?,?,?,?,?)",(plan["plan_id"],plan["plan_version"],plan["instrument"],plan["source"],plan["effective_at"],plan.get("supersedes_plan_id"),plan["status"],canonical_json(plan),plan["payload_hash"],utc_now()))
     def load_position_plan(self,plan_id:str)->dict[str,Any]:
@@ -79,6 +61,7 @@ class ReportRepository:
         return json.loads(r[0])
     def save_macro_set(self,value:dict[str,Any])->None:
         payload=canonical_json(value);h=stable_hash(value)
+        if len(payload.encode("utf-8"))>MAX_MACRO_SET_BYTES:raise ValueError("MACRO_SET_TOO_LARGE")
         with self.connect() as c:c.execute("INSERT OR IGNORE INTO ai_macro_evidence_sets VALUES(?,?,?,?,?,?,?,?)",(value["evidence_set_id"],value["decision_time"],len(value["items"]),canonical_json(sorted({i["category"] for i in value["items"]})),payload,h,value["quality"],utc_now()))
     def load_macro_set(self,evidence_set_id:str)->dict[str,Any]:
         with self.connect() as c:r=c.execute("SELECT payload_json FROM ai_macro_evidence_sets WHERE evidence_set_id=?",(evidence_set_id,)).fetchone()
@@ -89,7 +72,7 @@ class ReportRepository:
             row=c.execute("SELECT * FROM ai_report_requests WHERE request_identity=?",(value["request_identity"],)).fetchone()
             if row:return dict(row),False
             active=c.execute("SELECT COUNT(*) FROM ai_report_requests r WHERE (SELECT event_type FROM ai_report_request_events e WHERE e.request_id=r.request_id ORDER BY event_id DESC LIMIT 1) IN ('QUEUED','RUNNING','RETRY_SCHEDULED','INTERRUPTED')").fetchone()[0]
-            if active>=int(__import__('os').getenv("AI_REPORT_QUEUE_MAX","100")):raise OverflowError("AI report queue is full")
+            if active>=int(__import__('os').getenv("AI_REPORT_QUEUE_MAX","10")):raise OverflowError("AI report queue is full")
             cols=("request_id","request_identity","context_id","instrument","mode","language","prompt_version","provider","model","max_output_tokens","registry_snapshot_id","created_at")
             c.execute(f"INSERT INTO ai_report_requests({','.join(cols)}) VALUES({','.join('?' for _ in cols)})",(value["request_id"],value["request_identity"],value["context_id"],value["instrument"],value["mode"],value["language"],value["prompt_version"],value["provider"],value["model"],value["max_output_tokens"],value.get("registry_snapshot_id"),utc_now()))
         self.event(value["request_id"],"QUEUED",{})
@@ -119,6 +102,7 @@ class ReportRepository:
     def save_registry_snapshot(self,snapshot:dict[str,Any])->dict[str,Any]:
         failures=validate_registry_snapshot(snapshot)
         if failures:raise ValueError(failures[0])
+        if len(canonical_json(snapshot).encode("utf-8"))>MAX_REGISTRY_SNAPSHOT_BYTES:raise ValueError("REGISTRY_SNAPSHOT_TOO_LARGE")
         with self.connect() as c:
             row=c.execute("SELECT registry_snapshot_id,fact_registry_hash,numeric_registry_hash,prompt_hash,source_versions_hash FROM ai_report_registry_snapshots WHERE request_id=?",(snapshot["request_id"],)).fetchone()
             if row:
@@ -140,9 +124,14 @@ class ReportRepository:
         if instrument:query+=" AND r.instrument=?";args.append(instrument)
         with self.connect() as c:r=c.execute(query,args).fetchone()
         return {"input":r[0],"output":r[1],"total":r[2]}
+    def daily_live_provider_usage(self)->dict[str,Any]:
+        start=utc_now()[:10]+"T00:00:00Z"
+        with self.connect() as c:
+            row=c.execute("SELECT COUNT(*),COALESCE(SUM(input_tokens),0),COALESCE(SUM(output_tokens),0),COALESCE(SUM(total_tokens),0),COALESCE(SUM(estimated_cost),0),SUM(CASE WHEN cost_status!='AUDITED' THEN 1 ELSE 0 END) FROM ai_report_attempts WHERE started_at>=? AND provider!='fake'",(start,)).fetchone()
+        return {"calls":int(row[0]),"input":int(row[1]),"output":int(row[2]),"total":int(row[3]),"estimated_cost":float(row[4]),"unaudited_cost_attempts":int(row[5] or 0)}
     def save_report(self,request:dict[str,Any],response:dict[str,Any],generated_text:str)->dict[str,Any]:
         payload=canonical_json(response);h=stable_hash(response);rid=report_identity(response)
-        if len(payload.encode())>250_000:raise ValueError("REPORT_TOO_LARGE")
+        if len(payload.encode())>MAX_REPORT_JSON_BYTES or len(generated_text.encode("utf-8"))>MAX_GENERATED_TEXT_BYTES:raise ValueError("REPORT_TOO_LARGE")
         with self.connect() as c:
             existing=c.execute("SELECT response_hash FROM ai_market_reports WHERE request_id=?",(request["request_id"],)).fetchone()
             if existing and existing[0]!=h:raise ValueError("REPORT_IMMUTABILITY_CONFLICT")

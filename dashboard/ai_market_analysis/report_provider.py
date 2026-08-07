@@ -59,7 +59,9 @@ class FakeAIReportProvider:
             elif self.behavior == "probability": report["sections"][0]["body"] += " 上涨概率为70%。"
             elif self.behavior == "order": report["sections"][0]["body"] += " 立即下单买入。"
             raw=json.dumps(report,ensure_ascii=False,separators=(",",":"))
-        return ProviderResult(raw,"fake-request",self.model,{"prompt_tokens":request.get("token_estimate",100),"completion_tokens":min(4000,len(raw)//3),"total_tokens":request.get("token_estimate",100)+min(4000,len(raw)//3)},"stop",200,1,stable_hash(raw))
+        completion_tokens = min(int(request.get("max_output_tokens", 4000)), len(raw) // 3)
+        prompt_tokens = request.get("token_estimate", 100)
+        return ProviderResult(raw,"fake-request",self.model,{"prompt_tokens":prompt_tokens,"completion_tokens":completion_tokens,"total_tokens":prompt_tokens+completion_tokens},"stop",200,1,stable_hash(raw))
 
     def _report(self, request: dict[str, Any]) -> dict[str, Any]:
         registry=request["compiled_context"]; facts={f["fact_id"]:f for f in registry["facts"]}

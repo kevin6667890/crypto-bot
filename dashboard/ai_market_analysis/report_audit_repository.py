@@ -7,28 +7,16 @@ from typing import Any,Iterator
 from .canonical import canonical_json,identity,stable_hash
 from .report_repository import ReportRepository,utc_now
 from .versions import AI_REPORT_AUDIT_DB_VERSION,AI_REPORT_AUDIT_VERSION
+from .report_migrations import apply_migrations
 
 MIGRATION_KEY="ai-report-audit-db-v1"
-SQL_PATH=Path(__file__).resolve().parents[2]/"migrations/002_ai_report_audit.sql"
-STRICT_SQL_PATH=Path(__file__).resolve().parents[2]/"migrations/003_ai_report_registry_snapshots_and_strict_audit.sql"
-PRESENTATION_SQL_PATH=Path(__file__).resolve().parents[2]/"migrations/004_ai_shadow_presentation_indexes.sql"
 STRICT_MIGRATION_KEY="ai-report-registry-snapshot-strict-audit-v1"
 AUDIT_EVENTS=("AUDIT_QUEUED","AUDIT_RUNNING","AUDIT_PASSED","AUDIT_FAILED","AUDIT_ERROR","AUDIT_INTERRUPTED","AUDIT_CANCEL_REQUESTED","AUDIT_CANCELLED")
+MAX_AUDIT_INPUT_BYTES=2_097_152
+MAX_AUDIT_PAYLOAD_BYTES=131_072
 
 def migrate_audit_database(path:str|Path)->dict[str,Any]:
-    path=Path(path);path.parent.mkdir(parents=True,exist_ok=True)
-    sql=SQL_PATH.read_text(encoding="utf-8");strict_sql=STRICT_SQL_PATH.read_text(encoding="utf-8");presentation_sql=PRESENTATION_SQL_PATH.read_text(encoding="utf-8")
-    with sqlite3.connect(path) as conn:
-        conn.execute("PRAGMA journal_mode=WAL")
-        with conn:
-            conn.executescript(sql);conn.executescript(strict_sql);conn.executescript(presentation_sql)
-            request_columns={r[1] for r in conn.execute("PRAGMA table_info(ai_report_requests)")}
-            if "registry_snapshot_id" not in request_columns:conn.execute("ALTER TABLE ai_report_requests ADD COLUMN registry_snapshot_id TEXT")
-            attempt_columns={r[1] for r in conn.execute("PRAGMA table_info(ai_report_attempts)")}
-            if "prompt_hash" not in attempt_columns:conn.execute("ALTER TABLE ai_report_attempts ADD COLUMN prompt_hash TEXT")
-            conn.execute("INSERT OR IGNORE INTO ai_report_migrations VALUES(?,?,?)",(MIGRATION_KEY,AI_REPORT_AUDIT_DB_VERSION,utc_now()))
-            conn.execute("INSERT OR IGNORE INTO ai_report_migrations VALUES(?,?,?)",(STRICT_MIGRATION_KEY,AI_REPORT_AUDIT_VERSION,utc_now()))
-    return {"schema_version":AI_REPORT_AUDIT_DB_VERSION,"database":str(path),"applied":True}
+    return apply_migrations(path)
 
 def freeze_report_bundle(repository:ReportRepository,report_id:str)->dict[str,Any]:
     report=repository.get_report(report_id=report_id)
@@ -68,6 +56,7 @@ class AuditRepository:
         return r[0] if r else None
     def freeze_input(self,bundle:dict[str,Any])->str:
         payload=canonical_json(bundle);h=stable_hash(bundle);iid=identity("audit_input",{"report_id":bundle["report_id"],"payload_hash":h})
+        if len(payload.encode("utf-8"))>MAX_AUDIT_INPUT_BYTES:raise ValueError("AUDIT_INPUT_TOO_LARGE")
         with self.connect() as c:
             row=c.execute("SELECT payload_hash FROM ai_report_audit_inputs WHERE report_id=?",(bundle["report_id"],)).fetchone()
             if row and row[0]!=h:raise ValueError("AUDIT_INPUT_IDENTITY_CONFLICT")
@@ -86,7 +75,7 @@ class AuditRepository:
         return r[0] if r else None
     def save_audit(self,audit:dict[str,Any])->dict[str,Any]:
         payload=canonical_json(audit);h=stable_hash({k:v for k,v in audit.items() if k!="created_at"})
-        if len(payload.encode("utf-8"))>131072:raise ValueError("AUDIT_PAYLOAD_TOO_LARGE")
+        if len(payload.encode("utf-8"))>MAX_AUDIT_PAYLOAD_BYTES:raise ValueError("AUDIT_PAYLOAD_TOO_LARGE")
         with self.connect() as c:
             row=c.execute("SELECT payload_hash FROM ai_report_audits WHERE audit_id=?",(audit["audit_id"],)).fetchone()
             if row:

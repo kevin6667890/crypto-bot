@@ -14,7 +14,7 @@ def repo(tmp_path):
 def submit(repo,mode="FULL"):return ReportService(repo).submit(base_context(),mode=mode)
 
 def test_migration_empty_and_idempotent(tmp_path):
-    path=tmp_path/"r.db";migrate_database(path);migrate_database(path);connection=sqlite3.connect(path);assert connection.execute("select count(*) from ai_report_migrations").fetchone()[0]==1
+    path=tmp_path/"r.db";migrate_database(path);migrate_database(path);connection=sqlite3.connect(path);assert connection.execute("select count(*) from ai_report_migrations").fetchone()[0]==4
 
 def test_import_does_not_migrate(tmp_path):
     repository=ReportRepository(tmp_path/"missing.db");assert repository.schema_version() is None and not repository.path.exists()

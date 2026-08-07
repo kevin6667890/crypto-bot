@@ -112,7 +112,7 @@ except ImportError:
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DB_PATH = ROOT / "data_cache" / "paper_trades.db"
+DB_PATH = Path(os.getenv("PAPER_DB_PATH", str(ROOT / "data_cache" / "paper_trades.db")))
 INSTRUMENTS = ("BTC-USDT", "ETH-USDT")
 MAX_OPEN_POSITIONS = 3
 MAX_DAILY_LOSS_R = -2.0

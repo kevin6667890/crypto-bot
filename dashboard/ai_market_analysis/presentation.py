@@ -25,6 +25,8 @@ ELIGIBILITIES = (
 FRESHNESS = ("CURRENT", "AGING", "STALE", "SUPERSEDED", "UNKNOWN")
 MAX_PRESENTATION_BYTES = 500_000
 TARGET_PRESENTATION_BYTES = 250_000
+MAX_PRESENTATION_DEPTH = 32
+MAX_PRESENTATION_STRING_BYTES = 100_000
 
 
 class PresentationError(RuntimeError):
@@ -165,6 +167,10 @@ def _health(conn: Any) -> dict[str, Any]:
     tokens = conn.execute("SELECT COALESCE(SUM(input_tokens),0),COALESCE(SUM(output_tokens),0),COALESCE(SUM(total_tokens),0) FROM ai_report_attempts WHERE started_at>=?", (datetime.now(timezone.utc).date().isoformat()+"T00:00:00Z",)).fetchone()
     last_report = conn.execute("SELECT MAX(created_at) FROM ai_market_reports").fetchone()[0]
     last_audit = conn.execute("SELECT MAX(created_at) FROM ai_report_audits WHERE status='PASSED'").fetchone()[0]
+    queued_age = None
+    if queued:
+        stamp = _iso_epoch(queued)
+        queued_age = max(0, int(datetime.now(timezone.utc).timestamp()) - stamp) if stamp is not None else None
     return {
         "reports_enabled": os.getenv("AI_MARKET_REPORTS_ENABLED", "false").lower() == "true", "shadow_only": True,
         "worker_enabled": os.getenv("AI_MARKET_REPORT_WORKER_ENABLED", "false").lower() == "true",
@@ -172,7 +178,7 @@ def _health(conn: Any) -> dict[str, Any]:
         "provider_configured": bool(os.getenv("AI_REPORT_MODEL")),
         "live_provider_allowed": os.getenv("AI_REPORT_LIVE_PROVIDER_ENABLED", "false").lower() == "true",
         "queue_depth": count("SELECT COUNT(*) FROM ai_report_request_events e WHERE e.event_id=(SELECT MAX(x.event_id) FROM ai_report_request_events x WHERE x.request_id=e.request_id) AND e.event_type IN ('QUEUED','RETRY_SCHEDULED','INTERRUPTED')"),
-        "active_requests": active, "oldest_queued_at": queued,
+        "active_requests": active, "oldest_queued_age": queued_age,
         "last_report_success": last_report, "last_audit_success": last_audit,
         "failed_count": count("SELECT COUNT(*) FROM ai_report_request_events WHERE event_type='FAILED_FINAL'"),
         "budget_blocked": count("SELECT COUNT(*) FROM ai_report_request_events WHERE event_type='BUDGET_BLOCKED'"),
@@ -202,6 +208,7 @@ def _read_audit(conn: Any, report_id: str) -> tuple[dict[str, Any] | None, str |
         if stable_hash({k: v for k, v in audit.items() if k != "created_at"}) != row["payload_hash"]:
             raise PresentationError("AUDIT_PAYLOAD_HASH_MISMATCH")
         audit["_stored_payload_hash"] = row["payload_hash"]
+        audit["_stored_audit_id"] = row["audit_id"]
         audit["_stored_report_hash"] = row["report_hash"]
         audit["_stored_context_id"] = row["context_id"]
         audit["_stored_report_id"] = row["report_id"]
@@ -303,6 +310,12 @@ def _project(conn: Any, report: dict[str, Any], audit: dict[str, Any] | None, ev
     if not audit:
         raise PresentationError("AUDIT_NOT_FOUND")
     response = report["response"]
+    if audit.get("_stored_audit_id") != audit.get("audit_id"):
+        raise PresentationError("AUDIT_ID_MISMATCH")
+    if response.get("directional_bias") not in {"BULLISH", "BEARISH", "NEUTRAL", "MIXED", "UNKNOWN"}:
+        raise PresentationError("UNSUPPORTED_PRESENTATION_ENUM")
+    if response.get("confidence") not in {"HIGH", "MEDIUM", "LOW", "INSUFFICIENT"}:
+        raise PresentationError("UNSUPPORTED_PRESENTATION_ENUM")
     if audit.get("_stored_report_id") != report["report_id"] or audit.get("_stored_context_id") != report["context_id"]:
         raise PresentationError("REPORT_AUDIT_CONTEXT_MISMATCH")
     if audit.get("report_id") != report["report_id"] or audit.get("report_hash") != report["response_hash"]:
@@ -371,9 +384,23 @@ def _project(conn: Any, report: dict[str, Any], audit: dict[str, Any] | None, ev
 
 
 def _bounded(value: dict[str, Any]) -> dict[str, Any]:
+    _validate_payload_shape(value)
     if len(json.dumps(value, ensure_ascii=False, separators=(",", ":")).encode("utf-8")) > MAX_PRESENTATION_BYTES:
         raise PresentationError("PRESENTATION_PAYLOAD_TOO_LARGE", 413)
     return value
+
+
+def _validate_payload_shape(value: Any, depth: int = 0) -> None:
+    if depth > MAX_PRESENTATION_DEPTH:
+        raise PresentationError("PRESENTATION_JSON_TOO_DEEP", 413)
+    if isinstance(value, str) and len(value.encode("utf-8")) > MAX_PRESENTATION_STRING_BYTES:
+        raise PresentationError("PRESENTATION_STRING_TOO_LONG", 413)
+    if isinstance(value, dict):
+        for key, item in value.items():
+            _validate_payload_shape(key, depth + 1); _validate_payload_shape(item, depth + 1)
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            _validate_payload_shape(item, depth + 1)
 
 
 def position_details(repository: Any, report_id: str, *, instrument: str, mode: str) -> dict[str, Any]:

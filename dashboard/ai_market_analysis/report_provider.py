@@ -108,9 +108,32 @@ class FakeAIReportProvider:
                 "scenario_refs":[facts[x]["value"].get("scenario_id") for x in refs if x in facts and isinstance(facts[x]["value"],dict) and facts[x]["value"].get("scenario_id")],
                 "macro_refs":[facts[x]["value"].get("evidence_id") for x in refs if x in facts and isinstance(facts[x]["value"],dict) and facts[x]["value"].get("evidence_id")],
                 "position_refs":[x for x in refs if x.startswith("POSITION_")],"uncertainties":[]})
+        projected_level_facts=[facts[x] for x in level_ids[:1] if mode=="QUICK"] if mode=="QUICK" else [facts[x] for x in level_ids]
+        key_level_projections=[]
+        for fact in projected_level_facts:
+            level=fact["value"]
+            key_level_projections.append({"level_id":level["level_id"],"analysis_text":f"{level['role']} {level['state']} {level['strength']} on {level.get('primary_timeframe')}",
+              "asserted_role":level["role"],"asserted_state":level["state"],"asserted_strength":level["strength"],
+              "asserted_timeframe":level.get("primary_timeframe"),"asserted_dynamic":level.get("dynamic",False),
+              "valid_until":level.get("valid_until"),"fact_refs":[fact["fact_id"]],"level_refs":[level["level_id"]]})
+        projected_scenario_facts=[facts[x] for x in scenario_ids[:1] if mode=="QUICK"] if mode=="QUICK" else [facts[x] for x in scenario_ids]
+        scenario_projections=[]
+        for fact in projected_scenario_facts:
+            scenario=fact["value"];trigger=scenario.get("trigger") or {};confirmation=scenario.get("confirmation") or {};invalidation=scenario.get("invalidation") or {}
+            scenario_projections.append({"scenario_id":scenario["scenario_id"],"scenario_type":scenario["type"],"direction":scenario["direction"],"likelihood":scenario["likelihood"],
+              "summary":f"Conditional {scenario['type']} path", "trigger_text":trigger.get("rule"),"trigger_level_refs":trigger.get("level_ids",[]),
+              "confirmation_text":confirmation.get("rule") if isinstance(confirmation,dict) else str(confirmation),
+              "expected_path_text":" -> ".join(scenario.get("expected_path",[])),"expected_path_level_refs":scenario.get("expected_path",[]),
+              "target_level_refs":scenario.get("targets",[]),"invalidation_text":invalidation.get("rule"),"invalidation_level_ref":invalidation.get("level_id"),
+              "invalidation_timeframe":invalidation.get("timeframe"),"confirmed_close_required":"confirmed" in str(invalidation.get("rule","")).lower(),
+              "volume_confirmation_text":scenario.get("volume_confirmation"),"cvd_confirmation_text":scenario.get("cvd_confirmation"),
+              "oi_confirmation_text":scenario.get("oi_confirmation"),"funding_basis_confirmation_text":scenario.get("funding_basis_confirmation"),
+              "contradicting_evidence_text":"; ".join(map(str,scenario.get("contradicting_evidence",[]))),
+              "fact_refs":[fact["fact_id"]],"level_refs":scenario.get("source_level_ids",[]),
+              "source_phase_ids":scenario.get("source_phase_ids",[]),"source_event_ids":scenario.get("source_event_ids",[]),"uncertainty_markers":[scenario.get("likelihood")]})
         return {"schema_version":AI_REPORT_RESPONSE_VERSION,"source_versions":request.get("source_versions",REPORT_PIPELINE_VERSIONS),"context_id":request["context_id"],"request_id":request["request_id"],
             "mode":mode,"language":request["language"],"headline":"突破后回踩验证，短强长压",
             "market_phase":registry["allowed_market_phases"][0],"directional_bias":"BULLISH","confidence":registry["max_confidence"],
-            "sections":sections,"key_levels":[],"scenarios":[],"position_guidance":({"source":facts.get("POSITION_SOURCE",{}).get("value"),"fact_refs":position_ids} if mode=="POSITION_AWARE" else None),
+            "sections":sections,"key_levels":key_level_projections,"scenarios":scenario_projections,"position_guidance":({"source":facts.get("POSITION_SOURCE",{}).get("value"),"fact_refs":position_ids,"original_invalidation":{"stop":facts.get("POSITION_ORIGINAL_STOP",{}).get("value"),"fact_ref":"POSITION_ORIGINAL_STOP" if "POSITION_ORIGINAL_STOP" in facts else None,"timeframe":facts.get("POSITION_ORIGINAL_TIMEFRAME",{}).get("value"),"thesis":facts.get("POSITION_ORIGINAL_THESIS",{}).get("value")}} if mode=="POSITION_AWARE" else None),
             "unsupported_claims":[],"data_warnings":registry.get("context_warnings",[]),"citations":[{"evidence_id":facts[x]["value"]["evidence_id"]} for x in macro_ids],
             "model":self.model,"prompt_version":request["prompt_version"],"audit_status":"PENDING"}

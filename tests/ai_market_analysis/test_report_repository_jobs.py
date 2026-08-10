@@ -30,8 +30,8 @@ def test_request_idempotent_and_completed_reuse(repo):
 def test_events_attempts_report_pending(repo):
     item=submit(repo);ReportWorker(repo,lambda r:FakeAIReportProvider(r["model"])).run_once();assert repo.status(item["request_id"])["status"]=="COMPLETED" and repo.get_report(request_id=item["request_id"])["audit_status"]=="PENDING"
 
-def test_json_repair_success(repo):
-    item=submit(repo,"QUICK");ReportWorker(repo,lambda r:FakeAIReportProvider(r["model"],"repair_success")).run_once();assert repo.status(item["request_id"])["status"]=="COMPLETED"
+def test_json_schema_failure_is_final_without_provider_repair(repo):
+    provider=FakeAIReportProvider("fake","repair_success");item=submit(repo,"QUICK");ReportWorker(repo,lambda _r:provider).run_once();assert repo.status(item["request_id"])["status"]=="FAILED_FINAL";assert provider.calls==1
 
 def test_retry_and_final_failure(repo):
     item=submit(repo);worker=ReportWorker(repo,lambda r:FakeAIReportProvider(r["model"],"429"));worker.run_once();assert repo.status(item["request_id"])["status"]=="RETRY_SCHEDULED";worker.run_once();worker.run_once();assert repo.status(item["request_id"])["status"]=="FAILED_FINAL"

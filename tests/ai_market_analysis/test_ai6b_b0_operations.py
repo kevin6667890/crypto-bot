@@ -3,6 +3,8 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
+import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -12,10 +14,14 @@ from dashboard.ai_market_analysis.backup_restore import create_consistent_backup
 from dashboard.ai_market_analysis.production_readiness import check_candidate_compose, check_nginx_readiness
 from dashboard.ai_market_analysis.report_alerts import evaluate_alerts, load_alert_policy
 from dashboard.ai_market_analysis.report_jobs import ReportWorker, TokenBudget
+from dashboard.ai_market_analysis.report_jobs import provider_retry_allowed
+from dashboard.ai_market_analysis.report_provider import ProviderError
 from dashboard.ai_market_analysis.report_migrations import MigrationError, apply_migrations, migration_manifest
 from dashboard.ai_market_analysis.report_repository import ReportRepository, migrate_database
 from dashboard.ai_market_analysis.report_service import ReportService, output_limit
 from dashboard.ai_market_analysis.storage_budget import maximum_ai_bytes_per_request, project_capacity
+from dashboard.ai_market_analysis.live_provider_guard import HARD_STOP_EVENTS, assert_live_provider_allowed, status, trip, trip_if_armed
+from dashboard.ai_market_analysis.retention_archive import archive_hot_expired, expire_archive_payloads, verify_archive
 from .ai4_helpers import base_context
 
 
@@ -172,9 +178,12 @@ def test_approved_budget_and_retention_are_frozen():
         "daily_input_tokens": 100000, "daily_output_tokens": 25000, "daily_total_tokens": 125000,
         "daily_currency_cap_usd": 2.0, "cost_status": "REQUIRES_RUNTIME_AUDIT",
         "on_any_limit": "BLOCK_NEW_LIVE_PROVIDER_CALLS"}
-    assert policy["retention"]["context_hot_days"] == 90
-    assert policy["retention"]["immutable_compressed_archive_max_days"] == 365
+    assert policy["retention"]["context_hot_days"] == 30
+    assert policy["retention"]["archive_min_day"] == 31
+    assert policy["retention"]["archive_max_day"] == 365
     assert policy["retention"]["user_declared_production_canary"] == "DISABLED"
+    assert policy["privacy"]["status"] == "APPROVED_FOR_NONE_AND_PAPER_INTERNAL_SHADOW"
+    assert policy["privacy"]["user_declared"] == "NOT_APPROVED"
 
 
 def test_live_provider_is_blocked_until_price_audit(tmp_path):
@@ -210,7 +219,7 @@ def test_output_limits_cannot_exceed_approved_values(monkeypatch):
 
 def test_alert_policy_is_complete_and_stop_capable():
     policy = load_alert_policy()
-    assert len(policy["alerts"]) >= 19
+    assert len(policy["alerts"]) >= 24
     events = evaluate_alerts({"provider_401_5m": 1, "queue_depth": 11}, policy)
     assert {item["alert_id"] for item in events} == {"provider_401", "queue_growth"}
     assert all(item["stop"] for item in events)
@@ -221,4 +230,96 @@ def test_storage_projection_is_conservative_and_fail_closed():
     value = project_capacity(filesystem_total_bytes=110_570_917_888, filesystem_used_bytes=34_603_118_592,
         current_microstructure_bytes=19_059_113_984, microstructure_coverage_days=18.18135)
     assert value["within_24h_budget"] is True
-    assert value["within_90d_budget"] is False
+    assert value["ai_hot_30d_bytes"] == value["maximum_ai_daily_growth_bytes"] * 30
+    assert value["ai_logical_90d_total_bytes"] == value["maximum_ai_daily_growth_bytes"] * 90
+    assert value["wal_peak_reserve_bytes"] == 512 * 1024**2
+    assert value["docker_image_cache_reserve_bytes"] == 8 * 1024**3
+    assert value["backup_temporary_space_bytes"] == value["ai_hot_30d_bytes"] * 2
+
+
+@pytest.mark.parametrize("error,allowed", [
+    (ProviderError("CONNECTION_ERROR", retryable=True), True),
+    (ProviderError("TIMEOUT", retryable=True), True),
+    (ProviderError("HTTP_429", retryable=True, http_status=429), True),
+    (ProviderError("HTTP_503", retryable=True, http_status=503), True),
+    (ProviderError("SCHEMA_FAILURE", retryable=True), False),
+    (ProviderError("AUDIT_FAILURE", retryable=True), False),
+    (ProviderError("NUMERIC_HALLUCINATION", retryable=True), False),
+    (ProviderError("REFERENCE_FAILURE", retryable=True), False),
+    (ProviderError("HTTP_422", retryable=True, http_status=422), False),
+])
+def test_provider_retry_whitelist_is_authoritative(error, allowed):
+    assert provider_retry_allowed(error) is allowed
+
+
+def test_schema_failure_never_causes_provider_retry(tmp_path):
+    path=tmp_path/"reports.db";migrate_database(path);repository=ReportRepository(path)
+    item=ReportService(repository).submit(base_context(),mode="QUICK",provider="fake",model="invalid_json")
+    from dashboard.ai_market_analysis.report_provider import FakeAIReportProvider
+    provider=FakeAIReportProvider("fake",behavior="invalid_json");worker=ReportWorker(repository,lambda _:provider,budget=TokenBudget())
+    assert worker.run_once() is True
+    assert provider.calls == 1
+    assert repository.status(item["request_id"])["status"] == "FAILED_FINAL"
+
+
+def test_kill_switch_blocks_next_call_well_inside_sixty_seconds(tmp_path, monkeypatch):
+    path=tmp_path/"live-provider-disabled.json";monkeypatch.setenv("AI_REPORT_LIVE_PROVIDER_ENABLED","true");monkeypatch.setenv("AI_REPORT_KILL_SWITCH_FILE",str(path))
+    started=time.monotonic();result=trip("CONTEXT_MISMATCH",path=path,evidence_id="isolated-test")
+    with pytest.raises(ProviderError,match="LIVE_PROVIDER_KILL_SWITCHED"):
+        assert_live_provider_allowed(path)
+    assert time.monotonic()-started < 60
+    assert result["live_provider_disabled"] is True and status(path)["event"] == "CONTEXT_MISMATCH"
+    assert set(HARD_STOP_EVENTS) >= {"WRONG_SYMBOL","WRONG_MODE","AUDIT_MISMATCH","REGISTRY_MISMATCH","SECRET_EXPOSURE","DB_CORRUPTION","DISK_CRITICAL"}
+
+
+def test_automatic_hard_stop_is_armed_in_candidate(tmp_path,monkeypatch):
+    path=tmp_path/"automatic-stop.json";monkeypatch.setenv("AI6B_KILL_SWITCH_AUTOMATION_ENABLED","true");monkeypatch.setenv("AI_REPORT_KILL_SWITCH_FILE",str(path))
+    assert trip_if_armed("AUDIT_MISMATCH",evidence_id="isolated-auto-test")["live_provider_disabled"] is True
+    assert status(path)["event"]=="AUDIT_MISMATCH"
+
+
+def test_interrupted_live_call_never_auto_retries_or_risks_duplicate_charge(tmp_path,monkeypatch):
+    database=tmp_path/"interrupted.db";migrate_database(database);repository=ReportRepository(database)
+    item=ReportService(repository).submit(base_context(),mode="QUICK",provider="deepseek",model="future-approved")
+    repository.event(item["request_id"],"RUNNING",{"attempt":1});repository.interrupt_running()
+    switch=tmp_path/"kill.json";monkeypatch.setenv("AI6B_KILL_SWITCH_AUTOMATION_ENABLED","true");monkeypatch.setenv("AI_REPORT_KILL_SWITCH_FILE",str(switch))
+    called=False
+    def factory(_request):
+        nonlocal called;called=True;raise AssertionError("provider must not be called")
+    assert ReportWorker(repository,factory).run_once() is True
+    assert called is False and repository.status(item["request_id"])["status"]=="FAILED_FINAL"
+    assert status(switch)["event"]=="DUPLICATE_PROVIDER_CHARGE"
+
+
+def test_retention_archives_complete_identity_closure_before_pruning(tmp_path):
+    database=tmp_path/"ai-market-reports.db";archive=tmp_path/"independent-archive";migrate_database(database)
+    repository=ReportRepository(database);item=ReportService(repository).submit(base_context(),mode="QUICK",provider="fake",model="fake")
+    from dashboard.ai_market_analysis.report_provider import FakeAIReportProvider
+    assert ReportWorker(repository,lambda _:FakeAIReportProvider()).run_once() is True
+    old=(datetime.now(timezone.utc)-timedelta(days=31)).replace(microsecond=0).isoformat().replace("+00:00","Z")
+    with repository.connect() as connection:
+        connection.execute("UPDATE ai_report_requests SET created_at=?",(old,))
+    dry=archive_hot_expired(database,archive,apply=False);assert [x["request_id"] for x in dry["archived"]]==[item["request_id"]]
+    applied=archive_hot_expired(database,archive,apply=True);manifest=Path(applied["archived"][0]["manifest"])
+    verified=verify_archive(manifest);assert verified["request_id"]==item["request_id"]
+    identity=json.loads(manifest.read_text(encoding="utf-8"))["identity"]
+    assert identity["request_id"]==item["request_id"] and identity["context_id"]==item["context_id"]
+    with sqlite3.connect(database) as connection:
+        assert connection.execute("SELECT COUNT(*) FROM ai_report_requests").fetchone()[0]==0
+        trigger=connection.execute("SELECT COUNT(*) FROM sqlite_master WHERE type='trigger' AND name='trg_ai_registry_snapshot_no_delete'").fetchone()[0]
+        assert trigger==1
+    assert applied["vacuum_used"] is False
+    expired=expire_archive_payloads(archive,now=datetime.now(timezone.utc)+timedelta(days=366))
+    assert expired["expired_payloads"]==[item["request_id"]] and expired["identity_manifests_deleted"]==0
+    assert manifest.exists() and (archive/"expiry-receipts"/manifest.name).exists()
+
+
+def test_candidate_rate_limits_and_frontend_stop_contract_are_frozen():
+    root=Path(__file__).resolve().parents[2]
+    backend=(root/"dashboard/paper_api.py").read_text(encoding="utf-8")
+    frontend=(root/"frontend/src/aiMarketAnalysis/ShadowMarketAnalysisPage.tsx").read_text(encoding="utf-8")
+    for token in ('"ai-presentation-read-minute",10,60','"ai-position-detail-minute",5,60','"ai-report-generation-minute",2,60','"ai-audit-trigger-minute",5,60'):
+        assert token in backend
+    assert "status===401" in frontend and "status===429" in frontend
+    assert "AUDITED_BODY_SELECTION_MISMATCH_HARD_STOP" in frontend
+    assert '"/api/ai-market-analysis/v1/kill-switch"' in backend

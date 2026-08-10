@@ -5,11 +5,13 @@ paper scheduler, or legacy decision-engine dependency.
 """
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, field
+from collections.abc import Mapping
+from copy import deepcopy
+from dataclasses import asdict, dataclass, field, fields, is_dataclass
 import hashlib
 import json
 import math
-from typing import Any, Iterable, Mapping
+from typing import Any, Iterable
 
 
 ROUTER_VERSION = "strategy-router-v2"
@@ -61,6 +63,20 @@ PARAMETERS: dict[str, Any] = {
 
 
 def _canonical(value: Any) -> Any:
+    value_type = type(value)
+    if value is None or value_type is bool or value_type is int or value_type is str:
+        return value
+    if value_type is float:
+        if not math.isfinite(value):
+            raise ValueError("identity accepts finite values only")
+        return float(format(value, ".12g"))
+    if value_type is dict:
+        return {str(key): _canonical(value[key]) for key in sorted(value)}
+    if value_type is list or value_type is tuple:
+        return [_canonical(item) for item in value]
+    if value_type is set:
+        values = [_canonical(item) for item in value]
+        return sorted(values, key=lambda item: json.dumps(item, sort_keys=True))
     if isinstance(value, Mapping):
         return {str(key): _canonical(value[key]) for key in sorted(value)}
     if isinstance(value, (list, tuple, set)):
@@ -76,6 +92,22 @@ def _canonical(value: Any) -> Any:
 def stable_hash(value: Any) -> str:
     payload = json.dumps(_canonical(value), sort_keys=True, separators=(",", ":"), ensure_ascii=False)
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _dataclass_payload(value: Any) -> Any:
+    """Value-equivalent dataclass conversion without deepcopying primitives."""
+    value_type = type(value)
+    if value is None or value_type in {bool, int, float, str}:
+        return value
+    if value_type is dict:
+        return {_dataclass_payload(key): _dataclass_payload(item) for key, item in value.items()}
+    if value_type is list:
+        return [_dataclass_payload(item) for item in value]
+    if value_type is tuple:
+        return tuple(_dataclass_payload(item) for item in value)
+    if is_dataclass(value) and not isinstance(value, type):
+        return {item.name: _dataclass_payload(getattr(value, item.name)) for item in fields(value)}
+    return deepcopy(value)
 
 
 @dataclass(frozen=True)
@@ -216,7 +248,7 @@ class StrategyRouteSnapshotV2:
     parameter_set_id: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        return _dataclass_payload(self)
 
 
 @dataclass(frozen=True)
@@ -276,11 +308,68 @@ def _all_source_timestamps(context: Mapping[str, Any], state: Mapping[str, Any])
 
 
 def _future_timestamps(value: Any, as_of: int, path: str = "input") -> list[str]:
+    pending: list[Any] = [value]
+    timestamp_keys = {"as_of", "source_timestamps", "source_candle_timestamps"}
+    timestamp_key_cache: dict[str, bool] = {}
+
+    while pending:
+        item = pending.pop()
+        item_type = type(item)
+        if item_type is dict:
+            pairs = item.items()
+        elif item_type is list or item_type is tuple:
+            for child in item:
+                child_type = type(child)
+                if child_type is dict or child_type is list or child_type is tuple:
+                    pending.append(child)
+                elif child is not None and child_type not in {bool, int, float, str} and (
+                    isinstance(child, Mapping) or isinstance(child, (list, tuple))
+                ):
+                    pending.append(child)
+            continue
+        elif isinstance(item, Mapping):
+            pairs = item.items()
+        elif isinstance(item, (list, tuple)):
+            pending.extend(item)
+            continue
+        else:
+            continue
+        for key, child_value in pairs:
+            is_timestamp_key = timestamp_key_cache.get(key)
+            if is_timestamp_key is None:
+                is_timestamp_key = (
+                    key in timestamp_keys or key.endswith("timestamp") or key.endswith("_ts")
+                )
+                timestamp_key_cache[key] = is_timestamp_key
+            if is_timestamp_key and child_value is not None:
+                values = child_value if isinstance(child_value, (list, tuple)) else (child_value,)
+                for timestamp in values:
+                    try:
+                        if int(timestamp) > as_of:
+                            return _future_timestamp_details(value, as_of, path)
+                    except (TypeError, ValueError):
+                        return _future_timestamp_details(value, as_of, path)
+            else:
+                child_type = type(child_value)
+                if child_type is dict or child_type is list or child_type is tuple:
+                    pending.append(child_value)
+                elif child_value is not None and child_type not in {bool, int, float, str} and (
+                    isinstance(child_value, Mapping) or isinstance(child_value, (list, tuple))
+                ):
+                    pending.append(child_value)
+    return []
+
+
+def _future_timestamp_details(value: Any, as_of: int, path: str) -> list[str]:
     output: list[str] = []
     if isinstance(value, Mapping):
         for key, item in value.items():
             child = f"{path}.{key}"
-            if (key.endswith("timestamp") or key.endswith("_ts") or key in {"as_of", "source_timestamps", "source_candle_timestamps"}) and item is not None:
+            if (
+                (key in {"as_of", "source_timestamps", "source_candle_timestamps"}
+                 or key.endswith("timestamp") or key.endswith("_ts"))
+                and item is not None
+            ):
                 values = item if isinstance(item, (list, tuple)) else (item,)
                 for timestamp in values:
                     try:
@@ -289,10 +378,10 @@ def _future_timestamps(value: Any, as_of: int, path: str = "input") -> list[str]
                     except (TypeError, ValueError):
                         output.append(f"{child}=invalid")
             else:
-                output.extend(_future_timestamps(item, as_of, child))
+                output.extend(_future_timestamp_details(item, as_of, child))
     elif isinstance(value, (list, tuple)):
         for index, item in enumerate(value):
-            output.extend(_future_timestamps(item, as_of, f"{path}[{index}]"))
+            output.extend(_future_timestamp_details(item, as_of, f"{path}[{index}]"))
     return output
 
 
@@ -507,6 +596,11 @@ class StrategyRouterV2:
             if set(parameter_set) != set(allowed) or any(parameter_set[name] not in allowed[name] for name in allowed):
                 raise ValueError("parameter set is outside the frozen Router V2 specification")
         previous_candidates = {(item["family"], item["direction"]): item for item in (previous_route or {}).get("candidates", [])}
+        shared_quality = _quality(context)
+        shared_overlays = _overlays(state)
+        shared_htf = {_state(state, frame) for frame in ("1D", "4H")}
+        shared_sources = _all_source_timestamps(context, state)
+        no_level_identity = stable_hash({"level": "NONE"})
         candidates: list[StrategyCandidateV2] = []
         transitions: list[StrategyTransitionV2] = []
         requested = ((family, direction),) if family is not None else tuple(
@@ -516,7 +610,12 @@ class StrategyRouterV2:
             candidate = self._evaluate(item_family, item_direction, context, state,
                                        parameter_set_id=parameter_set_id,
                                        parameter_set=parameter_set,
-                                       previous_candidate=prior)
+                                       previous_candidate=prior,
+                                       shared_quality=shared_quality,
+                                       shared_overlays=shared_overlays,
+                                       shared_htf=shared_htf,
+                                       shared_sources=shared_sources,
+                                       no_level_identity=no_level_identity)
             if prior and (
                 prior.get("identity", {}).get("level_identity") != candidate.identity.level_identity
                 or prior.get("identity", {}).get("configuration_hash") != candidate.identity.configuration_hash
@@ -539,7 +638,7 @@ class StrategyRouterV2:
                     })
                     candidate = StrategyCandidateV2(**{
                         **candidate.__dict__, "identity": identity,
-                        "identity_hash": stable_hash(asdict(identity)),
+                        "identity_hash": stable_hash(identity.__dict__),
                         "stage": StrategyStageV2(candidate.state, started,
                             candidate.stage.trigger_timestamp,
                             int(started) + candidate.geometry.maximum_wait_bars * 900 if started else None,
@@ -568,16 +667,33 @@ class StrategyRouterV2:
         quality = dict(context.get("quality") or {})
         quality["degraded"] = quality.get("overall_status") != "AVAILABLE"
         quality["routing_compute_only"] = True
-        snapshot = StrategyRouteSnapshotV2(
-            ROUTER_VERSION, DEFINITIONS_VERSION, str(context["instrument"]), as_of,
-            str(context["version"]), str(state["version"]), execution, dict(TIMEFRAME_ROLES),
-            asdict(primary) if primary else None,
-            tuple(asdict(item) for item in selected_candidates if item.selection_status != "PRIMARY" and item.state != "INELIGIBLE"),
-            tuple(asdict(item) for item in selected_candidates),
-            {"active": active_no_trade, "strategy_version": FAMILY_VERSIONS["NO_TRADE"], "reasons": [asdict(item) for item in reasons]},
-            quality, tuple(asdict(item) for item in transitions),
-            "研究策略路由，不是实时交易建议，当前未连接Paper或实盘执行。",
-        ).to_dict()
+        snapshot = {
+            "version": ROUTER_VERSION,
+            "definitions_version": DEFINITIONS_VERSION,
+            "instrument": str(context["instrument"]),
+            "as_of": as_of,
+            "market_context_version": str(context["version"]),
+            "market_state_version": str(state["version"]),
+            "execution_timeframe": execution,
+            "timeframe_roles": dict(TIMEFRAME_ROLES),
+            "primary_route": _dataclass_payload(primary) if primary else None,
+            "alternatives": tuple(
+                _dataclass_payload(item)
+                for item in selected_candidates
+                if item.selection_status != "PRIMARY" and item.state != "INELIGIBLE"
+            ),
+            "candidates": tuple(_dataclass_payload(item) for item in selected_candidates),
+            "no_trade": {
+                "active": active_no_trade,
+                "strategy_version": FAMILY_VERSIONS["NO_TRADE"],
+                "reasons": [_dataclass_payload(item) for item in reasons],
+            },
+            "quality": _dataclass_payload(quality),
+            "transitions": tuple(_dataclass_payload(item) for item in transitions),
+            "disclaimer": "研究策略路由，不是实时交易建议，当前未连接Paper或实盘执行。",
+            "route_snapshot_identity": None,
+            "parameter_set_id": None,
+        }
         snapshot["parameter_set_id"] = parameter_set_id
         snapshot["route_snapshot_identity"] = stable_hash(
             {key: value for key, value in snapshot.items() if key != "route_snapshot_identity"})
@@ -586,20 +702,32 @@ class StrategyRouterV2:
     def _evaluate(self, family: str, direction: str, context: Mapping[str, Any], state: Mapping[str, Any], *,
                   parameter_set_id: str | None = None,
                   parameter_set: Mapping[str, Any] | None = None,
-                  previous_candidate: Mapping[str, Any] | None = None) -> StrategyCandidateV2:
+                  previous_candidate: Mapping[str, Any] | None = None,
+                  shared_quality: tuple[dict[str, Any], float, list[StrategyBlockerV2], list[str]] | None = None,
+                  shared_overlays: set[str] | None = None,
+                  shared_htf: set[str] | None = None,
+                  shared_sources: tuple[int, ...] | None = None,
+                  no_level_identity: str | None = None) -> StrategyCandidateV2:
         effective_parameters = dict(PARAMETERS)
         if parameter_set:
             effective_parameters.update(parameter_set)
-        quality, quality_points, blockers, limitations = _quality(context)
+        if shared_quality is None:
+            quality, quality_points, blockers, limitations = _quality(context)
+        else:
+            shared_quality_value, quality_points, shared_blockers, shared_limitations = shared_quality
+            quality = dict(shared_quality_value)
+            blockers = list(shared_blockers)
+            limitations = list(shared_limitations)
         supporting: list[StrategyEvidenceV2] = []
         conflicting: list[StrategyEvidenceV2] = []
         next_confirmation: list[str] = []
         env = structure = setup = trigger = 0.0
-        overlays = _overlays(state)
-        htf = {_state(state, frame) for frame in ("1D", "4H")}
+        overlays = shared_overlays if shared_overlays is not None else _overlays(state)
+        htf = shared_htf if shared_htf is not None else {_state(state, frame) for frame in ("1D", "4H")}
         side_trend, opposite_trend = ("TREND_UP", "TREND_DOWN") if direction == "LONG" else ("TREND_DOWN", "TREND_UP")
         approach = "FROM_ABOVE" if direction == "LONG" else "FROM_BELOW"
         level: Mapping[str, Any] | None = None
+        evaluated_level_identity: str | None = None
         desired = "INELIGIBLE"
         invalidated = False
         parameter_progress: dict[str, Any] = {}
@@ -642,7 +770,8 @@ class StrategyRouterV2:
             oversold = _momentum(state, "15m") == ("OVERSOLD" if direction == "LONG" else "OVERBOUGHT") or _momentum(state, "1H") == ("OVERSOLD" if direction == "LONG" else "OVERBOUGHT")
             recovered = _momentum(state, "15m") in ({"RECOVERING_FROM_OVERSOLD", "BULLISH"} if direction == "LONG" else {"ROLLING_OVER_FROM_OVERBOUGHT", "BEARISH"})
             raw_reclaimed = bool(level and (level.get("reclaim_status") not in {None, "", "NOT_RECLAIMED"} or level.get("interaction_type") == "REJECTED"))
-            current_level_identity = stable_hash({"type": level.get("level_type"), "timeframe": level.get("timeframe"), "boundary": level.get("boundary"), "sources": level.get("source_timestamps")}) if level else stable_hash({"level": "NONE"})
+            current_level_identity = stable_hash({"type": level.get("level_type"), "timeframe": level.get("timeframe"), "boundary": level.get("boundary"), "sources": level.get("source_timestamps")}) if level else (no_level_identity or stable_hash({"level": "NONE"}))
+            evaluated_level_identity = current_level_identity
             same_level = bool(previous_candidate and previous_candidate.get("identity", {}).get("level_identity") == current_level_identity)
             prior_reclaims = int((previous_candidate or {}).get("parameter_progress", {}).get("reclaim_confirmations", 0)) if same_level else 0
             reclaim_confirmations = prior_reclaims + 1 if raw_reclaimed else 0
@@ -726,8 +855,11 @@ class StrategyRouterV2:
             desired = "ARMED" if setup >= 20 else "WATCH"
         if not geometry.valid and desired == "TRIGGER_READY":
             desired = "WATCH"
-        sources = _all_source_timestamps(context, state)
-        level_identity = stable_hash({"type": level.get("level_type"), "timeframe": level.get("timeframe"), "boundary": level.get("boundary"), "sources": level.get("source_timestamps")}) if level else stable_hash({"level": "NONE"})
+        sources = shared_sources if shared_sources is not None else _all_source_timestamps(context, state)
+        level_identity = evaluated_level_identity or (
+            stable_hash({"type": level.get("level_type"), "timeframe": level.get("timeframe"), "boundary": level.get("boundary"), "sources": level.get("source_timestamps")})
+            if level else (no_level_identity or stable_hash({"level": "NONE"}))
+        )
         event_timestamps = [int((level or {})[key]) for key in
                             ("breakout_timestamp", "confirmation_timestamp", "reclaim_timestamp")
                             if (level or {}).get(key) is not None]
@@ -753,7 +885,7 @@ class StrategyRouterV2:
         return StrategyCandidateV2(family, direction, FAMILY_VERSIONS[family], PARAMETER_SET_VERSION,
                                    desired, stage, score, score_breakdown, evidence_strength,
                                    tuple(supporting), tuple(conflicting), tuple(blockers), tuple(next_confirmation),
-                                   geometry, sources, quality, identity, stable_hash(asdict(identity)), tuple(sorted(set(limitations))),
+                                   geometry, sources, quality, identity, stable_hash(identity.__dict__), tuple(sorted(set(limitations))),
                                    parameter_progress=parameter_progress)
 
     @staticmethod

@@ -1,0 +1,213 @@
+{
+  "aggregation": {
+    "basis_aggregates": {
+      "latest_end": 1785715200000,
+      "latest_start": 1785715200000,
+      "row_delta": 0
+    },
+    "cvd_aggregates": {
+      "latest_end": 1786345620000,
+      "latest_start": 1786343760000,
+      "row_delta": 120
+    },
+    "oi_aggregates": {
+      "latest_end": 1786345620000,
+      "latest_start": 1786343760000,
+      "row_delta": 120
+    }
+  },
+  "ai6b": {
+    "database_absent_all_samples": true,
+    "flags_off_all_samples": true,
+    "production_ai_writes": 0,
+    "production_migration_executed": false,
+    "real_live_provider_calls": 0
+  },
+  "api": {
+    "/": {
+      "max_ms": 10.372,
+      "p50_ms": 4.581,
+      "p95_ms": 7.331,
+      "status_codes": [
+        200
+      ]
+    },
+    "/api/health": {
+      "max_ms": 118.468,
+      "p50_ms": 62.855,
+      "p95_ms": 104.731,
+      "status_codes": [
+        200
+      ]
+    },
+    "/api/paper/flow/health": {
+      "max_ms": 120.144,
+      "p50_ms": 48.567,
+      "p95_ms": 88.017,
+      "status_codes": [
+        200
+      ]
+    }
+  },
+  "collector_terminal_statuses": {
+    "aggregation": "LIVE",
+    "liquidations": "CONNECTED",
+    "liquidations:message": "LIVE",
+    "maintenance": "DISABLED",
+    "realtime-aggregation": "LIVE",
+    "realtime-aggregation:BTC-USDT-SWAP": "LIVE",
+    "realtime-aggregation:ETH-USDT-SWAP": "LIVE",
+    "realtime-aggregation:SOL-USDT-SWAP": "LIVE",
+    "rest:BTC-USDT-SWAP": "LIVE",
+    "rest:ETH-USDT-SWAP": "LIVE",
+    "rest:SOL-USDT-SWAP": "LIVE",
+    "service": "RUNNING",
+    "trades": "LIVE",
+    "trades:BTC-USDT-SWAP": "CONNECTED",
+    "trades:BTC-USDT-SWAP:aggregated": "LIVE",
+    "trades:BTC-USDT-SWAP:persisted": "LIVE",
+    "trades:BTC-USDT-SWAP:received": "LIVE",
+    "trades:ETH-USDT-SWAP": "CONNECTED",
+    "trades:ETH-USDT-SWAP:aggregated": "LIVE",
+    "trades:ETH-USDT-SWAP:persisted": "LIVE",
+    "trades:ETH-USDT-SWAP:received": "LIVE",
+    "trades:SOL-USDT-SWAP": "CONNECTED",
+    "trades:SOL-USDT-SWAP:aggregated": "LIVE",
+    "trades:SOL-USDT-SWAP:persisted": "LIVE",
+    "trades:SOL-USDT-SWAP:received": "LIVE",
+    "writer": "LIVE"
+  },
+  "container_restarts": {
+    "crypto-bot-frontend-1": {
+      "end": 0,
+      "start": 0
+    },
+    "crypto-bot-microstructure-collector-1": {
+      "end": 0,
+      "start": 0
+    },
+    "crypto-bot-paper-api-1": {
+      "end": 0,
+      "start": 0
+    }
+  },
+  "elapsed_seconds": 1868.143,
+  "end": "2026-08-10T07:09:11Z",
+  "error_token_counts_since_start": {
+    "crypto-bot-frontend-1": {
+      "corrupt": 0,
+      "critical": 0,
+      "error": 0,
+      "exception": 0,
+      "traceback": 0
+    },
+    "crypto-bot-microstructure-collector-1": {
+      "corrupt": 0,
+      "critical": 0,
+      "error": 1,
+      "exception": 0,
+      "traceback": 1
+    },
+    "crypto-bot-paper-api-1": {
+      "corrupt": 0,
+      "critical": 0,
+      "error": 0,
+      "exception": 0,
+      "traceback": 0
+    }
+  },
+  "failed_probe_count": 0,
+  "gate": "AI6B-B0-30M-PRODUCTION-BASELINE",
+  "old_ai_brief": {
+    "BTC-USDT": {
+      "count_delta": 0,
+      "latest_end": "2026-08-10T06:18:47+00:00",
+      "latest_start": "2026-08-10T06:18:47+00:00"
+    },
+    "ETH-USDT": {
+      "count_delta": 0,
+      "latest_end": "2026-08-10T06:18:49+00:00",
+      "latest_start": "2026-08-10T06:18:49+00:00"
+    },
+    "SOL-USDT": {
+      "count_delta": 0,
+      "latest_end": "2026-07-20T02:48:50+00:00",
+      "latest_start": "2026-07-20T02:48:50+00:00"
+    },
+    "UNKNOWN": {
+      "count_delta": 0,
+      "latest_end": "2026-07-17T02:13:05+00:00",
+      "latest_start": "2026-07-17T02:13:05+00:00"
+    }
+  },
+  "paper_orders": {
+    "max_trade_id_end": 7,
+    "max_trade_id_start": 7,
+    "open_end": 0,
+    "open_start": 0,
+    "trade_count_delta": 0
+  },
+  "production_mutations": 0,
+  "resource": {
+    "cloud_configuration_source": "PROJECT_OWNER_CONFIRMED",
+    "cloud_configured_memory_bytes": 4294967296,
+    "container_oom_killed": false,
+    "container_stats_last": [
+      {
+        "BlockIO": "12.3MB / 4.1kB",
+        "CPUPerc": "0.00%",
+        "Container": "330abc03608cdc5da5ce71748f059a7504aab5106f02cc10c0bb6f3372cab1ed",
+        "ID": "330abc03608c",
+        "MemPerc": "0.18%",
+        "MemUsage": "6.344MiB / 3.413GiB",
+        "Name": "crypto-bot-frontend-1",
+        "NetIO": "1.13GB / 1.14GB",
+        "PIDs": "3"
+      },
+      {
+        "BlockIO": "28.7GB / 140GB",
+        "CPUPerc": "10.76%",
+        "Container": "d329d0e80b8ffbf3f016429c40d8319bfd5c2c783a09bafb5532edfa49f96c7a",
+        "ID": "d329d0e80b8f",
+        "MemPerc": "25.68%",
+        "MemUsage": "897.5MiB / 3.413GiB",
+        "Name": "crypto-bot-microstructure-collector-1",
+        "NetIO": "3.04GB / 614MB",
+        "PIDs": "8"
+      },
+      {
+        "BlockIO": "3.1GB / 13.4GB",
+        "CPUPerc": "0.90%",
+        "Container": "f8c6db95167e801a8e268c5d751065da1206cfcddc85f7a398850103910d6a09",
+        "ID": "f8c6db95167e",
+        "MemPerc": "5.24%",
+        "MemUsage": "183MiB / 3.413GiB",
+        "Name": "crypto-bot-paper-api-1",
+        "NetIO": "2.15GB / 1.37GB",
+        "PIDs": "9"
+      }
+    ],
+    "containers_healthy_all_samples": true,
+    "cpu_count": 2,
+    "disk_free_min_bytes": 67949010944,
+    "disk_total_bytes": 110570917888,
+    "disk_used_delta_bytes": 23076864,
+    "guest_memory_gate_min_bytes": 3489660928,
+    "memory_available_last_bytes": 2713206784,
+    "memory_available_min_bytes": 2679795712,
+    "memory_total_bytes": 3664924672,
+    "observed_non_ai_data_daily_growth_bytes": 1040752821,
+    "oom_kill_delta": 0,
+    "swap_in_delta_pages": 0,
+    "swap_out_delta_pages": 0,
+    "swap_total_bytes": 2147479552,
+    "swap_used_last_bytes": 0,
+    "swap_used_max_bytes": 0
+  },
+  "router": {
+    "decision_count_delta": 60
+  },
+  "sample_count": 30,
+  "start": "2026-08-10T06:38:00Z",
+  "status": "PASS"
+}

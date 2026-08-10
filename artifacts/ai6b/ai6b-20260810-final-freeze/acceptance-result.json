@@ -1,0 +1,19 @@
+{
+  "b1_authorized_by_this_result": false,
+  "b1_entered": false,
+  "capacity_ram": "CAPACITY_RAM_PASS",
+  "captured_at": "2026-08-10T07:16:41.272215Z",
+  "migration_hashes": {
+    "1": "9c65f71a6dd14852cafb35207a329e1ef81e04c22eaa33f8c9516d64ded0f980",
+    "2": "20f1f5584328f61603a77fcd17476aab1d643f73f990673138bbb317a80a3830",
+    "3": "b152238b9593e6081081ea919368aed57549b4eb7a5c94f8a4e7e2e62020a378",
+    "4": "c411d4e2fedf9725730e615236f635c8894e2727f907c14ecb2967d9ad5f095a"
+  },
+  "phase_executed": "B0_REMEDIATION_AND_REVALIDATION_ONLY",
+  "production_ai_writes": 0,
+  "production_changes": 0,
+  "production_migration_executed": false,
+  "provider_official_price_revalidation": "REQUIRED_BEFORE_B3",
+  "real_deepseek_calls": 0,
+  "result": "AI6B_B0_READY_FOR_B1"
+}

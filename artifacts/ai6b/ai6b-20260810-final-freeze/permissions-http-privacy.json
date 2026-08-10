@@ -1,0 +1,52 @@
+{
+  "access": {
+    "admin_token_transport": "AUTHORIZATION_HEADER_ONLY_NEVER_URL",
+    "audience": "PROJECT_OWNER_ONLY",
+    "candidate_listener": "127.0.0.1:8443",
+    "production_network_change_in_B0": false,
+    "transport": "TLS_OVER_OWNER_SSH_TUNNEL"
+  },
+  "ai6b_provider_secret_report_worker_only": true,
+  "ai_report_data_volume_isolated": true,
+  "audit_and_frontend_provider_secret_absent": true,
+  "audit_worker_ai_db_only": true,
+  "captured_at": "2026-08-10T07:16:41.272215Z",
+  "http": {
+    "csp": true,
+    "frame_policy": true,
+    "hsts_tls_only": true,
+    "nosniff": true,
+    "position_no_store": true,
+    "referrer_policy": true
+  },
+  "logging": {
+    "authorization": false,
+    "prompt": false,
+    "provider_raw": false,
+    "query_string": false,
+    "secret": false
+  },
+  "paper_and_microstructure_db_denied": true,
+  "privacy": {
+    "allowed_position_sources": [
+      "NONE",
+      "PAPER"
+    ],
+    "audience": [
+      "project_owner"
+    ],
+    "status": "APPROVED_FOR_NONE_AND_PAPER_INTERNAL_SHADOW",
+    "user_declared": "NOT_APPROVED"
+  },
+  "report_worker_ai_db_rw_only": true,
+  "resource_limits": {
+    "cloud_configured_memory_bytes": 4294967296,
+    "cpu_total": 1.85,
+    "guest_memory_bytes": 3664924672,
+    "host_cpu": 2,
+    "memory_total_mib": 2304,
+    "projected_memory_headroom_bytes": 1249005568
+  },
+  "status": "PASS_CANDIDATE_NOT_DEPLOYED",
+  "workers_non_root": true
+}

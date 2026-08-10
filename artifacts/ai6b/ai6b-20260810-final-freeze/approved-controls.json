@@ -1,0 +1,68 @@
+{
+  "alert_owner": "project_owner",
+  "budget": {
+    "cost_status": "REQUIRES_RUNTIME_AUDIT",
+    "daily_currency_cap_usd": 2.0,
+    "daily_input_tokens": 100000,
+    "daily_output_tokens": 25000,
+    "daily_total_tokens": 125000,
+    "full_output_tokens": 4000,
+    "global_live_provider_concurrency": 1,
+    "live_provider_requests_per_24h": 10,
+    "on_any_limit": "BLOCK_NEW_LIVE_PROVIDER_CALLS",
+    "per_instrument_concurrency": 1,
+    "per_request_input_tokens": 12000,
+    "position_output_tokens": 4000,
+    "queue_max": 10,
+    "quick_output_tokens": 900
+  },
+  "captured_at": "2026-08-10T07:16:41.272215Z",
+  "frontend_error_budget_24h": {
+    "audited_body_selection_mismatch": "HARD_STOP",
+    "critical_or_uncaught_js": 0,
+    "frozen_after_window_start": true,
+    "persistent_401": "STOP_SESSION_NO_RETRY",
+    "persistent_429": "STOP_POLL_AND_BACK_OFF",
+    "presentation_contract_errors": 0,
+    "recoverable_network_error_rate_max_exclusive": 0.01,
+    "xss_authorization_cross_instrument": 0
+  },
+  "privacy": {
+    "allowed_position_sources": [
+      "NONE",
+      "PAPER"
+    ],
+    "audience": [
+      "project_owner"
+    ],
+    "status": "APPROVED_FOR_NONE_AND_PAPER_INTERNAL_SHADOW",
+    "user_declared": "NOT_APPROVED"
+  },
+  "rate_limits_per_admin_session": {
+    "audit_trigger_per_minute": 5,
+    "position_detail_per_minute": 5,
+    "presentation_read_per_minute": 10,
+    "report_generation_per_minute": 2
+  },
+  "response_sla_seconds": 60,
+  "status": "PASS",
+  "stop_authority": "project_owner",
+  "workers": {
+    "audit_concurrency": 1,
+    "provider_non_retryable": [
+      "SCHEMA_FAILURE",
+      "AUDIT_FAILURE",
+      "NUMERIC_HALLUCINATION",
+      "REFERENCE_FAILURE",
+      "HTTP_4XX_BUSINESS"
+    ],
+    "provider_retry_max": 3,
+    "provider_retryable": [
+      "CONNECTION_ERROR",
+      "TIMEOUT",
+      "HTTP_429",
+      "HTTP_5XX"
+    ],
+    "report_concurrency": 1
+  }
+}

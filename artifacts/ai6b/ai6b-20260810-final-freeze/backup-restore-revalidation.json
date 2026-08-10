@@ -1,0 +1,60 @@
+{
+  "captured_at": "2026-08-10T06:36:40.575822Z",
+  "future_ai_sqlite_rehearsal": {
+    "backup_artifacts": [
+      {
+        "file": "ai_market_reports.db",
+        "kind": "ai_report_database",
+        "mode": "0o666",
+        "sha256": "6226b3244074d3ca21379ede44154d7f514e47783fb412965bae995761922151",
+        "size_bytes": 200704
+      }
+    ],
+    "backup_outside_source_directory": true,
+    "database_status": "BACKED_UP",
+    "manifest_sha256": "867d0d3f3c2751a28669918a8b9f1ffe26a0787e25889e348114ea11f5e5f3c5",
+    "method": "sqlite-online-backup-api",
+    "restore": {
+      "artifact_hashes_valid": true,
+      "backup_id": "ai6b-local-wal-safe-rehearsal",
+      "database_status": "BACKED_UP",
+      "integrity_check": "ok",
+      "read_samples": {
+        "ai_market_contexts": 1,
+        "ai_market_reports": 0,
+        "ai_report_audits": 0,
+        "ai_report_registry_snapshots": 0
+      },
+      "schema_versions": [
+        [
+          "ai-market-report-db-v1",
+          "ai-market-report-db-v1"
+        ],
+        [
+          "ai-report-audit-db-v1",
+          "ai-report-audit-db-v1"
+        ],
+        [
+          "ai-report-registry-snapshot-strict-audit-v1",
+          "ai-report-audit-v2"
+        ],
+        [
+          "ai-shadow-presentation-indexes-v1",
+          "ai-market-presentation-v1"
+        ]
+      ],
+      "table_count": 15,
+      "temporary_copy_deleted": true,
+      "verified_artifact_kinds": [
+        "ai_report_database"
+      ],
+      "verified_at": "2026-08-10T06:36:40Z"
+    },
+    "scope": "LOCAL_ISOLATED",
+    "source_wal_present_during_backup": true
+  },
+  "gate": "AI6B-B0-BACKUP-RESTORE",
+  "production_ai_database_status": "DATABASE_NOT_YET_PRESENT",
+  "production_database_backup_fabricated": false,
+  "status": "PASS"
+}

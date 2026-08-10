@@ -1,0 +1,16 @@
+{
+  "captured_at": "2026-08-10T07:16:04Z",
+  "files_scanned": 22,
+  "manifest_excluded_from_content_scan": true,
+  "rules": {
+    "authorization_bearer_value": 0,
+    "private_key_material": 0,
+    "provider_or_repository_token": 0,
+    "public_ipv4_address": 0,
+    "secret_assignment_value": 0,
+    "ssh_identity_or_key_path": 0
+  },
+  "scope": "sanitized B0 final-freeze artifacts generated before the final manifest",
+  "sensitive_findings": 0,
+  "status": "PASS"
+}

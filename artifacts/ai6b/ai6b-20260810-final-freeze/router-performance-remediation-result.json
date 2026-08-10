@@ -1,0 +1,53 @@
+{
+  "benchmark": {
+    "cold": {
+      "max_ms": 1.9325620000017807,
+      "mean_ms": 1.7695240500033833,
+      "median_ms": 1.7657042499922682,
+      "min_ms": 1.7175854998640716,
+      "p95_ms": 1.801294874981977
+    },
+    "routes_per_measurement": 200,
+    "warm": {
+      "max_ms": 1.7870215000584722,
+      "mean_ms": 1.7551773999681852,
+      "median_ms": 1.7585007500019856,
+      "min_ms": 1.7208034999202937,
+      "p95_ms": 1.7776066499645822
+    }
+  },
+  "captured_at": "2026-08-10T07:12:23Z",
+  "equivalence": {
+    "hash_matches": 1000,
+    "payload_matches": 1000
+  },
+  "fix_commit": "57fcb2c03f65c9cef0ec4a14912b1006d3d36ca6",
+  "original_node_passes": 10,
+  "profile_6000": {
+    "after": {
+      "dataclasses_asdict_calls_per_route": 0,
+      "future_timestamps_calls_per_route": 1,
+      "milliseconds_per_route_with_profiler": 13.295952066662721,
+      "stable_hash_calls_per_route": 47,
+      "total_function_calls": 78414001,
+      "typing_instancecheck_calls_per_route": 0
+    },
+    "before": {
+      "dataclasses_asdict_calls_per_route": 4736,
+      "future_timestamps_calls_per_route": 2052,
+      "milliseconds_per_route_with_profiler": 109.3555712333279,
+      "stable_hash_calls_per_route": 55,
+      "total_function_calls": 370056001,
+      "typing_instancecheck_calls_per_route": 4224
+    }
+  },
+  "related_suite": {
+    "passes": 3,
+    "tests_per_run": 253
+  },
+  "router_suite": {
+    "passes": 5,
+    "tests_per_run": 62
+  },
+  "status": "PASS"
+}

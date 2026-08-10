@@ -1,0 +1,29 @@
+{
+  "candidate_commit": "ccc8946f5a15ff39d0973c3185ee3282bfd08e05",
+  "captured_at": "2026-08-10T07:12:23Z",
+  "compileall": "PASS",
+  "diff_check": "PASS",
+  "frontend": {
+    "api_check": "PASS",
+    "api_generate": "PASS",
+    "build": "PASS",
+    "bundle_budget": "PASS",
+    "test_files_passed": 19,
+    "tests_passed": 147
+  },
+  "pytest_runs": [
+    {
+      "failed": 0,
+      "passed": 1557,
+      "seconds": 108.75,
+      "skipped": 1
+    },
+    {
+      "failed": 0,
+      "passed": 1557,
+      "seconds": 62.20,
+      "skipped": 1
+    }
+  ],
+  "status": "PASS"
+}

@@ -1,0 +1,12 @@
+{
+  "allowed_position_sources": [
+    "NONE",
+    "PAPER"
+  ],
+  "audience": [
+    "project_owner"
+  ],
+  "production_network_change": false,
+  "status": "APPROVED_FOR_NONE_AND_PAPER_INTERNAL_SHADOW",
+  "user_declared": "DISABLED_NOT_APPROVED"
+}

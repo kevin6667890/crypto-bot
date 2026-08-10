@@ -415,4 +415,8 @@ def position_details(repository: Any, report_id: str, *, instrument: str, mode: 
             raise PresentationError("POSITION_DETAILS_NOT_ELIGIBLE", 403)
         context = conn.execute("SELECT payload_json FROM ai_market_contexts WHERE context_id=?", (row["context_id"],)).fetchone()
         position = _loads(context[0], {}).get("position_context", {}) if context else {}
+        if os.getenv("AI6B_PRIVACY_SCOPE_ENFORCED","false").lower()=="true" and position.get("source") not in {"NONE","PAPER"}:
+            from .live_provider_guard import trip_if_armed
+            trip_if_armed("POSITION_LEAK",evidence_id="POSITION_SOURCE_OUTSIDE_CANARY_SCOPE")
+            raise PresentationError("POSITION_SOURCE_OUTSIDE_CANARY_SCOPE",403)
         return {k: position.get(k) for k in ("source", "side", "average_cost", "original_quantity", "remaining_quantity", "original_stop", "original_targets", "original_timeframe", "plan_completed", "plan_completion_ratio", "discipline_warnings") if k in position}

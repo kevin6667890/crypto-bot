@@ -6,15 +6,23 @@ from typing import Any, Callable
 from .canonical import stable_hash
 from .report_basic_validation import assemble_generated_text, validate_report, resolve_citations, ReportValidationError
 from .report_context_compiler import compile_report_context
-from .report_prompt_templates import compile_prompt, repair_prompt
+from .report_prompt_templates import compile_prompt
 from .report_provider import AIReportProvider, ProviderError
 from .report_response_parser import parse_report_response, ReportParseError
 from .report_registry_snapshot import validate_registry_snapshot
 from .report_repository import ReportRepository, utc_now
 from .report_identity import REPORT_PIPELINE_VERSIONS
+from .live_provider_guard import trip_if_armed
 
 EVENT_TYPES=("QUEUED","RUNNING","RETRY_SCHEDULED","COMPLETED","FAILED_RETRYABLE","FAILED_FINAL","CANCEL_REQUESTED","CANCELLED","INTERRUPTED","BUDGET_BLOCKED","VALIDATION_FAILED")
 RETRY_DELAYS=(2,5,10)
+
+
+def provider_retry_allowed(error:ProviderError)->bool:
+    """Ignore provider-supplied retry hints unless the approved class matches."""
+    if not error.retryable:return False
+    if error.http_status is not None:return error.http_status==429 or 500<=error.http_status<600
+    return error.code in {"CONNECTION_ERROR","TIMEOUT","CONNECTION_OR_TIMEOUT"}
 
 
 class ConcurrencyGate:
@@ -57,6 +65,9 @@ class ReportWorker:
         queued=self.repository.queued(1)
         if not queued:return False
         request=queued[0]
+        if request["provider"]!="fake" and self.repository.status(request["request_id"])["status"]=="INTERRUPTED":
+            trip_if_armed("DUPLICATE_PROVIDER_CHARGE",evidence_id=request["request_id"])
+            self.repository.event(request["request_id"],"FAILED_FINAL",{"code":"INTERRUPTED_LIVE_CALL_CHARGE_UNCERTAIN"});return True
         if not self.gate.acquire(request["request_id"],request["instrument"]):return False
         try:self._run(request)
         finally:self.gate.release(request["request_id"],request["instrument"])
@@ -88,7 +99,7 @@ class ReportWorker:
         try:result=provider.generate(provider_request)
         except ProviderError as error:
             self._record_attempt(request,number,failure_code=error.code,error=error.code)
-            if error.retryable and number<3:self.repository.event(request["request_id"],"RETRY_SCHEDULED",{"delay_seconds":RETRY_DELAYS[number-1],"code":error.code})
+            if provider_retry_allowed(error) and number<3:self.repository.event(request["request_id"],"RETRY_SCHEDULED",{"delay_seconds":RETRY_DELAYS[number-1],"code":error.code})
             else:self.repository.event(request["request_id"],"FAILED_FINAL",{"code":error.code})
             return
         usage=result.usage or {}
@@ -98,16 +109,7 @@ class ReportWorker:
         try:report=parse_report_response(result.raw_text)
         except ReportParseError as error:
             self._record_attempt(request,number,result,parse_status="FAILED",failure_code="INVALID_JSON",error=str(error))
-            # Exactly one format-only repair using the same context and model.
-            repair_number=number+1
-            repair_budget_reason=self.budget.reason(self.repository,request["instrument"],compiled["token_estimate"],request["max_output_tokens"],request["provider"])
-            if repair_budget_reason:self.repository.event(request["request_id"],"BUDGET_BLOCKED",{"code":repair_budget_reason});return
-            repair=repair_prompt(result.raw_text,{"context_id":request["context_id"],"request_id":request["request_id"],"mode":request["mode"],"language":request["language"],"model":request["model"],"prompt_version":request["prompt_version"]})
-            try:
-                repaired=provider.generate({**provider_request,"messages":repair["messages"]});report=parse_report_response(repaired.raw_text);result=repaired;number=repair_number
-            except (ProviderError,ReportParseError) as repair_error:
-                self._record_attempt(request,repair_number,locals().get("repaired"),parse_status="FAILED",failure_code="JSON_REPAIR_FAILED",error=type(repair_error).__name__)
-                self.repository.event(request["request_id"],"FAILED_FINAL",{"code":"JSON_REPAIR_FAILED"});return
+            self.repository.event(request["request_id"],"FAILED_FINAL",{"code":"SCHEMA_FAILURE_NO_PROVIDER_RETRY"});return
         try:validation=validate_report(report,provider_request,registry)
         except ReportValidationError as error:
             self._record_attempt(request,number,result,parse_status="VALID",validation_status="FAILED",failure_code=error.code,error=error.code)

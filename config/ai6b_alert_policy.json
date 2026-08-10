@@ -2,9 +2,9 @@
   "policy_version": "ai6b-alert-policy-v1",
   "owner": "project_owner",
   "stop_authority": "project_owner",
-  "notification_channel": "authenticated-local-operations-alerts",
-  "response_sla_seconds": 300,
-  "status": "APPROVAL_REQUIRED",
+  "notification_channels": ["structured_application_logs", "health_endpoint", "ai6b_evidence_event_log", "owner_manual_monitoring"],
+  "response_sla_seconds": 60,
+  "status": "APPROVED_FOR_INTERNAL_OWNER_CANARY",
   "stop_sequence": [
     "AI_REPORT_LIVE_PROVIDER_ENABLED=false",
     "AI_REPORT_AUTO_AUDIT_ENABLED=false",
@@ -31,17 +31,26 @@
     {"id":"audit_failure","metric":"audit_failure_count","operator":">=","threshold":1,"stop":true},
     {"id":"presentation_mismatch","metric":"presentation_mismatch_count","operator":">=","threshold":1,"stop":true},
     {"id":"position_access","metric":"position_access_anomaly_count","operator":">=","threshold":1,"stop":true},
-    {"id":"disk_growth","metric":"disk_free_bytes","operator":"<","threshold":5368709120,"stop":true},
+    {"id":"disk_growth","metric":"disk_free_bytes","operator":"<","threshold":16106127360,"stop":true},
     {"id":"wal_growth","metric":"ai_report_wal_bytes","operator":">","threshold":536870912,"stop":true},
     {"id":"worker_crash","metric":"worker_crash_count","operator":">=","threshold":1,"stop":true},
     {"id":"frontend_security","metric":"frontend_critical_or_serious_count","operator":">=","threshold":1,"stop":true},
     {"id":"health_lost","metric":"consecutive_health_failures","operator":">=","threshold":2,"stop":true},
-    {"id":"legacy_or_core_change","metric":"legacy_order_router_collector_aggregation_change_count","operator":">=","threshold":1,"stop":true}
+    {"id":"legacy_or_core_change","metric":"legacy_order_router_collector_aggregation_change_count","operator":">=","threshold":1,"stop":true},
+    {"id":"identity_mismatch","metric":"wrong_symbol_mode_context_audit_registry_count","operator":">=","threshold":1,"stop":true},
+    {"id":"unaudited_body","metric":"unaudited_body_display_count","operator":">=","threshold":1,"stop":true},
+    {"id":"secret_exposure","metric":"secret_exposure_count","operator":">=","threshold":1,"stop":true},
+    {"id":"duplicate_charge","metric":"duplicate_provider_charge_count","operator":">=","threshold":1,"stop":true},
+    {"id":"database_corruption","metric":"database_corruption_count","operator":">=","threshold":1,"stop":true}
   ],
   "frontend_error_budget": {
-    "status": "OWNER_APPROVAL_REQUIRED",
-    "js_error_rate_proposed_max": 0.005,
-    "network_error_rate_proposed_max": 0.01,
-    "security_or_authorization_error_max": 0
+    "status": "APPROVED_AND_FROZEN_BEFORE_WINDOW",
+    "critical_or_uncaught_js_max": 0,
+    "recoverable_network_error_rate_max_exclusive": 0.01,
+    "xss_authorization_cross_instrument_max": 0,
+    "presentation_contract_error_max": 0,
+    "persistent_401_action": "STOP_SESSION_NO_RETRY",
+    "persistent_429_action": "STOP_POLL_AND_BACK_OFF",
+    "audited_body_selection_mismatch_action": "HARD_STOP"
   }
 }

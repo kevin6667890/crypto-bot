@@ -6,6 +6,7 @@ from urllib.request import Request, urlopen
 from .canonical import stable_hash
 from .report_provider import ProviderError, ProviderResult
 from .versions import AI_REPORT_PROVIDER_VERSION
+from .live_provider_guard import assert_live_provider_allowed
 
 
 class DeepSeekAIReportProvider:
@@ -19,8 +20,7 @@ class DeepSeekAIReportProvider:
         if not self._key: raise ValueError("AI_REPORT_API_KEY is required")
         if self.timeout > 45: self.timeout=45
     def generate(self, request: dict) -> ProviderResult:
-        if os.getenv("AI_REPORT_LIVE_PROVIDER_ENABLED","false").lower() != "true":
-            raise ProviderError("LIVE_PROVIDER_DISABLED",retryable=False)
+        assert_live_provider_allowed()
         body={"model":self.model,"messages":request["messages"],"temperature":0.2,
               "max_tokens":request["max_output_tokens"],"response_format":{"type":"json_object"},
               "thinking":{"type":"disabled"},"stream":False}

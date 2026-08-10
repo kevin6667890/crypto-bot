@@ -65,6 +65,7 @@ try:
     from ai_market_analysis.report_audit_api import trigger_audit,latest_audit,eligibility,create_evaluation_run
     from ai_market_analysis.report_service import enabled as ai_report_flag
     from ai_market_analysis.presentation import build_latest_presentation,build_report_presentation,position_details,PresentationError
+    from ai_market_analysis.live_provider_guard import HARD_STOP_EVENTS,trip,trip_if_armed
 except ImportError:
     from .research_service import ResearchService
     from .strategy_rules import StrategyParameters, calculate_indicators, validate_parameters
@@ -103,6 +104,7 @@ except ImportError:
     from .ai_market_analysis.report_audit_api import trigger_audit,latest_audit,eligibility,create_evaluation_run
     from .ai_market_analysis.report_service import enabled as ai_report_flag
     from .ai_market_analysis.presentation import build_latest_presentation,build_report_presentation,position_details,PresentationError
+    from .ai_market_analysis.live_provider_guard import HARD_STOP_EVENTS,trip,trip_if_armed
 
 try:
     from dotenv import load_dotenv
@@ -1284,8 +1286,12 @@ class Handler(BaseHTTPRequestHandler):
     def _client(self)->str:
         return self.headers.get("X-Forwarded-For",self.client_address[0]).split(",")[0].strip()[:64]
 
-    def _limited(self,bucket:str,limit:int,window:int)->bool:
-        allowed,retry=LIMITER.allow(bucket,self._client(),limit,window)
+    def _admin_session(self)->str:
+        supplied=self.headers.get("Authorization","").removeprefix("Bearer ")
+        return hashlib.sha256(supplied.encode()).hexdigest() if supplied else self._client()
+
+    def _limited(self,bucket:str,limit:int,window:int,admin_session:bool=False)->bool:
+        allowed,retry=LIMITER.allow(bucket,self._admin_session() if admin_session else self._client(),limit,window)
         if not allowed:
             self.send_response(HTTPStatus.TOO_MANY_REQUESTS); self.send_header("Content-Type","application/json"); self.send_header("Retry-After",str(retry)); self.end_headers(); self.wfile.write(json.dumps({"error":"Rate limit exceeded.","retry_after":retry}).encode()); return True
         return False
@@ -1317,7 +1323,9 @@ class Handler(BaseHTTPRequestHandler):
                 if not ai_report_flag("AI_MARKET_ANALYSIS_PRESENTATION_ENABLED"):
                     self._send({"error":{"code":"PRESENTATION_DISABLED","message":"Shadow presentation is disabled."}},HTTPStatus.NOT_FOUND);return
                 if not self._admin():return
-                if self._limited("ai-presentation-minute",60,60):return
+                is_position=parsed.path.rstrip("/").endswith("/position")
+                if is_position and self._limited("ai-position-detail-minute",5,60,True):return
+                if not is_position and self._limited("ai-presentation-read-minute",10,60,True):return
                 if AI_REPORT_REPOSITORY.schema_version() is None:
                     self._send({"error":{"code":"SCHEMA_UNAVAILABLE","message":"Shadow presentation storage is unavailable."}},HTTPStatus.SERVICE_UNAVAILABLE);return
                 try:
@@ -1329,6 +1337,8 @@ class Handler(BaseHTTPRequestHandler):
                         self._send(position_details(AI_REPORT_REPOSITORY,report_id,instrument=requested,mode=mode));return
                     self._send(build_report_presentation(AI_REPORT_REPOSITORY,report_id,instrument=requested,mode=mode,language=language));return
                 except PresentationError as error:
+                    mapping={"PRESENTATION_SELECTION_MISMATCH":"WRONG_MODE","REPORT_AUDIT_CONTEXT_MISMATCH":"CONTEXT_MISMATCH","REPORT_AUDIT_HASH_MISMATCH":"AUDIT_MISMATCH","AUDIT_ID_MISMATCH":"AUDIT_MISMATCH","REGISTRY_OR_CONTEXT_MISMATCH":"REGISTRY_MISMATCH","REGISTRY_IDENTITY_MISMATCH":"REGISTRY_MISMATCH","REGISTRY_AUDIT_MISMATCH":"AUDIT_MISMATCH"}
+                    if error.code in mapping:trip_if_armed(mapping[error.code],evidence_id=error.code)
                     self._send({"error":{"code":error.code,"message":"Shadow presentation is unavailable."}},error.status);return
                 except Exception:
                     self._send({"error":{"code":"PRESENTATION_INTERNAL_ERROR","message":"Shadow presentation is unavailable."}},HTTPStatus.INTERNAL_SERVER_ERROR);return
@@ -1663,35 +1673,44 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
+        if parsed.path == "/api/ai-market-analysis/v1/kill-switch":
+            if not self._admin():return
+            payload=self._body()
+            if payload is None:return
+            try:self._send(trip(str(payload.get("event","")),evidence_id=str(payload.get("evidence_id") or "admin-api")),HTTPStatus.OK)
+            except ValueError:self._send({"error":"Unknown hard-stop event."},HTTPStatus.BAD_REQUEST)
+            return
         if parsed.path in {"/api/ai-market-analysis/v1/reports","/api/ai-market-analysis/v1/position-plans","/api/ai-market-analysis/v1/evaluation-runs"} or (parsed.path.startswith("/api/ai-market-analysis/v1/reports/") and parsed.path.endswith("/audits")):
             if not ai_report_flag("AI_MARKET_REPORTS_ENABLED"):
                 self._send({"error":"AI market reports are disabled."},HTTPStatus.NOT_FOUND);return
             if AI_REPORT_REPOSITORY.schema_version() is None:
                 self._send({"error":"AI report database requires explicit migration."},HTTPStatus.SERVICE_UNAVAILABLE);return
+            if not self._admin():return
             payload=self._body()
             if payload is None:return
-            if self._limited("ai-report-minute",3,60) or self._limited("ai-report-day",30,86400):return
+            if parsed.path.endswith("/audits"):
+                if self._limited("ai-audit-trigger-minute",5,60,True):return
+            elif parsed.path == "/api/ai-market-analysis/v1/reports":
+                if self._limited("ai-report-generation-minute",2,60,True):return
             try:
                 if parsed.path.endswith("evaluation-runs"):
                     if not ai_report_flag("AI_REPORT_EVALUATION_ENABLED"):
                         self._send({"error":"AI report evaluation is disabled."},HTTPStatus.NOT_FOUND);return
                     if AI_AUDIT_REPOSITORY.schema_version() is None:
                         self._send({"error":"AI audit database requires explicit migration."},HTTPStatus.SERVICE_UNAVAILABLE);return
-                    if not self._admin():return
                     self._send(create_evaluation_run(payload,AI_AUDIT_REPOSITORY),HTTPStatus.ACCEPTED);return
                 if parsed.path.endswith("/audits"):
                     if not ai_report_flag("AI_REPORT_AUDIT_ENABLED"):
                         self._send({"error":"AI report audit is disabled."},HTTPStatus.NOT_FOUND);return
                     if AI_AUDIT_REPOSITORY.schema_version() is None:
                         self._send({"error":"AI audit database requires explicit migration."},HTTPStatus.SERVICE_UNAVAILABLE);return
-                    if not self._admin():return
                     self._send(trigger_audit(parsed.path.split("/")[-2],AI_REPORT_REPOSITORY,AI_AUDIT_REPOSITORY),HTTPStatus.ACCEPTED);return
                 if parsed.path.endswith("position-plans"):
                     if not ai_report_flag("AI_USER_POSITION_PLANS_ENABLED"):
                         self._send({"error":"User position plans are disabled."},HTTPStatus.NOT_FOUND);return
-                    if not self._admin():return
                     self._send(save_position_plan(payload,AI_REPORT_REPOSITORY),HTTPStatus.CREATED);return
-                if payload.get("position_source")=="USER_DECLARED" and not self._admin():return
+                if payload.get("position_source")=="USER_DECLARED":
+                    self._send({"error":"USER_DECLARED is not approved for this canary."},HTTPStatus.FORBIDDEN);return
                 if payload.get("provider","fake")!="fake" and not ai_report_flag("AI_REPORT_LIVE_PROVIDER_ENABLED"):
                     self._send({"error":"Live report provider is disabled."},HTTPStatus.SERVICE_UNAVAILABLE);return
                 result=submit_report(payload,AI_REPORT_REPOSITORY,DB_PATH,MICROSTRUCTURE.path)

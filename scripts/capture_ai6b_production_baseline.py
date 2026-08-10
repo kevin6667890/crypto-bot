@@ -43,16 +43,20 @@ for path in ('/','/api/health','/api/paper/flow/health'):
   with urllib.request.urlopen('http://127.0.0.1:8501'+path,timeout=10) as response: status=response.status;response.read()
  except Exception as error: status=getattr(error,'code',0)
  out['http'][path]={'status':status,'latency_ms':round((time.monotonic()-started)*1000,3)}
+flags=('AI_MARKET_REPORTS_ENABLED','AI_MARKET_REPORT_WORKER_ENABLED','AI_USER_POSITION_PLANS_ENABLED','AI_MACRO_HTTP_FETCH_ENABLED','AI_REPORT_LIVE_PROVIDER_ENABLED','AI_REPORT_AUDIT_ENABLED','AI_REPORT_AUDIT_WORKER_ENABLED','AI_REPORT_AUTO_AUDIT_ENABLED','AI_REPORT_EVALUATION_ENABLED','AI_MARKET_ANALYSIS_PRESENTATION_ENABLED','VITE_AI_MARKET_ANALYSIS_SHADOW_ENABLED')
 code,ids=run(['docker','compose','-f',ROOT+'/docker-compose.yml','ps','-q']);containers=[]
 for cid in ids.splitlines() if code==0 else []:
  code,value=run(['docker','inspect','--format','{{json .}}',cid])
  if code==0:
   item=json.loads(value);health=(item.get('State',{}).get('Health') or {}).get('Status','none')
-  containers.append({'name':item['Name'].lstrip('/'),'image_id':item['Image'],'image_ref':item['Config']['Image'],'restart_count':item['RestartCount'],'health':health,'started_at':item['State']['StartedAt'],'oom_killed':bool(item.get('State',{}).get('OOMKilled',False)),'memory_limit_bytes':item.get('HostConfig',{}).get('Memory',0)})
+  environment=dict(raw.partition('=')[::2] for raw in item.get('Config',{}).get('Env') or [])
+  containers.append({'name':item['Name'].lstrip('/'),'image_id':item['Image'],'image_ref':item['Config']['Image'],'restart_count':item['RestartCount'],'health':health,'started_at':item['State']['StartedAt'],'oom_killed':bool(item.get('State',{}).get('OOMKilled',False)),'memory_limit_bytes':item.get('HostConfig',{}).get('Memory',0),'safe_ai_flags':{flag:environment[flag] for flag in flags if flag in environment}})
 out['containers']=containers
 code,stats=run(['docker','stats','--no-stream','--format','{{json .}}']);out['container_stats']=[json.loads(line) for line in stats.splitlines()] if code==0 else []
-flags=('AI_MARKET_REPORTS_ENABLED','AI_MARKET_REPORT_WORKER_ENABLED','AI_USER_POSITION_PLANS_ENABLED','AI_MACRO_HTTP_FETCH_ENABLED','AI_REPORT_LIVE_PROVIDER_ENABLED','AI_REPORT_AUDIT_ENABLED','AI_REPORT_AUDIT_WORKER_ENABLED','AI_REPORT_AUTO_AUDIT_ENABLED','AI_REPORT_EVALUATION_ENABLED','AI_MARKET_ANALYSIS_PRESENTATION_ENABLED')
-out['ai_flags']={flag:'ABSENT_EFFECTIVE_FALSE' for flag in flags}
+out['ai_flags']={}
+for flag in flags:
+ explicit=[container['safe_ai_flags'][flag].strip().lower() for container in containers if flag in container['safe_ai_flags']]
+ out['ai_flags'][flag]='ABSENT_EFFECTIVE_FALSE' if not explicit else ('EXPLICIT_FALSE' if all(value=='false' for value in explicit) else 'UNEXPECTED:'+','.join(sorted(set(explicit))))
 print(json.dumps(out,sort_keys=True,separators=(',',':')))
 '''
 

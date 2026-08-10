@@ -23,7 +23,7 @@ print(json.dumps(out,sort_keys=True))""".replace('START',start)
  observed=max(0,round((total_files(last)-total_files(first))/elapsed*86400))
  restarts={item['name']:{'start':next(x['restart_count'] for x in first['containers'] if x['name']==item['name']),'end':item['restart_count']} for item in last['containers']}
  all_ai_absent=all(all(value is None for name,value in sample['files'].items() if name.startswith('ai_market_reports.db')) for sample in samples)
- flags_off=all(all(value=='ABSENT_EFFECTIVE_FALSE' for value in sample['ai_flags'].values()) for sample in samples)
+ flags_off=all(all(value in {'ABSENT_EFFECTIVE_FALSE','EXPLICIT_FALSE'} for value in sample['ai_flags'].values()) for sample in samples)
  aggregation={name:{'row_delta':last['aggregation'][name]['count']-first['aggregation'][name]['count'],'latest_start':first['aggregation'][name]['latest'],'latest_end':last['aggregation'][name]['latest']} for name in first['aggregation']}
  legacy={name:{'count_delta':last['legacy_ai']['briefs'][name]['count']-first['legacy_ai']['briefs'][name]['count'],'latest_start':first['legacy_ai']['briefs'][name]['latest'],'latest_end':last['legacy_ai']['briefs'][name]['latest']} for name in first['legacy_ai']['briefs']}
  swap_used_max=max(s['memory']['SwapTotal']-s['memory']['SwapFree'] for s in samples)

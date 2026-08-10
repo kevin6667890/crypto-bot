@@ -10,3 +10,4 @@ data_cache/
 .git/
 node_modules/
 frontend/node_modules/
+artifacts/

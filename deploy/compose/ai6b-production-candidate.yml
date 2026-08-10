@@ -23,6 +23,8 @@ x-ai-disabled: &ai-disabled
   AI_REPORT_AUTO_AUDIT_ENABLED: "false"
   AI_REPORT_EVALUATION_ENABLED: "false"
   AI_MARKET_ANALYSIS_PRESENTATION_ENABLED: "false"
+  AI6B_KILL_SWITCH_AUTOMATION_ENABLED: "true"
+  AI6B_PRIVACY_SCOPE_ENFORCED: "true"
 
 x-ai-budget: &ai-budget
   AI_REPORT_CANARY_MAX_LIVE_REQUESTS: "10"
@@ -39,6 +41,11 @@ x-ai-budget: &ai-budget
   AI_REPORT_DAILY_CURRENCY_CAP_USD: "2"
   AI_REPORT_COST_STATUS: "REQUIRES_RUNTIME_AUDIT"
   AI_REPORT_PRICE_SCHEDULE_VERSION: "REQUIRES_RUNTIME_AUDIT"
+  AI_REPORT_WORKER_CONCURRENCY: "1"
+  AI_REPORT_AUDIT_WORKER_CONCURRENCY: "1"
+  AI_REPORT_PROVIDER_RETRY_MAX: "3"
+  AI_REPORT_HOT_RETENTION_DAYS: "30"
+  AI_REPORT_ARCHIVE_MAX_DAYS: "365"
 
 services:
   paper-api:
@@ -61,8 +68,8 @@ services:
       - ai-report-data:/var/lib/ai-report:rw
     expose: ["8765"]
     pids_limit: 128
-    mem_limit: 768m
-    cpus: 1.0
+    mem_limit: 640m
+    cpus: 0.55
     healthcheck:
       test: [CMD, python, -c, "from urllib.request import urlopen; urlopen('http://127.0.0.1:8765/api/paper/flow/health',timeout=3)"]
       interval: 30s
@@ -83,7 +90,7 @@ services:
       - microstructure-data:/var/lib/microstructure:rw
     pids_limit: 128
     mem_limit: 768m
-    cpus: 1.0
+    cpus: 0.65
     healthcheck:
       test: [CMD, python, -c, "from urllib.request import urlopen; urlopen('http://127.0.0.1:8770/health',timeout=12)"]
       interval: 30s
@@ -98,12 +105,13 @@ services:
     environment:
       <<: [*ai-disabled, *ai-budget]
       AI_REPORT_API_KEY_FILE: /run/secrets/ai_report_provider_key
+      AI_REPORT_KILL_SWITCH_FILE: /var/lib/ai-report/live-provider-disabled.json
     secrets: [ai_report_provider_key]
     volumes:
       - ai-report-data:/var/lib/ai-report:rw
     pids_limit: 64
-    mem_limit: 512m
-    cpus: 0.75
+    mem_limit: 384m
+    cpus: 0.30
     healthcheck:
       test: [CMD, python, -c, "from dashboard.ai_market_analysis.report_repository import ReportRepository; assert ReportRepository('/var/lib/ai-report/ai_market_reports.db').schema_version()"]
       interval: 30s
@@ -116,16 +124,32 @@ services:
     command: [python, scripts/run_ai_audit_worker.py, --database, /var/lib/ai-report/ai_market_reports.db]
     environment:
       <<: *ai-disabled
+      AI_REPORT_KILL_SWITCH_FILE: /var/lib/ai-report/live-provider-disabled.json
     volumes:
       - ai-report-data:/var/lib/ai-report:rw
     pids_limit: 64
-    mem_limit: 384m
-    cpus: 0.5
+    mem_limit: 256m
+    cpus: 0.20
     healthcheck:
       test: [CMD, python, -c, "from dashboard.ai_market_analysis.report_audit_repository import AuditRepository; assert AuditRepository('/var/lib/ai-report/ai_market_reports.db').schema_version()"]
       interval: 30s
       timeout: 5s
       retries: 3
+
+  retention-dry-run:
+    <<: *app-security
+    profiles: [ai6b-maintenance-candidate]
+    command: [python, scripts/manage_ai_report_retention.py, archive, --database, /var/lib/ai-report/ai_market_reports.db, --archive-directory, /var/lib/ai-report-archive, --limit, "10"]
+    environment:
+      <<: *ai-disabled
+      AI_REPORT_LOCAL_ARCHIVE_CAP_BYTES: "10737418240"
+    volumes:
+      - ai-report-data:/var/lib/ai-report:ro
+      - ai-report-archive:/var/lib/ai-report-archive:rw
+    restart: "no"
+    pids_limit: 32
+    mem_limit: 128m
+    cpus: 0.05
 
   frontend:
     image: ${AI6B_FRONTEND_IMAGE:?AI6B_FRONTEND_IMAGE digest is required}
@@ -142,10 +166,11 @@ services:
     volumes:
       - ../nginx-ai6b-production.conf:/etc/nginx/conf.d/default.conf:ro
     secrets: [tls_certificate, tls_private_key]
-    ports: ["443:8443"]
+    # Candidate topology: owner-only SSH tunnel to loopback; no public listener.
+    ports: ["127.0.0.1:8443:8443"]
     pids_limit: 32
     mem_limit: 128m
-    cpus: 0.25
+    cpus: 0.10
     logging: *bounded-logs
     depends_on: [paper-api]
     healthcheck:
@@ -164,6 +189,9 @@ volumes:
   ai-report-data:
     driver: local
     driver_opts: {type: none, o: bind, device: "${AI_REPORT_DATA_DIR:?AI_REPORT_DATA_DIR is required}"}
+  ai-report-archive:
+    driver: local
+    driver_opts: {type: none, o: bind, device: "${AI_REPORT_ARCHIVE_DIR:?AI_REPORT_ARCHIVE_DIR is required}"}
 
 secrets:
   admin_token: {file: "${ADMIN_TOKEN_FILE:?ADMIN_TOKEN_FILE is required}"}

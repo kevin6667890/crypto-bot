@@ -8,11 +8,12 @@ from dashboard.signal_identity import canonical_json
 from dashboard.strategy_rules import StrategyParameters
 
 
-def analysis(service, cvd=10.0, oi=1.0, atr=2.0):
-    ts = int(time.time())
+def analysis(service, cvd=10.0, oi=1.0, atr=2.0, *, candle_close_ts=None, snapshot_timestamp=None):
+    ts = int(time.time()) if candle_close_ts is None else int(candle_close_ts)
+    snapshot_ts = time.time_ns() if snapshot_timestamp is None else int(snapshot_timestamp)
     params = StrategyParameters(cooldown_bars=0)
     frames = {name: {"candle_close_ts": ts, "close": 100, "fast_ma": 99, "slow_ma": 98, "trend": "Bullish"} for name in ("1H", "4H")}
-    decision = evaluate_decision(params, MarketContext("BTC-USDT", "15m", ts, 100, {"fast_ma": 99, "slow_ma": 98, "ema": 100, "rsi": 50, "atr": atr, "volume_ratio": 2}), TimeframeContext(frames, ("1H", "4H"), False, "multi-timeframe"), FlowContext(True, cvd, oi, "test", ts, ts, time.time_ns()), RiskContext(), "live-mtf-flow-v1").to_dict()
+    decision = evaluate_decision(params, MarketContext("BTC-USDT", "15m", ts, 100, {"fast_ma": 99, "slow_ma": 98, "ema": 100, "rsi": 50, "atr": atr, "volume_ratio": 2}), TimeframeContext(frames, ("1H", "4H"), False, "multi-timeframe"), FlowContext(True, cvd, oi, "test", ts, ts, snapshot_ts), RiskContext(), "live-mtf-flow-v1").to_dict()
     result = {**decision, "price": 100.0, "ema20": 100.0, "rsi14": 50.0, "atr14": atr, "volume_ratio": 2.0, "updated_at": now_iso()}
     with service._connect() as conn:
         conn.execute("INSERT INTO decision_evaluations(evaluation_id,signal_setup_id,source,instrument,execution_timeframe,candle_close_ts,strategy_version,decision_engine_version,action,decision_payload,gate_payload,flow_payload,evaluation_timestamp,market_snapshot_ts,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", (decision["evaluation_id"], decision["signal_setup_id"], "PAPER", "BTC-USDT", "15m", ts, decision["strategy_version"], decision["decision_engine_version"], decision["action"], canonical_json(decision), canonical_json(decision["gate_results"]), canonical_json(decision["flow_context"]), result["updated_at"], ts, result["updated_at"]))
@@ -29,7 +30,9 @@ def rationale(service, item):
 
 def test_live_flow_evaluations_are_distinct_and_order_keeps_exact_authorizer(tmp_path):
     service = PaperService(tmp_path / "paper.db")
-    first, second = analysis(service, 10, 1), analysis(service, 20, 2)
+    ts = int(time.time())
+    first = analysis(service, 10, 1, candle_close_ts=ts)
+    second = analysis(service, 20, 2, candle_close_ts=ts)
     assert first["signal_setup_id"] == second["signal_setup_id"]
     assert first["evaluation_id"] != second["evaluation_id"]
     with service._connect() as conn:
@@ -41,6 +44,33 @@ def test_live_flow_evaluations_are_distinct_and_order_keeps_exact_authorizer(tmp
     payload = json.loads(trade["trade_rationale"])
     assert trade["evaluation_id"] == first["evaluation_id"] == payload["evaluation_id"]
     assert payload["cvd_value"] == 10 and payload["oi_value"] == 1
+
+
+def test_setup_identity_uses_candle_boundary_while_evaluation_tracks_live_flow(tmp_path):
+    service = PaperService(tmp_path / "paper.db")
+    ts = int(time.time())
+    first = analysis(
+        service, 10, 1,
+        candle_close_ts=ts,
+        snapshot_timestamp=ts * 1_000_000_000 + 101,
+    )
+    second = analysis(
+        service, 20, 2,
+        candle_close_ts=ts,
+        snapshot_timestamp=ts * 1_000_000_000 + 202,
+    )
+    next_candle = analysis(
+        service, 20, 2,
+        candle_close_ts=ts + 1,
+        snapshot_timestamp=(ts + 1) * 1_000_000_000 + 303,
+    )
+
+    assert first["signal_setup_id"] == second["signal_setup_id"]
+    assert first["flow_context"]["cvd_delta"] != second["flow_context"]["cvd_delta"]
+    assert first["flow_context"]["oi_change_pct"] != second["flow_context"]["oi_change_pct"]
+    assert first["flow_context"]["snapshot_timestamp"] != second["flow_context"]["snapshot_timestamp"]
+    assert first["evaluation_id"] != second["evaluation_id"]
+    assert second["signal_setup_id"] != next_candle["signal_setup_id"]
 
 
 def test_rationale_validation_is_atomic_and_costed(tmp_path):

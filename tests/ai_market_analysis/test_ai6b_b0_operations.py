@@ -235,6 +235,20 @@ def test_storage_projection_is_conservative_and_fail_closed():
     assert value["wal_peak_reserve_bytes"] == 512 * 1024**2
     assert value["docker_image_cache_reserve_bytes"] == 8 * 1024**3
     assert value["backup_temporary_space_bytes"] == value["ai_hot_30d_bytes"] * 2
+    assert value["remaining_hot_retention_days"] == pytest.approx(30 - 18.18135)
+    assert value["projected_non_ai_daily_growth_bytes"] == int(19_059_113_984 / 18.18135)
+
+
+def test_storage_projection_does_not_double_count_existing_hot_coverage():
+    value = project_capacity(filesystem_total_bytes=110_570_917_888, filesystem_used_bytes=37_720_215_552,
+        current_microstructure_bytes=21_984_579_584, microstructure_coverage_days=18.08,
+        observed_non_ai_daily_growth_bytes=2_122_609_849)
+    expected_remaining = 30 - 18.08
+    expected = (37_720_215_552 + 2_122_609_849 * expected_remaining +
+                value["ai_logical_90d_total_bytes"] + value["wal_peak_reserve_bytes"] +
+                value["docker_image_cache_reserve_bytes"] + value["backup_temporary_space_bytes"])
+    assert value["projected_used_with_30d_hot_and_90d_logical_bytes"] == int(expected)
+    assert value["within_30d_hot_and_90d_logical_budget"] is True
 
 
 @pytest.mark.parametrize("error,allowed", [

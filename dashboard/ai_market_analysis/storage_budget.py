@@ -21,16 +21,20 @@ def project_capacity(*,filesystem_total_bytes:int,filesystem_used_bytes:int,curr
                      observed_non_ai_daily_growth_bytes:int=0)->dict[str,Any]:
     if min(filesystem_total_bytes,current_microstructure_bytes,microstructure_coverage_days)<=0:raise ValueError("CAPACITY_INPUT_INVALID")
     daily_micro=current_microstructure_bytes/microstructure_coverage_days
+    projected_non_ai_daily=max(daily_micro,observed_non_ai_daily_growth_bytes)
+    remaining_hot_days=max(0.0,raw_retention_days-microstructure_coverage_days)
     ai_daily=maximum_ai_bytes_per_request()*live_requests_per_day
     hot_ai=ai_daily*HOT_RETENTION_DAYS
     archive_ai=ai_daily*(LOGICAL_RETENTION_DAYS-HOT_RETENTION_DAYS)
     logical_90d=hot_ai+archive_ai
     backup_temporary=hot_ai*2
-    projected_24h=filesystem_used_bytes+observed_non_ai_daily_growth_bytes+ai_daily
-    projected_local_30d=(filesystem_used_bytes+observed_non_ai_daily_growth_bytes*HOT_RETENTION_DAYS+
+    projected_24h=filesystem_used_bytes+projected_non_ai_daily+ai_daily
+    projected_local_30d=(filesystem_used_bytes+projected_non_ai_daily*remaining_hot_days+
                          logical_90d+WAL_PEAK_RESERVE_BYTES+DOCKER_IMAGE_CACHE_RESERVE_BYTES+backup_temporary)
     limit=filesystem_total_bytes-SYSTEM_SAFETY_RESERVE_BYTES
     return {"daily_microstructure_growth_bytes":int(daily_micro),"maximum_ai_bytes_per_request":maximum_ai_bytes_per_request(),
+            "projected_non_ai_daily_growth_bytes":int(projected_non_ai_daily),"observed_non_ai_daily_growth_bytes":observed_non_ai_daily_growth_bytes,
+            "existing_hot_coverage_days":microstructure_coverage_days,"remaining_hot_retention_days":remaining_hot_days,
             "maximum_ai_daily_growth_bytes":ai_daily,"projected_used_after_24h_bytes":int(projected_24h),
             "ai_hot_30d_bytes":hot_ai,"ai_archive_days_31_to_90_bytes":archive_ai,
             "ai_logical_90d_total_bytes":logical_90d,"wal_peak_reserve_bytes":WAL_PEAK_RESERVE_BYTES,

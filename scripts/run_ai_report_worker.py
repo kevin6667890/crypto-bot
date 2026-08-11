@@ -7,6 +7,7 @@ from dashboard.ai_market_analysis.deepseek_report_provider import DeepSeekAIRepo
 from dashboard.ai_market_analysis.report_jobs import ReportWorker
 from dashboard.ai_market_analysis.report_provider import FakeAIReportProvider
 from dashboard.ai_market_analysis.report_repository import ReportRepository,DEFAULT_REPORT_DB
+from dashboard.ai_market_analysis.live_provider_guard import assert_live_provider_allowed
 def load_provider_secret()->None:
  path=os.getenv("AI_REPORT_API_KEY_FILE")
  if path:
@@ -16,8 +17,12 @@ def load_provider_secret()->None:
 def main()->int:
  p=argparse.ArgumentParser();p.add_argument("--database",default=str(DEFAULT_REPORT_DB));p.add_argument("--once",action="store_true");a=p.parse_args()
  if os.getenv("AI_MARKET_REPORT_WORKER_ENABLED","false").lower()!="true":print("AI report worker disabled");return 0
- load_provider_secret()
- repo=ReportRepository(a.database);factory=lambda r:FakeAIReportProvider(r["model"]) if r["provider"]=="fake" else DeepSeekAIReportProvider(r["model"]);worker=ReportWorker(repo,factory);worker.recover()
+ if os.getenv("AI_REPORT_LIVE_PROVIDER_ENABLED","false").lower()=="true":load_provider_secret()
+ def factory(request):
+  if request["provider"]=="fake":return FakeAIReportProvider(request["model"])
+  assert_live_provider_allowed()
+  return DeepSeekAIReportProvider(request["model"])
+ repo=ReportRepository(a.database);worker=ReportWorker(repo,factory);worker.recover()
  while True:
   did=worker.run_once()
   if a.once:return 0

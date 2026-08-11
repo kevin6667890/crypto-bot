@@ -48,7 +48,24 @@ const StrategyResearchRoute = lazy(() => import("./routes/StrategyResearchRoute"
 const MicrostructureResearch = lazy(() => import("./MicrostructureResearch"));
 const Operations = lazy(() => import("./Operations"));
 const MarketStateResearch = lazy(() => import("./MarketStateResearch"));
-const StrategyRouterResearch = lazy(() => import("./StrategyRouterResearch"));
+
+type PrimaryPage = "workspace" | "market" | "research" | "microstructure" | "operations";
+type ResearchView = "overview" | "router";
+
+function routeFromLocation(): { page: PrimaryPage; researchView: ResearchView } {
+  const route = `${window.location.pathname}${window.location.hash}`.toLowerCase();
+  if (route.includes("strategy-router-v2") || route.includes("research/router")) return { page: "research", researchView: "router" };
+  if (route.includes("market-state-v2") || route.includes("market/state") || route.endsWith("#market")) return { page: "market", researchView: "overview" };
+  if (route.includes("microstructure")) return { page: "microstructure", researchView: "overview" };
+  if (route.includes("operations")) return { page: "operations", researchView: "overview" };
+  if (route.includes("research")) return { page: "research", researchView: "overview" };
+  return { page: "workspace", researchView: "overview" };
+}
+
+const canonicalRoute: Record<PrimaryPage, string> = {
+  workspace: "#workspace", market: "#market", research: "#research",
+  microstructure: "#microstructure", operations: "#operations",
+};
 
 type RouteErrorBoundaryProps = { name: string; children: React.ReactNode };
 type RouteErrorBoundaryState = { failed: boolean };
@@ -689,10 +706,10 @@ function Workspace() {
   const [paper, setPaper] = useState<PaperStatus | null>(null);
   const [selectedTrade, setSelectedTrade] = useState<PaperStatus["closed_trades"][number] | null>(null);
   const [vpvr, setVpvr] = useState<VpvrProfile | null>(null);
-  const [activePage, setActivePage] = useState<
-    "market" | "state" | "router" | "research" | "microstructure" | "operations"
-  >("market");
-  const [visitedPages, setVisitedPages] = useState(() => new Set(["market"]));
+  const initialRoute = useMemo(routeFromLocation, []);
+  const [activePage, setActivePage] = useState<PrimaryPage>(initialRoute.page);
+  const [researchView, setResearchView] = useState<ResearchView>(initialRoute.researchView);
+  const [visitedPages, setVisitedPages] = useState(() => new Set<PrimaryPage>([initialRoute.page]));
   const [question, setQuestion] = useState("");
   const [chatAnswer, setChatAnswer] = useState("");
   const [chatLoading, setChatLoading] = useState(false);
@@ -700,10 +717,23 @@ function Workspace() {
   const [replayDetail, setReplayDetail] = useState<ReplayDetail | null>(null);
   const [replayLoading, setReplayLoading] = useState(false);
   const paperRequest = useRef(0);
-  const selectPage = (page: "market" | "state" | "router" | "research" | "microstructure" | "operations") => {
+  const selectPage = (page: PrimaryPage, view: ResearchView = "overview") => {
     setVisitedPages((current) => new Set(current).add(page));
     setActivePage(page);
+    if (page === "research") setResearchView(view);
+    window.history.pushState({}, "", page === "research" && view === "router" ? "#research/router" : canonicalRoute[page]);
   };
+
+  useEffect(() => {
+    const syncRoute = () => {
+      const next = routeFromLocation();
+      setVisitedPages((current) => new Set(current).add(next.page));
+      setActivePage(next.page);
+      setResearchView(next.researchView);
+    };
+    window.addEventListener("popstate", syncRoute);
+    return () => window.removeEventListener("popstate", syncRoute);
+  }, []);
 
   async function refresh() {
     const request = ++paperRequest.current;
@@ -860,19 +890,16 @@ function Workspace() {
           <span>{t("app.workspace")}</span>
           <div className="page-switch">
             <button
+              className={activePage === "workspace" ? "active" : ""}
+              onClick={() => selectPage("workspace")}
+            >
+              {t("nav.workspace")}
+            </button>
+            <button
               className={activePage === "market" ? "active" : ""}
               onClick={() => selectPage("market")}
             >
               {t("nav.market")}
-            </button>
-            <button
-              className={activePage === "state" ? "active" : ""}
-              onClick={() => selectPage("state")}
-            >
-              市场状态 V2
-            </button>
-            <button className={activePage === "router" ? "active" : ""} onClick={() => selectPage("router")}>
-              {t("nav.router")}
             </button>
             <button
               className={activePage === "research" ? "active" : ""}
@@ -955,7 +982,11 @@ function Workspace() {
         </div>
       </header>
 
-      <div hidden={activePage !== "market"} data-route="market">
+      <div hidden={activePage !== "workspace"} data-route="workspace">
+        <section className="page-intent" aria-labelledby="workspace-title">
+          <div><span className="eyebrow">{t("workspace.eyebrow")}</span><h1 id="workspace-title">{t("workspace.title")}</h1></div>
+          <p>{t("workspace.description")}</p>
+        </section>
         <div className="workspace-grid">
           <aside className="watchlist-panel">
             <div className="section-title">
@@ -1607,24 +1638,19 @@ function Workspace() {
           </aside>
         </div>
       </div>
-      {visitedPages.has("research") && (
-        <div hidden={activePage !== "research"} data-route="research">
-          <DeferredRoute name="Strategy Research"><StrategyResearchRoute /></DeferredRoute>
+      {visitedPages.has("market") && (
+        <div hidden={activePage !== "market"} data-route="market">
+          <DeferredRoute name={t("nav.market")}><MarketStateResearch instrument={perpetualInstrument(instrument)} /></DeferredRoute>
         </div>
       )}
-      {visitedPages.has("state") && (
-        <div hidden={activePage !== "state"} data-route="state">
-          <DeferredRoute name="Market State V2"><MarketStateResearch instrument={perpetualInstrument(instrument)} /></DeferredRoute>
+      {visitedPages.has("research") && (
+        <div hidden={activePage !== "research"} data-route="research">
+          <DeferredRoute name={t("nav.research")}><StrategyResearchRoute instrument={perpetualInstrument(instrument)} initialView={researchView} onViewChange={(view) => { setResearchView(view); window.history.replaceState({}, "", view === "router" ? "#research/router" : "#research"); }} /></DeferredRoute>
         </div>
       )}
       {visitedPages.has("microstructure") && (
         <div hidden={activePage !== "microstructure"} data-route="microstructure">
           <DeferredRoute name="Microstructure"><MicrostructureResearch /></DeferredRoute>
-        </div>
-      )}
-      {visitedPages.has("router") && (
-        <div hidden={activePage !== "router"} data-route="router">
-          <DeferredRoute name="Strategy Router V2"><StrategyRouterResearch instrument={perpetualInstrument(instrument)} /></DeferredRoute>
         </div>
       )}
       {visitedPages.has("operations") && (

@@ -1,0 +1,128 @@
+{
+  "audit_schema_version": "ai6b-b3-provider-official-audit-v1",
+  "provider": "DeepSeek",
+  "retrieved_utc": "2026-08-11T02:02:35Z",
+  "facts_source_policy": "DEEPSEEK_OFFICIAL_ONLY",
+  "live_api_request_performed": false,
+  "source_urls": [
+    "https://api-docs.deepseek.com/quick_start/pricing/",
+    "https://api-docs.deepseek.com/api/create-chat-completion/",
+    "https://api-docs.deepseek.com/quick_start/error_codes/",
+    "https://api-docs.deepseek.com/quick_start/token_usage/",
+    "https://api-docs.deepseek.com/quick_start/rate_limit/"
+  ],
+  "endpoint": {
+    "base_url": "https://api.deepseek.com",
+    "method": "POST",
+    "path": "/chat/completions",
+    "full_url": "https://api.deepseek.com/chat/completions"
+  },
+  "selected_b3_model": "deepseek-v4-flash",
+  "selection_reason": "Bounded canary local choice: lowest officially published worst-case token price; not an official model recommendation.",
+  "official_model_recommendation": "UNKNOWN",
+  "models": {
+    "deepseek-v4-flash": {
+      "official_model_version": "DeepSeek-V4-Flash-0731",
+      "thinking_modes": ["enabled", "disabled"],
+      "context_tokens": 1000000,
+      "maximum_output_tokens": 384000
+    },
+    "deepseek-v4-pro": {
+      "official_model_version": "DeepSeek-V4-Pro",
+      "thinking_modes": ["enabled", "disabled"],
+      "context_tokens": 1000000,
+      "maximum_output_tokens": 384000
+    }
+  },
+  "reasoning_chat_distinction": "The current official API exposes thinking enabled/disabled on both current model names. It does not document separate current chat and reasoning model names on the audited pages.",
+  "pricing": {
+    "currency": "USD",
+    "unit": "per_1000000_tokens",
+    "price_version": "deepseek-official-2026-08-11T02:02:35Z",
+    "deepseek-v4-flash": {
+      "input_cache_hit": "0.0028",
+      "input_cache_miss": "0.14",
+      "output": "0.28"
+    },
+    "deepseek-v4-pro": {
+      "input_cache_hit": "0.003625",
+      "input_cache_miss": "0.435",
+      "output": "0.87"
+    },
+    "deduction_rule": "token_count multiplied by the corresponding per-token price",
+    "change_warning": "Official page says pricing may change and announces an expected significant increase. Re-audit immediately before formal B3."
+  },
+  "approved_budget_projection": {
+    "assumption": "All 100000 daily input tokens are cache misses and all 25000 daily output tokens are used.",
+    "deepseek-v4-flash_usd": "0.021000000000",
+    "deepseek-v4-pro_usd": "0.065250000000",
+    "usd_2_cap_is_current_binding_limit": false,
+    "policy": "USD 2 remains a hard cap and overrides token ceilings after any price change."
+  },
+  "usage_fields": {
+    "prompt_tokens": "DOCUMENTED",
+    "completion_tokens": "DOCUMENTED",
+    "total_tokens": "DOCUMENTED",
+    "prompt_cache_hit_tokens": "DOCUMENTED",
+    "prompt_cache_miss_tokens": "DOCUMENTED",
+    "completion_tokens_details.reasoning_tokens": "DOCUMENTED",
+    "missing_field_policy": "UNKNOWN"
+  },
+  "request_identity": {
+    "response_body_id": "DOCUMENTED_UNIQUE_CHAT_COMPLETION_IDENTIFIER",
+    "http_request_id_header": "UNKNOWN",
+    "server_side_idempotency_key": "UNKNOWN"
+  },
+  "streaming": {
+    "non_streaming": "HTTP 200 chat completion object with usage object",
+    "streaming": "SSE data-only chunks terminated by data: [DONE]",
+    "stream_usage": "When stream_options.include_usage is true, an additional pre-DONE chunk carries total usage; other chunks carry null usage."
+  },
+  "errors": {
+    "401": {
+      "official_meaning": "Authentication fails due to wrong API key",
+      "b3_retry": "NO_AUTOMATIC_RETRY"
+    },
+    "403": {
+      "official_meaning": "UNKNOWN",
+      "b3_retry": "NO_AUTOMATIC_RETRY"
+    },
+    "429": {
+      "official_meaning": "Rate limit reached / requests sent too quickly",
+      "provider_execution_or_charge_guarantee": "UNKNOWN",
+      "b3_retry": "NO_AUTOMATIC_RETRY_UNLESS_PROVIDER_NON_ACCEPTANCE_IS_PROVEN"
+    },
+    "500": {
+      "official_meaning": "Server error; official page suggests retry after a brief wait",
+      "provider_execution_or_charge_guarantee": "UNKNOWN",
+      "b3_retry": "NO_AUTOMATIC_RETRY_UNLESS_PROVIDER_NON_ACCEPTANCE_IS_PROVEN"
+    },
+    "503": {
+      "official_meaning": "Server overloaded; official page suggests retry after a brief wait",
+      "provider_execution_or_charge_guarantee": "UNKNOWN",
+      "b3_retry": "NO_AUTOMATIC_RETRY_UNLESS_PROVIDER_NON_ACCEPTANCE_IS_PROVEN"
+    },
+    "other_5xx": {
+      "official_meaning": "UNKNOWN",
+      "b3_retry": "NO_AUTOMATIC_RETRY"
+    }
+  },
+  "timeout_retry_guidance": {
+    "connect_timeout": "UNKNOWN",
+    "read_timeout": "UNKNOWN",
+    "request_body_sent_detection": "UNKNOWN",
+    "charge_state_after_timeout": "UNKNOWN",
+    "b3_policy": "Timeout after send becomes UNKNOWN_CHARGE_STATE and is never automatically retried."
+  },
+  "unknowns": [
+    "Official recommended model for this report workload",
+    "HTTP 403 semantics",
+    "HTTP request-ID header name",
+    "Server-side idempotency key capability",
+    "Charge/execution state for HTTP 429 and HTTP 5xx",
+    "Provider-specific connect/read timeout values",
+    "Provider retry ceiling and backoff schedule",
+    "Whether omitted cache token fields imply cache miss",
+    "Exact tokenizer parity without running the official offline tokenizer"
+  ]
+}

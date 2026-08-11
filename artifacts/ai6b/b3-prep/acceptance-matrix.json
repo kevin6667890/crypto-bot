@@ -1,0 +1,35 @@
+{
+  "matrix_schema_version": "ai6b-b3-smoke-acceptance-v1",
+  "body_display_policy": "PASSED_AUDIT_ONLY",
+  "required_checks": [
+    "context_freeze",
+    "context_id",
+    "registry_snapshot",
+    "prompt_identity",
+    "provider_reservation",
+    "provider_response",
+    "schema_parse",
+    "numeric_grounding",
+    "reference_support",
+    "level_coverage",
+    "scenario_coverage",
+    "warning_coverage",
+    "audit",
+    "immutable_persistence",
+    "presentation"
+  ],
+  "failure_result": {
+    "status": "FAILED_CLOSED",
+    "presentation_body_allowed": false,
+    "evidence_preserved": true
+  },
+  "smokes": [
+    {"number":1,"instrument":"ETH-USDT-SWAP","mode":"QUICK","position_mode":"NONE","requires":[]},
+    {"number":2,"instrument":"ETH-USDT-SWAP","mode":"FULL","position_mode":"NONE","requires":[1]},
+    {"number":3,"instrument":"BTC-USDT-SWAP","mode":"QUICK","position_mode":"NONE","requires":[1,2]},
+    {"number":4,"instrument":"SOL-USDT-SWAP","mode":"QUICK","position_mode":"NONE","requires":[1,2,3]},
+    {"number":5,"instrument":"ETH-USDT-SWAP","mode":"FULL","position_mode":"PAPER","requires":[1,2,3,4]}
+  ],
+  "maximum_initial_calls": 5,
+  "user_declared": "DISABLED"
+}

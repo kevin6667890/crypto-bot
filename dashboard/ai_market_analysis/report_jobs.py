@@ -1,6 +1,7 @@
 """Persistent independent AI report worker with bounded retries and single flight."""
 from __future__ import annotations
 import os, threading
+from decimal import Decimal
 from datetime import datetime, timezone
 from typing import Any, Callable
 from .canonical import stable_hash
@@ -37,9 +38,9 @@ class ConcurrencyGate:
 
 class TokenBudget:
     def __init__(self):
-        self.daily_input=int(os.getenv("AI_REPORT_DAILY_INPUT_TOKENS","100000"));self.daily_output=int(os.getenv("AI_REPORT_DAILY_OUTPUT_TOKENS","25000"));self.daily_total=int(os.getenv("AI_REPORT_DAILY_TOTAL_TOKENS","125000"));self.instrument_total=int(os.getenv("AI_REPORT_INSTRUMENT_DAILY_TOKENS","125000"));self.request_input=int(os.getenv("AI_REPORT_REQUEST_INPUT_TOKEN_MAX","12000"));self.live_calls=int(os.getenv("AI_REPORT_CANARY_MAX_LIVE_REQUESTS","10"));self.currency_cap=float(os.getenv("AI_REPORT_DAILY_CURRENCY_CAP_USD","2"));self.cost_status=os.getenv("AI_REPORT_COST_STATUS","REQUIRES_RUNTIME_AUDIT");self.input_price=float(os.getenv("AI_REPORT_INPUT_USD_PER_MILLION","0"));self.output_price=float(os.getenv("AI_REPORT_OUTPUT_USD_PER_MILLION","0"))
-    def projected_cost(self,input_tokens:int,output_tokens:int)->float:
-        return input_tokens*self.input_price/1_000_000+output_tokens*self.output_price/1_000_000
+        self.daily_input=int(os.getenv("AI_REPORT_DAILY_INPUT_TOKENS","100000"));self.daily_output=int(os.getenv("AI_REPORT_DAILY_OUTPUT_TOKENS","25000"));self.daily_total=int(os.getenv("AI_REPORT_DAILY_TOTAL_TOKENS","125000"));self.instrument_total=int(os.getenv("AI_REPORT_INSTRUMENT_DAILY_TOKENS","125000"));self.request_input=int(os.getenv("AI_REPORT_REQUEST_INPUT_TOKEN_MAX","12000"));self.live_calls=int(os.getenv("AI_REPORT_CANARY_MAX_LIVE_REQUESTS","10"));self.currency_cap=Decimal(os.getenv("AI_REPORT_DAILY_CURRENCY_CAP_USD","2"));self.cost_status=os.getenv("AI_REPORT_COST_STATUS","REQUIRES_RUNTIME_AUDIT");self.input_price=Decimal(os.getenv("AI_REPORT_INPUT_USD_PER_MILLION","0"));self.output_price=Decimal(os.getenv("AI_REPORT_OUTPUT_USD_PER_MILLION","0"))
+    def projected_cost(self,input_tokens:int,output_tokens:int)->Decimal:
+        return (Decimal(input_tokens)*self.input_price+Decimal(output_tokens)*self.output_price)/Decimal(1_000_000)
     def reason(self,repo:ReportRepository,instrument:str,input_estimate:int,output_limit:int,provider:str="fake")->str|None:
         total=repo.daily_tokens();inst=repo.daily_tokens(instrument)
         if input_estimate>self.request_input:return "REQUEST_INPUT_TOKEN_CAP"
@@ -50,8 +51,8 @@ class TokenBudget:
         if provider!="fake":
             live=repo.daily_live_provider_usage()
             if live["calls"]>=self.live_calls:return "LIVE_PROVIDER_REQUEST_CAP"
-            if self.cost_status!="AUDITED" or self.input_price<=0 or self.output_price<=0:return "PROVIDER_PRICE_AUDIT_REQUIRED"
-            if live["estimated_cost"]+self.projected_cost(input_estimate,output_limit)>self.currency_cap:return "DAILY_CURRENCY_CAP"
+            if self.cost_status not in {"AUDITED","B3_CONTROL_LEDGER"} or self.input_price<=0 or self.output_price<=0:return "PROVIDER_PRICE_AUDIT_REQUIRED"
+            if self.cost_status=="AUDITED" and Decimal(str(live["estimated_cost"]))+self.projected_cost(input_estimate,output_limit)>self.currency_cap:return "DAILY_CURRENCY_CAP"
         return None
     def allows(self,repo:ReportRepository,instrument:str,input_estimate:int,output_limit:int,provider:str="fake")->bool:
         return self.reason(repo,instrument,input_estimate,output_limit,provider) is None
@@ -77,8 +78,12 @@ class ReportWorker:
     def _record_attempt(self,request:dict[str,Any],number:int,result:Any=None,*,parse_status:str="NOT_RUN",validation_status:str="NOT_RUN",failure_code:str|None=None,error:str|None=None)->None:
         usage=result.usage if result else {}
         audited=self.budget.cost_status=="AUDITED" and self.budget.input_price>0 and self.budget.output_price>0
-        estimated_cost=self.budget.projected_cost(int(usage.get("prompt_tokens",0)),int(usage.get("completion_tokens",0))) if audited else None
-        self.repository.save_attempt({"attempt_id":f"attempt_{stable_hash([request['request_id'],number])}","request_id":request["request_id"],"attempt_number":number,"provider":request["provider"],"model":request["model"],"started_at":utc_now(),"completed_at":utc_now(),"latency_ms":getattr(result,"latency_ms",None),"http_status":getattr(result,"http_status",None),"input_tokens":usage.get("prompt_tokens",0),"output_tokens":usage.get("completion_tokens",0),"total_tokens":usage.get("total_tokens",0),"finish_reason":getattr(result,"finish_reason",None),"raw_response_hash":getattr(result,"raw_response_hash",None),"parse_status":parse_status,"validation_status":validation_status,"failure_code":failure_code,"sanitized_error":(error or "")[:200] or None,"cost_status":"AUDITED" if audited else "REQUIRES_RUNTIME_AUDIT","currency":"USD" if audited else None,"price_schedule_version":os.getenv("AI_REPORT_PRICE_SCHEDULE_VERSION") if audited else None,"estimated_cost":estimated_cost,"prompt_hash":request.get("generation_prompt_hash")})
+        controlled=self.budget.cost_status=="B3_CONTROL_LEDGER"
+        exact=self.budget.projected_cost(int(usage.get("prompt_tokens",0)),int(usage.get("completion_tokens",0))) if audited else None
+        # The legacy column has SQLite REAL affinity. Formal B3 therefore keeps
+        # authoritative exact costs in the separate TEXT control ledger.
+        estimated_cost=format(exact,"f") if exact is not None else None
+        self.repository.save_attempt({"attempt_id":f"attempt_{stable_hash([request['request_id'],number])}","request_id":request["request_id"],"attempt_number":number,"provider":request["provider"],"model":request["model"],"started_at":utc_now(),"completed_at":utc_now(),"latency_ms":getattr(result,"latency_ms",None),"http_status":getattr(result,"http_status",None),"input_tokens":usage.get("prompt_tokens",0),"output_tokens":usage.get("completion_tokens",0),"total_tokens":usage.get("total_tokens",0),"finish_reason":getattr(result,"finish_reason",None),"raw_response_hash":getattr(result,"raw_response_hash",None),"parse_status":parse_status,"validation_status":validation_status,"failure_code":failure_code,"sanitized_error":(error or "")[:200] or None,"cost_status":"B3_CONTROL_LEDGER" if controlled else ("AUDITED" if audited else "REQUIRES_RUNTIME_AUDIT"),"currency":"USD" if audited or controlled else None,"price_schedule_version":os.getenv("AI_REPORT_PRICE_SCHEDULE_VERSION") if audited or controlled else None,"estimated_cost":estimated_cost,"prompt_hash":request.get("generation_prompt_hash")})
     def _run(self,request:dict[str,Any])->None:
         context=self.repository.load_context(request["context_id"])
         try:snapshot=self.repository.load_registry_snapshot(registry_snapshot_id=request.get("registry_snapshot_id"))

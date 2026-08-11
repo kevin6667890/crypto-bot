@@ -12,6 +12,7 @@
     "api:check": "node scripts/api-check.mjs",
     "test": "vitest run",
     "test:e2e": "playwright test",
+    "portfolio:capture": "python ../scripts/build_portfolio_assets.py",
     "benchmark:ai-presentation-parse": "vite-node scripts/benchmarkAiPresentationParse.ts",
     "preview": "vite preview --host 127.0.0.1"
   },

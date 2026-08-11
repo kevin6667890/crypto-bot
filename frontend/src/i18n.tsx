@@ -359,7 +359,13 @@ const LanguageContext = createContext<LanguageContextValue | null>(null);
 export function LanguageProvider({ children }: { children: React.ReactNode }) {
   const [language, setLanguageState] = useState<Language>(() => localStorage.getItem("crypto-bot-language") === "zh" ? "zh" : "en");
   const value = useMemo<LanguageContextValue>(() => {
-    const t = (key: TranslationKey, params: Params = {}) => interpolate((language === "zh" ? zh : en)[key], params);
+    const t = (key: TranslationKey, params: Params = {}) => {
+      const dictionary = language === "zh" ? zh : en;
+      const template = dictionary[key] ?? en[key] ?? String(key)
+        .replace(/^enum\./, "")
+        .replace(/_/g, " ");
+      return interpolate(template, params);
+    };
     return {
       language,
       setLanguage(next) { localStorage.setItem("crypto-bot-language", next); setLanguageState(next); },

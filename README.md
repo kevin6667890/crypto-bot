@@ -1,256 +1,162 @@
-# Crypto-Bot Research Workspace
+# Crypto-Bot Research Platform
 
-[![CI](https://github.com/kevin6667890/crypto-bot/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/kevin6667890/crypto-bot/actions/workflows/ci.yml)
+A production-style crypto strategy research and paper-trading platform focused on causal evaluation, reproducible experiments, and out-of-time validation.
 
-Crypto-Bot is a paper-trading and historical strategy-research workspace for
-BTC-USDT, ETH-USDT and SOL-USDT. The production UI is React + TypeScript served
-by Nginx; the Python Paper API stores runtime and research data in SQLite.
+[![CI](https://github.com/kevin6667890/crypto-bot/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/kevin6667890/crypto-bot/actions/workflows/ci.yml) ![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white) ![React](https://img.shields.io/badge/React-18-149ECA?logo=react&logoColor=white) ![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white) ![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white) ![Research only](https://img.shields.io/badge/Execution-Paper%20only-16856B)
 
-The project does not place exchange orders. OKX public endpoints provide market
-data, deterministic rules control all paper decisions, and DeepSeek is limited
-to descriptive market summaries and user-requested explanations.
+![Crypto-Bot product overview](docs/assets/portfolio/crypto-bot-overview.gif)
 
-## Production architecture
+Crypto-Bot joins real OKX market data, a deterministic decision engine, causal historical research, governed strategy discovery, and paper execution in one auditable workspace. It sends no live exchange orders; AI is limited to descriptive summaries and explanations.
 
-- React, TypeScript and Vite frontend
-- Nginx static hosting with `/api/` reverse-proxied to the Paper API
-- Python `ThreadingHTTPServer` application on internal port 8765
-- SQLite persistence under `data_cache/`
-- Docker Compose services `frontend` and `paper-api`
-- OKX public spot candles, trades, ticker and perpetual open interest
+## Why this is more than a backtester
 
-Streamlit remains only as a compatibility wrapper and is not the production
-frontend.
+1. **Causal evaluation.** Signals are confirmed at candle close and executed at the next candle open, after complete indicator warm-up and without future-bar leakage.
+2. **Research leakage control.** Experiment families lock development, primary holdout, and optional final OOT periods. Holdout reveal is explicit and durable; later search-space changes mark the evidence as contaminated.
+3. **Reproducible lineage.** Canonical configuration hashes, SHA-256 signal IDs, persisted run lineage, and exact Paper/Research reconciliation make results traceable across restarts.
+4. **Validation beyond in-sample results.** Walk-forward, hidden holdout, final OOT, ETH/SOL transfer, bootstrap/Monte Carlo, and stress tests are recorded. OOT and transfer evidence never changes optimization ranking.
+5. **Manual strategy lifecycle.** Discovery → validation → Shadow → Paper promotion is evidence-driven and manual. Backtest return alone cannot activate a strategy.
 
-## Workspaces
+## At a glance
 
-### Market Analysis
+| | |
+|---|---|
+| Frontend | React, TypeScript, Vite, lightweight-charts |
+| Backend | Python Paper API and deterministic research services |
+| Storage | SQLite with persisted jobs, evidence, and paper ledger |
+| Market data | OKX public candles, trades, ticker, and perpetual OI |
+| Assets | BTC, ETH, and SOL research coverage |
+| Research | Causal backtest, walk-forward, holdout, final OOT, transfer |
+| Execution | Paper only; no exchange keys or live orders |
+| Deployment | Docker Compose and Nginx |
+| AI boundary | Descriptive market summaries and explanations only |
 
-- Live BTC, ETH and SOL ticker and confirmed candles
-- 1m, 5m, 15m, 1H, 4H and 1D charts with MA60 and MA200
-- Multi-timeframe trend, EMA20 slope, recent-trade CVD proxy and swap OI
-- Explainable deterministic score, risk controls and SQLite paper ledger
-- Historical decision replay and DeepSeek Market Copilot
+## Architecture
 
-CVD is a proxy calculated from the latest public taker-trade sample. It is not a
-complete historical order-flow measure and is labelled accordingly.
+```mermaid
+flowchart TD
+    OKX[OKX public market data] --> DC[Collection, confirmation, cache]
+    DC --> DE[Canonical decision engine]
+    DE --> PAPER[Paper workspace]
+    DE --> RESEARCH[Causal research and backtest]
+    DE --> ROUTER[Market state and decision trace]
+    RESEARCH --> DISCOVERY[Strategy discovery]
+    RESEARCH --> GOVERNANCE[Validation and research governance]
+    PAPER --> DB[(SQLite evidence and paper ledger)]
+    ROUTER --> DB
+    DISCOVERY --> DB
+    GOVERNANCE --> DB
+    DB --> API[Python Paper API]
+    API --> UI[React and TypeScript UI]
+```
 
-### Strategy Research
+## Research lifecycle
 
-- Real OKX `history-candles` data with pagination, confirmation filtering,
-  deduplication, gap reporting and SQLite caching
-- BTC-USDT, ETH-USDT and SOL-USDT on 15m, 1H and 4H
-- Causal indicators with complete Slow MA warm-up
-- Signal confirmation at candle close and next-candle-open execution
-- Configurable adverse slippage, two-sided fees, ATR stops, reward targets,
-  cooldown and long/short controls
-- Persisted strategy configurations, runs, trades, equity and walk-forward data
-- IS/OOS validation, rolling walk-forward stability and Paper reconciliation
-- Responsive equity, drawdown, candle/execution, R-distribution, monthly-return
-  and long/short diagnostics
-- Gate funnel statistics from complete canonical decision payloads, explainable
-  near misses and conservative counterfactual outcomes
-- Bounded OAT/2D sensitivity, comparable benchmarks, reproducible Monte Carlo
-  and bootstrap stress tests in the persistent single-worker queue
-- Isolated restart-safe Shadow candidates and an evidence-based, audited
-  strategy lifecycle with manual-only Active promotion and rollback
-- Causal deterministic market regimes stored with new decisions
-- Optimization run history/comparison, explicit experiment-family holdout locking,
-  contamination audit flags and anonymized research-report export
-- Persistent multi-stage out-of-time validation suites. BTC holdout/final-OOT and
-  ETH/SOL transfer evidence are descriptive only and never influence ranking.
+```mermaid
+flowchart LR
+    D[Development evidence] --> W[Walk-forward validation]
+    W --> R[Optimization ranking]
+    R -->|freeze candidate| H[Primary holdout]
+    H --> O[Final OOT]
+    O --> X[Cross-asset transfer]
+    X --> S[Shadow]
+    S --> P[Manual paper promotion]
+    H --> E[(Persisted evidence lineage)]
+    O --> E
+    X --> E
+    N[Holdout, OOT, and transfer never feed back into ranking] -.-> H
+    N -.-> O
+    N -.-> X
+```
 
-Historical CVD and OI are not reconstructed because the required historical
-samples are not reliably available from the endpoints used here. The backtest
-does not synthesize them. If a candle touches stop and target in the same bar,
-the engine conservatively records the stop first.
+Only development and walk-forward evidence can affect optimization ranking. Later stages test a frozen candidate and remain descriptive evidence for a manual lifecycle decision.
 
-### Operations and lineage
+## Product tour
 
-- Paper and historical research call the same canonical `evaluate_decision`
-  implementation; 15m research uses strict confirmed 1H/4H as-of context.
-- Canonical JSON configuration hashes and SHA-256 signal IDs make decisions
-  reproducible without rewriting legacy rows.
-- Exact reconciliation classifies matched, missing, divergent, risk-blocked,
-  service-gap and legacy executions instead of inferring matches.
-- Portfolio research processes BTC, ETH and SOL in one chronological stream
-  with shared cash, exposure, position and risk limits.
-- A persistent SQLite queue runs one heavy job at a time and supports queue
-  limits, deduplication, cancellation, retries and restart interruption.
-- Operations exposes sanitized health, collector freshness, job monitoring and
-  deduplicated persistent alerts. Logs rotate on disk.
+<table>
+  <tr>
+    <td><img src="docs/assets/portfolio/workspace.webp" alt="Decision Workspace with real OKX chart and paper decision"></td>
+    <td><img src="docs/assets/portfolio/market.webp" alt="Market Structure with timeframe and coverage diagnostics"></td>
+  </tr>
+  <tr>
+    <td><strong>Workspace</strong><br>Current market context, deterministic decision, rule evidence, and paper risk state.</td>
+    <td><strong>Market Structure</strong><br>Multi-timeframe state, key-level interaction, freshness, and explicit coverage gaps.</td>
+  </tr>
+  <tr>
+    <td><img src="docs/assets/portfolio/research.webp" alt="Optimization Lab with persisted experiment evidence"></td>
+    <td><img src="docs/assets/portfolio/decision-trace.webp" alt="Decision Trace explaining a no-trade outcome"></td>
+  </tr>
+  <tr>
+    <td><strong>Research</strong><br>Persisted optimization evidence, locked holdouts, validation suites, and contamination tracking.</td>
+    <td><strong>Decision Trace</strong><br>Selected strategy family, supporting evidence, blockers, and the next required confirmation.</td>
+  </tr>
+</table>
 
-Chat and research writes have application and Nginx rate limits. API bodies are
-limited to 64 KiB, API responses are not cached, and browser API calls are
-same-origin. Optional `ADMIN_TOKEN` protection uses a server environment value;
-when used by the UI it belongs in `sessionStorage`. Plain HTTP does not protect
-that token in transit, so HTTPS remains required before treating it as secure.
+## Engineering highlights
 
-## Local development
+- One canonical `evaluate_decision` path shared by paper execution and historical research.
+- Canonical JSON configuration hashes and deterministic signal identities.
+- Restart-safe SQLite job queue with limits, deduplication, cancellation, and retries.
+- Real OKX ingestion with confirmation filtering, deduplication, pagination, gap reporting, and caching.
+- Causal next-bar execution with explicit fees, slippage, and conservative intrabar collision handling.
+- Durable experiment-family lineage, holdout reveal, OOT suites, and contamination audit flags.
+- Exact Paper/Research reconciliation instead of inferred matches.
+- Dockerized Python API and Nginx-served React production architecture.
+
+## Research integrity
+
+- Research and paper trading only; the project does not place live orders.
+- Confirmed candles only, causal indicators, complete slow-MA warm-up, and next-candle-open execution.
+- Fees and adverse slippage are applied; a same-bar stop/target collision records the stop first.
+- Historical CVD/OI is never fabricated. Missing or partial coverage remains visible and cannot silently become zero.
+- Primary holdouts are hidden until an explicit, durable reveal. Final OOT and cross-asset results never affect ranking.
+- Strategy promotion is manual; there is no AI parameter search, online self-learning, or automatic activation.
+
+## Quick start
 
 ```bash
+# Backend
 python -m pip install -r requirements.txt
-python dashboard/paper_api.py
-```
+python -m dashboard.paper_api
 
-### Paper Flow collector
-
-The supported local command is `python -m dashboard.paper_api`. It listens on
-port `8765` by default and starts the public OKX `trades-all` WebSocket and the
-public SWAP OI poller with the Paper API. Check it with:
-
-```bash
-curl http://127.0.0.1:8765/api/paper/flow/health
-```
-
-Stop it with `Ctrl+C`; the collectors close, flush pending buckets, and release
-their database connections. Runtime flow data is stored in
-`data_cache/paper_trades.db`. Tick CVD is collected only while this service is
-running: an empty restart starts with partial coverage and needs six hours for a
-complete display window. No historical tick CVD or OI is synthesized.
-
-In another terminal:
-
-```bash
+# Frontend (second terminal)
 cd frontend
-npm install
+npm ci
 npm run dev
 ```
 
-Open `http://127.0.0.1:5173`. Vite proxies `/api` to the local Paper API.
-
-## Tests and production build
+Open `http://127.0.0.1:5173`.
 
 ```bash
-pytest -q
-cd frontend
-npm run build
-```
-
-The backtest tests cover causal/no-future indicators, MA warm-up, fees,
-slippage, long and short execution, stop/target handling, drawdown, Profit
-Factor and empty-trade results.
-
-## Research API
-
-- `POST /api/backtest/run`
-- `GET /api/backtest/{id}`
-- `GET /api/backtest/{id}/trades`
-- `GET /api/backtest/{id}/equity`
-- `GET /api/backtest/history`
-- `GET|POST /api/strategies`
-- `PUT|DELETE /api/strategies/{id}`
-- `POST /api/strategies/{id}/duplicate`
-- `POST /api/compare`
-- `POST /api/walk-forward`
-- `GET /api/reconciliation?run_id={id}`
-- `POST /api/portfolio/run`
-- `GET /api/portfolio/{id}`
-- `GET /api/validation/gates`
-- `POST /api/validation/gates/run`
-- `GET /api/near-misses`
-- `POST /api/sensitivity/run`
-- `POST /api/benchmarks/run`
-- `POST /api/robustness/run`
-- `GET|POST /api/optimization/families`
-- `GET /api/optimization/families/{id}`
-- `POST /api/optimization/run`
-- `GET /api/optimization/history`
-- `GET /api/optimization/{id}` (holdout hidden by default)
-- `POST /api/optimization/{id}/reveal-holdout`
-- `POST /api/optimization/compare`
-- `POST /api/validation-suites/run`
-- `GET /api/validation-suites`, `GET /api/validation-suites/{id}`
-- `GET|POST /api/shadow-strategies`
-- `GET /api/strategy-lifecycle`
-- `GET /api/health`
-- `GET /api/health/details`
-- `GET /api/paper/flow/health`
-- `GET /api/paper/flow/history/v1?instrument=BTC-USDT&series=cvd&start={unix}&end={unix}&max_points=1200&cursor={opaque}`
-- `GET /api/jobs`
-- `POST /api/jobs/{id}/cancel`
-- `POST /api/jobs/{id}/retry`
-- `GET /api/alerts`
-- `POST /api/alerts/{id}/acknowledge`
-
-## Docker deployment
-
-Build the frontend before starting the services because Nginx mounts the
-generated `frontend/dist` directory:
-
-```bash
-cd frontend && npm ci && npm run build && cd ..
+# Docker
 docker compose up -d --build paper-api frontend
 ```
 
-Runtime `.env` files, keys, SQLite databases and candle caches must remain
-outside Git.
+## Reproduce the portfolio assets
 
-### Flow-history retention and aggregation
-
-Raw `flow_trade_buckets`, `flow_price_buckets`, and `oi_snapshots` remain
-bounded to 90 days. Durable aggregates use only persisted observations and are
-retained indefinitely at 5 minute, 1 hour, 4 hour, and 1 day resolutions.
-Missing periods remain absent and are reported as gaps; they are never filled
-with zeroes.
-
-CVD aggregate `delta` is the sum of observed buy notional minus sell notional
-inside the bucket. The API returns a globally anchored cumulative `value`, so
-different ranges, resolutions, and pages keep consistent CVD semantics. OI
-uses the last confirmed observation in a bucket and also returns the observed
-minimum and maximum. Legacy `flow_snapshots` OI is admitted only before the
-first raw OI snapshot for that instrument; its rolling CVD is not used.
-
-The versioned response includes requested and available bounds, latest
-timestamp, raw/returned counts, selected resolution, stale/history flags,
-bidirectional coverage flags, an opaque older-page cursor, source, gap
-metadata, and `flow-retention-v2`. Run the transactional, resumable,
-idempotent backfill after making a verified SQLite snapshot:
+The screenshots, looping README GIF, and approximately 41-second H.264 demo are generated from the real application with Playwright and ffmpeg:
 
 ```bash
-python scripts/backfill_flow_history.py --database data_cache/paper_trades.db
+python scripts/build_portfolio_assets.py
 ```
 
-## Research report export
+The command connects to healthy local services or starts them, captures fixed viewports, converts and verifies the media, prints dimensions and file sizes, and shuts down only the processes it created. It requires an existing real `data_cache/paper_trades.db`; it never synthesizes profitable results. The MP4 is written to `artifacts/portfolio-demo/crypto-bot-demo.mp4` and intentionally ignored by Git.
 
-Export only sanitized persisted evidence; generated reports are ignored by Git.
+## Documentation
+
+- [Research and strategy discovery architecture](docs/strategy_discovery_architecture.md)
+- [Research API](docs/API.md)
+- [Operations and deployment](docs/OPERATIONS.md)
+- [Market state engine](docs/market_state_engine_v2.md)
+- [Strategy router](docs/strategy_router_v2.md)
+- [Microstructure research readiness](docs/microstructure_research_readiness.md)
+- [Storage lifecycle](docs/storage_lifecycle_v2.md)
+
+## Verification
 
 ```bash
-python scripts/export_research_report.py --optimization-run 12 --output reports/optimization-run-12.md
-python scripts/export_research_report.py --experiment-family 3 --output reports/family-3.md
+pytest -q
+python -m compileall dashboard tests scripts
+cd frontend && npm run api:check && npm test && npm run build
 ```
 
-Experiment families lock instrument, timeframe, development, primary holdout and
-optional final OOT periods. Revealing a holdout is explicit and durable. Later
-parameter or search-space changes are flagged as contaminated rather than
-silently treated as untouched validation. Optimization ranking is based only on
-development/validation metrics: holdout, final OOT and cross-asset transfer
-results never affect it. The workspace remains paper/research only: no real
-orders, no AI parameter search, no automatic parameter activation or promotion.
-
----
-
-For educational and research purposes only. Past paper or backtest results do
-not predict future performance and are not financial advice.
-# Experiment-family research governance
-
-The Optimization Lab supports governed experiment families: configure a 15m BTC-USDT, ETH-USDT, or SOL-USDT development period, a primary holdout, and an optional final OOT period. Family ranges are locked; any gap between development and holdout is excluded from research. Start optimization from the selected family to retain its fingerprint and evidence lineage.
-
-Primary holdout metrics remain hidden until **Reveal Primary Holdout** is explicitly confirmed. Later changed base parameters or search space are marked as contaminated evidence. Final OOT and cross-asset validation are recorded as validation suites and never affect optimization ranking or strategy activation. Retrying a failed, cancelled, or interrupted suite creates a new suite and job while preserving the original evidence.
-
-Public Markdown/JSON reports use a safe allowlist and exclude hidden holdout results, queue internals, secrets, and local paths. This project is paper/research only: it sends no live exchange orders, automatically activates no parameters, and does not use AI parameter search.
-
-CI checks: `pytest -q`, `python -m compileall dashboard tests scripts`, and `cd frontend && npm ci && npm run build`.
-# Strategy Discovery Lab
-
-The lab is paper/research only: it places no live orders, never automatically
-activates a strategy, and has no online self-learning.  Prepare the fixed cache
-with `python scripts/prepare_discovery_dataset.py --start 2024-01-01 --end
-2026-01-01 --instruments BTC-USDT ETH-USDT SOL-USDT --timeframes 15m 1H 4H 1D`.
-Its range is start-inclusive/end-exclusive (`[2024-01-01, 2026-01-01)`), and
-uses confirmed OKX public candles.  The primary engine is causal next-bar-open.
-Price-only templates are Trend Pullback, Volatility Breakout, Mean Reversion and
-Trend Breakout, searched with a bounded seeded sampler and development-only
-walk-forward folds. CVD/OI are never fabricated; flow overlays require verified
-coverage. Historical discovery does not prove future profitability and final
-selection remains manual. See `docs/strategy_discovery_architecture.md`.
+For educational and research purposes only. Historical, paper, or backtest results do not predict future performance and are not financial advice.

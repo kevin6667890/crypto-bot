@@ -346,6 +346,11 @@ def _project(conn: Any, report: dict[str, Any], audit: dict[str, Any] | None, ev
             or audit.get("prompt_hash") != snapshot["prompt_hash"]):
         raise PresentationError("REGISTRY_AUDIT_MISMATCH")
     context = _loads(context_row[0], {})
+    if (os.getenv("AI6B_PRIVACY_SCOPE_ENFORCED", "false").lower() == "true"
+            and context.get("position_context", {}).get("source") not in {"NONE", "PAPER"}):
+        from .live_provider_guard import trip_if_armed
+        trip_if_armed("POSITION_LEAK", evidence_id="POSITION_SOURCE_OUTSIDE_CANARY_SCOPE")
+        raise PresentationError("POSITION_SOURCE_OUTSIDE_CANARY_SCOPE", 403)
     fact_ids = _refs(response, "fact_refs")
     facts = [_compact_fact(f) for f in registry.get("facts", []) if f.get("fact_id") in fact_ids]
     level_ids, scenario_ids, macro_ids = (_refs(response, name) for name in ("level_refs", "scenario_refs", "macro_refs"))

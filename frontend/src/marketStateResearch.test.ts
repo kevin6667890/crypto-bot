@@ -6,7 +6,7 @@ const source = readFileSync(new URL("./MarketStateResearch.tsx", import.meta.url
 
 describe("market state research page", () => {
   it("is explicitly state recognition and contains no recommendation fields", () => {
-    expect(source).toContain("市场状态识别，不是交易信号。");
+    expect(source).toContain('t("state.disclaimer")');
     for (const forbidden of ["stop_loss", "take_profit", "win_rate", "profit_probability", "position_size"]) {
       expect(source.toLowerCase()).not.toContain(forbidden);
     }
@@ -16,5 +16,13 @@ describe("market state research page", () => {
     for (const label of ["primary_state_code", "evidence_strength", "timeframes", "cross_timeframe", "level_interactions", "overlays", "transitions", "limitations", "quality"]) {
       expect(source).toContain(label);
     }
+  });
+
+  it("presents degraded data as an explained product state", () => {
+    for (const key of ["state.waitingData", "state.unavailableFrame", "state.staleObservation", "state.partialCoverage"]) {
+      expect(source).toContain(key);
+    }
+    expect(source).toContain("state-diagnostics");
+    expect(source).toContain("technicalStatus");
   });
 });

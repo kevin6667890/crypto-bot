@@ -14,7 +14,7 @@ class ProviderResult:
     raw_text: str
     provider_request_id: str | None
     model: str
-    usage: dict[str, int]
+    usage: dict[str, Any]
     finish_reason: str | None
     http_status: int | None
     latency_ms: int
@@ -22,8 +22,11 @@ class ProviderResult:
 
 
 class ProviderError(RuntimeError):
-    def __init__(self, code: str, *, retryable: bool, http_status: int | None = None):
+    def __init__(self, code: str, *, retryable: bool, http_status: int | None = None,
+                 request_body_sent: bool | None = None, provider_accepted: bool | None = None,
+                 charge_state: str = "UNKNOWN"):
         super().__init__(code); self.code=code; self.retryable=retryable; self.http_status=http_status
+        self.request_body_sent=request_body_sent;self.provider_accepted=provider_accepted;self.charge_state=charge_state
 
 
 class AIReportProvider(Protocol):

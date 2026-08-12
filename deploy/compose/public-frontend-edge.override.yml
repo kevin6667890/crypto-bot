@@ -1,0 +1,6 @@
+services:
+  frontend:
+    volumes:
+      - ${PUBLIC_EDGE_NGINX_CONFIG:?PUBLIC_EDGE_NGINX_CONFIG is required}:/etc/nginx/conf.d/default.conf:ro
+    ports:
+      - "0.0.0.0:443:8443"

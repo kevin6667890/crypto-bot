@@ -51,7 +51,7 @@ services:
   paper-api:
     <<: *app-security
     profiles: [ai6b-candidate]
-    command: [python, scripts/run_paper_api_with_secrets.py]
+    command: [python, -m, scripts.run_paper_api_with_secrets]
     environment:
       <<: [*ai-disabled, *ai-budget]
       PAPER_API_HOST: 0.0.0.0

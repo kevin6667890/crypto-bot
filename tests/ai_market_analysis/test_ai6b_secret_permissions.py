@@ -78,3 +78,8 @@ def test_compose_secret_mounts_match_authorized_services() -> None:
     assert services["report-worker"]["secrets"] == ["ai_report_provider_key"]
     assert "secrets" not in services["audit-worker"]
     assert services["frontend"]["secrets"] == ["tls_certificate", "tls_private_key"]
+    assert services["paper-api"]["command"] == [
+        "python",
+        "-m",
+        "scripts.run_paper_api_with_secrets",
+    ]

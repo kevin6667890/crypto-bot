@@ -161,9 +161,9 @@ services:
     security_opt: [no-new-privileges:true]
     restart: "on-failure:3"
     tmpfs:
-      - /var/cache/nginx:rw,noexec,nosuid,size=32m
-      - /var/run:rw,noexec,nosuid,size=4m
-      - /var/log/nginx:rw,noexec,nosuid,size=32m
+      - /var/cache/nginx:rw,noexec,nosuid,size=32m,uid=101,gid=101,mode=700
+      - /var/run:rw,noexec,nosuid,size=4m,uid=101,gid=101,mode=700
+      - /var/log/nginx:rw,noexec,nosuid,size=32m,uid=101,gid=101,mode=700
     volumes:
       - ../nginx-ai6b-production.conf:/etc/nginx/conf.d/default.conf:ro
     secrets: [tls_certificate, tls_private_key]

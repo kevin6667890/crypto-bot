@@ -90,3 +90,5 @@ def test_read_only_app_services_have_only_bounded_runtime_tmpfs() -> None:
     tmpfs = compose["x-app-security"]["tmpfs"]
     assert "/tmp:rw,noexec,nosuid,size=64m" in tmpfs
     assert "/app/logs:rw,noexec,nosuid,size=32m" in tmpfs
+    frontend_tmpfs = compose["services"]["frontend"]["tmpfs"]
+    assert all("uid=101,gid=101,mode=700" in mount for mount in frontend_tmpfs)

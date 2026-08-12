@@ -83,3 +83,10 @@ def test_compose_secret_mounts_match_authorized_services() -> None:
         "-m",
         "scripts.run_paper_api_with_secrets",
     ]
+
+
+def test_read_only_app_services_have_only_bounded_runtime_tmpfs() -> None:
+    compose = yaml.safe_load((ROOT / "deploy/compose/ai6b-production-candidate.yml").read_text(encoding="utf-8"))
+    tmpfs = compose["x-app-security"]["tmpfs"]
+    assert "/tmp:rw,noexec,nosuid,size=64m" in tmpfs
+    assert "/app/logs:rw,noexec,nosuid,size=32m" in tmpfs

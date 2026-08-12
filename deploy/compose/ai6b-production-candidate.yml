@@ -4,6 +4,7 @@ x-app-security: &app-security
   read_only: true
   tmpfs:
     - /tmp:rw,noexec,nosuid,size=64m
+    - /app/logs:rw,noexec,nosuid,size=32m
   cap_drop: [ALL]
   security_opt: [no-new-privileges:true]
   restart: "on-failure:3"

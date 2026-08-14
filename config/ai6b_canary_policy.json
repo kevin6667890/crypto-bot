@@ -8,7 +8,7 @@
     "global_live_provider_concurrency": 1,
     "per_instrument_concurrency": 1,
     "queue_max": 10,
-    "per_request_input_tokens": 12000,
+    "per_request_input_tokens": 500000,
     "quick_output_tokens": 200000,
     "full_output_tokens": 200000,
     "position_output_tokens": 200000,

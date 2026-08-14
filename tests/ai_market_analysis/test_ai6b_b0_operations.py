@@ -173,7 +173,7 @@ def test_approved_budget_and_retention_are_frozen():
     policy = json.loads((root / "config/ai6b_canary_policy.json").read_text(encoding="utf-8"))
     assert policy["budget"] == {
         "live_provider_requests_per_24h": 15, "global_live_provider_concurrency": 1,
-        "per_instrument_concurrency": 1, "queue_max": 10, "per_request_input_tokens": 12000,
+        "per_instrument_concurrency": 1, "queue_max": 10, "per_request_input_tokens": 500000,
         "quick_output_tokens": 200000, "full_output_tokens": 200000, "position_output_tokens": 200000,
         "daily_input_tokens": 500000, "daily_output_tokens": 1000000, "daily_total_tokens": 1500000,
         "daily_currency_cap_usd": 2.0, "cost_status": "REQUIRES_RUNTIME_AUDIT",

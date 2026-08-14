@@ -16,7 +16,7 @@ from .report_prompt_templates import compile_prompt
 from .report_response_contract import response_metadata_contract
 from .report_repository import ReportRepository
 from .versions import AI_REPORT_PROMPT_VERSION,AI_REPORT_REQUEST_VERSION
-from .provider_limits import OUTPUT_TOKEN_LIMITS
+from .provider_limits import OUTPUT_TOKEN_LIMITS, REQUEST_INPUT_TOKEN_MAX
 
 MODES=("QUICK","FULL","POSITION_AWARE");LANGUAGES=("zh-CN",)
 OUTPUT_LIMIT_DEFAULTS=OUTPUT_TOKEN_LIMITS
@@ -51,7 +51,7 @@ class ReportService:
         macro=freeze_macro_evidence_set(macro_evidence or [],decision);enriched=build_enriched_context(base_context,position,macro)
         self.repository.save_context(enriched);self.repository.save_macro_set(macro)
         registry=build_fact_registry(enriched);compiled=compile_report_context(registry,mode)
-        if compiled["token_estimate"]>int(os.getenv("AI_REPORT_REQUEST_INPUT_TOKEN_MAX","12000")):
+        if compiled["token_estimate"]>int(os.getenv("AI_REPORT_REQUEST_INPUT_TOKEN_MAX",str(REQUEST_INPUT_TOKEN_MAX))):
             raise OverflowError("AI_REPORT_REQUEST_INPUT_TOKEN_LIMIT")
         source_versions={**enriched["source_versions"],**REPORT_PIPELINE_VERSIONS};source_hash=stable_hash(source_versions)
         metadata=response_metadata_contract(context_id=enriched["enriched_context_id"],mode=mode,language=language,

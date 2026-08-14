@@ -159,7 +159,7 @@ def test_worker_restart_converts_sent_attempt_to_unknown_without_retry(tmp_path)
 @pytest.mark.parametrize(
     ("kwargs", "code"),
     [
-        ({"predicted_input_tokens": 12_001, "maximum_output_tokens": 1, "queue_depth": 0}, "REQUEST_INPUT_TOKEN_CAP"),
+        ({"predicted_input_tokens": 500_001, "maximum_output_tokens": 1, "queue_depth": 0}, "REQUEST_INPUT_TOKEN_CAP"),
         ({"predicted_input_tokens": 1, "maximum_output_tokens": 200001, "queue_depth": 0}, "REQUEST_OUTPUT_TOKEN_CAP"),
         ({"predicted_input_tokens": 1, "maximum_output_tokens": 1, "queue_depth": 10}, "QUEUE_CAP"),
     ],

@@ -19,6 +19,7 @@ MAX_MACRO_SET_BYTES=131_072
 MAX_REGISTRY_SNAPSHOT_BYTES=1_048_576
 MAX_REPORT_JSON_BYTES=250_000
 MAX_GENERATED_TEXT_BYTES=250_000
+MAX_ATTEMPT_DIAGNOSTIC_BYTES=1_000_000
 
 def utc_now()->str: return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00","Z")
 
@@ -98,7 +99,32 @@ class ReportRepository:
         self.event(request_id,"CANCEL_REQUESTED",{});self.event(request_id,"CANCELLED",{});return "CANCELLED"
     def save_attempt(self,a:dict[str,Any])->None:
         cols=("attempt_id","request_id","attempt_number","provider","model","started_at","completed_at","latency_ms","http_status","input_tokens","output_tokens","total_tokens","finish_reason","raw_response_hash","parse_status","validation_status","failure_code","sanitized_error","cost_status","currency","price_schedule_version","estimated_cost","prompt_hash")
-        with self.connect() as c:c.execute(f"INSERT INTO ai_report_attempts({','.join(cols)}) VALUES({','.join('?' for _ in cols)})",tuple(a.get(k) for k in cols))
+        diagnostic=a.get("diagnostic")
+        with self.connect() as c:
+            c.execute(f"INSERT INTO ai_report_attempts({','.join(cols)}) VALUES({','.join('?' for _ in cols)})",tuple(a.get(k) for k in cols))
+            if diagnostic is not None:
+                payloads=(
+                    str(diagnostic["sanitized_raw_response"]),
+                    canonical_json(diagnostic["normalized_response"]) if diagnostic.get("normalized_response") is not None else None,
+                    canonical_json(diagnostic.get("parse_diagnostic") or {}),
+                    canonical_json(diagnostic.get("validation_diagnostic") or {}),
+                )
+                if sum(len(value.encode("utf-8")) for value in payloads if value is not None)>MAX_ATTEMPT_DIAGNOSTIC_BYTES:
+                    raise ValueError("ATTEMPT_DIAGNOSTIC_TOO_LARGE")
+                c.execute(
+                    "INSERT INTO ai_report_attempt_diagnostics VALUES(?,?,?,?,?,?,?,?,?)",
+                    (a["attempt_id"],a["request_id"],a.get("raw_response_hash") or "UNKNOWN",*payloads,
+                     str(diagnostic["sanitizer_version"]),utc_now()),
+                )
+
+    def attempt_diagnostic(self,attempt_id:str)->dict[str,Any]|None:
+        with self.connect() as c:
+            row=c.execute("SELECT * FROM ai_report_attempt_diagnostics WHERE attempt_id=?",(attempt_id,)).fetchone()
+        if not row:return None
+        value=dict(row)
+        for name in ("normalized_response_json","parse_diagnostic_json","validation_diagnostic_json"):
+            if value.get(name) is not None:value[name.removesuffix("_json")]=json.loads(value.pop(name))
+        return value
     def save_registry_snapshot(self,snapshot:dict[str,Any])->dict[str,Any]:
         failures=validate_registry_snapshot(snapshot)
         if failures:raise ValueError(failures[0])

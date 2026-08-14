@@ -27,7 +27,7 @@ from .ai4_helpers import base_context
 
 def test_manifest_hashes_every_ai_report_migration():
     manifest = migration_manifest()
-    assert [item["order"] for item in manifest["migrations"]] == [1, 2, 3, 4]
+    assert [item["order"] for item in manifest["migrations"]] == [1, 2, 3, 4, 5]
     assert all(not item["destructive"] for item in manifest["migrations"])
     assert all(not item["touches_paper_db"] and not item["touches_microstructure_db"] for item in manifest["migrations"])
 
@@ -137,7 +137,7 @@ def test_consistent_backup_and_isolated_restore(tmp_path):
     assert restored["integrity_check"] == "ok"
     assert restored["artifact_hashes_valid"] is True
     assert restored["temporary_copy_deleted"] is True
-    assert len(restored["schema_versions"]) == 4
+    assert len(restored["schema_versions"]) == 5
 
 
 def test_absent_database_still_backs_up_deployment_state(tmp_path):

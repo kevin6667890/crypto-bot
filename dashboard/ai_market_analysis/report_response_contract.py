@@ -36,6 +36,46 @@ FULL_SECTION_IDS = (
 )
 
 
+def provider_reference_allowlists(compiled_context: dict[str, Any]) -> dict[str, list[str]]:
+    """Return disjoint provider-facing identifier namespaces for one frozen context."""
+    facts = compiled_context.get("facts", [])
+    fact_ids = sorted({str(item["fact_id"]) for item in facts if item.get("fact_id")})
+    return {
+        "fact_refs": fact_ids,
+        "macro_refs": sorted({
+            str(item["value"]["evidence_id"])
+            for item in facts
+            if item.get("category") == "MACRO" and isinstance(item.get("value"), dict)
+            and item["value"].get("evidence_id")
+        }),
+        # FLOW/TIMEFRAME are scoped FACT identifiers, not additional response fields.
+        "flow_refs": sorted({
+            str(item["fact_id"]) for item in facts
+            if item.get("category") == "ORDER_FLOW" and item.get("fact_id")
+        }),
+        "level_refs": sorted({
+            str(item["value"]["level_id"])
+            for item in facts
+            if item.get("category") == "LEVEL" and isinstance(item.get("value"), dict)
+            and item["value"].get("level_id")
+        }),
+        "scenario_refs": sorted({
+            str(item["value"]["scenario_id"])
+            for item in facts
+            if item.get("category") == "SCENARIO" and isinstance(item.get("value"), dict)
+            and item["value"].get("scenario_id")
+        }),
+        "position_refs": sorted({
+            str(item["fact_id"]) for item in facts
+            if item.get("category") == "POSITION" and item.get("fact_id")
+        }),
+        "timeframe_refs": sorted({
+            str(item["fact_id"]) for item in facts
+            if item.get("category") == "TIMEFRAME" and item.get("fact_id")
+        }),
+    }
+
+
 def expected_section_ids(mode: str, has_macro: bool) -> list[str]:
     if mode == "QUICK":
         return ["QUICK_SUMMARY"]
@@ -78,6 +118,7 @@ def provider_json_schema(metadata: dict[str, Any], compiled_context: dict[str, A
     confidence_rank = {"LOW": 0, "MEDIUM": 1, "HIGH": 2}
     max_rank = confidence_rank.get(str(compiled_context.get("max_confidence")), 0)
     confidence = [name for name, rank in confidence_rank.items() if rank <= max_rank]
+    reference_allowlists = provider_reference_allowlists(compiled_context)
     return {
         "contract_version": "ai-market-report-provider-contract-v1",
         "output": "one JSON object only",
@@ -107,5 +148,12 @@ def provider_json_schema(metadata: dict[str, Any], compiled_context: dict[str, A
              "original_invalidation_exact_fields": ["stop", "fact_ref", "timeframe", "thesis"]}
             if mode == "POSITION_AWARE" else None
         ),
-        "identifier_rule": "all refs must copy existing identifiers from FACT_REGISTRY_JSON",
+        "allowed_reference_ids": reference_allowlists,
+        "identifier_rules": [
+            "each ref field may contain only exact IDs from its own allowed_reference_ids namespace",
+            "flow_refs and timeframe_refs are scoped subsets of fact_refs and may appear only in fact_refs",
+            "an empty allowlist requires [] and forbids factual claims that require that evidence namespace",
+            "status FACT IDs such as MACRO_UNAVAILABLE are never macro_refs",
+            "cross-namespace references are forbidden",
+        ],
     }

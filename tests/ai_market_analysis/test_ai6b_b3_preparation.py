@@ -284,4 +284,4 @@ def test_final_closure_technical_envelope_and_paid_attempt_allowance():
     assert limits.position_output_tokens == 8000
     assert limits.daily_input_tokens == 150000
     assert limits.daily_output_tokens == 80000
-    assert limits.calls_24h == 7
+    assert limits.calls_24h == 8

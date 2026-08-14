@@ -9,6 +9,9 @@ from .report_basic_validation import assemble_generated_text, validate_report, r
 from .report_context_compiler import compile_report_context
 from .report_prompt_templates import compile_prompt
 from .report_response_contract import response_metadata_contract
+from .provider_response_diagnostics import (
+    DIAGNOSTIC_VERSION, reference_diagnostics, sanitize_provider_response,
+)
 from .report_provider import AIReportProvider, ProviderError
 from .report_response_parser import parse_report_response, ReportParseError
 from .report_registry_snapshot import validate_registry_snapshot
@@ -89,7 +92,7 @@ class ReportWorker:
         return True
     def _attempt_count(self,request_id:str)->int:
         with self.repository.connect() as c:return int(c.execute("SELECT COUNT(*) FROM ai_report_attempts WHERE request_id=?",(request_id,)).fetchone()[0])
-    def _record_attempt(self,request:dict[str,Any],number:int,result:Any=None,*,parse_status:str="NOT_RUN",validation_status:str="NOT_RUN",failure_code:str|None=None,error:str|None=None)->None:
+    def _record_attempt(self,request:dict[str,Any],number:int,result:Any=None,*,parse_status:str="NOT_RUN",validation_status:str="NOT_RUN",failure_code:str|None=None,error:str|None=None,normalized_response:dict[str,Any]|None=None,parse_diagnostic:dict[str,Any]|None=None,validation_diagnostic:dict[str,Any]|None=None)->None:
         usage=result.usage if result else {}
         audited=self.budget.cost_status=="AUDITED" and self.budget.input_price>0 and self.budget.output_price>0
         controlled=self.budget.cost_status=="B3_CONTROL_LEDGER"
@@ -97,7 +100,13 @@ class ReportWorker:
         # The legacy column has SQLite REAL affinity. Formal B3 therefore keeps
         # authoritative exact costs in the separate TEXT control ledger.
         estimated_cost=format(exact,"f") if exact is not None else None
-        self.repository.save_attempt({"attempt_id":f"attempt_{stable_hash([request['request_id'],number])}","request_id":request["request_id"],"attempt_number":number,"provider":request["provider"],"model":request["model"],"started_at":utc_now(),"completed_at":utc_now(),"latency_ms":getattr(result,"latency_ms",None),"http_status":getattr(result,"http_status",None),"input_tokens":usage.get("prompt_tokens",0),"output_tokens":usage.get("completion_tokens",0),"total_tokens":usage.get("total_tokens",0),"finish_reason":getattr(result,"finish_reason",None),"raw_response_hash":getattr(result,"raw_response_hash",None),"parse_status":parse_status,"validation_status":validation_status,"failure_code":failure_code,"sanitized_error":(error or "")[:200] or None,"cost_status":"B3_CONTROL_LEDGER" if controlled else ("AUDITED" if audited else "REQUIRES_RUNTIME_AUDIT"),"currency":"USD" if audited or controlled else None,"price_schedule_version":os.getenv("AI_REPORT_PRICE_SCHEDULE_VERSION") if audited or controlled else None,"estimated_cost":estimated_cost,"prompt_hash":request.get("generation_prompt_hash")})
+        diagnostic=None
+        if result is not None and provider_budget_chargeable(request["provider"]):
+            diagnostic={"sanitizer_version":DIAGNOSTIC_VERSION,
+              "sanitized_raw_response":sanitize_provider_response(result.raw_text),
+              "normalized_response":normalized_response,"parse_diagnostic":parse_diagnostic or {},
+              "validation_diagnostic":validation_diagnostic or {}}
+        self.repository.save_attempt({"attempt_id":f"attempt_{stable_hash([request['request_id'],number])}","request_id":request["request_id"],"attempt_number":number,"provider":request["provider"],"model":request["model"],"started_at":utc_now(),"completed_at":utc_now(),"latency_ms":getattr(result,"latency_ms",None),"http_status":getattr(result,"http_status",None),"input_tokens":usage.get("prompt_tokens",0),"output_tokens":usage.get("completion_tokens",0),"total_tokens":usage.get("total_tokens",0),"finish_reason":getattr(result,"finish_reason",None),"raw_response_hash":getattr(result,"raw_response_hash",None),"parse_status":parse_status,"validation_status":validation_status,"failure_code":failure_code,"sanitized_error":(error or "")[:200] or None,"cost_status":"B3_CONTROL_LEDGER" if controlled else ("AUDITED" if audited else "REQUIRES_RUNTIME_AUDIT"),"currency":"USD" if audited or controlled else None,"price_schedule_version":os.getenv("AI_REPORT_PRICE_SCHEDULE_VERSION") if audited or controlled else None,"estimated_cost":estimated_cost,"prompt_hash":request.get("generation_prompt_hash"),"diagnostic":diagnostic})
     def _run(self,request:dict[str,Any])->None:
         context=self.repository.load_context(request["context_id"])
         try:snapshot=self.repository.load_registry_snapshot(registry_snapshot_id=request.get("registry_snapshot_id"))
@@ -131,12 +140,17 @@ class ReportWorker:
             truncated=str(getattr(result,"finish_reason","") or "").lower()=="length"
             failure_code="PROVIDER_OUTPUT_TRUNCATED" if truncated else "INVALID_JSON"
             event_code="PROVIDER_OUTPUT_TRUNCATED" if truncated else "SCHEMA_FAILURE_NO_PROVIDER_RETRY"
-            self._record_attempt(request,number,result,parse_status="FAILED",failure_code=failure_code,error=str(error))
+            self._record_attempt(request,number,result,parse_status="FAILED",failure_code=failure_code,error=str(error),
+              parse_diagnostic={"status":"FAILED","failure_code":failure_code,"error":str(error)[:500]})
             self.repository.event(request["request_id"],"FAILED_FINAL",{"code":event_code});return
         try:validation=validate_report(report,provider_request,registry)
         except ReportValidationError as error:
-            self._record_attempt(request,number,result,parse_status="VALID",validation_status="FAILED",failure_code=error.code,error=error.code)
+            diagnostics=reference_diagnostics(report,provider_request,registry)
+            diagnostics.update({"status":"FAILED","failure_code":error.code,"details":error.details[:20]})
+            self._record_attempt(request,number,result,parse_status="VALID",validation_status="FAILED",failure_code=error.code,error=error.code,
+              normalized_response=report,parse_diagnostic={"status":"VALID"},validation_diagnostic=diagnostics)
             self.repository.event(request["request_id"],"VALIDATION_FAILED",{"code":error.code});return
-        self._record_attempt(request,number,result,parse_status="VALID",validation_status="VALID")
+        self._record_attempt(request,number,result,parse_status="VALID",validation_status="VALID",normalized_response=report,
+          parse_diagnostic={"status":"VALID"},validation_diagnostic={"status":"VALID",**reference_diagnostics(report,provider_request,registry)})
         report=resolve_citations(report,provider_request["macro_items"])
         saved=self.repository.save_report(request,report,assemble_generated_text(report));self.repository.event(request["request_id"],"COMPLETED",saved)

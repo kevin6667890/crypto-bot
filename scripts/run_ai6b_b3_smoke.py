@@ -18,7 +18,7 @@ from dashboard.ai_market_analysis.live_provider_guard import status as kill_swit
 from dashboard.ai_market_analysis.presentation import build_report_presentation
 from dashboard.ai_market_analysis.provider_cost import PRICE_VERSION, estimate_provider_cost, reconcile_provider_usage
 from dashboard.ai_market_analysis.report_audit_jobs import AuditWorker, queue_audit
-from dashboard.ai_market_analysis.report_audit_repository import AuditRepository
+from dashboard.ai_market_analysis.report_audit_repository import AuditRepository, freeze_report_bundle
 from dashboard.ai_market_analysis.report_jobs import ReportWorker
 from dashboard.ai_market_analysis.report_provider import ProviderError
 from dashboard.ai_market_analysis.report_repository import ReportRepository
@@ -142,6 +142,65 @@ def _trip_for_failure(code: str, path: str, evidence_id: str) -> None:
         trip(event, path=path, evidence_id=evidence_id)
 
 
+def _freeze_and_queue_audit(repository: ReportRepository, audit_repository: AuditRepository,
+                            report_id: str) -> dict[str, Any]:
+    """Use the canonical immutable audit-input path before queueing."""
+    bundle = freeze_report_bundle(repository, report_id)
+    audit_input_id = audit_repository.freeze_input(bundle)
+    frozen = audit_repository.load_input(report_id)
+    if frozen["report_id"] != report_id or frozen["report_hash"] != bundle["report_hash"]:
+        raise RuntimeError("FROZEN_AUDIT_INPUT_IDENTITY_MISMATCH")
+    queued = queue_audit(audit_repository, report_id)
+    return {"audit_input_id": audit_input_id, "queue": queued}
+
+
+def _resume_persisted_report(database: str, request_id: str, smoke_number: int) -> int:
+    repository = ReportRepository(database)
+    request = repository.status(request_id)
+    context = repository.load_context(request["context_id"])
+    expected = SMOKES[smoke_number]
+    actual = (request["instrument"], request["mode"], context["position_context"]["source"])
+    if actual != expected or actual[2] == "USER_DECLARED":
+        _emit("PERSISTED_REPORT_RESUME_BLOCKED", code="SMOKE_IDENTITY_MISMATCH",
+              expected=expected, actual=actual, provider_call_attempted=False)
+        return 7
+    with repository.connect() as connection:
+        attempt = connection.execute(
+            "SELECT http_status,parse_status,validation_status,failure_code,cost_status "
+            "FROM ai_report_attempts WHERE request_id=? ORDER BY attempt_number DESC LIMIT 1",
+            (request_id,),
+        ).fetchone()
+    report = repository.get_report(request_id=request_id)
+    if (not attempt or attempt[0] != 200 or attempt[1] != "VALID" or attempt[2] != "VALID"
+            or attempt[3] is not None or not report):
+        _emit("PERSISTED_REPORT_RESUME_BLOCKED", code="PERSISTED_REPORT_NOT_VALIDATED",
+              provider_call_attempted=False)
+        return 9
+    response_hash_before = report["response_hash"]
+    audit_repository = AuditRepository(database)
+    frozen = _freeze_and_queue_audit(repository, audit_repository, report["report_id"])
+    AuditWorker(audit_repository).run_once()
+    audit = audit_repository.latest(report["report_id"])
+    unchanged = repository.get_report(report_id=report["report_id"])
+    if not audit or audit["status"] != "PASSED" or unchanged["response_hash"] != response_hash_before:
+        _emit("PERSISTED_REPORT_REMEDIATION_FAILED", stage="AUDIT",
+              provider_call_attempted=False, report_immutable=unchanged["response_hash"] == response_hash_before)
+        return 10
+    presentation = build_report_presentation(
+        repository, report["report_id"], instrument=request["instrument"], mode=request["mode"]
+    )
+    if presentation.get("report") is None or presentation.get("eligibility") != "AUDIT_PASSED_SHADOW_ONLY":
+        _emit("PERSISTED_REPORT_REMEDIATION_FAILED", stage="PRESENTATION",
+              provider_call_attempted=False, report_immutable=True)
+        return 11
+    _emit("PERSISTED_REPORT_REMEDIATION_PASSED", smoke_number=smoke_number,
+          report_id=report["report_id"], audit_input_id=frozen["audit_input_id"],
+          audit_id=audit["audit_id"], presentation_id=presentation["presentation_id"],
+          provider_call_attempted=False, report_immutable=True,
+          counted_as_successful_smoke=False)
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--dry-run", action="store_true", default=True)
@@ -155,6 +214,7 @@ def main() -> int:
     parser.add_argument("--control-ledger")
     parser.add_argument("--kill-switch-file")
     parser.add_argument("--secret-file")
+    parser.add_argument("--resume-persisted-report", action="store_true")
     args = parser.parse_args()
 
     if not args.approval_id:
@@ -164,6 +224,16 @@ def main() -> int:
         _emit("DRY_RUN", provider_call_attempted=False, approval_present=True,
               live_provider_allowed=False, smoke_sequence=SMOKES)
         return 0
+
+    preconditions_ok, missing = _preconditions(args.preconditions)
+    if not preconditions_ok:
+        _emit("B3_PRECONDITIONS_BLOCKED", missing=missing, provider_call_attempted=False)
+        return 4
+    if args.resume_persisted_report:
+        if not all((args.database, args.request_id, args.smoke_number)):
+            _emit("PERSISTED_REPORT_RESUME_INPUT_REQUIRED", provider_call_attempted=False)
+            return 5
+        return _resume_persisted_report(args.database, args.request_id, args.smoke_number)
 
     gates = {
         "runtime_live_flag": os.getenv("AI_REPORT_LIVE_PROVIDER_ENABLED", "false").lower() == "true",
@@ -176,10 +246,6 @@ def main() -> int:
     if failed_gates:
         _emit("LIVE_PROVIDER_GATES_BLOCKED", failed_gates=failed_gates, provider_call_attempted=False)
         return 3
-    preconditions_ok, missing = _preconditions(args.preconditions)
-    if not preconditions_ok:
-        _emit("B3_PRECONDITIONS_BLOCKED", missing=missing, provider_call_attempted=False)
-        return 4
     if not all((args.database, args.request_id, args.secret_file, args.smoke_number)):
         _emit("LIVE_PROVIDER_INPUT_REQUIRED", provider_call_attempted=False)
         return 5
@@ -249,7 +315,7 @@ def main() -> int:
     report = repository.get_report(request_id=args.request_id)
     assert report is not None
     audit_repository = AuditRepository(args.database)
-    queue_audit(audit_repository, report["report_id"])
+    _freeze_and_queue_audit(repository, audit_repository, report["report_id"])
     AuditWorker(audit_repository).run_once()
     audit = audit_repository.latest(report["report_id"])
     if not audit or audit["status"] != "PASSED":

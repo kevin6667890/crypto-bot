@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import json
 from pathlib import Path
 
@@ -9,9 +10,8 @@ from dashboard.ai_market_analysis.canonical import canonical_json
 from dashboard.ai_market_analysis.enriched_context import build_enriched_context
 from dashboard.ai_market_analysis.macro_evidence import freeze_macro_evidence_set
 from dashboard.ai_market_analysis.presentation import build_report_presentation
-from dashboard.ai_market_analysis.report_audit_jobs import AuditWorker, queue_audit
 from dashboard.ai_market_analysis.report_audit_repository import (
-    AuditRepository, freeze_report_bundle, migrate_audit_database,
+    AuditRepository, migrate_audit_database,
 )
 from dashboard.ai_market_analysis.report_context_compiler import compile_report_context
 from dashboard.ai_market_analysis.report_fact_registry import build_fact_registry
@@ -34,6 +34,7 @@ from dashboard.ai_market_analysis.position_context import none_position_context
 from dashboard.ai_market_analysis.versions import AI_REPORT_PROMPT_VERSION
 from tests.ai_market_analysis.ai4_helpers import base_context
 from tests.ai_market_analysis.test_report_provider_validation import setup
+from scripts.run_ai6b_b3_smoke import _resume_persisted_report
 
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -90,7 +91,9 @@ def test_request_id_sentinel_is_the_only_deterministic_provider_normalization():
         parse_report_response(canonical_json(value), expected_request_id=request["request_id"])
 
 
-def test_real_style_sentinel_response_completes_validation_audit_and_presentation(tmp_path, monkeypatch):
+def test_real_style_sentinel_response_resumes_idempotently_without_provider_recall(
+    tmp_path, monkeypatch, capsys,
+):
     path = tmp_path / "reports.db"
     migrate_database(path)
     migrate_audit_database(path)
@@ -117,11 +120,37 @@ def test_real_style_sentinel_response_completes_validation_audit_and_presentatio
     assert reports.status(submitted["request_id"])["status"] == "COMPLETED"
     report = reports.get_report(request_id=submitted["request_id"])
     assert report is not None
-    audits.freeze_input(freeze_report_bundle(reports, report["report_id"]))
-    queue_audit(audits, report["report_id"])
-    assert AuditWorker(audits).run_once() is True
+    response_hash = report["response_hash"]
+    assert _resume_persisted_report(str(path), submitted["request_id"], 1) == 0
+    first = json.loads(capsys.readouterr().out)
+    assert first["provider_call_attempted"] is False
+    assert first["counted_as_successful_smoke"] is False
+    assert first["report_immutable"] is True
+    assert _resume_persisted_report(str(path), submitted["request_id"], 1) == 0
+    capsys.readouterr()
     audit = audits.latest(report["report_id"])
     assert audit["status"] == "PASSED"
+    with audits.connect() as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM ai_report_audit_inputs WHERE report_id=?", (report["report_id"],)
+        ).fetchone()[0] == 1
+        assert connection.execute(
+            "SELECT COUNT(*) FROM ai_report_audits WHERE report_id=?", (report["report_id"],)
+        ).fetchone()[0] == 1
+    assert reports.get_report(report_id=report["report_id"])["response_hash"] == response_hash
     presentation = build_report_presentation(reports, report["report_id"], instrument="ETH-USDT-SWAP", mode="QUICK")
     assert presentation["eligibility"] == "AUDIT_PASSED_SHADOW_ONLY"
     assert presentation["report"] is not None
+
+
+def test_b3_runner_has_no_queue_path_without_frozen_input():
+    source = (ROOT / "scripts/run_ai6b_b3_smoke.py").read_text(encoding="utf-8")
+    calls = [
+        node for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "queue_audit"
+    ]
+    assert len(calls) == 1
+    helper = source.split("def _freeze_and_queue_audit", 1)[1].split("def _resume_persisted_report", 1)[0]
+    assert helper.index("freeze_report_bundle(") < helper.index("freeze_input(")
+    assert helper.index("freeze_input(") < helper.index("load_input(")
+    assert helper.index("load_input(") < helper.index("queue_audit(")

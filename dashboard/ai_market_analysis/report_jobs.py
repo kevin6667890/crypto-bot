@@ -9,6 +9,7 @@ from .report_basic_validation import assemble_generated_text, validate_report, r
 from .report_context_compiler import compile_report_context
 from .report_prompt_templates import compile_prompt
 from .report_response_contract import response_metadata_contract
+from .provider_claim_pack import build_provider_claim_pack, ground_provider_report
 from .provider_response_diagnostics import (
     DIAGNOSTIC_VERSION, reference_diagnostics, sanitize_provider_response,
 )
@@ -143,6 +144,18 @@ class ReportWorker:
             self._record_attempt(request,number,result,parse_status="FAILED",failure_code=failure_code,error=str(error),
               parse_diagnostic={"status":"FAILED","failure_code":failure_code,"error":str(error)[:500]})
             self.repository.event(request["request_id"],"FAILED_FINAL",{"code":event_code});return
+        if provider_budget_chargeable(request["provider"]):
+            raw_reference_diagnostics=reference_diagnostics(report,provider_request,registry)
+            unknown=raw_reference_diagnostics["unknown_refs"]
+            reference_codes=(("fact_refs","UNKNOWN_FACT_REF"),("level_refs","UNKNOWN_LEVEL_REF"),
+              ("scenario_refs","UNKNOWN_SCENARIO_REF"),("macro_refs","UNKNOWN_MACRO_REF"),("position_refs","UNKNOWN_POSITION_REF"))
+            unknown_code=next((code for name,code in reference_codes if unknown[name]),None)
+            if unknown_code:
+                raw_reference_diagnostics.update({"status":"FAILED","failure_code":unknown_code})
+                self._record_attempt(request,number,result,parse_status="VALID",validation_status="FAILED",failure_code=unknown_code,error=unknown_code,
+                  normalized_response=report,parse_diagnostic={"status":"VALID"},validation_diagnostic=raw_reference_diagnostics)
+                self.repository.event(request["request_id"],"VALIDATION_FAILED",{"code":unknown_code});return
+            report=ground_provider_report(report,build_provider_claim_pack(compiled,request["mode"]))
         try:validation=validate_report(report,provider_request,registry)
         except ReportValidationError as error:
             diagnostics=reference_diagnostics(report,provider_request,registry)

@@ -4,6 +4,7 @@ from __future__ import annotations
 from typing import Any
 
 from .versions import AI_REPORT_RESPONSE_VERSION
+from .provider_claim_pack import build_provider_claim_pack
 
 SERVICE_REQUEST_ID_SENTINEL = "__SERVICE_REQUEST_ID__"
 SERVICE_SOURCE_VERSIONS_SENTINEL = "__SERVICE_SOURCE_VERSIONS__"
@@ -200,6 +201,14 @@ def provider_json_schema(metadata: dict[str, Any], compiled_context: dict[str, A
             "cross_namespace_provider_paths": 0,
             "citations_must_equal_section_macro_refs": True,
         },
+        "provider_claim_pack": build_provider_claim_pack(compiled_context, mode),
+        "claim_pack_rules": [
+            "copy numeric values only from provider_claim_pack.allowed_numeric_values and never round or recalculate",
+            "key_levels and scenarios are immutable deterministic projections; narrative may explain but never alter them",
+            "when evidence_status is false, emit only the supplied limitation/status statement for that domain",
+            "do not write ASCII timeframe tokens in narrative; use Chinese timeframe words to avoid numeric ambiguity",
+            "host attaches strict evidence references from the claim pack; do not invent support relationships",
+        ],
         "identifier_rules": [
             "each ref field may contain only exact IDs from its own allowed_reference_ids namespace",
             "flow_refs and timeframe_refs are scoped subsets of fact_refs and may appear only in fact_refs",

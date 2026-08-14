@@ -3,6 +3,7 @@ from __future__ import annotations
 import re
 from typing import Any
 from .versions import AI_REPORT_BASIC_VALIDATION_VERSION, AI_REPORT_RESPONSE_VERSION
+from .report_numeric_normalizer import normalize_numbers
 from .report_response_contract import LEVEL_PROJECTION_FIELDS, SCENARIO_PROJECTION_FIELDS, expected_section_ids
 from .report_identity import REPORT_PIPELINE_VERSIONS
 
@@ -24,11 +25,7 @@ def expected_sections(mode: str, has_macro: bool) -> list[str]:
 
 
 def _numbers(text: str) -> list[float]:
-    clean=DATE_RE.sub("",TIMEFRAME_RE.sub("",VERSION_RE.sub("",text)))
-    values=[]
-    for match in NUMBER_RE.finditer(clean):
-        token=match.group(); values.append(float(token.rstrip("%")))
-    return values
+    return [float(item["value"]) for item in normalize_numbers(text) if "value" in item]
 
 
 def _numeric_allowed(value: float, registry: list[dict[str,Any]]) -> bool:

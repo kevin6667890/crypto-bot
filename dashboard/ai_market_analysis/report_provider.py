@@ -70,6 +70,33 @@ class FakeAIReportProvider:
         macro_ids=[x for x in all_ids if x.startswith("MACRO_") and x!="MACRO_UNAVAILABLE"]
         position_ids=[x for x in all_ids if x.startswith("POSITION_")]
         flow_ids=[x for x in all_ids if x.startswith("FLOW_")]
+        scenario_values=[facts[x]["value"] for x in scenario_ids]
+        scenario_labels={
+            "BULLISH_CONTINUATION":"上行延续路径",
+            "BEARISH_CONTINUATION":"下行延续路径",
+            "NORMAL_RETEST":"正常回踩路径",
+            "FAILED_BREAKOUT":"失败突破路径",
+            "RANGE_CONTINUATION":"区间延续路径",
+        }
+        scenario_level_ids=set()
+        for value in scenario_values:
+            trigger=value.get("trigger") or {};invalidation=value.get("invalidation") or {}
+            scenario_level_ids.update(value.get("source_level_ids",[]))
+            scenario_level_ids.update(trigger.get("level_ids",[]))
+            scenario_level_ids.update(value.get("expected_path",[]))
+            scenario_level_ids.update(value.get("targets",[]))
+            if invalidation.get("level_id"):scenario_level_ids.add(invalidation["level_id"])
+        scenario_level_fact_ids=[
+            fact_id for fact_id in level_ids
+            if facts[fact_id]["value"].get("level_id") in scenario_level_ids
+        ]
+        scenario_body=(
+            "冻结注册表提供的条件情景为："+"、".join(
+                f"{value['type']} {scenario_labels.get(value['type'],'条件路径')}"
+                for value in scenario_values
+            )+"；只有在各自注册表触发条件满足后才可审计。"
+            if scenario_values else "证据不足，当前没有可审计的情景路径。"
+        )
         tfrefs={sid:[x for x in all_ids if x.startswith({"TF_15M":"TF15_","TF_1H":"TF1H_","TF_4H":"TF4H_","TF_1D":"TF1D_","TF_1W":"TF1W_"}.get(sid,"NO"))][:3] for sid in FULL_SECTION_IDS}
         if mode == "QUICK": ids=["QUICK_SUMMARY"]
         else:
@@ -87,7 +114,7 @@ class FakeAIReportProvider:
           "TF_1W":"周线仍偏弱并存在更高周期压力，因此不能宣布长期牛市。",
           "ORDER_FLOW":"成交量扩张、CVD为正与主动买盘支持突破；未平仓量显著下降说明首段以空头回补为主，回踩阶段的小幅恢复尚不足以确认新多全面接力。Funding、Basis与Liquidation仅按已冻结数据披露。",
           "KEY_LEVELS":"核心防守取自已引用支撑 zone；延续确认取自已引用压力位，其他高周期压力不新增价格。",
-          "SCENARIOS":"路径一是突破压力后延续；路径二是回踩支撑后确认；路径三是跌回核心 zone 且反抽失败，构成失败突破路径。触发前均不是已确认结果。",
+          "SCENARIOS":scenario_body,
           "LIMITATIONS":"数据 gap 与未知字段限制置信度；核心 zone 失守且反抽失败会使当前偏强判断失效。本次未加入已验证宏观证据。" if not macro_ids else "宏观证据仅作背景且不覆盖盘面；数据 gap 与未知字段限制置信度，核心结构失效条件必须继续观察。",
           "MACRO_BACKGROUND":"只依据冻结证据说明背景，不扩写政策结论，也不编造来源。",
           "POSITION_PLAN":"该 USER_DECLARED 计划的平均成本为1835 USDT，原计划主要任务已经完成，剩余持仓属于需要重新决策的部分；不能因行情继续上涨自动改变原计划，也不能把短线反弹计划自动升级为长期仓位。结构失效只引用既有关键位与情景，不虚构减仓比例或数量。",
@@ -101,7 +128,7 @@ class FakeAIReportProvider:
             if sid=="MOVE_NATURE": refs=flow_ids[:4]
             if sid=="ORDER_FLOW": refs=flow_ids[:4]
             if sid=="KEY_LEVELS": refs=level_ids[:4]
-            if sid=="SCENARIOS": refs=scenario_ids[:3]
+            if sid=="SCENARIOS": refs=scenario_ids+scenario_level_fact_ids
             if sid=="LIMITATIONS": refs=([x for x in all_ids if x.startswith(("DATA_","UNSUPPORTED_","MACRO_UNAVAILABLE"))][:6]+macro_ids[:4])
             if sid=="MACRO_BACKGROUND": refs=macro_ids[:4]
             if sid=="POSITION_PLAN": refs=position_ids[:7]+scenario_ids[:1]+level_ids[:1]

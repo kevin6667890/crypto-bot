@@ -10,6 +10,13 @@ from dashboard.ai_market_analysis.report_provider import FakeAIReportProvider,Pr
 from dashboard.ai_market_analysis.report_response_parser import parse_report_response,ReportParseError
 from dashboard.ai_market_analysis.report_level_audit import audit_report_levels
 from dashboard.ai_market_analysis.report_scenario_audit import audit_report_scenarios
+from dashboard.ai_market_analysis.report_audit_repository import AuditRepository,freeze_report_bundle,migrate_audit_database
+from dashboard.ai_market_analysis.report_audit_service import audit_report
+from dashboard.ai_market_analysis.report_jobs import ReportWorker
+from dashboard.ai_market_analysis.report_repository import ReportRepository,migrate_database
+from dashboard.ai_market_analysis.report_service import ReportService
+from dashboard.ai_market_analysis.presentation import build_report_presentation
+from dashboard.ai_market_analysis.canonical import stable_hash
 from dashboard.ai_market_analysis.versions import AI_REPORT_PROMPT_VERSION
 from .ai4_helpers import base_context,macro_items
 
@@ -81,3 +88,93 @@ def test_empty_registry_does_not_allow_provider_to_invent_a_scenario():
     with pytest.raises(ReportValidationError) as error:
         validate_report(report,empty_q,empty_registry)
     assert error.value.code=="UNKNOWN_SCENARIO_REF"
+
+
+def _run_btc_breakout_attempt(tmp_path,mode):
+    base=base_context();base["instrument"]="BTC-USDT-SWAP"
+    base["market_timeline"]["breakout_direction"]="UP"
+    base["market_timeline"]["current_phase"]="BREAKOUT_ATTEMPT"
+    base["scenario_tree"]={"status":"NOT_IMPLEMENTED","direction":"UP","scenarios":[]}
+    database=tmp_path/f"btc-{mode.lower()}.db"
+    migrate_database(database);migrate_audit_database(database)
+    reports=ReportRepository(database);audits=AuditRepository(database)
+    submitted=ReportService(reports).submit(base,mode=mode,position_source="NONE")
+    assert ReportWorker(reports,lambda request:FakeAIReportProvider(request["model"])).run_once()
+    report=reports.get_report(request_id=submitted["request_id"])
+    with reports.connect() as connection:
+        attempt=dict(connection.execute(
+            "SELECT * FROM ai_report_attempts WHERE request_id=?",(submitted["request_id"],)
+        ).fetchone())
+    bundle=freeze_report_bundle(reports,report["report_id"])
+    audit=audit_report(bundle,created_at="2026-08-14T02:30:00Z")
+    audits.save_audit(audit)
+    presentation=build_report_presentation(
+        reports,report["report_id"],instrument="BTC-USDT-SWAP",mode=mode)
+    return report,attempt,bundle,audit,presentation
+
+
+@pytest.mark.parametrize("mode",["QUICK","FULL"])
+def test_btc_breakout_attempt_empty_scenario_registry_audits_and_presents(tmp_path,mode):
+    report,attempt,_,audit,presentation=_run_btc_breakout_attempt(tmp_path,mode)
+    assert attempt["parse_status"]==attempt["validation_status"]=="VALID"
+    assert report["response"]["scenarios"]==[]
+    assert audit["status"]=="PASSED"
+    assert audit["hard_failures"]==[]
+    assert audit["scorecard"]["ratios"]["reference_semantic_support"]==1.0
+    assert presentation["eligibility"]=="AUDIT_PASSED_SHADOW_ONLY"
+    assert presentation["report"] is not None
+    if mode=="FULL":
+        section=next(item for item in report["response"]["sections"] if item["section_id"]=="SCENARIOS")
+        assert section["body"]=="证据不足，当前没有可审计的情景路径。"
+        assert section["fact_refs"]==section["level_refs"]==section["scenario_refs"]==[]
+
+
+def test_unreferenced_generic_scenario_paths_remain_fail_closed(tmp_path):
+    _,_,bundle,_,_=_run_btc_breakout_attempt(tmp_path,"FULL")
+    section=next(item for item in bundle["report"]["sections"] if item["section_id"]=="SCENARIOS")
+    section["body"]="路径一是突破压力后延续；路径二是回踩支撑后确认；路径三是跌回核心 zone 且反抽失败，构成失败突破路径。触发前均不是已确认结果。"
+    section["fact_refs"]=[];section["level_refs"]=[];section["scenario_refs"]=[]
+    bundle["report_hash"]=stable_hash(bundle["report"])
+    audit=audit_report(bundle,created_at="2026-08-14T02:31:00Z")
+    unsupported=[item for item in audit["reference_audits"] if item["code"]=="UNSUPPORTED_CLAIM"]
+    assert audit["status"]=="FAILED"
+    assert "UNSUPPORTED_CLAIM" in audit["hard_failures"]
+    assert len(unsupported)==4
+
+
+def test_scenario_section_uses_only_registry_scenarios_and_their_fact_refs():
+    request,registry=setup("FULL")
+    report=parse_report_response(FakeAIReportProvider().generate(request).raw_text)
+    section=next(item for item in report["sections"] if item["section_id"]=="SCENARIOS")
+    frozen_registry=request["compiled_context"]
+    scenario_facts=[item for item in frozen_registry["facts"] if item["category"]=="SCENARIO"]
+    referenced_levels=set()
+    for item in scenario_facts:
+        value=item["value"]
+        referenced_levels.update(value["source_level_ids"])
+        referenced_levels.update((value.get("trigger") or {}).get("level_ids",[]))
+        referenced_levels.update(value.get("expected_path",[]))
+        referenced_levels.update(value.get("targets",[]))
+        invalidation_level=(value.get("invalidation") or {}).get("level_id")
+        if invalidation_level:
+            referenced_levels.add(invalidation_level)
+    level_facts=[item for item in frozen_registry["facts"] if item["category"]=="LEVEL" and item["value"]["level_id"] in referenced_levels]
+    assert section["fact_refs"]==[item["fact_id"] for item in scenario_facts+level_facts]
+    assert section["scenario_refs"]==[item["value"]["scenario_id"] for item in scenario_facts]
+    assert section["level_refs"]==[item["value"]["level_id"] for item in level_facts]
+    assert "路径一是突破压力后延续" not in section["body"]
+    assert all(item["value"]["type"] in section["body"] for item in scenario_facts)
+    assert "失败突破路径" in section["body"]
+
+
+def test_typed_scenario_ref_without_supporting_fact_ref_cannot_bypass_audit(tmp_path):
+    _,_,bundle,_,_=_run_btc_breakout_attempt(tmp_path,"FULL")
+    golden=setup("FULL")[1]
+    known=next(item["value"]["scenario_id"] for item in golden["facts"] if item["category"]=="SCENARIO")
+    section=next(item for item in bundle["report"]["sections"] if item["section_id"]=="SCENARIOS")
+    section["body"]="路径一是突破压力后延续。"
+    section["scenario_refs"]=[known]
+    section["fact_refs"]=[]
+    bundle["report_hash"]=stable_hash(bundle["report"])
+    audit=audit_report(bundle,created_at="2026-08-14T02:32:00Z")
+    assert "UNKNOWN_REFERENCE" in audit["hard_failures"] or "UNSUPPORTED_CLAIM" in audit["hard_failures"]

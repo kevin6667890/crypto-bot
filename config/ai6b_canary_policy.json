@@ -9,7 +9,7 @@
     "per_instrument_concurrency": 1,
     "queue_max": 10,
     "per_request_input_tokens": 12000,
-    "quick_output_tokens": 3000,
+    "quick_output_tokens": 6000,
     "full_output_tokens": 8000,
     "position_output_tokens": 8000,
     "daily_input_tokens": 150000,

@@ -8,6 +8,7 @@ from .canonical import stable_hash
 from .report_basic_validation import assemble_generated_text, validate_report, resolve_citations, ReportValidationError
 from .report_context_compiler import compile_report_context
 from .report_prompt_templates import compile_prompt
+from .report_response_contract import response_metadata_contract
 from .report_provider import AIReportProvider, ProviderError
 from .report_response_parser import parse_report_response, ReportParseError
 from .report_registry_snapshot import validate_registry_snapshot
@@ -110,8 +111,9 @@ class ReportWorker:
         if number>3:self.repository.event(request["request_id"],"FAILED_FINAL",{"code":"MAX_ATTEMPTS"});return
         self.repository.event(request["request_id"],"RUNNING",{"attempt":number})
         provider=self.provider_factory(request);source_versions=snapshot["source_versions"]
-        response_metadata={"context_id":request["context_id"],"request_id":request["request_id"],"mode":request["mode"],"language":request["language"],"model":request["model"],"prompt_version":request["prompt_version"],"source_versions":source_versions,"audit_status":"PENDING"}
-        prompt=compile_prompt(compiled,request["mode"])
+        response_metadata=response_metadata_contract(context_id=request["context_id"],mode=request["mode"],
+          language=request["language"],model=request["model"],prompt_version=request["prompt_version"],source_versions=source_versions)
+        prompt=compile_prompt(compiled,request["mode"],response_metadata)
         if prompt["prompt_hash"]!=snapshot["prompt_hash"]:self.repository.event(request["request_id"],"FAILED_FINAL",{"code":"REGISTRY_PROMPT_HASH_MISMATCH"});return
         provider_request={**request,"source_versions":source_versions,"compiled_context":compiled,"token_estimate":compiled["token_estimate"],"messages":prompt["messages"],"max_output_tokens":request["max_output_tokens"],"macro_items":context["macro_context"]["items"],"position_source":context["position_context"]["source"]}
         try:result=provider.generate(provider_request)
@@ -124,7 +126,7 @@ class ReportWorker:
         if int(usage.get("prompt_tokens",0))>self.budget.request_input or int(usage.get("completion_tokens",0))>request["max_output_tokens"]:
             self._record_attempt(request,number,result,failure_code="PROVIDER_USAGE_CAP_EXCEEDED",error="PROVIDER_USAGE_CAP_EXCEEDED")
             self.repository.event(request["request_id"],"BUDGET_BLOCKED",{"code":"PROVIDER_USAGE_CAP_EXCEEDED"});return
-        try:report=parse_report_response(result.raw_text)
+        try:report=parse_report_response(result.raw_text,expected_request_id=request["request_id"],expected_source_versions=source_versions)
         except ReportParseError as error:
             truncated=str(getattr(result,"finish_reason","") or "").lower()=="length"
             failure_code="PROVIDER_OUTPUT_TRUNCATED" if truncated else "INVALID_JSON"

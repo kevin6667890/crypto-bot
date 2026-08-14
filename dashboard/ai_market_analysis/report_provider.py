@@ -7,6 +7,7 @@ from typing import Any, Protocol
 from .canonical import stable_hash
 from .versions import AI_REPORT_PROVIDER_VERSION, AI_REPORT_RESPONSE_VERSION
 from .report_identity import REPORT_PIPELINE_VERSIONS
+from .report_response_contract import FULL_SECTION_IDS
 
 
 @dataclass(frozen=True)
@@ -37,7 +38,6 @@ class AIReportProvider(Protocol):
     def generate(self, request: dict[str, Any]) -> ProviderResult: ...
 
 
-FULL_SECTION_IDS = ("CONCLUSION","RECENT_PROCESS","MOVE_NATURE","TF_15M","TF_1H","TF_4H","TF_1D","TF_1W","ORDER_FLOW","KEY_LEVELS","SCENARIOS","LIMITATIONS")
 TITLES = {"CONCLUSION":"综合结论","MACRO_BACKGROUND":"宏观背景","RECENT_PROCESS":"最近行情过程","MOVE_NATURE":"本轮上涨或下跌性质","TF_15M":"15分钟","TF_1H":"1小时","TF_4H":"4小时","TF_1D":"日线","TF_1W":"周线","ORDER_FLOW":"成交量、CVD、OI、Funding、Basis与Liquidation","KEY_LEVELS":"关键支撑压力","SCENARIOS":"后续三种路径","LIMITATIONS":"数据限制和判断失效","POSITION_PLAN":"当前持仓与原计划执行分析","QUICK_SUMMARY":"快速结论"}
 
 

@@ -13,6 +13,7 @@ from .report_identity import REPORT_PIPELINE_VERSIONS
 from .report_registry_snapshot import build_registry_snapshot
 from .canonical import stable_hash
 from .report_prompt_templates import compile_prompt
+from .report_response_contract import response_metadata_contract
 from .report_repository import ReportRepository
 from .versions import AI_REPORT_PROMPT_VERSION,AI_REPORT_REQUEST_VERSION
 from .provider_limits import OUTPUT_TOKEN_LIMITS
@@ -49,10 +50,13 @@ class ReportService:
         if mode=="POSITION_AWARE" and position["source"]=="NONE":mode="FULL";downgraded="POSITION_SOURCE_NONE"
         macro=freeze_macro_evidence_set(macro_evidence or [],decision);enriched=build_enriched_context(base_context,position,macro)
         self.repository.save_context(enriched);self.repository.save_macro_set(macro)
-        registry=build_fact_registry(enriched);compiled=compile_report_context(registry,mode);prompt=compile_prompt(compiled,mode)
+        registry=build_fact_registry(enriched);compiled=compile_report_context(registry,mode)
         if compiled["token_estimate"]>int(os.getenv("AI_REPORT_REQUEST_INPUT_TOKEN_MAX","12000")):
             raise OverflowError("AI_REPORT_REQUEST_INPUT_TOKEN_LIMIT")
         source_versions={**enriched["source_versions"],**REPORT_PIPELINE_VERSIONS};source_hash=stable_hash(source_versions)
+        metadata=response_metadata_contract(context_id=enriched["enriched_context_id"],mode=mode,language=language,
+          model=model,prompt_version=AI_REPORT_PROMPT_VERSION,source_versions=source_versions)
+        prompt=compile_prompt(compiled,mode,metadata)
         request_id=report_request_identity(enriched["enriched_context_id"],mode,language,AI_REPORT_PROMPT_VERSION,provider,model,
           fact_registry_hash=stable_hash(registry),numeric_registry_hash=stable_hash(registry["numeric_registry"]),prompt_hash=prompt["prompt_hash"],registry_source_versions_hash=source_hash)
         snapshot=build_registry_snapshot(request_id=request_id,report_context_id=compiled["compiled_hash"],enriched_context_id=enriched["enriched_context_id"],fact_registry=registry,prompt_hash=prompt["prompt_hash"],source_versions=source_versions)

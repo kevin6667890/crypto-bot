@@ -3,7 +3,7 @@ from __future__ import annotations
 import re
 from typing import Any
 from .versions import AI_REPORT_BASIC_VALIDATION_VERSION, AI_REPORT_RESPONSE_VERSION
-from .report_provider import FULL_SECTION_IDS
+from .report_response_contract import LEVEL_PROJECTION_FIELDS, SCENARIO_PROJECTION_FIELDS, expected_section_ids
 from .report_identity import REPORT_PIPELINE_VERSIONS
 
 NUMBER_RE=re.compile(r"(?<![A-Za-z_\d])[-+]?\d+(?:\.\d+)?%?(?![A-Za-z_\d])")
@@ -20,11 +20,7 @@ class ReportValidationError(ValueError):
 
 
 def expected_sections(mode: str, has_macro: bool) -> list[str]:
-    if mode=="QUICK": return ["QUICK_SUMMARY"]
-    result=list(FULL_SECTION_IDS)
-    if has_macro: result.insert(1,"MACRO_BACKGROUND")
-    if mode=="POSITION_AWARE": result.append("POSITION_PLAN")
-    return result
+    return expected_section_ids(mode,has_macro)
 
 
 def _numbers(text: str) -> list[float]:
@@ -70,8 +66,8 @@ def validate_report(report: dict[str,Any], request: dict[str,Any], registry: dic
         if not set(section["scenario_refs"])<=scenario_ids: raise ReportValidationError("UNKNOWN_SCENARIO_REF")
         if not set(section["macro_refs"])<=macro_ids: raise ReportValidationError("UNKNOWN_MACRO_REF")
         if not set(section["position_refs"])<=position_ids: raise ReportValidationError("UNKNOWN_POSITION_REF")
-    level_projection_fields={"level_id","analysis_text","asserted_role","asserted_state","asserted_strength","asserted_timeframe","asserted_dynamic","fact_refs","level_refs"}
-    scenario_projection_fields={"scenario_id","scenario_type","direction","likelihood","summary","trigger_text","trigger_level_refs","confirmation_text","expected_path_text","expected_path_level_refs","target_level_refs","invalidation_text","invalidation_level_ref","invalidation_timeframe","confirmed_close_required","volume_confirmation_text","cvd_confirmation_text","oi_confirmation_text","funding_basis_confirmation_text","contradicting_evidence_text","fact_refs","level_refs","source_phase_ids","source_event_ids","uncertainty_markers"}
+    level_projection_fields=set(LEVEL_PROJECTION_FIELDS)
+    scenario_projection_fields=set(SCENARIO_PROJECTION_FIELDS)
     projections=report.get("key_levels")
     if not isinstance(projections,list) or any(not level_projection_fields<=set(x) for x in projections):raise ReportValidationError("LEVEL_PROJECTION_INVALID")
     if any(x["level_id"] not in level_ids or not set(x["level_refs"])<={x["level_id"]} or not set(x["fact_refs"])<=fact_ids for x in projections):raise ReportValidationError("UNKNOWN_LEVEL_REF")

@@ -21,9 +21,10 @@ def compile_prompt(compiled_context: dict[str, Any], mode: str,
         "prompt_version":AI_REPORT_PROMPT_VERSION,"audit_status":"PENDING",
     }
     contract=provider_json_schema(metadata,compiled_context)
+    narrative_context={key:value for key,value in compiled_context.items() if key!="provider_claim_pack"}
     messages = [{"role":"system","content":system},{"role":"user","content":mode_prompt+
         "\nCANONICAL_RESPONSE_JSON_SCHEMA (must match exactly; no extra fields):\n"+canonical_json(contract)+
-        "\nFACT_REGISTRY_JSON:\n"+canonical_json(compiled_context)}]
+        "\nFACT_REGISTRY_JSON:\n"+canonical_json(narrative_context)}]
     return {"prompt_version":AI_REPORT_PROMPT_VERSION,"messages":messages,"prompt_hash":stable_hash(messages)}
 
 

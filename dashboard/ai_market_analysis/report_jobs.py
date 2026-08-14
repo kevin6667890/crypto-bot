@@ -155,7 +155,7 @@ class ReportWorker:
                 self._record_attempt(request,number,result,parse_status="VALID",validation_status="FAILED",failure_code=unknown_code,error=unknown_code,
                   normalized_response=report,parse_diagnostic={"status":"VALID"},validation_diagnostic=raw_reference_diagnostics)
                 self.repository.event(request["request_id"],"VALIDATION_FAILED",{"code":unknown_code});return
-            report=ground_provider_report(report,build_provider_claim_pack(compiled,request["mode"]))
+            report=ground_provider_report(report,compiled["provider_claim_pack"])
         try:validation=validate_report(report,provider_request,registry)
         except ReportValidationError as error:
             diagnostics=reference_diagnostics(report,provider_request,registry)

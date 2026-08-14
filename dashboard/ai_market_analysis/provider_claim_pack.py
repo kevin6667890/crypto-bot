@@ -4,7 +4,10 @@ from __future__ import annotations
 import re
 from typing import Any
 
-_TIMEFRAME_WORDS = {"15m": "十五分钟", "1H": "一小时", "4H": "四小时", "1D": "日线", "1W": "周线"}
+# Narrative labels intentionally contain no numeric glyphs or number words.
+# The numeric auditor treats every number as a market claim, while exact
+# timeframe identity remains available in deterministic facts/projections.
+_TIMEFRAME_WORDS = {"15m": "超短周期", "1H": "小时周期", "4H": "中周期", "1D": "日线", "1W": "周线"}
 
 
 def _scenario_projection(fact: dict[str, Any], narrative: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -60,6 +63,44 @@ def build_provider_claim_pack(compiled_context: dict[str, Any], mode: str) -> di
     }
 
 
+def provider_claim_pack_contract(claim_pack: dict[str, Any]) -> dict[str, Any]:
+    """Compact provider view derived from the canonical host grounding pack."""
+    numeric = [
+        [item["source_fact_id"], item["canonical_value"], item.get("unit")]
+        for item in claim_pack["allowed_numeric_values"]
+    ]
+    levels = [
+        {"level_id": item["level_id"], "fact_id": item["fact_refs"][0], "role": item["asserted_role"],
+         "state": item["asserted_state"], "strength": item["asserted_strength"],
+         "timeframe": item["asserted_timeframe"], "dynamic": item["asserted_dynamic"],
+         "valid_until": item["valid_until"]}
+        for item in claim_pack["levels"]
+    ]
+    scenarios = [
+        {"scenario_id": item["scenario_id"], "fact_id": item["fact_refs"][0],
+         "type": item["scenario_type"], "direction": item["direction"], "likelihood": item["likelihood"],
+         "trigger": {"text": item["trigger_text"], "level_refs": item["trigger_level_refs"]},
+         "confirmation": item["confirmation_text"],
+         "path": {"text": item["expected_path_text"], "level_refs": item["expected_path_level_refs"]},
+         "target_level_refs": item["target_level_refs"],
+         "invalidation": {"text": item["invalidation_text"], "level_ref": item["invalidation_level_ref"],
+                          "timeframe": item["invalidation_timeframe"]},
+         "order_flow_conditions": [value for value in (
+             item["volume_confirmation_text"], item["cvd_confirmation_text"], item["oi_confirmation_text"],
+             item["funding_basis_confirmation_text"], item["contradicting_evidence_text"]
+         ) if value]}
+        for item in claim_pack["scenarios"]
+    ]
+    return {
+        "claim_pack_version": claim_pack["claim_pack_version"], "mode": claim_pack["mode"],
+        "allowed_numeric_tuple_fields": ["fact_id", "exact_value", "unit"],
+        "allowed_numeric_values": numeric, "level_claim_slots": levels, "scenario_claim_slots": scenarios,
+        "macro_evidence_ids": claim_pack["macro_evidence_ids"],
+        "macro_unavailable_statement": claim_pack["macro_unavailable_statement"],
+        "evidence_status": claim_pack["evidence_status"],
+    }
+
+
 def _section_categories(section_id: str) -> set[str]:
     if section_id == "QUICK_SUMMARY": return {"TIMELINE", "TIMEFRAME", "ORDER_FLOW", "LEVEL", "SCENARIO", "WARNING", "MACRO", "POSITION"}
     if section_id in {"CONCLUSION", "RECENT_PROCESS"}: return {"TIMELINE", "TIMEFRAME", "LEVEL", "SCENARIO", "WARNING"}
@@ -80,16 +121,28 @@ def _narrative_text(value: str) -> str:
     return result
 
 
+def _macro_limitation_text(value: str, statement: str | None) -> str:
+    """Canonicalize only explicit no-macro status wording, never market claims."""
+    result = str(value)
+    if not statement:
+        return result
+    canonical = statement.rstrip("。")
+    for wording in ("宏观证据未加入", "未加入宏观证据", "无已验证宏观证据"):
+        result = result.replace(wording, canonical)
+    return result
+
+
 def ground_provider_report(report: dict[str, Any], claim_pack: dict[str, Any]) -> dict[str, Any]:
     """Attach deterministic evidence/projections while retaining provider narrative text."""
     by_category = claim_pack["fact_ids_by_category"]; level_ids = [item["level_id"] for item in claim_pack["levels"]]
     scenario_ids = [item["scenario_id"] for item in claim_pack["scenarios"]]; macro_ids = list(claim_pack["macro_evidence_ids"])
     position_ids = list(by_category.get("POSITION", [])); provider_levels = {item.get("level_id"): item for item in report.get("key_levels", [])}
     provider_scenarios = {item.get("scenario_id"): item for item in report.get("scenarios", [])}; grounded = dict(report)
-    grounded["headline"] = _narrative_text(report["headline"]); sections = []
+    macro_statement = claim_pack.get("macro_unavailable_statement")
+    grounded["headline"] = _macro_limitation_text(_narrative_text(report["headline"]), macro_statement); sections = []
     for original in report.get("sections", []):
         section = dict(original); categories = _section_categories(str(section.get("section_id")))
-        section["body"] = _narrative_text(section["body"])
+        section["body"] = _macro_limitation_text(_narrative_text(section["body"]), macro_statement)
         section["fact_refs"] = [fact_id for category in sorted(categories) for fact_id in by_category.get(category, [])]
         section["level_refs"] = level_ids if "LEVEL" in categories else []
         section["scenario_refs"] = scenario_ids if "SCENARIO" in categories else []

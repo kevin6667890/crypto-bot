@@ -2,6 +2,7 @@
 from __future__ import annotations
 from typing import Any
 from .canonical import canonical_json, stable_hash
+from .provider_claim_pack import build_provider_claim_pack
 from .versions import AI_REPORT_CONTEXT_COMPILER_VERSION
 
 MODE_INPUT_BUDGETS = {"QUICK": 5000, "FULL": 10000, "POSITION_AWARE": 12000}
@@ -40,4 +41,10 @@ def compile_report_context(registry: dict[str, Any], mode: str, max_tokens: int 
                 "omitted_fact_ids": omitted, "context_warnings": (["CONTEXT_FACTS_OMITTED"] if omitted else [])}
     compiled["token_estimate"] = estimate_tokens(compiled)
     compiled["compiled_hash"] = stable_hash({k:v for k,v in compiled.items() if k != "token_estimate"})
+    # The narrative context remains token-budgeted, while strict claim slots are
+    # projected from the complete frozen registry. The pack is provider-contract
+    # metadata, not another copy of the narrative context for compiler budgeting.
+    # Audit uses that same full registry, so grounding must not silently lose
+    # LEVEL/ORDER_FLOW evidence merely because QUICK omitted verbose fact payloads.
+    compiled["provider_claim_pack"] = build_provider_claim_pack(registry, mode)
     return compiled

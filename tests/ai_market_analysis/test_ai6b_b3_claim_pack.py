@@ -5,7 +5,10 @@ import json
 
 import pytest
 
-from dashboard.ai_market_analysis.provider_claim_pack import build_provider_claim_pack, ground_provider_report
+from dashboard.ai_market_analysis.provider_claim_pack import build_provider_claim_pack, ground_provider_report, provider_claim_pack_contract
+from dashboard.ai_market_analysis.report_context_compiler import compile_report_context
+from dashboard.ai_market_analysis.report_prompt_templates import compile_prompt
+from dashboard.ai_market_analysis.report_response_contract import provider_reference_allowlists
 from dashboard.ai_market_analysis.report_basic_validation import validate_report
 from dashboard.ai_market_analysis.report_claim_extractor import extract_claims
 from dashboard.ai_market_analysis.report_level_audit import audit_report_levels
@@ -43,7 +46,7 @@ def test_current_failure_classes_are_closed_by_deterministic_claim_pack():
     assert audit_report_levels(corrupted, registry)["failure_codes"]
     assert audit_report_scenarios(corrupted, registry)["failure_codes"]
 
-    grounded = ground_provider_report(corrupted, build_provider_claim_pack(request["compiled_context"], "QUICK"))
+    grounded = ground_provider_report(corrupted, compile_report_context(registry, "QUICK")["provider_claim_pack"])
     assert validate_report(grounded, request, registry)["status"] == "VALID"
     claims = extract_claims("report_fixture", grounded)
     assert audit_numeric_claims(claims, registry["numeric_registry"])["numeric_grounding_ratio"] == 1.0
@@ -84,3 +87,40 @@ def test_claim_pack_preserves_exact_numeric_and_multiple_level_timeframe_facts()
     ]
     assert len(pack["levels"]) >= 2
     assert all(item["asserted_timeframe"] for item in pack["levels"])
+
+
+def test_quick_claim_pack_uses_complete_frozen_registry_after_narrative_pruning():
+    _request, registry = setup("QUICK")
+    compiled = compile_report_context(registry, "QUICK")
+    pack = compiled["provider_claim_pack"]
+    categories = pack["fact_ids_by_category"]
+    assert categories.get("LEVEL") == [item["fact_id"] for item in registry["facts"] if item["category"] == "LEVEL"]
+    assert categories.get("ORDER_FLOW") == [item["fact_id"] for item in registry["facts"] if item["category"] == "ORDER_FLOW"]
+    refs = provider_reference_allowlists(compiled)
+    assert set(categories["LEVEL"]).issubset(refs["fact_refs"])
+    assert set(categories["ORDER_FLOW"]).issubset(refs["fact_refs"])
+
+
+def test_grounding_canonicalizes_timeframe_and_no_macro_status_without_accepting_macro_claims():
+    request, _registry, report = _real_style_report("QUICK")
+    report["sections"][0]["body"] = "4H 数据过期，宏观证据未加入。"
+    grounded = ground_provider_report(report, compile_report_context(_registry, "QUICK")["provider_claim_pack"])
+    assert grounded["sections"][0]["body"] == "中周期 数据过期，本次未加入已验证宏观证据。"
+
+
+def test_provider_claim_pack_contract_is_compact_view_of_host_source_of_truth():
+    _request, registry = setup("QUICK")
+    host = compile_report_context(registry, "QUICK")["provider_claim_pack"]
+    provider = provider_claim_pack_contract(host)
+    assert [item["level_id"] for item in provider["level_claim_slots"]] == [item["level_id"] for item in host["levels"]]
+    assert [item["scenario_id"] for item in provider["scenario_claim_slots"]] == [item["scenario_id"] for item in host["scenarios"]]
+    assert {item[0] for item in provider["allowed_numeric_values"]} <= {
+        item["source_fact_id"] for item in host["allowed_numeric_values"]
+    }
+
+
+def test_provider_prompt_contains_one_claim_pack_copy():
+    request, registry = setup("QUICK")
+    compiled = compile_report_context(registry, "QUICK")
+    prompt = compile_prompt(compiled, "QUICK")
+    assert prompt["messages"][1]["content"].count('"claim_pack_version"') == 1

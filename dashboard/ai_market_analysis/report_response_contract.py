@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Any
 
 from .versions import AI_REPORT_RESPONSE_VERSION
-from .provider_claim_pack import build_provider_claim_pack
+from .provider_claim_pack import build_provider_claim_pack, provider_claim_pack_contract
 
 SERVICE_REQUEST_ID_SENTINEL = "__SERVICE_REQUEST_ID__"
 SERVICE_SOURCE_VERSIONS_SENTINEL = "__SERVICE_SOURCE_VERSIONS__"
@@ -40,41 +40,44 @@ FULL_SECTION_IDS = (
 def provider_reference_allowlists(compiled_context: dict[str, Any]) -> dict[str, list[str]]:
     """Return disjoint provider-facing identifier namespaces for one frozen context."""
     facts = compiled_context.get("facts", [])
-    fact_ids = sorted({str(item["fact_id"]) for item in facts if item.get("fact_id")})
+    claim_pack = compiled_context.get("provider_claim_pack") or build_provider_claim_pack(compiled_context, compiled_context.get("mode", "QUICK"))
+    packed_categories = claim_pack.get("fact_ids_by_category", {})
+    packed_fact_ids = {str(value) for values in packed_categories.values() for value in values}
+    fact_ids = sorted(packed_fact_ids or {str(item["fact_id"]) for item in facts if item.get("fact_id")})
     scenario_values = [
         item["value"] for item in facts
         if item.get("category") == "SCENARIO" and isinstance(item.get("value"), dict)
     ]
     return {
         "fact_refs": fact_ids,
-        "macro_refs": sorted({
+        "macro_refs": sorted(set(claim_pack.get("macro_evidence_ids", [])) or {
             str(item["value"]["evidence_id"])
             for item in facts
             if item.get("category") == "MACRO" and isinstance(item.get("value"), dict)
             and item["value"].get("evidence_id")
         }),
         # FLOW/TIMEFRAME are scoped FACT identifiers, not additional response fields.
-        "flow_refs": sorted({
+        "flow_refs": sorted(set(packed_categories.get("ORDER_FLOW", [])) or {
             str(item["fact_id"]) for item in facts
             if item.get("category") == "ORDER_FLOW" and item.get("fact_id")
         }),
-        "level_refs": sorted({
+        "level_refs": sorted({str(item["level_id"]) for item in claim_pack.get("levels", [])} or {
             str(item["value"]["level_id"])
             for item in facts
             if item.get("category") == "LEVEL" and isinstance(item.get("value"), dict)
             and item["value"].get("level_id")
         }),
-        "scenario_refs": sorted({
+        "scenario_refs": sorted({str(item["scenario_id"]) for item in claim_pack.get("scenarios", [])} or {
             str(item["value"]["scenario_id"])
             for item in facts
             if item.get("category") == "SCENARIO" and isinstance(item.get("value"), dict)
             and item["value"].get("scenario_id")
         }),
-        "position_refs": sorted({
+        "position_refs": sorted(set(packed_categories.get("POSITION", [])) or {
             str(item["fact_id"]) for item in facts
             if item.get("category") == "POSITION" and item.get("fact_id")
         }),
-        "timeframe_refs": sorted({
+        "timeframe_refs": sorted(set(packed_categories.get("TIMEFRAME", [])) or {
             str(item["fact_id"]) for item in facts
             if item.get("category") == "TIMEFRAME" and item.get("fact_id")
         }),
@@ -201,7 +204,9 @@ def provider_json_schema(metadata: dict[str, Any], compiled_context: dict[str, A
             "cross_namespace_provider_paths": 0,
             "citations_must_equal_section_macro_refs": True,
         },
-        "provider_claim_pack": build_provider_claim_pack(compiled_context, mode),
+        "provider_claim_pack": provider_claim_pack_contract(
+            compiled_context.get("provider_claim_pack") or build_provider_claim_pack(compiled_context, mode)
+        ),
         "claim_pack_rules": [
             "copy numeric values only from provider_claim_pack.allowed_numeric_values and never round or recalculate",
             "key_levels and scenarios are immutable deterministic projections; narrative may explain but never alter them",

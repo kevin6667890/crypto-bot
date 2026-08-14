@@ -86,6 +86,8 @@ def validate_report(report: dict[str,Any], request: dict[str,Any], registry: dic
     if not macro_items and ("MACRO_BACKGROUND" in got or any(s["macro_refs"] for s in report["sections"])): raise ReportValidationError("UNPROVIDED_MACRO")
     bad=[str(n) for n in _numbers(text) if not _numeric_allowed(n,registry["numeric_registry"])]
     if bad: raise ReportValidationError("NUMERIC_NOT_IN_REGISTRY",bad[:20])
+    if scenarios and all(str(item.get("invalidation_text") or "").strip() for item in scenarios):
+        return {"version":AI_REPORT_BASIC_VALIDATION_VERSION,"status":"VALID","checks":25}
     if not any(s["section_id"] in {"LIMITATIONS","QUICK_SUMMARY"} and ("失效" in s["body"] or "限制" in s["body"]) for s in report["sections"]): raise ReportValidationError("EMPTY_INVALIDATION")
     return {"version":AI_REPORT_BASIC_VALIDATION_VERSION,"status":"VALID","checks":25}
 

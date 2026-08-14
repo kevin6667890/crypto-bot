@@ -31,6 +31,13 @@ def setup(mode="FULL",macro=False):
 def test_valid_schema_modes(mode):
     q,r=setup(mode);report=parse_report_response(FakeAIReportProvider().generate(q).raw_text);assert validate_report(report,q,r)["status"]=="VALID"
 
+def test_full_structured_scenario_invalidations_satisfy_invalidation_contract():
+    q,r=setup("FULL");report=parse_report_response(FakeAIReportProvider().generate(q).raw_text)
+    limitations=next(section for section in report["sections"] if section["section_id"]=="LIMITATIONS")
+    limitations["body"]="Data quality status only."
+    assert report["scenarios"] and all(item["invalidation_text"] for item in report["scenarios"])
+    assert validate_report(report,q,r)["status"]=="VALID"
+
 @pytest.mark.parametrize("behavior,code",[("wrong_context","CONTEXT_ID_MISMATCH"),("unknown_fact","UNKNOWN_FACT_REF"),("hallucinated_number","NUMERIC_NOT_IN_REGISTRY"),("probability","EXACT_PROBABILITY_FORBIDDEN"),("order","ORDER_INSTRUCTION_FORBIDDEN"),("missing_section","SECTION_ORDER_OR_COMPLETENESS")])
 def test_validation_failures(behavior,code):
     q,r=setup();report=parse_report_response(FakeAIReportProvider(behavior=behavior).generate(q).raw_text)

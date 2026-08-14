@@ -76,7 +76,9 @@ def validate_report(report: dict[str,Any], request: dict[str,Any], registry: dic
     if not isinstance(projections,list) or any(not level_projection_fields<=set(x) for x in projections):raise ReportValidationError("LEVEL_PROJECTION_INVALID")
     if any(x["level_id"] not in level_ids or not set(x["level_refs"])<={x["level_id"]} or not set(x["fact_refs"])<=fact_ids for x in projections):raise ReportValidationError("UNKNOWN_LEVEL_REF")
     scenarios=report.get("scenarios")
-    if not isinstance(scenarios,list) or not scenarios or any(not scenario_projection_fields<=set(x) for x in scenarios):raise ReportValidationError("SCENARIO_PROJECTION_INVALID")
+    if (not isinstance(scenarios,list) or (scenario_ids and not scenarios)
+            or any(not scenario_projection_fields<=set(x) for x in scenarios)):
+        raise ReportValidationError("SCENARIO_PROJECTION_INVALID")
     if any(x["scenario_id"] not in scenario_ids or not set(x["level_refs"])<=level_ids or not set(x["fact_refs"])<=fact_ids for x in scenarios):raise ReportValidationError("UNKNOWN_SCENARIO_REF")
     if report["mode"] in {"FULL","POSITION_AWARE"} and {x["scenario_id"] for x in scenarios}!=scenario_ids:raise ReportValidationError("SCENARIO_PROJECTION_INCOMPLETE")
     citation_ids=[]

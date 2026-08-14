@@ -110,7 +110,11 @@ class FakeAIReportProvider:
                 "scenario_refs":[facts[x]["value"].get("scenario_id") for x in refs if x in facts and isinstance(facts[x]["value"],dict) and facts[x]["value"].get("scenario_id")],
                 "macro_refs":[facts[x]["value"].get("evidence_id") for x in refs if x in facts and isinstance(facts[x]["value"],dict) and facts[x]["value"].get("evidence_id")],
                 "position_refs":[x for x in refs if x.startswith("POSITION_")],"uncertainties":[]})
-        projected_level_facts=[facts[x] for x in level_ids[:1] if mode=="QUICK"] if mode=="QUICK" else [facts[x] for x in level_ids]
+        referenced_levels={level_id for section in sections for level_id in section["level_refs"]}
+        projected_level_facts=[
+            facts[x] for x in level_ids
+            if mode!="QUICK" or facts[x]["value"].get("level_id") in referenced_levels
+        ]
         key_level_projections=[]
         for fact in projected_level_facts:
             level=fact["value"]

@@ -11,9 +11,10 @@ from dashboard.ai_market_analysis.report_jobs import ReportWorker
 from dashboard.ai_market_analysis.report_provider import FakeAIReportProvider, ProviderResult
 from dashboard.ai_market_analysis.report_repository import ReportRepository, migrate_database
 from dashboard.ai_market_analysis.report_response_contract import (
-    provider_json_schema, provider_reference_allowlists, response_metadata_contract,
+    provider_json_schema, provider_reference_allowlists, provider_reference_namespace_matrix,
+    response_metadata_contract,
 )
-from dashboard.ai_market_analysis.provider_response_diagnostics import sanitize_provider_response
+from dashboard.ai_market_analysis.provider_response_diagnostics import reference_diagnostics, sanitize_provider_response
 from dashboard.ai_market_analysis.report_service import ReportService
 from dashboard.ai_market_analysis.versions import AI_REPORT_PROMPT_VERSION
 from tests.ai_market_analysis.ai4_helpers import base_context
@@ -33,7 +34,10 @@ def _compiled_with_every_namespace():
             {"fact_id": "MACRO_01", "category": "MACRO", "value": {"evidence_id": "macro-1"}},
             {"fact_id": "FLOW_01", "category": "ORDER_FLOW", "value": {}},
             {"fact_id": "LEVEL_FACT", "category": "LEVEL", "value": {"level_id": "level-1"}},
-            {"fact_id": "SCENARIO_FACT", "category": "SCENARIO", "value": {"scenario_id": "scenario-1"}},
+            {"fact_id": "SCENARIO_FACT", "category": "SCENARIO", "value": {
+                "scenario_id": "scenario-1", "source_phase_ids": ["phase-1"],
+                "source_event_ids": ["event-1"],
+            }},
             {"fact_id": "POSITION_SOURCE", "category": "POSITION", "value": "NONE"},
             {"fact_id": "TF15_SUMMARY", "category": "TIMEFRAME", "value": {}},
         ],
@@ -56,6 +60,8 @@ def test_provider_reference_allowlists_are_disjoint_and_exact():
     assert allowed["scenario_refs"] == ["scenario-1"]
     assert allowed["position_refs"] == ["POSITION_SOURCE"]
     assert allowed["timeframe_refs"] == ["TF15_SUMMARY"]
+    assert allowed["source_phase_ids"] == ["phase-1"]
+    assert allowed["source_event_ids"] == ["event-1"]
     assert "MACRO_01" in allowed["fact_refs"] and "macro-1" not in allowed["fact_refs"]
 
 
@@ -71,6 +77,60 @@ def test_empty_namespaces_are_explicit_empty_arrays_and_status_fact_is_not_macro
     assert refs["fact_refs"] == ["MACRO_UNAVAILABLE"]
     assert refs["macro_refs"] == refs["flow_refs"] == refs["level_refs"] == refs["scenario_refs"] == []
     assert "cross-namespace references are forbidden" in schema["identifier_rules"]
+
+
+def test_canonical_reference_namespace_matrix_has_no_unconstrained_path():
+    matrix = provider_reference_namespace_matrix()
+    expected = {
+        "sections[].fact_refs", "sections[].level_refs", "sections[].scenario_refs",
+        "sections[].macro_refs", "sections[].position_refs", "key_levels[].level_id",
+        "key_levels[].fact_refs", "key_levels[].level_refs", "scenarios[].scenario_id",
+        "scenarios[].trigger_level_refs", "scenarios[].expected_path_level_refs",
+        "scenarios[].target_level_refs", "scenarios[].invalidation_level_ref",
+        "scenarios[].fact_refs", "scenarios[].level_refs", "scenarios[].source_phase_ids",
+        "scenarios[].source_event_ids", "position_guidance.fact_refs",
+        "position_guidance.original_invalidation.fact_ref", "citations[].evidence_id",
+    }
+    assert set(matrix) == expected
+    assert matrix["citations[].evidence_id"]["namespace"] == "macro_refs"
+    assert all(item["allowlist"].startswith("allowed_reference_ids.") for item in matrix.values())
+    schema = provider_json_schema(
+        response_metadata_contract(context_id="ctx", mode="QUICK", language="zh-CN",
+          model="deepseek-v4-flash", prompt_version=AI_REPORT_PROMPT_VERSION, source_versions={}),
+        _compiled_with_every_namespace(),
+    )
+    assert schema["reference_contract_summary"] == {
+        "unconstrained_reference_fields": 0,
+        "cross_namespace_provider_paths": 0,
+        "citations_must_equal_section_macro_refs": True,
+    }
+
+
+def test_exact_cross_namespace_citations_reproduce_failure_but_contract_forbids_them():
+    historical = json.loads(HISTORICAL.read_text(encoding="utf-8"))["next_attempt_exact_citation_failure"]
+    request, registry = setup("QUICK")
+    report = json.loads(FakeAIReportProvider().generate(request).raw_text)
+    report["sections"][0]["macro_refs"] = []
+    report["citations"] = [{"evidence_id": value} for value in historical["citation_evidence_ids"]]
+    with pytest.raises(ReportValidationError, match="UNKNOWN_MACRO_REF"):
+        validate_report(report, request, registry)
+    schema = provider_json_schema(
+        response_metadata_contract(context_id=request["context_id"], mode="QUICK", language="zh-CN",
+          model=request["model"], prompt_version=request["prompt_version"], source_versions={}),
+        request["compiled_context"],
+    )
+    assert schema["allowed_reference_ids"]["macro_refs"] == []
+    assert schema["reference_namespace_matrix"]["citations[].evidence_id"]["namespace"] == "macro_refs"
+    report["citations"] = []
+    assert validate_report(report, request, registry)["status"] == "VALID"
+
+
+def test_citation_ids_are_included_in_exact_persisted_reference_diagnostics():
+    request, registry = setup("QUICK")
+    report = json.loads(FakeAIReportProvider().generate(request).raw_text)
+    report["citations"] = [{"evidence_id": "TF15_SUMMARY"}]
+    value = reference_diagnostics(report, request, registry)
+    assert value["unknown_refs"]["macro_refs"] == ["TF15_SUMMARY"]
 
 
 @pytest.mark.parametrize("field,bad,code", [

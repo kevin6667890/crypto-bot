@@ -40,6 +40,10 @@ def provider_reference_allowlists(compiled_context: dict[str, Any]) -> dict[str,
     """Return disjoint provider-facing identifier namespaces for one frozen context."""
     facts = compiled_context.get("facts", [])
     fact_ids = sorted({str(item["fact_id"]) for item in facts if item.get("fact_id")})
+    scenario_values = [
+        item["value"] for item in facts
+        if item.get("category") == "SCENARIO" and isinstance(item.get("value"), dict)
+    ]
     return {
         "fact_refs": fact_ids,
         "macro_refs": sorted({
@@ -73,6 +77,47 @@ def provider_reference_allowlists(compiled_context: dict[str, Any]) -> dict[str,
             str(item["fact_id"]) for item in facts
             if item.get("category") == "TIMEFRAME" and item.get("fact_id")
         }),
+        "source_phase_ids": sorted({
+            str(value) for scenario in scenario_values for value in scenario.get("source_phase_ids", [])
+        }),
+        "source_event_ids": sorted({
+            str(value) for scenario in scenario_values for value in scenario.get("source_event_ids", [])
+        }),
+    }
+
+
+def provider_reference_namespace_matrix() -> dict[str, dict[str, str]]:
+    """Map every canonical reference-bearing provider field to one exact namespace."""
+    fields = {
+        "sections[].fact_refs": "fact_refs",
+        "sections[].level_refs": "level_refs",
+        "sections[].scenario_refs": "scenario_refs",
+        "sections[].macro_refs": "macro_refs",
+        "sections[].position_refs": "position_refs",
+        "key_levels[].level_id": "level_refs",
+        "key_levels[].fact_refs": "fact_refs",
+        "key_levels[].level_refs": "level_refs",
+        "scenarios[].scenario_id": "scenario_refs",
+        "scenarios[].trigger_level_refs": "level_refs",
+        "scenarios[].expected_path_level_refs": "level_refs",
+        "scenarios[].target_level_refs": "level_refs",
+        "scenarios[].invalidation_level_ref": "level_refs",
+        "scenarios[].fact_refs": "fact_refs",
+        "scenarios[].level_refs": "level_refs",
+        "scenarios[].source_phase_ids": "source_phase_ids",
+        "scenarios[].source_event_ids": "source_event_ids",
+        "position_guidance.fact_refs": "position_refs",
+        "position_guidance.original_invalidation.fact_ref": "position_refs",
+        "citations[].evidence_id": "macro_refs",
+    }
+    return {
+        field: {
+            "namespace": namespace,
+            "allowlist": f"allowed_reference_ids.{namespace}",
+            "empty_set_behavior": "[] (or null only for a nullable scalar field)",
+            "restriction": "exact allowlist member only; cross-namespace IDs forbidden",
+        }
+        for field, namespace in fields.items()
     }
 
 
@@ -131,7 +176,7 @@ def provider_json_schema(metadata: dict[str, Any], compiled_context: dict[str, A
             "sections": "array", "key_levels": "array", "scenarios": "array",
             "position_guidance": "object only for POSITION_AWARE; otherwise null",
             "unsupported_claims": "string array", "data_warnings": "string array",
-            "citations": "array of exact {evidence_id:string} objects",
+            "citations": "array of exact {evidence_id:string} objects; evidence_id uses macro_refs namespace only",
         },
         "allowed_values": {
             "market_phase": compiled_context.get("allowed_market_phases", []),
@@ -149,11 +194,18 @@ def provider_json_schema(metadata: dict[str, Any], compiled_context: dict[str, A
             if mode == "POSITION_AWARE" else None
         ),
         "allowed_reference_ids": reference_allowlists,
+        "reference_namespace_matrix": provider_reference_namespace_matrix(),
+        "reference_contract_summary": {
+            "unconstrained_reference_fields": 0,
+            "cross_namespace_provider_paths": 0,
+            "citations_must_equal_section_macro_refs": True,
+        },
         "identifier_rules": [
             "each ref field may contain only exact IDs from its own allowed_reference_ids namespace",
             "flow_refs and timeframe_refs are scoped subsets of fact_refs and may appear only in fact_refs",
             "an empty allowlist requires [] and forbids factual claims that require that evidence namespace",
             "status FACT IDs such as MACRO_UNAVAILABLE are never macro_refs",
+            "citations[].evidence_id may use only macro_refs and citations must equal the union of section macro_refs",
             "cross-namespace references are forbidden",
         ],
     }

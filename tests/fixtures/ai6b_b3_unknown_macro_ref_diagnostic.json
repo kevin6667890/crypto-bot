@@ -9,4 +9,24 @@
   "macro_evidence_count": 0,
   "unknown_macro_ref_value": "UNRECOVERABLE_FROM_PERSISTED_EVIDENCE",
   "raw_response_recoverable": false
+  ,
+  "next_attempt_exact_citation_failure": {
+    "request_id": "request_78f60350ad3d473be669a842ee769e6fabf3d84d575fb5f543d94f747bacfa2c",
+    "raw_response_hash": "0bd541ebfbf1dd331a6518839f5966298dbfeebb32c06050d113a50ea905c275",
+    "allowed_macro_refs": [],
+    "section_macro_refs": [],
+    "citation_evidence_ids": [
+      "TIMELINE_CURRENT_PHASE",
+      "TF15_SUMMARY",
+      "TF4H_SUMMARY",
+      "SCENARIO_02",
+      "STRUCT_BREAKOUT_BOUNDARY",
+      "DATA_QUALITY",
+      "DATA_WARNING_01",
+      "DATA_WARNING_02",
+      "DATA_WARNING_03",
+      "POSITION_SOURCE"
+    ],
+    "failure_code": "UNKNOWN_MACRO_REF"
+  }
 }

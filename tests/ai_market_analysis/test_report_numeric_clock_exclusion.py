@@ -12,6 +12,12 @@ def test_clock_is_excluded_without_hiding_adjacent_market_price():
     )] == [1873.78]
 
 
+def test_date_is_excluded_without_hiding_adjacent_market_price():
+    assert [item["value"] for item in normalize_numbers(
+        "timestamp 2026-07-16, price 1875.77"
+    )] == [1875.77]
+
+
 def test_non_market_timeframe_enumerator_and_validity_values_are_excluded():
     text = (
         "15 \u5206\u949f, 1 \u5c0f\u65f6, 4 \u5c0f\u65f6. "

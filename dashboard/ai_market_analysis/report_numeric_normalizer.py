@@ -43,7 +43,7 @@ ENUMERATOR_RE = re.compile(r"(?:^|[\s\u3002\uff1a\uff1b:;.!?])\d{1,2}[\uff09)]")
 VALID_UNTIL_RE = re.compile(r"(?:valid(?:\s+until)?|\u6709\u6548\u81f3)\s*\d{10}\b", re.I)
 
 def _excluded(text:str,start:int,end:int)->bool:
-    return (any(m.start()<=start and end<=m.end() for m in EXCLUDED.finditer(text))
+    return (any(m.start()<end and start<m.end() for m in EXCLUDED.finditer(text))
             or any(m.start()<end and start<m.end() for pattern in (
                 CLOCK_RE, UNICODE_TIMEFRAME_RE, ENUMERATOR_RE, VALID_UNTIL_RE
             ) for m in pattern.finditer(text)))

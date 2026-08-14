@@ -156,7 +156,7 @@ def test_worker_restart_converts_sent_attempt_to_unknown_without_retry(tmp_path)
     ("kwargs", "code"),
     [
         ({"predicted_input_tokens": 12_001, "maximum_output_tokens": 1, "queue_depth": 0}, "REQUEST_INPUT_TOKEN_CAP"),
-        ({"predicted_input_tokens": 1, "maximum_output_tokens": 901, "queue_depth": 0}, "REQUEST_OUTPUT_TOKEN_CAP"),
+        ({"predicted_input_tokens": 1, "maximum_output_tokens": 3001, "queue_depth": 0}, "REQUEST_OUTPUT_TOKEN_CAP"),
         ({"predicted_input_tokens": 1, "maximum_output_tokens": 1, "queue_depth": 10}, "QUEUE_CAP"),
     ],
 )
@@ -275,3 +275,13 @@ def test_smoke_script_defaults_to_no_call_and_requires_approval():
     payload = json.loads(result.stdout)
     assert payload["status"] == "LIVE_PROVIDER_APPROVAL_REQUIRED"
     assert payload["provider_call_attempted"] is False
+
+
+def test_final_closure_technical_envelope_and_paid_attempt_allowance():
+    limits = BudgetLimits()
+    assert limits.quick_output_tokens == 3000
+    assert limits.full_output_tokens == 8000
+    assert limits.position_output_tokens == 8000
+    assert limits.daily_input_tokens == 150000
+    assert limits.daily_output_tokens == 80000
+    assert limits.calls_24h == 6

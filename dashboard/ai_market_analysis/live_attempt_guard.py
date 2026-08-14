@@ -17,6 +17,13 @@ from typing import Any
 from .canonical import canonical_json, stable_hash
 from .live_provider_guard import status as kill_switch_status, trip as trip_kill_switch
 from .provider_cost import PRICE_VERSION, estimate_provider_cost
+from .provider_limits import (
+    B3_MAX_PAID_ATTEMPTS_TOTAL,
+    DAILY_INPUT_TOKEN_SAFETY_CAP,
+    DAILY_OUTPUT_TOKEN_SAFETY_CAP,
+    OUTPUT_TOKEN_LIMITS,
+    REQUEST_INPUT_TOKEN_MAX,
+)
 
 
 ACTIVE_STATES = frozenset({"LIVE_PROVIDER_ATTEMPT_RESERVED", "REQUEST_SENT"})
@@ -31,16 +38,16 @@ NO_RETRY_STATES = frozenset({"SUCCEEDED", "FAILED_AFTER_REQUEST_SENT", "UNKNOWN_
 
 @dataclass(frozen=True)
 class BudgetLimits:
-    calls_24h: int = 10
+    calls_24h: int = B3_MAX_PAID_ATTEMPTS_TOTAL
     global_concurrency: int = 1
     per_instrument_concurrency: int = 1
     queue_max: int = 10
-    request_input_tokens: int = 12_000
-    quick_output_tokens: int = 900
-    full_output_tokens: int = 4_000
-    position_output_tokens: int = 4_000
-    daily_input_tokens: int = 100_000
-    daily_output_tokens: int = 25_000
+    request_input_tokens: int = REQUEST_INPUT_TOKEN_MAX
+    quick_output_tokens: int = OUTPUT_TOKEN_LIMITS["QUICK"]
+    full_output_tokens: int = OUTPUT_TOKEN_LIMITS["FULL"]
+    position_output_tokens: int = OUTPUT_TOKEN_LIMITS["POSITION_AWARE"]
+    daily_input_tokens: int = DAILY_INPUT_TOKEN_SAFETY_CAP
+    daily_output_tokens: int = DAILY_OUTPUT_TOKEN_SAFETY_CAP
     currency_cap_usd: Decimal = Decimal("2")
     max_attempts: int = 3
 

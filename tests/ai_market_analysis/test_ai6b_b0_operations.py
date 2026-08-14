@@ -174,8 +174,8 @@ def test_approved_budget_and_retention_are_frozen():
     assert policy["budget"] == {
         "live_provider_requests_per_24h": 10, "global_live_provider_concurrency": 1,
         "per_instrument_concurrency": 1, "queue_max": 10, "per_request_input_tokens": 12000,
-        "quick_output_tokens": 900, "full_output_tokens": 4000, "position_output_tokens": 4000,
-        "daily_input_tokens": 100000, "daily_output_tokens": 25000, "daily_total_tokens": 125000,
+        "quick_output_tokens": 3000, "full_output_tokens": 8000, "position_output_tokens": 8000,
+        "daily_input_tokens": 150000, "daily_output_tokens": 80000, "daily_total_tokens": 230000,
         "daily_currency_cap_usd": 2.0, "cost_status": "REQUIRES_RUNTIME_AUDIT",
         "on_any_limit": "BLOCK_NEW_LIVE_PROVIDER_CALLS"}
     assert policy["retention"]["context_hot_days"] == 30
@@ -213,8 +213,9 @@ def test_live_request_count_and_currency_caps(tmp_path, monkeypatch):
 def test_output_limits_cannot_exceed_approved_values(monkeypatch):
     monkeypatch.setenv("AI_REPORT_QUICK_OUTPUT_TOKENS", "9999")
     monkeypatch.setenv("AI_REPORT_FULL_OUTPUT_TOKENS", "9999")
-    assert output_limit("QUICK") == 900
-    assert output_limit("FULL") == 4000
+    assert output_limit("QUICK") == 3000
+    assert output_limit("FULL") == 8000
+    assert output_limit("POSITION_AWARE") == 8000
 
 
 def test_alert_policy_is_complete_and_stop_capable():

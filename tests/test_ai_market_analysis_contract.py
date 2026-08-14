@@ -96,7 +96,7 @@ def request_response():
         "context_id": context["context_id"], "mode": "FULL", "requested_at": context["generated_at"],
         "language": "zh-CN", "context": context,
         "generation_policy": {"may_create_numbers": False, "must_preserve_unknown": True,
-                              "max_input_tokens": 12000, "max_output_tokens": 4000},
+                              "max_input_tokens": 12000, "max_output_tokens": 8000},
     }
     response = {
         "schema_version": "ai-market-report-response-v1", "report_id": "report_fixture",

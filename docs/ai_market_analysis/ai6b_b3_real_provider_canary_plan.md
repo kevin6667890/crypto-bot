@@ -28,9 +28,9 @@ Any missing precondition returns a structured block and makes zero Provider call
 
 ## Budget and model
 
-The selected canary model is `deepseek-v4-flash` in non-thinking mode. This is a local bounded-cost choice, not an official DeepSeek recommendation. The audited endpoint is `POST https://api.deepseek.com/chat/completions` with non-streaming JSON output.
+The selected canary model is `deepseek-v4-flash` in non-thinking mode. This is a local bounded-canary choice, not an official DeepSeek recommendation. The audited endpoint is `POST https://api.deepseek.com/chat/completions` with non-streaming JSON output.
 
-Limits are: 10 calls/rolling 24h, global concurrency 1, per-instrument concurrency 1, queue 10, request input 12,000, QUICK output 900, FULL/POSITION output 4,000, daily input 100,000, daily output 25,000 and USD 2/rolling 24h. The exact `Decimal` cost guard uses cache-miss input price when cache state is unknown. USD 2 overrides token ceilings. A stale or unknown price version blocks before reservation.
+Technical safety limits are: 10 calls/rolling 24h, global concurrency 1, per-instrument concurrency 1, queue 10, request input 12,000, QUICK output 3,000, FULL/POSITION output 8,000, daily input 150,000 and daily output 80,000. Formal B3 allows at most six total paid attempts solely because one historical attempt was charged after output truncation, while successful smoke calls remain capped at five. The exact `Decimal` cost telemetry uses cache-miss input price when cache state is unknown. A stale or unknown price version blocks before reservation.
 
 Do not spend to the 10-call ceiling. Five calls are the initial maximum; the remaining five are held for reviewed recovery or validation.
 

@@ -53,9 +53,9 @@
     "change_warning": "Official page says product prices may change; this snapshot was refreshed immediately before formal B3."
   },
   "approved_budget_projection": {
-    "assumption": "All 100000 daily input tokens are cache misses and all 25000 daily output tokens are used.",
-    "deepseek-v4-flash_usd": "0.021000000000",
-    "deepseek-v4-pro_usd": "0.065250000000",
+    "assumption": "All 150000 daily input safety tokens are cache misses and all 80000 daily output safety tokens are used.",
+    "deepseek-v4-flash_usd": "0.043400000000",
+    "deepseek-v4-pro_usd": "0.134850000000",
     "usd_2_cap_is_current_binding_limit": false,
     "policy": "USD 2 remains a hard cap and overrides token ceilings after any price change."
   },

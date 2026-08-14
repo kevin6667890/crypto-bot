@@ -15,9 +15,10 @@ from .canonical import stable_hash
 from .report_prompt_templates import compile_prompt
 from .report_repository import ReportRepository
 from .versions import AI_REPORT_PROMPT_VERSION,AI_REPORT_REQUEST_VERSION
+from .provider_limits import OUTPUT_TOKEN_LIMITS
 
 MODES=("QUICK","FULL","POSITION_AWARE");LANGUAGES=("zh-CN",)
-OUTPUT_LIMIT_DEFAULTS={"QUICK":900,"FULL":4000,"POSITION_AWARE":4000}
+OUTPUT_LIMIT_DEFAULTS=OUTPUT_TOKEN_LIMITS
 
 def output_limit(mode:str)->int:
     names={"QUICK":"AI_REPORT_QUICK_OUTPUT_TOKENS","FULL":"AI_REPORT_FULL_OUTPUT_TOKENS","POSITION_AWARE":"AI_REPORT_POSITION_OUTPUT_TOKENS"}

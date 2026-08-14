@@ -14,6 +14,13 @@ from .report_registry_snapshot import validate_registry_snapshot
 from .report_repository import ReportRepository, utc_now
 from .report_identity import REPORT_PIPELINE_VERSIONS
 from .live_provider_guard import trip_if_armed
+from .provider_limits import (
+    DAILY_INPUT_TOKEN_SAFETY_CAP,
+    DAILY_OUTPUT_TOKEN_SAFETY_CAP,
+    DAILY_TOTAL_TOKEN_SAFETY_CAP,
+    LIVE_PROVIDER_CALLS_PER_24H,
+    REQUEST_INPUT_TOKEN_MAX,
+)
 
 EVENT_TYPES=("QUEUED","RUNNING","RETRY_SCHEDULED","COMPLETED","FAILED_RETRYABLE","FAILED_FINAL","CANCEL_REQUESTED","CANCELLED","INTERRUPTED","BUDGET_BLOCKED","VALIDATION_FAILED")
 RETRY_DELAYS=(2,5,10)
@@ -43,7 +50,7 @@ class ConcurrencyGate:
 
 class TokenBudget:
     def __init__(self):
-        self.daily_input=int(os.getenv("AI_REPORT_DAILY_INPUT_TOKENS","100000"));self.daily_output=int(os.getenv("AI_REPORT_DAILY_OUTPUT_TOKENS","25000"));self.daily_total=int(os.getenv("AI_REPORT_DAILY_TOTAL_TOKENS","125000"));self.instrument_total=int(os.getenv("AI_REPORT_INSTRUMENT_DAILY_TOKENS","125000"));self.request_input=int(os.getenv("AI_REPORT_REQUEST_INPUT_TOKEN_MAX","12000"));self.live_calls=int(os.getenv("AI_REPORT_CANARY_MAX_LIVE_REQUESTS","10"));self.currency_cap=Decimal(os.getenv("AI_REPORT_DAILY_CURRENCY_CAP_USD","2"));self.cost_status=os.getenv("AI_REPORT_COST_STATUS","REQUIRES_RUNTIME_AUDIT");self.input_price=Decimal(os.getenv("AI_REPORT_INPUT_USD_PER_MILLION","0"));self.output_price=Decimal(os.getenv("AI_REPORT_OUTPUT_USD_PER_MILLION","0"))
+        self.daily_input=int(os.getenv("AI_REPORT_DAILY_INPUT_TOKENS",str(DAILY_INPUT_TOKEN_SAFETY_CAP)));self.daily_output=int(os.getenv("AI_REPORT_DAILY_OUTPUT_TOKENS",str(DAILY_OUTPUT_TOKEN_SAFETY_CAP)));self.daily_total=int(os.getenv("AI_REPORT_DAILY_TOTAL_TOKENS",str(DAILY_TOTAL_TOKEN_SAFETY_CAP)));self.instrument_total=int(os.getenv("AI_REPORT_INSTRUMENT_DAILY_TOKENS",str(DAILY_TOTAL_TOKEN_SAFETY_CAP)));self.request_input=int(os.getenv("AI_REPORT_REQUEST_INPUT_TOKEN_MAX",str(REQUEST_INPUT_TOKEN_MAX)));self.live_calls=int(os.getenv("AI_REPORT_CANARY_MAX_LIVE_REQUESTS",str(LIVE_PROVIDER_CALLS_PER_24H)));self.currency_cap=Decimal(os.getenv("AI_REPORT_DAILY_CURRENCY_CAP_USD","2"));self.cost_status=os.getenv("AI_REPORT_COST_STATUS","REQUIRES_RUNTIME_AUDIT");self.input_price=Decimal(os.getenv("AI_REPORT_INPUT_USD_PER_MILLION","0"));self.output_price=Decimal(os.getenv("AI_REPORT_OUTPUT_USD_PER_MILLION","0"))
     def projected_cost(self,input_tokens:int,output_tokens:int)->Decimal:
         return (Decimal(input_tokens)*self.input_price+Decimal(output_tokens)*self.output_price)/Decimal(1_000_000)
     def reason(self,repo:ReportRepository,instrument:str,input_estimate:int,output_limit:int,provider:str="fake")->str|None:
@@ -119,8 +126,11 @@ class ReportWorker:
             self.repository.event(request["request_id"],"BUDGET_BLOCKED",{"code":"PROVIDER_USAGE_CAP_EXCEEDED"});return
         try:report=parse_report_response(result.raw_text)
         except ReportParseError as error:
-            self._record_attempt(request,number,result,parse_status="FAILED",failure_code="INVALID_JSON",error=str(error))
-            self.repository.event(request["request_id"],"FAILED_FINAL",{"code":"SCHEMA_FAILURE_NO_PROVIDER_RETRY"});return
+            truncated=str(getattr(result,"finish_reason","") or "").lower()=="length"
+            failure_code="PROVIDER_OUTPUT_TRUNCATED" if truncated else "INVALID_JSON"
+            event_code="PROVIDER_OUTPUT_TRUNCATED" if truncated else "SCHEMA_FAILURE_NO_PROVIDER_RETRY"
+            self._record_attempt(request,number,result,parse_status="FAILED",failure_code=failure_code,error=str(error))
+            self.repository.event(request["request_id"],"FAILED_FINAL",{"code":event_code});return
         try:validation=validate_report(report,provider_request,registry)
         except ReportValidationError as error:
             self._record_attempt(request,number,result,parse_status="VALID",validation_status="FAILED",failure_code=error.code,error=error.code)

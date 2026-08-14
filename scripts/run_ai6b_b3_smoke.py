@@ -135,6 +135,7 @@ def _trip_for_failure(code: str, path: str, evidence_id: str) -> None:
         "REGISTRY_PROMPT_HASH_MISMATCH": "REGISTRY_MISMATCH",
         "REGISTRY_SNAPSHOT_NOT_FOUND": "REGISTRY_MISMATCH",
         "SCHEMA_FAILURE_NO_PROVIDER_RETRY": "SCHEMA_CORRUPTION",
+        "PROVIDER_OUTPUT_TRUNCATED": "PROVIDER_OUTPUT_TRUNCATION",
     }
     event = mapping.get(code)
     if event:

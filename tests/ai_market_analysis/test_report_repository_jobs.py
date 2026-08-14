@@ -2,7 +2,7 @@ from __future__ import annotations
 import sqlite3
 import pytest
 from dashboard.ai_market_analysis.report_jobs import ConcurrencyGate,ReportWorker,TokenBudget,provider_budget_chargeable
-from dashboard.ai_market_analysis.report_provider import FakeAIReportProvider
+from dashboard.ai_market_analysis.report_provider import FakeAIReportProvider,ProviderResult
 from dashboard.ai_market_analysis.report_repository import ReportRepository,migrate_database
 from dashboard.ai_market_analysis.report_service import ReportService
 from .ai4_helpers import base_context
@@ -86,3 +86,34 @@ def test_non_external_provider_classes_are_not_chargeable(provider):
 def test_unknown_and_real_provider_classes_fail_safe_as_chargeable():
     assert provider_budget_chargeable("deepseek") is True
     assert provider_budget_chargeable("future-paid-provider") is True
+
+def test_charged_length_truncation_is_distinct_and_never_retried(repo):
+    class TruncatedProvider:
+        calls=0
+        def generate(self,_request):
+            self.calls+=1
+            return ProviderResult('{"schema_version":"ai-market-report-response-v4"',"paid-id","deepseek-v4-flash",
+                {"prompt_tokens":5118,"completion_tokens":3000,"total_tokens":8118},"length",200,10,"raw-hash")
+    provider=TruncatedProvider()
+    item=ReportService(repo).submit(base_context(),mode="QUICK",provider="deepseek",model="deepseek-v4-flash")
+    monkey_budget=TokenBudget();monkey_budget.cost_status="B3_CONTROL_LEDGER"
+    monkey_budget.input_price=__import__('decimal').Decimal("0.14")
+    monkey_budget.output_price=__import__('decimal').Decimal("0.28")
+    worker=ReportWorker(repo,lambda _request:provider,budget=monkey_budget)
+    assert worker.run_once() is True
+    assert provider.calls==1
+    status=repo.status(item["request_id"])
+    assert status["status"]=="FAILED_FINAL"
+    assert 'PROVIDER_OUTPUT_TRUNCATED' in status["events"][-1]["payload_json"]
+    with repo.connect() as connection:
+        attempt=connection.execute("SELECT failure_code,finish_reason,parse_status FROM ai_report_attempts WHERE request_id=?",(item["request_id"],)).fetchone()
+    assert tuple(attempt)==("PROVIDER_OUTPUT_TRUNCATED","length","FAILED")
+    assert repo.get_report(request_id=item["request_id"]) is None
+    assert worker.run_once() is False
+
+def test_complete_json_below_new_quick_cap_still_completes(repo):
+    item=submit(repo,"QUICK")
+    provider=FakeAIReportProvider()
+    assert ReportWorker(repo,lambda _request:provider).run_once() is True
+    assert repo.status(item["request_id"])["status"]=="COMPLETED"
+    assert provider.calls==1

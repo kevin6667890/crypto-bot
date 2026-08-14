@@ -30,6 +30,7 @@
     {"number":4,"instrument":"SOL-USDT-SWAP","mode":"QUICK","position_mode":"NONE","requires":[1,2,3]},
     {"number":5,"instrument":"ETH-USDT-SWAP","mode":"FULL","position_mode":"PAPER","requires":[1,2,3,4]}
   ],
-  "maximum_initial_calls": 5,
+  "maximum_successful_calls": 5,
+  "maximum_total_paid_attempts_including_historical_truncation": 6,
   "user_declared": "DISABLED"
 }

@@ -1,7 +1,7 @@
 {
   "audit_schema_version": "ai6b-b3-provider-official-audit-v1",
   "provider": "DeepSeek",
-  "retrieved_utc": "2026-08-14T05:04:04Z",
+  "retrieved_utc": "2026-08-14T05:24:53Z",
   "facts_source_policy": "DEEPSEEK_OFFICIAL_ONLY",
   "live_api_request_performed": false,
   "source_urls": [
@@ -50,7 +50,7 @@
       "output": "0.87"
     },
     "deduction_rule": "token_count multiplied by the corresponding per-token price",
-    "change_warning": "Official page says product prices may change; this snapshot was refreshed immediately before formal B3."
+    "change_warning": "Current prices were unchanged at refresh. Official peak/off-peak pricing begins 2026-08-16T16:00:00Z, after the planned B4 window; re-audit if the acceptance window crosses that boundary."
   },
   "approved_budget_projection": {
     "assumption": "All 150000 daily input safety tokens are cache misses and all 80000 daily output safety tokens are used.",

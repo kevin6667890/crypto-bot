@@ -25,3 +25,13 @@ def test_non_market_timeframe_enumerator_and_validity_values_are_excluded():
         "\u6709\u6548\u81f3 1786698900\uff1b\u4ef7\u683c 1878.87\u3002"
     )
     assert [item["value"] for item in normalize_numbers(text)] == [1878.87]
+
+
+def test_real_provider_scenario_labels_are_not_market_numbers():
+    """Regression for request_8812: labels 2/3 are structure, while prices remain auditable."""
+    text = (
+        "\u60c5\u666f1\uff1a\u5ef6\u7eed\u8def\u5f84 -> \u963b\u529b\u4f4d1946.4\u3002"
+        "\u60c5\u666f2\uff1a\u6b63\u5e38\u56de\u6d4b\u3002"
+        "\u60c5\u666f3\uff1a\u5931\u8d25\u7a81\u7834 -> \u652f\u6491\u4f4d1772.83-1787.17\u3002"
+    )
+    assert [item["value"] for item in normalize_numbers(text)] == [1946.4, 1772.83, 1787.17]

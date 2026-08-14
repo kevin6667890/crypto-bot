@@ -16,6 +16,11 @@ from .live_provider_guard import trip_if_armed
 
 EVENT_TYPES=("QUEUED","RUNNING","RETRY_SCHEDULED","COMPLETED","FAILED_RETRYABLE","FAILED_FINAL","CANCEL_REQUESTED","CANCELLED","INTERRUPTED","BUDGET_BLOCKED","VALIDATION_FAILED")
 RETRY_DELAYS=(2,5,10)
+NON_CHARGEABLE_PROVIDERS=frozenset({"fake","mock","local","dry-run","dry_run","test"})
+
+
+def provider_budget_chargeable(provider:str)->bool:
+    return str(provider).strip().lower() not in NON_CHARGEABLE_PROVIDERS
 
 
 def provider_retry_allowed(error:ProviderError)->bool:
@@ -41,8 +46,9 @@ class TokenBudget:
     def projected_cost(self,input_tokens:int,output_tokens:int)->float:
         return input_tokens*self.input_price/1_000_000+output_tokens*self.output_price/1_000_000
     def reason(self,repo:ReportRepository,instrument:str,input_estimate:int,output_limit:int,provider:str="fake")->str|None:
-        total=repo.daily_tokens();inst=repo.daily_tokens(instrument)
         if input_estimate>self.request_input:return "REQUEST_INPUT_TOKEN_CAP"
+        if not provider_budget_chargeable(provider):return None
+        total=repo.daily_tokens(chargeable_only=True);inst=repo.daily_tokens(instrument,chargeable_only=True)
         if total["input"]+input_estimate>self.daily_input:return "DAILY_INPUT_TOKEN_CAP"
         if total["output"]+output_limit>self.daily_output:return "DAILY_OUTPUT_TOKEN_CAP"
         if total["total"]+input_estimate+output_limit>self.daily_total:return "DAILY_TOTAL_TOKEN_CAP"

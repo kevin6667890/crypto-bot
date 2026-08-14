@@ -1,7 +1,7 @@
 from __future__ import annotations
 import sqlite3
 import pytest
-from dashboard.ai_market_analysis.report_jobs import ConcurrencyGate,ReportWorker,TokenBudget
+from dashboard.ai_market_analysis.report_jobs import ConcurrencyGate,ReportWorker,TokenBudget,provider_budget_chargeable
 from dashboard.ai_market_analysis.report_provider import FakeAIReportProvider
 from dashboard.ai_market_analysis.report_repository import ReportRepository,migrate_database
 from dashboard.ai_market_analysis.report_service import ReportService
@@ -48,5 +48,41 @@ def test_singleflight_and_concurrency():
 def test_restart_interrupts(repo):
     item=submit(repo);repo.event(item["request_id"],"RUNNING",{});assert ReportWorker(repo,lambda r:FakeAIReportProvider()).recover()==1 and repo.status(item["request_id"])["status"]=="INTERRUPTED"
 
-def test_budget_blocked(repo,monkeypatch):
-    monkeypatch.setenv("AI_REPORT_DAILY_TOTAL_TOKENS","1");item=submit(repo);ReportWorker(repo,lambda r:FakeAIReportProvider(),budget=TokenBudget()).run_once();assert repo.status(item["request_id"])["status"]=="BUDGET_BLOCKED"
+def test_fake_tokens_are_telemetry_but_not_paid_budget(repo,monkeypatch):
+    monkeypatch.setenv("AI_REPORT_DAILY_INPUT_TOKENS","1")
+    monkeypatch.setenv("AI_REPORT_DAILY_OUTPUT_TOKENS","1")
+    monkeypatch.setenv("AI_REPORT_DAILY_TOTAL_TOKENS","1")
+    monkeypatch.setenv("AI_REPORT_DAILY_CURRENCY_CAP_USD","0")
+    monkeypatch.setenv("AI_REPORT_COST_STATUS","AUDITED")
+    monkeypatch.setenv("AI_REPORT_INPUT_USD_PER_MILLION","1")
+    monkeypatch.setenv("AI_REPORT_OUTPUT_USD_PER_MILLION","1")
+    provider=FakeAIReportProvider();items=[submit(repo,"FULL"),submit(repo,"QUICK")]
+    worker=ReportWorker(repo,lambda _request:provider,budget=TokenBudget())
+    assert worker.run_once() is True and worker.run_once() is True
+    assert all(repo.status(item["request_id"])["status"]=="COMPLETED" for item in items)
+    assert provider.calls==2
+    assert repo.daily_tokens()["output"]>0
+    assert repo.daily_tokens(chargeable_only=True)=={"input":0,"output":0,"total":0}
+
+def test_paid_budget_classification_needs_no_history_migration(repo):
+    with repo.connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM ai_report_migrations").fetchone()[0]==4
+        columns={row[1] for row in connection.execute("PRAGMA table_info(ai_report_attempts)")}
+    assert "budget_chargeable" not in columns
+    assert repo.daily_tokens(chargeable_only=True)=={"input":0,"output":0,"total":0}
+
+def test_real_provider_still_enters_paid_budget(repo,monkeypatch):
+    monkeypatch.setenv("AI_REPORT_DAILY_TOTAL_TOKENS","1")
+    item=ReportService(repo).submit(base_context(),mode="FULL",provider="deepseek",model="bounded-live")
+    worker=ReportWorker(repo,lambda _request:pytest.fail("budget must block before provider"),budget=TokenBudget())
+    assert worker.run_once() is True
+    assert repo.status(item["request_id"])["status"]=="BUDGET_BLOCKED"
+    assert 'DAILY_TOTAL_TOKEN_CAP' in repo.status(item["request_id"])["events"][-1]["payload_json"]
+
+@pytest.mark.parametrize("provider",["fake","mock","local","dry-run","dry_run","test"])
+def test_non_external_provider_classes_are_not_chargeable(provider):
+    assert provider_budget_chargeable(provider) is False
+
+def test_unknown_and_real_provider_classes_fail_safe_as_chargeable():
+    assert provider_budget_chargeable("deepseek") is True
+    assert provider_budget_chargeable("future-paid-provider") is True

@@ -119,15 +119,16 @@ class ReportRepository:
         out=dict(r);out["fact_registry"]=json.loads(out.pop("fact_registry_json"));out["numeric_registry"]=json.loads(out.pop("numeric_registry_json"));out["source_versions"]=json.loads(out.pop("source_versions_json"))
         out["identity_input"]={"snapshot_version":out["snapshot_version"],"enriched_context_id":out["enriched_context_id"],"fact_registry_hash":out["fact_registry_hash"],"numeric_registry_hash":out["numeric_registry_hash"],"prompt_hash":out["prompt_hash"],"fact_registry_version":out["fact_registry_version"],"numeric_registry_version":out["numeric_registry_version"],"source_versions_hash":out["source_versions_hash"]}
         return out
-    def daily_tokens(self,instrument:str|None=None)->dict[str,int]:
+    def daily_tokens(self,instrument:str|None=None,*,chargeable_only:bool=False)->dict[str,int]:
         query="SELECT COALESCE(SUM(input_tokens),0),COALESCE(SUM(output_tokens),0),COALESCE(SUM(total_tokens),0) FROM ai_report_attempts a JOIN ai_report_requests r ON r.request_id=a.request_id WHERE a.started_at>=?";args=[utc_now()[:10]+"T00:00:00Z"]
+        if chargeable_only:query+=" AND LOWER(a.provider) NOT IN ('fake','mock','local','dry-run','dry_run','test')"
         if instrument:query+=" AND r.instrument=?";args.append(instrument)
         with self.connect() as c:r=c.execute(query,args).fetchone()
         return {"input":r[0],"output":r[1],"total":r[2]}
     def daily_live_provider_usage(self)->dict[str,Any]:
         start=utc_now()[:10]+"T00:00:00Z"
         with self.connect() as c:
-            row=c.execute("SELECT COUNT(*),COALESCE(SUM(input_tokens),0),COALESCE(SUM(output_tokens),0),COALESCE(SUM(total_tokens),0),COALESCE(SUM(estimated_cost),0),SUM(CASE WHEN cost_status!='AUDITED' THEN 1 ELSE 0 END) FROM ai_report_attempts WHERE started_at>=? AND provider!='fake'",(start,)).fetchone()
+            row=c.execute("SELECT COUNT(*),COALESCE(SUM(input_tokens),0),COALESCE(SUM(output_tokens),0),COALESCE(SUM(total_tokens),0),COALESCE(SUM(estimated_cost),0),SUM(CASE WHEN cost_status!='AUDITED' THEN 1 ELSE 0 END) FROM ai_report_attempts WHERE started_at>=? AND LOWER(provider) NOT IN ('fake','mock','local','dry-run','dry_run','test')",(start,)).fetchone()
         return {"calls":int(row[0]),"input":int(row[1]),"output":int(row[2]),"total":int(row[3]),"estimated_cost":float(row[4]),"unaudited_cost_attempts":int(row[5] or 0)}
     def save_report(self,request:dict[str,Any],response:dict[str,Any],generated_text:str)->dict[str,Any]:
         payload=canonical_json(response);h=stable_hash(response);rid=report_identity(response)

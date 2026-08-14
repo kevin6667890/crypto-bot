@@ -1,0 +1,66 @@
+{
+  "schema_version": "ai6b-b2-evidence-v1",
+  "status": "AI6B_B2_FAKE_SHADOW_CANARY_PASSED",
+  "candidate": {
+    "commit": "303900ce66999e1625dd87cb0623a2d6719aa8fc",
+    "tree": "f318259635da16858c56313875de6435231816b8",
+    "image": "sha256:9b545c5515297733deff3a8d5b74eafddfbf8d659c60d527683d80ceead148da"
+  },
+  "budget_policy": {
+    "fake_chargeable": false,
+    "telemetry_preserved": true,
+    "historical_ledger_mutated": false,
+    "current_day_input_tokens": 71345,
+    "current_day_output_tokens": 21108,
+    "paid_chargeable_input_tokens": 0,
+    "paid_chargeable_output_tokens": 0
+  },
+  "local_gates": {
+    "targeted_tests_passed": 66,
+    "service_matrix_passed": 12,
+    "service_matrix_total": 12,
+    "full_pytest_passed": 1626,
+    "full_pytest_skipped": 2
+  },
+  "production_matrix": {
+    "passed": 12,
+    "total": 12,
+    "historical_duplicate_passes": 1,
+    "fake_provider_attempts": 16,
+    "live_provider_attempts": 0,
+    "paper_order_delta": 0,
+    "minimum_reference_support": 1.0
+  },
+  "production_counts": {
+    "contexts": 17,
+    "requests": 17,
+    "attempts": 16,
+    "registry_snapshots": 17,
+    "reports": 15,
+    "audits": 15,
+    "migrations": 4
+  },
+  "observation": {
+    "started_at": "2026-08-14T03:56:33.530389Z",
+    "finished_at": "2026-08-14T04:56:46.848640Z",
+    "samples": 60,
+    "required_samples": 60,
+    "hard_stops": 0,
+    "passed": true
+  },
+  "rollback_rehearsal": {
+    "sequence": ["SHADOW_ON", "FAKE_CANARY", "SHADOW_OFF"],
+    "immutable_evidence_retained": true,
+    "passed": true
+  },
+  "final_runtime": {
+    "shadow_enabled": false,
+    "ai_flags_enabled": false,
+    "live_provider_enabled": false,
+    "user_declared_enabled": false,
+    "collector_healthy": true,
+    "paper_healthy": true,
+    "frontend_public_http_status": 200,
+    "restart_count": 0
+  }
+}

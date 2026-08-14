@@ -1,0 +1,17 @@
+{
+  "schema_version": "ai6b-sensitive-scan-v1",
+  "scope": [
+    "artifacts/ai6b/b2-production-303900c",
+    "tracked_changes_since_35ac0007d66dd50ec3ed779adfa77eb5809ebcf8"
+  ],
+  "evidence_files_scanned_before_scan_record": 6,
+  "changed_files_scanned": 3,
+  "findings": {
+    "private_key_pem": 0,
+    "provider_api_key": 0,
+    "bearer_credential": 0,
+    "credential_assignment": 0
+  },
+  "total_findings": 0,
+  "passed": true
+}

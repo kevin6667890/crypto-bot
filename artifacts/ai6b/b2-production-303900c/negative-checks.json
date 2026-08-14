@@ -1,0 +1,35 @@
+{
+  "schema_version": "ai6b-b2-negative-evidence-v1",
+  "passed": true,
+  "production_api_checks": [
+    {"case": "USER_DECLARED", "expected": 403, "actual": 403, "provider_attempted": false},
+    {"case": "LIVE_PROVIDER_DISABLED", "expected": 503, "actual": 503, "provider_attempted": false},
+    {"case": "INVALID_INSTRUMENT", "expected": 400, "actual": 400, "provider_attempted": false},
+    {"case": "INVALID_MODE", "expected": 400, "actual": 400, "provider_attempted": false},
+    {"case": "MALFORMED_JSON", "expected": 400, "actual": 400, "provider_attempted": false},
+    {"case": "MISSING_REQUIRED_FIELDS", "expected": 400, "actual": 400, "provider_attempted": false}
+  ],
+  "presentation_fail_closed_checks": {
+    "audit_failed_cases_checked": 2,
+    "eligibility": "AUDIT_FAILED",
+    "body_present": false
+  },
+  "frozen_local_negative_coverage": [
+    "PENDING_NO_BODY",
+    "FAILED_NO_BODY",
+    "ERROR_NO_BODY",
+    "LEGACY_SCHEMA_REJECTED",
+    "WRONG_INSTRUMENT_HARD_STOP",
+    "WRONG_MODE_HARD_STOP",
+    "REGISTRY_MISMATCH_REJECTED",
+    "UNSUPPORTED_CLAIM_REJECTED",
+    "INVENTED_REFERENCE_REJECTED"
+  ],
+  "rate_limit_note": {
+    "initial_invalid_identity_checks_returned_429": true,
+    "retry_after_seconds": 7,
+    "blind_retry_used": false,
+    "provider_attempt_created": false,
+    "post_wait_contract_result": 400
+  }
+}

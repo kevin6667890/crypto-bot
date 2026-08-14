@@ -172,10 +172,10 @@ def test_approved_budget_and_retention_are_frozen():
     root = Path(__file__).resolve().parents[2]
     policy = json.loads((root / "config/ai6b_canary_policy.json").read_text(encoding="utf-8"))
     assert policy["budget"] == {
-        "live_provider_requests_per_24h": 10, "global_live_provider_concurrency": 1,
+        "live_provider_requests_per_24h": 15, "global_live_provider_concurrency": 1,
         "per_instrument_concurrency": 1, "queue_max": 10, "per_request_input_tokens": 12000,
-        "quick_output_tokens": 6000, "full_output_tokens": 8000, "position_output_tokens": 8000,
-        "daily_input_tokens": 150000, "daily_output_tokens": 80000, "daily_total_tokens": 230000,
+        "quick_output_tokens": 200000, "full_output_tokens": 200000, "position_output_tokens": 200000,
+        "daily_input_tokens": 500000, "daily_output_tokens": 1000000, "daily_total_tokens": 1500000,
         "daily_currency_cap_usd": 2.0, "cost_status": "REQUIRES_RUNTIME_AUDIT",
         "on_any_limit": "BLOCK_NEW_LIVE_PROVIDER_CALLS"}
     assert policy["retention"]["context_hot_days"] == 30
@@ -201,7 +201,7 @@ def test_live_request_count_and_currency_caps(tmp_path, monkeypatch):
     path = tmp_path / "reports.db"
     migrate_database(path)
     repository = ReportRepository(path)
-    for number in range(10):
+    for number in range(15):
         repository.save_attempt({"attempt_id":f"a{number}","request_id":f"r{number}","attempt_number":1,"provider":"deepseek","model":"m","started_at":"2099-01-01T00:00:00Z","completed_at":None,"latency_ms":None,"http_status":None,"input_tokens":1,"output_tokens":1,"total_tokens":2,"finish_reason":None,"raw_response_hash":None,"parse_status":"VALID","validation_status":"VALID","failure_code":None,"sanitized_error":None,"cost_status":"AUDITED","currency":"USD","price_schedule_version":"test","estimated_cost":0.1,"prompt_hash":None})
     # Move the stored attempts into today's UTC day without depending on wall-clock string construction.
     with repository.connect() as connection:
@@ -211,11 +211,11 @@ def test_live_request_count_and_currency_caps(tmp_path, monkeypatch):
 
 
 def test_output_limits_cannot_exceed_approved_values(monkeypatch):
-    monkeypatch.setenv("AI_REPORT_QUICK_OUTPUT_TOKENS", "9999")
-    monkeypatch.setenv("AI_REPORT_FULL_OUTPUT_TOKENS", "9999")
-    assert output_limit("QUICK") == 6000
-    assert output_limit("FULL") == 8000
-    assert output_limit("POSITION_AWARE") == 8000
+    monkeypatch.setenv("AI_REPORT_QUICK_OUTPUT_TOKENS", "999999")
+    monkeypatch.setenv("AI_REPORT_FULL_OUTPUT_TOKENS", "999999")
+    assert output_limit("QUICK") == 200000
+    assert output_limit("FULL") == 200000
+    assert output_limit("POSITION_AWARE") == 200000
 
 
 def test_alert_policy_is_complete_and_stop_capable():

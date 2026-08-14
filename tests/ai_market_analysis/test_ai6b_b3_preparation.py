@@ -30,6 +30,10 @@ from dashboard.ai_market_analysis.provider_cost import (
     estimate_provider_cost,
     reconcile_provider_usage,
 )
+from dashboard.ai_market_analysis.provider_limits import (
+    OUTPUT_TOKEN_LIMITS, PROVIDER_CONTEXT_TOKEN_MAX, PROVIDER_RESPONSE_BYTES_MAX,
+    PROVIDER_TIMEOUT_SECONDS,
+)
 from dashboard.ai_market_analysis.report_provider import ProviderError
 from dashboard.ai_market_analysis.secret_leak_scanner import scan_repository
 
@@ -156,7 +160,7 @@ def test_worker_restart_converts_sent_attempt_to_unknown_without_retry(tmp_path)
     ("kwargs", "code"),
     [
         ({"predicted_input_tokens": 12_001, "maximum_output_tokens": 1, "queue_depth": 0}, "REQUEST_INPUT_TOKEN_CAP"),
-        ({"predicted_input_tokens": 1, "maximum_output_tokens": 6001, "queue_depth": 0}, "REQUEST_OUTPUT_TOKEN_CAP"),
+        ({"predicted_input_tokens": 1, "maximum_output_tokens": 200001, "queue_depth": 0}, "REQUEST_OUTPUT_TOKEN_CAP"),
         ({"predicted_input_tokens": 1, "maximum_output_tokens": 1, "queue_depth": 10}, "QUEUE_CAP"),
     ],
 )
@@ -178,6 +182,21 @@ def test_currency_cap_and_kill_switch_block_before_reservation(tmp_path):
     killed = store.reserve(identity(2), model="deepseek-v4-flash", predicted_input_tokens=1,
                            maximum_output_tokens=1, queue_depth=0, now=NOW)
     assert killed["code"] == "KILL_SWITCH_ACTIVE"
+
+
+def test_daily_technical_cap_reconciles_terminal_actual_usage(tmp_path):
+    store = ledger(tmp_path)
+    limits = BudgetLimits(daily_input_tokens=250, daily_output_tokens=250,
+                          quick_output_tokens=200, currency_cap_usd=Decimal("2"))
+    first = store.reserve(identity(1), model="deepseek-v4-flash", predicted_input_tokens=200,
+                          maximum_output_tokens=200, queue_depth=0, limits=limits, now=NOW)
+    store.mark_request_sent(first["logical_request_id"], first["reservation_owner"])
+    store.finish(first["logical_request_id"], first["reservation_owner"], "SUCCEEDED", {
+        "provider_input_tokens": 10, "provider_output_tokens": 10, "reconciled_cost": "0.00001",
+    })
+    second = store.reserve(identity(2), model="deepseek-v4-flash", predicted_input_tokens=200,
+                           maximum_output_tokens=200, queue_depth=0, limits=limits, now=NOW)
+    assert second["provider_call_allowed"] is True
 
 
 def test_charge_safe_retry_state_machine():
@@ -266,6 +285,33 @@ def test_deepseek_stub_usage_and_http_429_are_no_retry(monkeypatch):
     assert raised.value.charge_state == "UNKNOWN_CHARGE_STATE"
 
 
+def test_provider_200k_output_and_context_window_guard(monkeypatch):
+    monkeypatch.setenv("AI_REPORT_LIVE_PROVIDER_ENABLED", "true")
+    monkeypatch.setenv("AI_REPORT_KILL_SWITCH_FILE", os.devnull + ".not-present")
+    captured = {}
+    payload = {"id":"fixture","model":"deepseek-v4-flash",
+               "choices":[{"message":{"content":"{}"},"finish_reason":"stop"}],
+               "usage":{"prompt_tokens":10,"completion_tokens":2,"total_tokens":12}}
+    class Response:
+        status=200
+        def __enter__(self):return self
+        def __exit__(self,*_):return False
+        def read(self,limit):captured["read_limit"]=limit;return json.dumps(payload).encode()
+    def fake_urlopen(request,timeout):
+        captured["body"]=json.loads(request.data);captured["timeout"]=timeout;return Response()
+    monkeypatch.setattr("dashboard.ai_market_analysis.deepseek_report_provider.urlopen",fake_urlopen)
+    provider=DeepSeekAIReportProvider("deepseek-v4-flash",api_key="fixture")
+    provider.generate({"messages":[{"role":"user","content":"json"}],"token_estimate":12000,
+                       "max_output_tokens":OUTPUT_TOKEN_LIMITS["QUICK"]})
+    assert captured["body"]["max_tokens"] == 200000
+    assert captured["read_limit"] == PROVIDER_RESPONSE_BYTES_MAX + 1
+    assert captured["timeout"] == PROVIDER_TIMEOUT_SECONDS
+    with pytest.raises(ProviderError) as raised:
+        provider.generate({"messages":[],"token_estimate":PROVIDER_CONTEXT_TOKEN_MAX,
+                           "max_output_tokens":1})
+    assert raised.value.code == "PROVIDER_CONTEXT_WINDOW_EXCEEDED"
+
+
 def test_smoke_script_defaults_to_no_call_and_requires_approval():
     result = subprocess.run(
         [sys.executable, str(ROOT / "scripts/run_ai6b_b3_smoke.py")],
@@ -279,9 +325,9 @@ def test_smoke_script_defaults_to_no_call_and_requires_approval():
 
 def test_final_closure_technical_envelope_and_paid_attempt_allowance():
     limits = BudgetLimits()
-    assert limits.quick_output_tokens == 6000
-    assert limits.full_output_tokens == 8000
-    assert limits.position_output_tokens == 8000
-    assert limits.daily_input_tokens == 150000
-    assert limits.daily_output_tokens == 80000
-    assert limits.calls_24h == 11
+    assert limits.quick_output_tokens == 200000
+    assert limits.full_output_tokens == 200000
+    assert limits.position_output_tokens == 200000
+    assert limits.daily_input_tokens == 500000
+    assert limits.daily_output_tokens == 1000000
+    assert limits.calls_24h == 15

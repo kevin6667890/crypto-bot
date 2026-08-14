@@ -6,8 +6,9 @@ import re
 from typing import Any
 
 from .canonical import canonical_json
+from .provider_limits import PROVIDER_RESPONSE_BYTES_MAX
 
-MAX_SANITIZED_RESPONSE_BYTES = 300_000
+MAX_SANITIZED_RESPONSE_BYTES = PROVIDER_RESPONSE_BYTES_MAX
 DIAGNOSTIC_VERSION = "ai6b-provider-response-diagnostic-v1"
 _SENSITIVE_KEYS = {"api_key", "apikey", "authorization", "password", "private_key", "secret", "token"}
 _TEXT_PATTERNS = (

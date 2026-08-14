@@ -5,6 +5,9 @@ from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 from .canonical import stable_hash
+from .provider_limits import (
+    PROVIDER_CONTEXT_TOKEN_MAX, PROVIDER_RESPONSE_BYTES_MAX, PROVIDER_TIMEOUT_SECONDS,
+)
 from .report_provider import ProviderError, ProviderResult
 from .versions import AI_REPORT_PROVIDER_VERSION
 from .live_provider_guard import assert_live_provider_allowed
@@ -16,13 +19,14 @@ class DeepSeekAIReportProvider:
     def __init__(self, model: str | None=None, timeout: int | None=None,
                  api_key_file: str | Path | None=None, api_key: str | None=None):
         self.model=model or os.getenv("AI_REPORT_MODEL", "")
-        self.timeout=int(timeout or os.getenv("AI_REPORT_TIMEOUT_SECONDS","45"))
+        self.timeout=int(timeout or os.getenv("AI_REPORT_TIMEOUT_SECONDS",str(PROVIDER_TIMEOUT_SECONDS)))
         self._key_file=Path(api_key_file or os.getenv("AI_REPORT_API_KEY_FILE", "")) if (api_key_file or os.getenv("AI_REPORT_API_KEY_FILE")) else None
         self._test_key=api_key
         if not self.model: raise ValueError("AI_REPORT_MODEL is required")
         if self.model not in {"deepseek-v4-flash","deepseek-v4-pro"}:raise ValueError("UNAPPROVED_DEEPSEEK_MODEL")
         if not self._key_file and not self._test_key: raise ValueError("AI_REPORT_API_KEY_FILE is required")
-        if self.timeout > 45: self.timeout=45
+        if self.timeout <= 0: raise ValueError("AI_REPORT_TIMEOUT_SECONDS_INVALID")
+        if self.timeout > PROVIDER_TIMEOUT_SECONDS: self.timeout=PROVIDER_TIMEOUT_SECONDS
     def _secret(self)->str:
         if self._test_key is not None:return self._test_key
         assert self._key_file is not None
@@ -31,16 +35,22 @@ class DeepSeekAIReportProvider:
         return value
     def generate(self, request: dict) -> ProviderResult:
         assert_live_provider_allowed()
+        maximum_output=int(request["max_output_tokens"])
+        predicted_input=int(request.get("token_estimate",0))
+        if maximum_output<=0 or predicted_input<0 or predicted_input+maximum_output>PROVIDER_CONTEXT_TOKEN_MAX:
+            raise ProviderError("PROVIDER_CONTEXT_WINDOW_EXCEEDED",retryable=False,
+                                request_body_sent=False,provider_accepted=False,
+                                charge_state="FAILED_BEFORE_CHARGE")
         body={"model":self.model,"messages":request["messages"],"temperature":0.2,
-              "max_tokens":request["max_output_tokens"],"response_format":{"type":"json_object"},
+              "max_tokens":maximum_output,"response_format":{"type":"json_object"},
               "thinking":{"type":"disabled"},"stream":False}
         wire=json.dumps(body,ensure_ascii=False,separators=(",",":")).encode("utf-8")
         started=time.monotonic()
         try:
             req=Request(self.endpoint,data=wire,headers={"Authorization":f"Bearer {self._secret()}","Content-Type":"application/json","User-Agent":f"crypto-bot/{AI_REPORT_PROVIDER_VERSION}"})
             with urlopen(req,timeout=self.timeout) as response:  # noqa: S310 - fixed HTTPS endpoint
-                raw=response.read(2_000_001)
-                if len(raw)>2_000_000: raise ProviderError("RESPONSE_TOO_LARGE",retryable=False,http_status=response.status)
+                raw=response.read(PROVIDER_RESPONSE_BYTES_MAX+1)
+                if len(raw)>PROVIDER_RESPONSE_BYTES_MAX: raise ProviderError("RESPONSE_TOO_LARGE",retryable=False,http_status=response.status)
                 payload=json.loads(raw.decode("utf-8")); choice=payload["choices"][0]; content=choice["message"]["content"] or ""
                 usage=payload.get("usage") or {}
                 reported={key:int(usage[key]) for key in ("prompt_tokens","completion_tokens","total_tokens","prompt_cache_hit_tokens","prompt_cache_miss_tokens") if isinstance(usage.get(key),int)}

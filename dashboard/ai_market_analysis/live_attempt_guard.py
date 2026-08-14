@@ -36,6 +36,26 @@ TERMINAL_STATES = frozenset({
 NO_RETRY_STATES = frozenset({"SUCCEEDED", "FAILED_AFTER_REQUEST_SENT", "UNKNOWN_CHARGE_STATE"})
 
 
+def _technical_token_usage(reservations: list[sqlite3.Row], terminals: list[sqlite3.Row]) -> tuple[int, int]:
+    """Count actual terminal usage; reserve ceilings only for unresolved/unknown calls."""
+    outcomes: dict[tuple[str, int], tuple[str, dict[str, Any]]] = {}
+    for row in terminals:
+        outcomes[(str(row[0]), int(row[1]))] = (str(row[2]), json.loads(row[3]))
+    input_tokens = output_tokens = 0
+    for row in reservations:
+        key = (str(row[0]), int(row[1])); predicted = json.loads(row[2])
+        terminal = outcomes.get(key)
+        if terminal and terminal[0] == "SUCCEEDED":
+            input_tokens += int(terminal[1].get("provider_input_tokens", predicted["predicted_input_tokens"]))
+            output_tokens += int(terminal[1].get("provider_output_tokens", predicted["predicted_output_tokens"]))
+        elif terminal and terminal[0] == "FAILED_BEFORE_CHARGE":
+            continue
+        else:
+            input_tokens += int(predicted["predicted_input_tokens"])
+            output_tokens += int(predicted["predicted_output_tokens"])
+    return input_tokens, output_tokens
+
+
 @dataclass(frozen=True)
 class BudgetLimits:
     calls_24h: int = B3_MAX_PAID_ATTEMPTS_TOTAL
@@ -198,11 +218,17 @@ class B3ControlLedger:
                 attempt_number = 1
 
             reservation_rows = connection.execute(
-                """SELECT payload_json FROM ai6b_b3_attempt_events
+                """SELECT logical_request_id,attempt_number,payload_json FROM ai6b_b3_attempt_events
                    WHERE created_at>=? AND event_type='LIVE_PROVIDER_ATTEMPT_RESERVED'""",
                 (cutoff,),
             ).fetchall()
-            reservation_payloads = [json.loads(row[0]) for row in reservation_rows]
+            terminal_rows = connection.execute(
+                """SELECT logical_request_id,attempt_number,event_type,payload_json
+                   FROM ai6b_b3_attempt_events WHERE created_at>=?
+                   AND event_type IN ('SUCCEEDED','FAILED_BEFORE_CHARGE','FAILED_AFTER_REQUEST_SENT','UNKNOWN_CHARGE_STATE')
+                   ORDER BY event_id""", (cutoff,),
+            ).fetchall()
+            reservation_payloads = [json.loads(row[2]) for row in reservation_rows]
             active_global = connection.execute(
                 "SELECT COUNT(*) FROM ai6b_b3_live_requests WHERE state IN (?,?)",
                 tuple(ACTIVE_STATES),
@@ -215,8 +241,7 @@ class B3ControlLedger:
                 (Decimal(payload["predicted_cost_usd"]) for payload in reservation_payloads),
                 Decimal("0"),
             )
-            daily_input = sum(int(payload["predicted_input_tokens"]) for payload in reservation_payloads)
-            daily_output = sum(int(payload["predicted_output_tokens"]) for payload in reservation_payloads)
+            daily_input, daily_output = _technical_token_usage(reservation_rows, terminal_rows)
             dynamic_checks = [
                 (len(reservation_payloads) + 1 > limits.calls_24h, "DAILY_CALL_CAP"),
                 (daily_input + predicted_input_tokens > limits.daily_input_tokens, "DAILY_INPUT_TOKEN_CAP"),

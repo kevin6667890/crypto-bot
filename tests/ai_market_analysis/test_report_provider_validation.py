@@ -1,4 +1,6 @@
 from __future__ import annotations
+import copy
+import sqlite3
 import pytest
 from dashboard.ai_market_analysis.enriched_context import build_enriched_context
 from dashboard.ai_market_analysis.macro_evidence import freeze_macro_evidence_set
@@ -10,6 +12,8 @@ from dashboard.ai_market_analysis.report_provider import FakeAIReportProvider,Pr
 from dashboard.ai_market_analysis.report_response_parser import parse_report_response,ReportParseError
 from dashboard.ai_market_analysis.report_level_audit import audit_report_levels
 from dashboard.ai_market_analysis.report_scenario_audit import audit_report_scenarios
+from dashboard.ai_market_analysis.report_claim_extractor import extract_claims
+from dashboard.ai_market_analysis.report_reference_audit import audit_references
 from dashboard.ai_market_analysis.report_audit_repository import AuditRepository,freeze_report_bundle,migrate_audit_database
 from dashboard.ai_market_analysis.report_audit_service import audit_report
 from dashboard.ai_market_analysis.report_jobs import ReportWorker
@@ -178,3 +182,74 @@ def test_typed_scenario_ref_without_supporting_fact_ref_cannot_bypass_audit(tmp_
     bundle["report_hash"]=stable_hash(bundle["report"])
     audit=audit_report(bundle,created_at="2026-08-14T02:32:00Z")
     assert "UNKNOWN_REFERENCE" in audit["hard_failures"] or "UNSUPPORTED_CLAIM" in audit["hard_failures"]
+
+
+class _FakeWithoutCompiledFlow(FakeAIReportProvider):
+    def __init__(self):
+        super().__init__();self.compiled_flow_count=None
+
+    def generate(self,request):
+        request=copy.deepcopy(request);compiled=request["compiled_context"]
+        compiled["facts"]=[fact for fact in compiled["facts"] if fact["category"]!="ORDER_FLOW"]
+        kept={fact["fact_id"] for fact in compiled["facts"]}
+        compiled["numeric_registry"]=[item for item in compiled["numeric_registry"] if item["source_fact_id"] in kept]
+        self.compiled_flow_count=sum(fact["fact_id"].startswith("FLOW_") for fact in compiled["facts"])
+        return super().generate(request)
+
+
+def _paper_db(path):
+    with sqlite3.connect(path) as connection:
+        connection.execute("CREATE TABLE paper_trades(id INTEGER,instrument TEXT,side TEXT,entry REAL,stop_loss REAL,take_profit REAL,status TEXT,position_size REAL,mark_price REAL,pnl_usdt REAL,net_pnl REAL,created_at TEXT,closed_at TEXT,execution_timeframe TEXT,trade_rationale TEXT,accounting_version TEXT,risk_amount REAL,actual_risk_amount REAL)")
+        connection.execute("INSERT INTO paper_trades VALUES(1,'ETH-USDT','BUY',1835,1810,1890,'OPEN',2,1900,NULL,NULL,'2027-10-01T00:00:00Z',NULL,'15m','rebound','v2',10,10)")
+
+
+def test_eth_full_paper_without_compiled_flow_is_limitation_only(tmp_path):
+    database=tmp_path/"eth-full-paper.db";paper=tmp_path/"paper.db";_paper_db(paper)
+    migrate_database(database);migrate_audit_database(database)
+    reports=ReportRepository(database);audits=AuditRepository(database);provider=_FakeWithoutCompiledFlow()
+    submitted=ReportService(reports,paper_db=paper).submit(
+        base_context(),mode="FULL",position_source="PAPER",current_mark=1900)
+    assert ReportWorker(reports,lambda _:provider).run_once()
+    assert provider.compiled_flow_count==0
+    report=reports.get_report(request_id=submitted["request_id"])
+    bundle=freeze_report_bundle(reports,report["report_id"])
+    audit=audit_report(bundle,created_at="2026-08-14T03:30:00Z")
+    audits.save_audit(audit)
+    presentation=build_report_presentation(
+        reports,report["report_id"],instrument="ETH-USDT-SWAP",mode="FULL")
+    forbidden=("空头回补","主动买盘","OI恢复","CVD为正","Funding","Basis","Liquidation")
+    flow_sections=[section for section in report["response"]["sections"] if section["section_id"] in {"MOVE_NATURE","ORDER_FLOW"}]
+    assert all("证据不足" in section["body"] and section["fact_refs"]==[] for section in flow_sections)
+    assert not any(term in section["body"] for section in flow_sections for term in forbidden)
+    assert audit["status"]=="PASSED"
+    assert audit["scorecard"]["ratios"]["reference_semantic_support"]==1.0
+    assert not [item for item in audit["reference_audits"] if item["code"]]
+    assert presentation["eligibility"]=="AUDIT_PASSED_SHADOW_ONLY" and presentation["report"]
+
+
+def test_positive_flow_projection_preserves_attribution_and_exact_refs(tmp_path):
+    report,attempt,bundle,audit,presentation=_run_btc_breakout_attempt(tmp_path,"FULL")
+    section=next(item for item in report["response"]["sections"] if item["section_id"]=="MOVE_NATURE")
+    orderflow=next(item for item in report["response"]["sections"] if item["section_id"]=="ORDER_FLOW")
+    flow_ids=[item["fact_id"] for item in bundle["fact_registry"]["facts"] if item["category"]=="ORDER_FLOW"]
+    assert attempt["validation_status"]=="VALID"
+    assert "空头回补" in section["body"] and "主动买盘同样存在" in section["body"]
+    assert section["fact_refs"] and set(section["fact_refs"])<=set(flow_ids)
+    assert orderflow["fact_refs"]==flow_ids
+    assert audit["status"]=="PASSED"
+    assert audit["scorecard"]["ratios"]["reference_semantic_support"]==1.0
+    assert presentation["report"]
+
+
+@pytest.mark.parametrize("removed",["TIMELINE","TIMEFRAME","ORDER_FLOW","LEVEL","SCENARIO","POSITION","WARNING","MACRO"])
+def test_fake_provider_has_no_unconditional_market_claim_when_evidence_category_absent(removed):
+    request,_=setup("FULL",macro=removed!="MACRO")
+    request=copy.deepcopy(request);compiled=request["compiled_context"]
+    compiled["facts"]=[fact for fact in compiled["facts"] if fact["category"]!=removed]
+    kept={fact["fact_id"] for fact in compiled["facts"]}
+    compiled["numeric_registry"]=[item for item in compiled["numeric_registry"] if item["source_fact_id"] in kept]
+    if removed=="MACRO":request["macro_items"]=[]
+    report=parse_report_response(FakeAIReportProvider().generate(request).raw_text)
+    reference=audit_references(extract_claims("report_claim_sweep",report),compiled)
+    assert reference["unsupported_claims"]==[]
+    assert reference["reference_support_ratio"]==1.0

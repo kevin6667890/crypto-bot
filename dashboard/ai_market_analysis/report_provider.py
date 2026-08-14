@@ -97,41 +97,166 @@ class FakeAIReportProvider:
             )+"；只有在各自注册表触发条件满足后才可审计。"
             if scenario_values else "证据不足，当前没有可审计的情景路径。"
         )
-        tfrefs={sid:[x for x in all_ids if x.startswith({"TF_15M":"TF15_","TF_1H":"TF1H_","TF_4H":"TF4H_","TF_1D":"TF1D_","TF_1W":"TF1W_"}.get(sid,"NO"))][:3] for sid in FULL_SECTION_IDS}
+        timeline_ids=[x for x in all_ids if facts[x]["category"]=="TIMELINE"]
+        warning_ids=[x for x in all_ids if facts[x]["category"]=="WARNING"]
+        timeframe_prefixes={"TF_15M":"TF15_","TF_1H":"TF1H_","TF_4H":"TF4H_","TF_1D":"TF1D_","TF_1W":"TF1W_"}
+        tfrefs={sid:[x for x in all_ids if x.startswith(prefix)] for sid,prefix in timeframe_prefixes.items()}
+        timeframe_labels={"TF_15M":"15分钟","TF_1H":"1小时","TF_4H":"4小时","TF_1D":"日线","TF_1W":"周线"}
+        ordering_labels={"BULLISH":"偏强","BEARISH":"偏弱","MIXED":"多空混合","FLAT":"横向","UNKNOWN":"未知"}
+        attribution_labels={
+            "SHORT_COVERING_DOMINANT":"空头回补主导","ACTIVE_BUYING_CONTRIBUTED":"主动买盘参与",
+            "ALTERNATIVE_ACTIVE_BUYING":"主动买盘可能参与","NEW_LONGS_DOMINANT":"新增多头主导",
+            "NEW_SHORTS_DOMINANT":"新增空头主导","LONG_UNWINDING_DOMINANT":"多头减仓主导",
+            "LONG_LIQUIDATION_ASSISTED":"多头强平参与","SHORT_LIQUIDATION_ASSISTED":"空头强平参与",
+            "LEVERAGED_LONG_BUILDUP":"杠杆多头增加","LEVERAGED_SHORT_BUILDUP":"杠杆空头增加",
+            "SPOT_BUYING_LIKELY":"现货买盘可能参与","SPOT_SELLING_LIKELY":"现货卖盘可能参与",
+            "TWO_SIDED_DELEVERAGING":"双向去杠杆","MIXED_POSITIONING":"多空混合",
+            "POSSIBLE_NEW_POSITION_BUILDUP":"可能有新增持仓","INSUFFICIENT_EVIDENCE":"证据不足",
+            "UNAVAILABLE":"不可用",
+        }
+        flow_values=[(fact_id,facts[fact_id]["value"]) for fact_id in flow_ids if isinstance(facts[fact_id]["value"],dict)]
+
+        phase_fact=next((fact_id for fact_id in timeline_ids if fact_id=="TIMELINE_CURRENT_PHASE"),None)
+        phase_value=facts[phase_fact]["value"] if phase_fact else None
+        conclusion_parts=[];conclusion_refs=[]
+        if phase_value=="POST_BREAKOUT_PULLBACK":
+            conclusion_parts.append("突破已经发生，当前处于突破后回踩验证")
+            conclusion_refs.append(phase_fact)
+        elif phase_value:
+            conclusion_parts.append(f"冻结时间线显示当前阶段为 {phase_value}")
+            conclusion_refs.append(phase_fact)
+        short_fact=next((x for x in tfrefs["TF_15M"] if x.endswith("_SUMMARY")),None)
+        weekly_fact=next((x for x in tfrefs["TF_1W"] if x.endswith("_SUMMARY")),None)
+        short_order=(facts[short_fact]["value"] or {}).get("moving_average_ordering") if short_fact else None
+        weekly_order=(facts[weekly_fact]["value"] or {}).get("moving_average_ordering") if weekly_fact else None
+        if short_order=="BULLISH" and weekly_order=="BEARISH":
+            conclusion_parts.append("短周期偏强，但周线仍偏弱，不能宣布长期牛市")
+            conclusion_refs.extend([short_fact,weekly_fact])
+        elif short_fact:
+            conclusion_parts.append(f"短周期结构为{ordering_labels.get(short_order,'未知')}")
+            conclusion_refs.append(short_fact)
+        conclusion_body="；".join(conclusion_parts)+"。本报告尚未经完整事实审计。" if conclusion_parts else "证据不足，当前无法形成可审计综合结论。"
+
+        if phase_fact:
+            recent_body=f"冻结时间线显示当前阶段为 {phase_value}，最近过程仅按该时间线事实披露。"
+            recent_refs=[phase_fact]
+        else:
+            recent_body="证据不足，当前没有可审计的最近行情过程。";recent_refs=[]
+
+        usable_attributions=[(fact_id,(value.get("attribution") or {}).get("primary")) for fact_id,value in flow_values]
+        usable_attributions=[item for item in usable_attributions if item[1] not in {None,"INSUFFICIENT_EVIDENCE","UNAVAILABLE"}]
+        positive_cvd=[fact_id for fact_id,value in flow_values if value.get("cvd_status") not in {None,"UNAVAILABLE","GAP_AFFECTED"} and isinstance(value.get("cvd_delta"),(int,float)) and value["cvd_delta"]>0]
+        if usable_attributions:
+            move_refs=list(dict.fromkeys([fact_id for fact_id,_ in usable_attributions]+positive_cvd))
+            labels=list(dict.fromkeys(attribution_labels.get(value,value) for _,value in usable_attributions))
+            move_parts=["冻结订单流归因为"+"、".join(labels)]
+            if any(value=="SHORT_COVERING_DOMINANT" for _,value in usable_attributions):
+                move_parts.insert(0,"首段不是纯新增多头推动，实际订单流归因包含空头回补")
+                if positive_cvd:move_parts.append("CVD正向证据显示主动买盘同样存在")
+                move_parts.append("现有证据不足以确认新多全面接力")
+            move_body="；".join(move_parts)+"。"
+        else:
+            move_body="证据不足，当前无法从已冻结订单流证据判定驱动性质。";move_refs=[]
+
+        flow_parts=[];missing_oi=False
+        for fact_id,value in flow_values:
+            phase=value.get("phase") or "UNKNOWN"
+            attribution=(value.get("attribution") or {}).get("primary")
+            volume=value.get("volume_regime")
+            cvd=value.get("cvd_delta");cvd_status=value.get("cvd_status")
+            oi=value.get("oi_change");oi_status=value.get("oi_status")
+            details=[]
+            if attribution not in {None,"UNAVAILABLE"}:details.append("归因为"+attribution_labels.get(attribution,attribution))
+            if volume not in {None,"UNAVAILABLE"}:details.append("成交量状态为"+str(volume))
+            if cvd_status not in {None,"UNAVAILABLE"}:
+                details.append("CVD方向为"+("正" if isinstance(cvd,(int,float)) and cvd>0 else "负" if isinstance(cvd,(int,float)) and cvd<0 else "中性"))
+            if oi_status not in {None,"UNAVAILABLE"} and isinstance(oi,(int,float)):
+                details.append("OI变化为"+("上升" if oi>0 else "下降" if oi<0 else "持平"))
+            elif oi_status not in {None,"UNAVAILABLE"}:missing_oi=True
+            if details:flow_parts.append(f"{phase}阶段"+"，".join(details))
+        orderflow_body="；".join(flow_parts)+"。" if flow_parts else "证据不足，当前没有可审计的订单流证据。"
+        if flow_parts and missing_oi:orderflow_body+="证据不足，当前没有可审计的 OI 变化。"
+        orderflow_refs=flow_ids if flow_parts else []
+
+        timeframe_bodies={}
+        for sid,label in timeframe_labels.items():
+            summary=next((x for x in tfrefs[sid] if x.endswith("_SUMMARY")),None)
+            if not summary:
+                timeframe_bodies[sid]=f"证据不足，当前无法判断{label}结构。";continue
+            value=facts[summary]["value"] if isinstance(facts[summary]["value"],dict) else {}
+            ordering=value.get("moving_average_ordering")
+            if sid=="TF_15M" and ordering=="BULLISH":timeframe_bodies[sid]="15分钟保持偏强，结构判断仅采用已引用事实。"
+            elif sid=="TF_1H" and ordering=="BULLISH":timeframe_bodies[sid]="1小时结构偏强，延续仍需后续确认。"
+            elif sid=="TF_1W" and ordering=="BEARISH":timeframe_bodies[sid]="周线仍偏弱，因此不能宣布长期牛市。"
+            else:timeframe_bodies[sid]=f"{label}结构为{ordering_labels.get(ordering,'未知')}，仅按已引用事实披露。"
+
+        level_roles=list(dict.fromkeys((facts[x]["value"] or {}).get("role") for x in level_ids if isinstance(facts[x]["value"],dict) and (facts[x]["value"] or {}).get("role")))
+        if level_ids:
+            role_labels={"SUPPORT":"支撑","RESISTANCE":"压力","PIVOT":"枢轴"}
+            levels_body="冻结注册表提供的可审计关键位角色为"+"、".join(role_labels.get(x,x) for x in level_roles)+"；关键位状态仅按引用事实披露。"
+        else:levels_body="证据不足，当前没有可引用关键位。"
+
+        limitation_refs=warning_ids+scenario_ids+scenario_level_fact_ids
+        limitation_parts=[]
+        if warning_ids:limitation_parts.append("数据 gap 与遗漏事实限制置信度")
+        elif registry.get("context_warnings"):limitation_parts.append("证据不足，编译上下文存在遗漏事实")
+        if "MACRO_UNAVAILABLE" in facts:limitation_parts.append("本次未加入已验证宏观证据")
+        elif macro_ids:limitation_parts.append("宏观证据仅作背景且不覆盖盘面")
+        if scenario_ids:limitation_parts.append("情景失效条件仅采用已引用注册表事实")
+        limitations_body="；".join(limitation_parts)+"。" if limitation_parts else "当前未识别额外数据限制。"
+
+        macro_body="冻结注册表包含已验证宏观证据，宏观内容仅作背景且不覆盖盘面。" if macro_ids else "本次未加入已验证宏观证据。"
+        if position_ids:
+            position_body="该持仓计划仅按冻结持仓事实审计。"
+            position_source=facts.get("POSITION_SOURCE",{}).get("value")
+            average_cost=facts.get("POSITION_AVERAGE_COST",{}).get("value")
+            if average_cost is not None:
+                position_body+=f"该 {position_source} 计划的平均成本为{average_cost:g} USDT。"
+            warnings=(facts.get("POSITION_WARNINGS",{}).get("value") or [])
+            if "PLAN_MOSTLY_COMPLETED" in warnings:
+                position_body+="原计划主要任务已经完成，剩余持仓属于需要重新决策的部分；不能因行情继续上涨自动改变原计划，也不能把短线反弹计划自动升级为长期仓位。"
+            position_body+="结构失效只引用既有关键位与情景，不虚构减仓比例或数量。"
+        else:position_body="证据不足，当前没有可审计持仓计划。"
+
+        quick_parts=[];quick_refs=[]
+        if phase_value=="POST_BREAKOUT_PULLBACK":quick_parts.append("突破已经发生且处于回踩验证");quick_refs.append(phase_fact)
+        elif phase_fact:quick_parts.append(f"当前阶段为 {phase_value}");quick_refs.append(phase_fact)
+        if usable_attributions:
+            quick_parts.append("订单流归因为"+"、".join(dict.fromkeys(attribution_labels.get(value,value) for _,value in usable_attributions)))
+            quick_refs.extend(fact_id for fact_id,_ in usable_attributions)
+        if level_ids:quick_parts.append("关键位仅采用已引用事实");quick_refs.extend(level_ids)
+        if scenario_ids:quick_parts.append("情景仅采用已引用注册表路径");quick_refs.extend(scenario_ids)
+        if warning_ids:
+            quick_parts.append("数据限制约束置信度")
+            quick_refs.extend(warning_ids)
+        quick_body="；".join(quick_parts)+"。" if quick_parts else "证据不足，当前限制条件下无法形成可审计快速结论。"
+
         if mode == "QUICK": ids=["QUICK_SUMMARY"]
         else:
             ids=list(FULL_SECTION_IDS)
             if macro_ids: ids.insert(1,"MACRO_BACKGROUND")
             if mode == "POSITION_AWARE": ids.append("POSITION_PLAN")
         bodies={
-          "CONCLUSION":"突破已经发生，当前处于突破后回踩验证；短周期偏强，但周线更高周期压力仍限制长期结论。本报告未经完整事实审计。",
-          "RECENT_PROCESS":"市场先经历压缩，随后向上突破、冲高并回踩；当前焦点是突破边界能否完成角色转换。",
-          "MOVE_NATURE":"首段不是纯新增多头推动，主要包含空头回补，主动买盘同样存在；后续未平仓量恢复仍不足以确认新多全面接力。",
-          "TF_15M":"15分钟保持偏强但处于回踩，结构限制是核心防守区失守。",
-          "TF_1H":"1小时结构偏强，延续仍需突破确认位，而非仅凭方向推断。",
-          "TF_4H":"4小时处于突破后消化，未确认第二段上涨。",
-          "TF_1D":"日线是偏多修复，不等于长期趋势已经反转。",
-          "TF_1W":"周线仍偏弱并存在更高周期压力，因此不能宣布长期牛市。",
-          "ORDER_FLOW":"成交量扩张、CVD为正与主动买盘支持突破；未平仓量显著下降说明首段以空头回补为主，回踩阶段的小幅恢复尚不足以确认新多全面接力。Funding、Basis与Liquidation仅按已冻结数据披露。",
-          "KEY_LEVELS":"核心防守取自已引用支撑 zone；延续确认取自已引用压力位，其他高周期压力不新增价格。",
+          "CONCLUSION":conclusion_body,
+          "RECENT_PROCESS":recent_body,
+          "MOVE_NATURE":move_body,
+          **timeframe_bodies,
+          "ORDER_FLOW":orderflow_body,
+          "KEY_LEVELS":levels_body,
           "SCENARIOS":scenario_body,
-          "LIMITATIONS":"数据 gap 与未知字段限制置信度；核心 zone 失守且反抽失败会使当前偏强判断失效。本次未加入已验证宏观证据。" if not macro_ids else "宏观证据仅作背景且不覆盖盘面；数据 gap 与未知字段限制置信度，核心结构失效条件必须继续观察。",
-          "MACRO_BACKGROUND":"只依据冻结证据说明背景，不扩写政策结论，也不编造来源。",
-          "POSITION_PLAN":"该 USER_DECLARED 计划的平均成本为1835 USDT，原计划主要任务已经完成，剩余持仓属于需要重新决策的部分；不能因行情继续上涨自动改变原计划，也不能把短线反弹计划自动升级为长期仓位。结构失效只引用既有关键位与情景，不虚构减仓比例或数量。",
-          "QUICK_SUMMARY":"突破已经发生且处于回踩验证；首段含空头回补与主动买盘，后续接力尚未确认。支撑、压力与失效条件仅采用引用事实；数据限制约束置信度。"}
+          "LIMITATIONS":limitations_body,
+          "MACRO_BACKGROUND":macro_body,
+          "POSITION_PLAN":position_body,
+          "QUICK_SUMMARY":quick_body}
+        refs_by_section={
+          "CONCLUSION":list(dict.fromkeys(conclusion_refs)),"RECENT_PROCESS":recent_refs,
+          "MOVE_NATURE":move_refs,"ORDER_FLOW":orderflow_refs,"KEY_LEVELS":level_ids,
+          "SCENARIOS":scenario_ids+scenario_level_fact_ids,"LIMITATIONS":list(dict.fromkeys(limitation_refs+macro_ids)),
+          "MACRO_BACKGROUND":macro_ids,"POSITION_PLAN":position_ids+scenario_ids+scenario_level_fact_ids,
+          "QUICK_SUMMARY":list(dict.fromkeys(quick_refs)),**tfrefs}
         sections=[]
         for sid in ids:
-            refs=(tfrefs.get(sid) or [])
-            if sid in {"CONCLUSION","QUICK_SUMMARY"}: refs=([x for x in all_ids if x.startswith(("TIMELINE_","STRUCT_","EVENT_"))][:5]+flow_ids[:2]+level_ids[:2]+[x for values in tfrefs.values() for x in values])[:24]
-            if sid=="QUICK_SUMMARY": refs=([x for x in all_ids if x.startswith(("DATA_","MACRO_UNAVAILABLE","TIMELINE_","STRUCT_","EVENT_"))][:7]+flow_ids[:2]+level_ids[:2]+scenario_ids[:1]+[x for values in tfrefs.values() for x in values])[:24]
-            if sid=="RECENT_PROCESS": refs=[x for x in all_ids if x.startswith(("TIMELINE_","STRUCT_","EVENT_"))][:8]+level_ids[:2]
-            if sid=="MOVE_NATURE": refs=flow_ids[:4]
-            if sid=="ORDER_FLOW": refs=flow_ids[:4]
-            if sid=="KEY_LEVELS": refs=level_ids[:4]
-            if sid=="SCENARIOS": refs=scenario_ids+scenario_level_fact_ids
-            if sid=="LIMITATIONS": refs=([x for x in all_ids if x.startswith(("DATA_","UNSUPPORTED_","MACRO_UNAVAILABLE"))][:6]+macro_ids[:4])
-            if sid=="MACRO_BACKGROUND": refs=macro_ids[:4]
-            if sid=="POSITION_PLAN": refs=position_ids[:7]+scenario_ids[:1]+level_ids[:1]
+            refs=refs_by_section.get(sid,[])
             sections.append({"section_id":sid,"title":TITLES[sid],"body":bodies[sid],"fact_refs":refs,
                 "level_refs":[facts[x]["value"].get("level_id") for x in refs if x in facts and isinstance(facts[x]["value"],dict) and facts[x]["value"].get("level_id")],
                 "scenario_refs":[facts[x]["value"].get("scenario_id") for x in refs if x in facts and isinstance(facts[x]["value"],dict) and facts[x]["value"].get("scenario_id")],

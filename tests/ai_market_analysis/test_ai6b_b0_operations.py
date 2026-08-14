@@ -16,6 +16,7 @@ from dashboard.ai_market_analysis.report_alerts import evaluate_alerts, load_ale
 from dashboard.ai_market_analysis.report_jobs import ReportWorker, TokenBudget
 from dashboard.ai_market_analysis.report_jobs import provider_retry_allowed
 from dashboard.ai_market_analysis.report_provider import ProviderError
+from dashboard.ai_market_analysis.provider_limits import LIVE_PROVIDER_CALLS_PER_24H
 from dashboard.ai_market_analysis.report_migrations import MigrationError, apply_migrations, migration_manifest
 from dashboard.ai_market_analysis.report_repository import ReportRepository, migrate_database
 from dashboard.ai_market_analysis.report_service import ReportService, output_limit
@@ -201,7 +202,7 @@ def test_live_request_count_and_currency_caps(tmp_path, monkeypatch):
     path = tmp_path / "reports.db"
     migrate_database(path)
     repository = ReportRepository(path)
-    for number in range(15):
+    for number in range(LIVE_PROVIDER_CALLS_PER_24H):
         repository.save_attempt({"attempt_id":f"a{number}","request_id":f"r{number}","attempt_number":1,"provider":"deepseek","model":"m","started_at":"2099-01-01T00:00:00Z","completed_at":None,"latency_ms":None,"http_status":None,"input_tokens":1,"output_tokens":1,"total_tokens":2,"finish_reason":None,"raw_response_hash":None,"parse_status":"VALID","validation_status":"VALID","failure_code":None,"sanitized_error":None,"cost_status":"AUDITED","currency":"USD","price_schedule_version":"test","estimated_cost":0.1,"prompt_hash":None})
     # Move the stored attempts into today's UTC day without depending on wall-clock string construction.
     with repository.connect() as connection:

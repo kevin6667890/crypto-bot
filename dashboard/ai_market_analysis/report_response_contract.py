@@ -35,6 +35,11 @@ FULL_SECTION_IDS = (
     "CONCLUSION", "RECENT_PROCESS", "MOVE_NATURE", "TF_15M", "TF_1H", "TF_4H", "TF_1D",
     "TF_1W", "ORDER_FLOW", "KEY_LEVELS", "SCENARIOS", "LIMITATIONS",
 )
+ALL_SECTION_IDS = (
+    "QUICK_SUMMARY", "CONCLUSION", "MACRO_BACKGROUND", "RECENT_PROCESS", "MOVE_NATURE",
+    "TF_15M", "TF_1H", "TF_4H", "TF_1D", "TF_1W", "ORDER_FLOW", "KEY_LEVELS",
+    "SCENARIOS", "LIMITATIONS", "POSITION_PLAN",
+)
 
 
 def provider_reference_allowlists(compiled_context: dict[str, Any]) -> dict[str, list[str]]:
@@ -125,15 +130,37 @@ def provider_reference_namespace_matrix() -> dict[str, dict[str, str]]:
     }
 
 
-def expected_section_ids(mode: str, has_macro: bool) -> list[str]:
+def expected_section_manifest(mode: str, has_macro: bool) -> dict[str, Any]:
+    """Return the one canonical required/forbidden section contract for a frozen context."""
     if mode == "QUICK":
-        return ["QUICK_SUMMARY"]
-    result = list(FULL_SECTION_IDS)
-    if has_macro:
-        result.insert(1, "MACRO_BACKGROUND")
-    if mode == "POSITION_AWARE":
-        result.append("POSITION_PLAN")
-    return result
+        required = ["QUICK_SUMMARY"]
+    else:
+        required = list(FULL_SECTION_IDS)
+        if has_macro:
+            required.insert(1, "MACRO_BACKGROUND")
+        if mode == "POSITION_AWARE":
+            required.append("POSITION_PLAN")
+    forbidden = [section_id for section_id in ALL_SECTION_IDS if section_id not in required]
+    conditions = {
+        "QUICK_SUMMARY": "required only in QUICK",
+        "MACRO_BACKGROUND": "required only in FULL/POSITION_AWARE with frozen macro evidence; otherwise forbidden",
+        "ORDER_FLOW": "required in FULL/POSITION_AWARE; use limitation text when flow evidence is unavailable",
+        "KEY_LEVELS": "required in FULL/POSITION_AWARE; use limitation text when levels are unavailable",
+        "SCENARIOS": "required in FULL/POSITION_AWARE; use limitation text when scenarios are unavailable",
+        "POSITION_PLAN": "required only in POSITION_AWARE; otherwise forbidden",
+    }
+    return {
+        "mode": mode,
+        "macro_evidence_available": bool(has_macro),
+        "required_section_ids_in_exact_order": required,
+        "forbidden_section_ids": forbidden,
+        "conditional_section_rules": conditions,
+        "unconstrained_conditional_sections": 0,
+    }
+
+
+def expected_section_ids(mode: str, has_macro: bool) -> list[str]:
+    return list(expected_section_manifest(mode, has_macro)["required_section_ids_in_exact_order"])
 
 
 def response_metadata_contract(*, context_id: str, mode: str, language: str, model: str,
@@ -163,7 +190,8 @@ def provider_json_schema(metadata: dict[str, Any], compiled_context: dict[str, A
         for item in compiled_context.get("facts", [])
     )
     mode = str(metadata["mode"])
-    sections = expected_section_ids(mode, has_macro)
+    section_manifest = expected_section_manifest(mode, has_macro)
+    sections = section_manifest["required_section_ids_in_exact_order"]
     confidence_rank = {"LOW": 0, "MEDIUM": 1, "HIGH": 2}
     max_rank = confidence_rank.get(str(compiled_context.get("max_confidence")), 0)
     confidence = [name for name, rank in confidence_rank.items() if rank <= max_rank]
@@ -187,7 +215,13 @@ def provider_json_schema(metadata: dict[str, Any], compiled_context: dict[str, A
             "directional_bias": compiled_context.get("allowed_directional_biases", []),
             "confidence": confidence,
         },
+        "expected_section_manifest": section_manifest,
         "section_order": sections,
+        "section_contract_rules": [
+            "emit every required section exactly once and in required_section_ids_in_exact_order",
+            "never emit any forbidden_section_ids, even to explain unavailable evidence",
+            "put unavailable-evidence status text only in an already-required section such as LIMITATIONS or QUICK_SUMMARY",
+        ],
         "exact_section_fields": list(SECTION_FIELDS),
         "section_ref_fields_are_string_arrays": list(SECTION_FIELDS[3:]),
         "exact_level_projection_fields": list(LEVEL_PROJECTION_FIELDS),

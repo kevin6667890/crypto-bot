@@ -4,7 +4,7 @@ import re
 from typing import Any
 from .versions import AI_REPORT_BASIC_VALIDATION_VERSION, AI_REPORT_RESPONSE_VERSION
 from .report_numeric_normalizer import normalize_numbers
-from .report_response_contract import LEVEL_PROJECTION_FIELDS, SCENARIO_PROJECTION_FIELDS, expected_section_ids
+from .report_response_contract import LEVEL_PROJECTION_FIELDS, SCENARIO_PROJECTION_FIELDS, expected_section_manifest
 from .report_identity import REPORT_PIPELINE_VERSIONS
 
 NUMBER_RE=re.compile(r"(?<![A-Za-z_\d])[-+]?\d+(?:\.\d+)?%?(?![A-Za-z_\d])")
@@ -21,7 +21,7 @@ class ReportValidationError(ValueError):
 
 
 def expected_sections(mode: str, has_macro: bool) -> list[str]:
-    return expected_section_ids(mode,has_macro)
+    return list(expected_section_manifest(mode,has_macro)["required_section_ids_in_exact_order"])
 
 
 def _numbers(text: str) -> list[float]:

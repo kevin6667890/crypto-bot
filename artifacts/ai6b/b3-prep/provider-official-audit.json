@@ -1,7 +1,7 @@
 {
   "audit_schema_version": "ai6b-b3-provider-official-audit-v1",
   "provider": "DeepSeek",
-  "retrieved_utc": "2026-08-11T02:02:35Z",
+  "retrieved_utc": "2026-08-14T05:04:04Z",
   "facts_source_policy": "DEEPSEEK_OFFICIAL_ONLY",
   "live_api_request_performed": false,
   "source_urls": [
@@ -28,7 +28,7 @@
       "maximum_output_tokens": 384000
     },
     "deepseek-v4-pro": {
-      "official_model_version": "DeepSeek-V4-Pro",
+      "official_model_version": "DeepSeek-V4-Pro-0813",
       "thinking_modes": ["enabled", "disabled"],
       "context_tokens": 1000000,
       "maximum_output_tokens": 384000
@@ -38,7 +38,7 @@
   "pricing": {
     "currency": "USD",
     "unit": "per_1000000_tokens",
-    "price_version": "deepseek-official-2026-08-11T02:02:35Z",
+    "price_version": "deepseek-official-2026-08-14T05:04:04Z",
     "deepseek-v4-flash": {
       "input_cache_hit": "0.0028",
       "input_cache_miss": "0.14",
@@ -50,7 +50,7 @@
       "output": "0.87"
     },
     "deduction_rule": "token_count multiplied by the corresponding per-token price",
-    "change_warning": "Official page says pricing may change and announces an expected significant increase. Re-audit immediately before formal B3."
+    "change_warning": "Official page says product prices may change; this snapshot was refreshed immediately before formal B3."
   },
   "approved_budget_projection": {
     "assumption": "All 100000 daily input tokens are cache misses and all 25000 daily output tokens are used.",

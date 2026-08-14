@@ -10,7 +10,7 @@ from decimal import Decimal, ROUND_UP
 from typing import Any
 
 
-PRICE_VERSION = "deepseek-official-2026-08-11T02:02:35Z"
+PRICE_VERSION = "deepseek-official-2026-08-14T05:04:04Z"
 PRICING_SOURCE = "https://api-docs.deepseek.com/quick_start/pricing/"
 PER_MILLION = Decimal("1000000")
 

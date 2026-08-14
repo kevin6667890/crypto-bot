@@ -34,8 +34,11 @@ def _unit(raw:str|None, percent:bool=False)->str|None:
     return {"美元":"USDT","USD":"USDT","USDT":"USDT","枚":"coin","张":"contracts","合约":"contracts",
             "倍":"multiple","R":"R","ATR":"ATR","个百分点":"percentage_point"}.get(raw,raw)
 
+CLOCK_RE = re.compile(r"\b(?:[01]?\d|2[0-3]):[0-5]\d(?::[0-5]\d)?\b")
+
 def _excluded(text:str,start:int,end:int)->bool:
-    return any(m.start()<=start and end<=m.end() for m in EXCLUDED.finditer(text))
+    return (any(m.start()<=start and end<=m.end() for m in EXCLUDED.finditer(text))
+            or any(m.start()<end and start<m.end() for m in CLOCK_RE.finditer(text)))
 
 def normalize_numbers(text:str)->list[dict[str,Any]]:
     values=[]

@@ -133,6 +133,26 @@ def test_citation_ids_are_included_in_exact_persisted_reference_diagnostics():
     assert value["unknown_refs"]["macro_refs"] == ["TF15_SUMMARY"]
 
 
+def test_null_scenario_identity_is_not_coerced_into_a_reference_id():
+    request, registry = setup("QUICK")
+    report = json.loads(FakeAIReportProvider().generate(request).raw_text)
+    report["scenarios"] = [{"scenario_id": None, "fact_refs": [], "level_refs": []}]
+
+    value = reference_diagnostics(report, request, registry)
+
+    assert value["unknown_refs"]["scenario_refs"] == []
+
+
+def test_unknown_nonempty_scenario_identity_remains_in_diagnostics():
+    request, registry = setup("QUICK")
+    report = json.loads(FakeAIReportProvider().generate(request).raw_text)
+    report["scenarios"] = [{"scenario_id": "SCENARIO_INVENTED", "fact_refs": [], "level_refs": []}]
+
+    value = reference_diagnostics(report, request, registry)
+
+    assert value["unknown_refs"]["scenario_refs"] == ["SCENARIO_INVENTED"]
+
+
 @pytest.mark.parametrize("field,bad,code", [
     ("macro_refs", "MACRO_UNAVAILABLE", "UNKNOWN_MACRO_REF"),
     ("level_refs", "FACT_1", "UNKNOWN_LEVEL_REF"),

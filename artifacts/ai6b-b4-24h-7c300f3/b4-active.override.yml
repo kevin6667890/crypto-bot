@@ -1,0 +1,61 @@
+services:
+  paper-api:
+    environment:
+      AI_MARKET_REPORTS_ENABLED: "true"
+      AI_MARKET_REPORT_SHADOW_ONLY: "true"
+      AI_REPORT_LIVE_PROVIDER_ENABLED: "true"
+      AI_REPORT_AUDIT_ENABLED: "true"
+      AI_REPORT_AUTO_AUDIT_ENABLED: "false"
+      AI_REPORT_EVALUATION_ENABLED: "true"
+      AI_MARKET_ANALYSIS_PRESENTATION_ENABLED: "true"
+      AI_USER_POSITION_PLANS_ENABLED: "false"
+      AI_MARKET_REPORT_WORKER_ENABLED: "true"
+      AI_REPORT_AUDIT_WORKER_ENABLED: "true"
+      AI_REPORT_PROVIDER: "deepseek"
+      AI_REPORT_MODEL: "deepseek-v4-flash"
+      AI_REPORT_COST_STATUS: "B3_CONTROL_LEDGER"
+      AI_REPORT_PRICE_SCHEDULE_VERSION: "deepseek-official-2026-08-14T05:54:57Z"
+      AI_REPORT_INPUT_USD_PER_MILLION: "0.14"
+      AI_REPORT_OUTPUT_USD_PER_MILLION: "0.28"
+  report-worker:
+    environment:
+      AI_MARKET_REPORTS_ENABLED: "true"
+      AI_MARKET_REPORT_SHADOW_ONLY: "true"
+      AI_MARKET_REPORT_WORKER_ENABLED: "true"
+      AI_REPORT_LIVE_PROVIDER_ENABLED: "true"
+      AI_USER_POSITION_PLANS_ENABLED: "false"
+      AI_REPORT_PROVIDER: "deepseek"
+      AI_REPORT_MODEL: "deepseek-v4-flash"
+      AI_REPORT_COST_STATUS: "B3_CONTROL_LEDGER"
+      AI_REPORT_PRICE_SCHEDULE_VERSION: "deepseek-official-2026-08-14T05:54:57Z"
+      AI_REPORT_INPUT_USD_PER_MILLION: "0.14"
+      AI_REPORT_OUTPUT_USD_PER_MILLION: "0.28"
+  audit-worker:
+    environment:
+      AI_REPORT_AUDIT_ENABLED: "true"
+      AI_REPORT_AUDIT_WORKER_ENABLED: "true"
+  b4-supervisor:
+    container_name: ai6b-b4-supervisor-7c300f3
+    image: ${AI6B_APP_IMAGE:?AI6B_APP_IMAGE digest is required}
+    user: "10001:10001"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    restart: "no"
+    command: [python, /opt/ai6b-b4/b4_supervisor.py]
+    environment:
+      B4_START_EPOCH: ${B4_START_EPOCH:?B4_START_EPOCH is required}
+      B4_START_UTC: ${B4_START_UTC:?B4_START_UTC is required}
+      B4_END_EPOCH: ${B4_END_EPOCH:?B4_END_EPOCH is required}
+      B4_END_EARLIEST_UTC: ${B4_END_EARLIEST_UTC:?B4_END_EARLIEST_UTC is required}
+      AI_REPORT_KILL_SWITCH_FILE: /var/lib/ai-report/live-provider-disabled.json
+    secrets: [admin_token]
+    volumes:
+      - ai-report-data:/var/lib/ai-report:rw
+      - /opt/crypto-bot-ai6b-staging/7c300f3/b4/b4_supervisor.py:/opt/ai6b-b4/b4_supervisor.py:ro
+      - /opt/crypto-bot-ai6b-staging/7c300f3/b4/evidence:/evidence:rw
+    pids_limit: 64
+    mem_limit: 256m
+    cpus: 0.20

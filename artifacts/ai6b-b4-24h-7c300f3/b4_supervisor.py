@@ -48,7 +48,7 @@ def emit(event: str, **values: object) -> None:
 
 def fail(code: str, **values: object) -> int:
     for path in ("/var/lib/ai-report/live-provider-disabled.json", "/var/lib/ai-report/ai6b-kill-switch.json"):
-        trip(code, path=path, evidence_id=str(values.get("request_id") or "B4"))
+        trip("AUDIT_MISMATCH", path=path, evidence_id=str(values.get("request_id") or "B4"))
     payload = {"status": "AI6B_B4_FAILED", "failure_code": code, "failed_at_utc": utc_now(), **values}
     RESULT.write_text(json.dumps(payload, sort_keys=True, indent=2) + "\n", encoding="utf-8")
     emit("B4_FAILED", **payload)
@@ -133,7 +133,7 @@ def complete_pipeline(request_id: str) -> dict[str, object]:
         "audit_id": audit["audit_id"],
         "presentation_id": presentation["presentation_id"],
         "presentation_latency_ms": latency_ms,
-        "audit_score": audit["overall_score"],
+        "audit_score": audit["scorecard"]["overall"],
     }
 
 

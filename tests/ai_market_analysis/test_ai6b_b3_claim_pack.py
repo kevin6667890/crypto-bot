@@ -197,3 +197,25 @@ def test_grounding_splits_mixed_direction_flow_values_into_independent_claims():
 
 def test_grounding_formats_unix_evidence_timestamps_as_utc_dates():
     assert _narrative_text("该区域在 1784131200 时间戳被翻转。") == "该区域在 2026-07-15 时间戳被翻转。"
+
+
+def test_unavailable_flow_facts_render_only_auditable_limitation():
+    request, registry, report = _real_style_report("FULL")
+    compiled = copy.deepcopy(request["compiled_context"])
+    for fact in compiled["facts"]:
+        if fact["category"] == "ORDER_FLOW":
+            fact["quality"] = "UNAVAILABLE"
+            if isinstance(fact.get("value"), dict):
+                fact["value"]["quality"] = "UNAVAILABLE"
+    pack = build_provider_claim_pack(compiled, "FULL")
+    grounded = ground_provider_report(report, pack)
+
+    assert pack["evidence_status"]["flow_available"] is False
+    assert pack["fact_ids_by_category"]["ORDER_FLOW"] == []
+    for section_id in ("MOVE_NATURE", "ORDER_FLOW"):
+        section = next(item for item in grounded["sections"] if item["section_id"] == section_id)
+        assert section["body"] == "当前无可审计订单流证据，无法判定驱动性质。"
+        assert all(not ref.startswith("FLOW_") for ref in section["fact_refs"])
+        claims = extract_claims("report_unavailable_flow", {"sections": [section]})
+        assert len(claims) == 1
+        assert claims[0]["claim_type"] == "LIMITATION"

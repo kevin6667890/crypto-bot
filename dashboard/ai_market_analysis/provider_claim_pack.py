@@ -45,6 +45,12 @@ def _level_projection(fact: dict[str, Any], narrative: dict[str, Any] | None = N
 def build_provider_claim_pack(compiled_context: dict[str, Any], mode: str) -> dict[str, Any]:
     facts = list(compiled_context.get("facts", [])); by_category: dict[str, list[dict[str, Any]]] = {}
     for fact in facts: by_category.setdefault(str(fact.get("category")), []).append(fact)
+    usable_flow = [
+        item for item in by_category.get("ORDER_FLOW", [])
+        if str(item.get("quality") or "").upper() != "UNAVAILABLE"
+        and str((item.get("value") or {}).get("quality") or "").upper() != "UNAVAILABLE"
+    ]
+    by_category["ORDER_FLOW"] = usable_flow
     levels = [_level_projection(item) for item in by_category.get("LEVEL", [])
               if isinstance(item.get("value"), dict) and all(key in item["value"] for key in ("level_id", "role", "state", "strength"))]
     scenarios = [_scenario_projection(item) for item in by_category.get("SCENARIO", [])
@@ -58,7 +64,7 @@ def build_provider_claim_pack(compiled_context: dict[str, Any], mode: str) -> di
         "claim_pack_version": "ai6b-provider-claim-pack-v1", "mode": mode, "allowed_numeric_values": numeric,
         "levels": levels, "scenarios": scenarios, "macro_evidence_ids": macro_ids,
         "macro_unavailable_statement": None if macro_ids else unavailable_macro,
-        "evidence_status": {"flow_available": bool(by_category.get("ORDER_FLOW")), "macro_available": bool(macro_ids),
+        "evidence_status": {"flow_available": bool(usable_flow), "macro_available": bool(macro_ids),
                             "levels_available": bool(levels), "scenarios_available": bool(scenarios)},
         "fact_ids_by_category": {category: [item["fact_id"] for item in items] for category, items in sorted(by_category.items())},
     }
@@ -158,6 +164,9 @@ def ground_provider_report(report: dict[str, Any], claim_pack: dict[str, Any]) -
     for original in report.get("sections", []):
         section = dict(original); categories = _section_categories(str(section.get("section_id")))
         section["body"] = _macro_limitation_text(_narrative_text(section["body"]), macro_statement)
+        if (not claim_pack["evidence_status"]["flow_available"]
+                and section.get("section_id") in {"MOVE_NATURE", "ORDER_FLOW"}):
+            section["body"] = "当前无可审计订单流证据，无法判定驱动性质。"
         if (not scenario_ids and section.get("section_id") in {"QUICK_SUMMARY", "SCENARIOS"}
                 and "失效" not in section["body"] and "限制" not in section["body"]):
             section["body"] = section["body"].rstrip("。") + "。证据不足，当前没有可审计的情景失效路径。"

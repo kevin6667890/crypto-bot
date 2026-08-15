@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from urllib.request import Request, urlopen
+
+sys.path.insert(0, "/app")
 
 from dashboard.ai_market_analysis.live_provider_guard import trip
 from dashboard.ai_market_analysis.presentation import build_report_presentation

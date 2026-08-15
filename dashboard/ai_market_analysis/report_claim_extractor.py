@@ -38,6 +38,8 @@ def _restore(text:str,protected:dict[str,str])->str:
     return text
 
 def _claim_type(section_id:str,text:str)->ClaimType:
+    if "当前没有可审计的情景失效路径" in text:
+        return ClaimType.LIMITATION
     if any(term in text for term in ("本次未加入已验证宏观证据", "无已验证宏观证据", "宏观证据未纳入")):
         return ClaimType.LIMITATION
     if section_id in {"TF_15M","TF_1H","TF_4H","TF_1D","TF_1W","SCENARIOS","KEY_LEVELS","POSITION_PLAN","MACRO_BACKGROUND"}:

@@ -124,3 +124,39 @@ def test_provider_prompt_contains_one_claim_pack_copy():
     compiled = compile_report_context(registry, "QUICK")
     prompt = compile_prompt(compiled, "QUICK")
     assert prompt["messages"][1]["content"].count('"claim_pack_version"') == 1
+
+
+def test_empty_scenario_grounding_adds_canonical_invalidation_limitation():
+    request, registry, report = _real_style_report("QUICK")
+    request = copy.deepcopy(request)
+    registry = copy.deepcopy(registry)
+    registry["facts"] = [item for item in registry["facts"] if item["category"] != "SCENARIO"]
+    request["compiled_context"]["facts"] = [
+        item for item in request["compiled_context"]["facts"] if item["category"] != "SCENARIO"
+    ]
+    report["scenarios"] = []
+    report["sections"][0]["body"] = "当前结论仅使用已冻结证据。"
+    pack = build_provider_claim_pack(request["compiled_context"], "QUICK")
+
+    grounded = ground_provider_report(report, pack)
+
+    assert grounded["sections"][0]["body"].endswith("证据不足，当前没有可审计的情景失效路径。")
+    assert validate_report(grounded, request, registry)["status"] == "VALID"
+    limitation = [
+        claim for claim in extract_claims("report_empty_scenario", grounded)
+        if "当前没有可审计的情景失效路径" in claim["original_text"]
+    ]
+    assert len(limitation) == 1
+    assert limitation[0]["claim_type"] == "LIMITATION"
+
+
+def test_empty_scenario_grounding_does_not_duplicate_existing_invalidation():
+    _request, registry, report = _real_style_report("QUICK")
+    compiled = copy.deepcopy(_request["compiled_context"])
+    compiled["facts"] = [item for item in compiled["facts"] if item["category"] != "SCENARIO"]
+    report["scenarios"] = []
+    report["sections"][0]["body"] = "当前没有可审计的情景失效路径。"
+
+    grounded = ground_provider_report(report, build_provider_claim_pack(compiled, "QUICK"))
+
+    assert grounded["sections"][0]["body"].count("当前没有可审计的情景失效路径") == 1

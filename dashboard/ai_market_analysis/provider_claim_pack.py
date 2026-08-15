@@ -144,6 +144,9 @@ def ground_provider_report(report: dict[str, Any], claim_pack: dict[str, Any]) -
     for original in report.get("sections", []):
         section = dict(original); categories = _section_categories(str(section.get("section_id")))
         section["body"] = _macro_limitation_text(_narrative_text(section["body"]), macro_statement)
+        if (not scenario_ids and section.get("section_id") in {"QUICK_SUMMARY", "SCENARIOS"}
+                and "失效" not in section["body"] and "限制" not in section["body"]):
+            section["body"] = section["body"].rstrip("。") + "。证据不足，当前没有可审计的情景失效路径。"
         section["fact_refs"] = [fact_id for category in sorted(categories) for fact_id in by_category.get(category, [])]
         section["level_refs"] = level_ids if "LEVEL" in categories else []
         section["scenario_refs"] = scenario_ids if "SCENARIO" in categories else []

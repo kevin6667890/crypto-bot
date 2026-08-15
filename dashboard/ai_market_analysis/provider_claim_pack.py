@@ -119,6 +119,10 @@ def _narrative_text(value: str) -> str:
     result = str(value)
     for token, word in _TIMEFRAME_WORDS.items():
         result = re.sub(rf"(?<![A-Za-z0-9]){re.escape(token)}(?![A-Za-z0-9])", word, result, flags=re.I)
+    # Keep mixed-sign deterministic flow observations in separate audit
+    # claims. A comma chain would give every number the direction vocabulary
+    # of every sibling observation.
+    result = re.sub(r"，(?=FLOW_[A-Z0-9_]+\s+显示)", "。", result)
     # Level identity and membership are projected by the host below.  Provider
     # prose must not introduce an independently audited numeric count for the
     # same deterministic collection (for example, "两个支撑").

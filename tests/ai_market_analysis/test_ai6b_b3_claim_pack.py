@@ -5,7 +5,7 @@ import json
 
 import pytest
 
-from dashboard.ai_market_analysis.provider_claim_pack import build_provider_claim_pack, ground_provider_report, provider_claim_pack_contract
+from dashboard.ai_market_analysis.provider_claim_pack import _narrative_text, build_provider_claim_pack, ground_provider_report, provider_claim_pack_contract
 from dashboard.ai_market_analysis.report_context_compiler import compile_report_context
 from dashboard.ai_market_analysis.report_prompt_templates import compile_prompt
 from dashboard.ai_market_analysis.report_response_contract import provider_reference_allowlists
@@ -170,3 +170,26 @@ def test_grounding_removes_provider_level_counts_not_present_in_numeric_registry
 
     assert grounded["sections"][0]["body"] == "支撑保持有效，压力仍需关注。"
     assert validate_report(grounded, request, registry)["status"] == "VALID"
+
+
+def test_grounding_splits_mixed_direction_flow_values_into_independent_claims():
+    body = _narrative_text(
+        "订单流事实：FLOW_PHASE_01 显示净负值 -0.0129，"
+        "FLOW_PHASE_02 显示正值 0.0430，"
+        "FLOW_PHASE_03 显示净负值 -0.0203。"
+    )
+    report = {"sections": [{"section_id": "QUICK_SUMMARY", "body": body,
+                            "fact_refs": [], "level_refs": [], "scenario_refs": [],
+                            "macro_refs": [], "position_refs": []}]}
+    claims = extract_claims("report_mixed_flow", report)
+    registry = [
+        {"source_fact_id": "FLOW_PHASE_01", "canonical_value": -0.0129, "absolute_tolerance": 0.00001},
+        {"source_fact_id": "FLOW_PHASE_02", "canonical_value": 0.0430, "absolute_tolerance": 0.00001},
+        {"source_fact_id": "FLOW_PHASE_03", "canonical_value": -0.0203, "absolute_tolerance": 0.00001},
+    ]
+
+    result = audit_numeric_claims(claims, registry)
+
+    assert len(claims) == 3
+    assert result["numeric_grounding_ratio"] == 1.0
+    assert result["failure_codes"] == []

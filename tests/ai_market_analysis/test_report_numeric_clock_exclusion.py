@@ -35,3 +35,12 @@ def test_real_provider_scenario_labels_are_not_market_numbers():
         "\u60c5\u666f3\uff1a\u5931\u8d25\u7a81\u7834 -> \u652f\u6491\u4f4d1772.83-1787.17\u3002"
     )
     assert [item["value"] for item in normalize_numbers(text)] == [1946.4, 1772.83, 1787.17]
+
+
+def test_real_provider_line_enumerators_and_epoch_metadata_are_not_market_numbers():
+    """Regression for request_87d09 without hiding adjacent canonical prices."""
+    text = (
+        "level flipped_at=1784131200, price 1878.82.\n"
+        "1. first path at 1900.0\n2. second path at 1780.0\n3. third path at 1512.04"
+    )
+    assert [item["value"] for item in normalize_numbers(text)] == [1878.82, 1900.0, 1780.0, 1512.04]

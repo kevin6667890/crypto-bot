@@ -18,6 +18,11 @@ def test_date_is_excluded_without_hiding_adjacent_market_price():
     )] == [1875.77]
 
 
+def test_compact_end_date_range_is_not_treated_as_market_numbers():
+    text = "订单流仅覆盖2026-07-20至07-21，价格为63037.2。"
+    assert [item["value"] for item in normalize_numbers(text)] == [63037.2]
+
+
 def test_non_market_timeframe_enumerator_and_validity_values_are_excluded():
     text = (
         "15 \u5206\u949f, 1 \u5c0f\u65f6, 4 \u5c0f\u65f6. "

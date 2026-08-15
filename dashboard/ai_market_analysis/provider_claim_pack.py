@@ -128,7 +128,7 @@ def _macro_limitation_text(value: str, statement: str | None) -> str:
     if not statement:
         return result
     canonical = statement.rstrip("。")
-    for wording in ("宏观证据未加入", "未加入宏观证据", "无已验证宏观证据"):
+    for wording in ("宏观证据未加入", "未加入宏观证据", "无已验证宏观证据", "宏观证据未纳入"):
         result = result.replace(wording, canonical)
     return result
 

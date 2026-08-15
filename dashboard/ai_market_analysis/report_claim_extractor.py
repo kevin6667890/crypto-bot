@@ -40,6 +40,8 @@ def _restore(text:str,protected:dict[str,str])->str:
 def _claim_type(section_id:str,text:str)->ClaimType:
     if section_id in {"TF_15M","TF_1H","TF_4H","TF_1D","TF_1W","SCENARIOS","KEY_LEVELS","POSITION_PLAN","MACRO_BACKGROUND"}:
         return SECTION_TYPES[section_id]
+    if section_id=="MOVE_NATURE" and any(token in text for token in ("均线","趋势","周期级别结构")):
+        return ClaimType.TIMEFRAME_TREND
     for kind,terms in KEYWORD_TYPES:
         if any(t.lower() in text.lower() for t in terms):return kind
     return SECTION_TYPES.get(section_id,ClaimType.OTHER)

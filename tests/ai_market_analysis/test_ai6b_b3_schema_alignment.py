@@ -11,7 +11,7 @@ from dashboard.ai_market_analysis.enriched_context import build_enriched_context
 from dashboard.ai_market_analysis.macro_evidence import freeze_macro_evidence_set
 from dashboard.ai_market_analysis.presentation import build_report_presentation
 from dashboard.ai_market_analysis.report_audit_repository import (
-    AuditRepository, migrate_audit_database,
+    AuditRepository, MAX_AUDIT_INPUT_BYTES, MAX_AUDIT_PAYLOAD_BYTES, migrate_audit_database,
 )
 from dashboard.ai_market_analysis.report_context_compiler import compile_report_context
 from dashboard.ai_market_analysis.report_fact_registry import build_fact_registry
@@ -39,6 +39,10 @@ from scripts.run_ai6b_b3_smoke import _resume_persisted_report
 
 ROOT = Path(__file__).resolve().parents[2]
 DIAGNOSTIC = ROOT / "tests/fixtures/ai6b_b3_real_schema_failure_diagnostic.json"
+
+
+def test_audit_payload_budget_tracks_frozen_input_envelope():
+    assert MAX_AUDIT_PAYLOAD_BYTES == MAX_AUDIT_INPUT_BYTES
 
 
 def test_historical_real_response_recovery_boundary_is_immutable_and_no_recall():

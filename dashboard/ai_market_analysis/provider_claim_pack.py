@@ -103,8 +103,9 @@ def provider_claim_pack_contract(claim_pack: dict[str, Any]) -> dict[str, Any]:
 
 def _section_categories(section_id: str) -> set[str]:
     if section_id == "QUICK_SUMMARY": return {"TIMELINE", "TIMEFRAME", "ORDER_FLOW", "LEVEL", "SCENARIO", "WARNING", "MACRO", "POSITION"}
-    if section_id in {"CONCLUSION", "RECENT_PROCESS"}: return {"TIMELINE", "TIMEFRAME", "LEVEL", "SCENARIO", "WARNING"}
-    if section_id == "MOVE_NATURE": return {"TIMELINE", "ORDER_FLOW", "WARNING"}
+    if section_id == "CONCLUSION": return {"TIMELINE", "TIMEFRAME", "LEVEL", "SCENARIO", "WARNING"}
+    if section_id == "RECENT_PROCESS": return {"TIMELINE", "TIMEFRAME", "ORDER_FLOW", "LEVEL", "SCENARIO", "WARNING"}
+    if section_id == "MOVE_NATURE": return {"TIMELINE", "TIMEFRAME", "ORDER_FLOW", "LEVEL", "WARNING"}
     if section_id.startswith("TF_"): return {"TIMEFRAME", "WARNING"}
     if section_id == "ORDER_FLOW": return {"ORDER_FLOW", "WARNING"}
     if section_id == "KEY_LEVELS": return {"LEVEL"}

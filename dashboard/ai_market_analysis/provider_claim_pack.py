@@ -135,6 +135,12 @@ def _narrative_text(value: str) -> str:
     # claims. A comma chain would give every number the direction vocabulary
     # of every sibling observation.
     result = re.sub(r"，(?=FLOW_[A-Z0-9_]+\s+显示)", "。", result)
+    result = re.sub(
+        r"，(?:但|且|并且|同时|而)?(?=(?:成交量|CVD|OI|Funding|资金费率|Basis|基差|Liquidation|强平|爆仓))",
+        "。",
+        result,
+        flags=re.I,
+    )
     # Level identity and membership are projected by the host below.  Provider
     # prose must not introduce an independently audited numeric count for the
     # same deterministic collection (for example, "两个支撑").

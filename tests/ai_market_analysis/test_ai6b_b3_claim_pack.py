@@ -195,6 +195,33 @@ def test_grounding_splits_mixed_direction_flow_values_into_independent_claims():
     assert result["failure_codes"] == []
 
 
+def test_grounding_splits_real_provider_mixed_flow_clause_before_numeric_audit():
+    body = _narrative_text(
+        "订单流显示资金费率转负（-0.005012677565483098），"
+        "但成交量放大（2182680.532165999），"
+        "CVD 为正（0.002984441853589368），表明空头回补可能推动反弹。"
+    )
+    report = {"sections": [{"section_id": "QUICK_SUMMARY", "body": body,
+                            "fact_refs": [], "level_refs": [], "scenario_refs": [],
+                            "macro_refs": [], "position_refs": []}]}
+    claims = extract_claims("report_b4_mixed_flow", report)
+    registry = [
+        {"source_fact_id": "FLOW_PHASE_04", "canonical_value": -0.005012677565483098, "absolute_tolerance": 0.51},
+        {"source_fact_id": "FLOW_PHASE_02", "canonical_value": 2182680.532165999, "absolute_tolerance": 0.51},
+        {"source_fact_id": "FLOW_PHASE_02", "canonical_value": 0.002984441853589368, "absolute_tolerance": 0.51},
+    ]
+
+    result = audit_numeric_claims(claims, registry)
+
+    assert [claim["original_text"] for claim in claims] == [
+        "订单流显示资金费率转负（-0.005012677565483098）",
+        "成交量放大（2182680.532165999）",
+        "CVD 为正（0.002984441853589368），表明空头回补可能推动反弹",
+    ]
+    assert result["numeric_grounding_ratio"] == 1.0
+    assert result["failure_codes"] == []
+
+
 def test_grounding_formats_unix_evidence_timestamps_as_utc_dates():
     assert _narrative_text("该区域在 1784131200 时间戳被翻转。") == "该区域在 2026-07-15 时间戳被翻转。"
     assert _narrative_text("该区域动态有效至 1786763700。") == "该区域动态有效至 2026-08-15。"

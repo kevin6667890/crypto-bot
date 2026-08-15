@@ -6,7 +6,6 @@ import sqlite3
 import subprocess
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.request import urlopen
 
 
 def inspect(name: str) -> dict[str, object]:
@@ -31,8 +30,13 @@ def main() -> None:
         "disk": shutil.disk_usage("/var/lib/docker/volumes/crypto-bot_ai-report-data/_data")._asdict(),
     }
     try:
-        sample["public_http"] = urlopen("https://bitcoinbot.uk/", timeout=10).status
-    except Exception:
+        sample["public_http"] = int(
+            subprocess.check_output(
+                ["curl", "-4", "-sS", "-o", "/dev/null", "-w", "%{http_code}", "--max-time", "10", "https://bitcoinbot.uk/"],
+                text=True,
+            ).strip()
+        )
+    except (OSError, subprocess.SubprocessError, ValueError):
         sample["public_http"] = 0
     db = "/var/lib/docker/volumes/crypto-bot_ai-report-data/_data/ai_market_reports.db"
     connection = sqlite3.connect("file:" + db + "?mode=ro", uri=True)
@@ -56,4 +60,3 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
-

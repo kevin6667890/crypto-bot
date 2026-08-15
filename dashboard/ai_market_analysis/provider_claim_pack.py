@@ -125,7 +125,7 @@ def _section_categories(section_id: str) -> set[str]:
 def _narrative_text(value: str) -> str:
     result = str(value)
     result = re.sub(
-        r"(?<!\d)(1[5-9]\d{8}|2\d{9})(?=\s*时间戳)",
+        r"(?<!\d)(1[5-9]\d{8}|2\d{9})(?!\d)",
         lambda match: datetime.fromtimestamp(int(match.group(1)), timezone.utc).date().isoformat(),
         result,
     )
@@ -140,6 +140,17 @@ def _narrative_text(value: str) -> str:
     # same deterministic collection (for example, "两个支撑").
     result = re.sub(r"(?:[一二两三四五六七八九十]+|\d+)个(?=(?:支撑|压力|阻力|关键位))", "", result)
     return result
+
+
+def _scenario_narrative_text(value: str) -> str:
+    """Remove presentation-only counts from deterministic scenario prose."""
+    result = str(value)
+    result = re.sub(
+        r"(?:存在|包括|共有)?\s*(?:[一二两三四五六七八九十]+|\d+)个?(情景|场景|路径)",
+        r"存在\1",
+        result,
+    )
+    return re.sub(r"(?<![\d.])\d+\s*[).、]\s*", "", result)
 
 
 def _macro_limitation_text(value: str, statement: str | None) -> str:
@@ -164,6 +175,8 @@ def ground_provider_report(report: dict[str, Any], claim_pack: dict[str, Any]) -
     for original in report.get("sections", []):
         section = dict(original); categories = _section_categories(str(section.get("section_id")))
         section["body"] = _macro_limitation_text(_narrative_text(section["body"]), macro_statement)
+        if section.get("section_id") == "SCENARIOS":
+            section["body"] = _scenario_narrative_text(section["body"])
         if (not claim_pack["evidence_status"]["flow_available"]
                 and section.get("section_id") in {"MOVE_NATURE", "ORDER_FLOW"}):
             section["body"] = "当前无可审计订单流证据，无法判定驱动性质。"

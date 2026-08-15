@@ -5,7 +5,7 @@ import json
 
 import pytest
 
-from dashboard.ai_market_analysis.provider_claim_pack import _narrative_text, build_provider_claim_pack, ground_provider_report, provider_claim_pack_contract
+from dashboard.ai_market_analysis.provider_claim_pack import _narrative_text, _scenario_narrative_text, build_provider_claim_pack, ground_provider_report, provider_claim_pack_contract
 from dashboard.ai_market_analysis.report_context_compiler import compile_report_context
 from dashboard.ai_market_analysis.report_prompt_templates import compile_prompt
 from dashboard.ai_market_analysis.report_response_contract import provider_reference_allowlists
@@ -197,6 +197,12 @@ def test_grounding_splits_mixed_direction_flow_values_into_independent_claims():
 
 def test_grounding_formats_unix_evidence_timestamps_as_utc_dates():
     assert _narrative_text("该区域在 1784131200 时间戳被翻转。") == "该区域在 2026-07-15 时间戳被翻转。"
+    assert _narrative_text("该区域动态有效至 1786763700。") == "该区域动态有效至 2026-08-15。"
+
+
+def test_grounding_removes_presentation_only_scenario_counts_and_numbering():
+    value = "基于当前结构，存在三个情景：1) 看涨延续，2) 正常回测，3) 失败突破。"
+    assert _scenario_narrative_text(value) == "基于当前结构，存在情景：看涨延续，正常回测，失败突破。"
 
 
 def test_unavailable_flow_facts_render_only_auditable_limitation():

@@ -68,7 +68,7 @@ class TokenBudget:
         if inst["total"]+input_estimate+output_limit>self.instrument_total:return "INSTRUMENT_TOKEN_CAP"
         if provider!="fake":
             live=repo.daily_live_provider_usage()
-            if live["calls"]>=self.live_calls:return "LIVE_PROVIDER_REQUEST_CAP"
+            if self.live_calls > 0 and live["calls"]>=self.live_calls:return "LIVE_PROVIDER_REQUEST_CAP"
             if self.cost_status not in {"AUDITED","B3_CONTROL_LEDGER"} or self.input_price<=0 or self.output_price<=0:return "PROVIDER_PRICE_AUDIT_REQUIRED"
             if self.cost_status=="AUDITED" and Decimal(str(live["estimated_cost"]))+self.projected_cost(input_estimate,output_limit)>self.currency_cap:return "DAILY_CURRENCY_CAP"
         return None

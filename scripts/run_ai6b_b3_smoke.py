@@ -13,7 +13,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from dashboard.ai_market_analysis.deepseek_report_provider import DeepSeekAIReportProvider
-from dashboard.ai_market_analysis.live_attempt_guard import B3ControlLedger, LiveRequestIdentity
+from dashboard.ai_market_analysis.live_attempt_guard import B3ControlLedger, BudgetLimits, LiveRequestIdentity
 from dashboard.ai_market_analysis.live_provider_guard import status as kill_switch_status, trip
 from dashboard.ai_market_analysis.presentation import build_report_presentation
 from dashboard.ai_market_analysis.provider_cost import PRICE_VERSION, estimate_provider_cost, reconcile_provider_usage
@@ -65,6 +65,7 @@ class GuardedLiveProvider:
             predicted_input_tokens=int(provider_request["token_estimate"]),
             maximum_output_tokens=int(provider_request["max_output_tokens"]),
             queue_depth=len(self.repository.queued(11)),
+            limits=BudgetLimits(calls_24h=0),
         )
         if not decision["provider_call_allowed"]:
             raise ProviderError(decision["code"], retryable=False, request_body_sent=False,

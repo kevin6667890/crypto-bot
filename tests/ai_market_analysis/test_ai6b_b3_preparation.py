@@ -331,3 +331,20 @@ def test_final_closure_technical_envelope_and_paid_attempt_allowance():
     assert limits.daily_input_tokens == 500000
     assert limits.daily_output_tokens == 1000000
     assert limits.calls_24h == 24
+
+
+def test_zero_call_limit_disables_only_count_gate(tmp_path):
+    store = ledger(tmp_path)
+    limits = BudgetLimits(calls_24h=0)
+    for index in range(30):
+        request = identity(index + 1)
+        reserved = store.reserve(
+            request, model="deepseek-v4-flash", predicted_input_tokens=1,
+            maximum_output_tokens=1, queue_depth=0, limits=limits, now=NOW,
+        )
+        assert reserved["provider_call_allowed"] is True
+        store.mark_request_sent(reserved["logical_request_id"], reserved["reservation_owner"])
+        store.finish(reserved["logical_request_id"], reserved["reservation_owner"], "SUCCEEDED", {
+            "provider_input_tokens": 1, "provider_output_tokens": 1,
+            "reconciled_cost": "0",
+        })

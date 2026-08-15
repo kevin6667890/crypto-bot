@@ -243,7 +243,7 @@ class B3ControlLedger:
             )
             daily_input, daily_output = _technical_token_usage(reservation_rows, terminal_rows)
             dynamic_checks = [
-                (len(reservation_payloads) + 1 > limits.calls_24h, "DAILY_CALL_CAP"),
+                (limits.calls_24h > 0 and len(reservation_payloads) + 1 > limits.calls_24h, "DAILY_CALL_CAP"),
                 (daily_input + predicted_input_tokens > limits.daily_input_tokens, "DAILY_INPUT_TOKEN_CAP"),
                 (daily_output + maximum_output_tokens > limits.daily_output_tokens, "DAILY_OUTPUT_TOKEN_CAP"),
                 (daily_cost + requested_cost > limits.currency_cap_usd, "DAILY_CURRENCY_CAP"),

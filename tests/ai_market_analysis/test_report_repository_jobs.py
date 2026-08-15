@@ -79,6 +79,22 @@ def test_real_provider_still_enters_paid_budget(repo,monkeypatch):
     assert repo.status(item["request_id"])["status"]=="BUDGET_BLOCKED"
     assert 'DAILY_TOTAL_TOKEN_CAP' in repo.status(item["request_id"])["events"][-1]["payload_json"]
 
+
+def test_zero_live_call_limit_keeps_other_paid_provider_guards(repo, monkeypatch):
+    monkeypatch.setattr(repo, "daily_live_provider_usage", lambda: {
+        "calls": 999, "input": 0, "output": 0, "total": 0,
+        "estimated_cost": 0, "unaudited_cost_attempts": 0,
+    })
+    budget = TokenBudget()
+    budget.live_calls = 0
+    budget.cost_status = "B3_CONTROL_LEDGER"
+    budget.input_price = __import__('decimal').Decimal("0.14")
+    budget.output_price = __import__('decimal').Decimal("0.28")
+
+    assert budget.reason(repo, "BTC-USDT-SWAP", 1, 1, "deepseek") is None
+    budget.request_input = 0
+    assert budget.reason(repo, "BTC-USDT-SWAP", 1, 1, "deepseek") == "REQUEST_INPUT_TOKEN_CAP"
+
 @pytest.mark.parametrize("provider",["fake","mock","local","dry-run","dry_run","test"])
 def test_non_external_provider_classes_are_not_chargeable(provider):
     assert provider_budget_chargeable(provider) is False

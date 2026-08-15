@@ -1,0 +1,10 @@
+{
+  "schema_version": "ai6b-evidence-manifest-v1",
+  "artifacts": [
+    {
+      "path": "summary.json",
+      "sha256": "560de465b23cce937940c9212ddc18987674481e58b1051f3dbe74761d062aeb"
+    }
+  ],
+  "sensitive_findings": 0
+}

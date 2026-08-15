@@ -193,3 +193,7 @@ def test_grounding_splits_mixed_direction_flow_values_into_independent_claims():
     assert len(claims) == 3
     assert result["numeric_grounding_ratio"] == 1.0
     assert result["failure_codes"] == []
+
+
+def test_grounding_formats_unix_evidence_timestamps_as_utc_dates():
+    assert _narrative_text("该区域在 1784131200 时间戳被翻转。") == "该区域在 2026-07-15 时间戳被翻转。"

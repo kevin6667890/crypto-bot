@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+from datetime import datetime, timezone
 from typing import Any
 
 # Narrative labels intentionally contain no numeric glyphs or number words.
@@ -117,6 +118,11 @@ def _section_categories(section_id: str) -> set[str]:
 
 def _narrative_text(value: str) -> str:
     result = str(value)
+    result = re.sub(
+        r"(?<!\d)(1[5-9]\d{8}|2\d{9})(?=\s*时间戳)",
+        lambda match: datetime.fromtimestamp(int(match.group(1)), timezone.utc).date().isoformat(),
+        result,
+    )
     for token, word in _TIMEFRAME_WORDS.items():
         result = re.sub(rf"(?<![A-Za-z0-9]){re.escape(token)}(?![A-Za-z0-9])", word, result, flags=re.I)
     # Keep mixed-sign deterministic flow observations in separate audit

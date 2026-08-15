@@ -119,6 +119,10 @@ def _narrative_text(value: str) -> str:
     result = str(value)
     for token, word in _TIMEFRAME_WORDS.items():
         result = re.sub(rf"(?<![A-Za-z0-9]){re.escape(token)}(?![A-Za-z0-9])", word, result, flags=re.I)
+    # Level identity and membership are projected by the host below.  Provider
+    # prose must not introduce an independently audited numeric count for the
+    # same deterministic collection (for example, "两个支撑").
+    result = re.sub(r"(?:[一二两三四五六七八九十]+|\d+)个(?=(?:支撑|压力|阻力|关键位))", "", result)
     return result
 
 

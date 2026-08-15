@@ -160,3 +160,13 @@ def test_empty_scenario_grounding_does_not_duplicate_existing_invalidation():
     grounded = ground_provider_report(report, build_provider_claim_pack(compiled, "QUICK"))
 
     assert grounded["sections"][0]["body"].count("当前没有可审计的情景失效路径") == 1
+
+
+def test_grounding_removes_provider_level_counts_not_present_in_numeric_registry():
+    request, registry, report = _real_style_report("QUICK")
+    report["sections"][0]["body"] = "两个支撑保持有效，两个压力仍需关注。"
+
+    grounded = ground_provider_report(report, compile_report_context(registry, "QUICK")["provider_claim_pack"])
+
+    assert grounded["sections"][0]["body"] == "支撑保持有效，压力仍需关注。"
+    assert validate_report(grounded, request, registry)["status"] == "VALID"

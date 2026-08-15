@@ -143,10 +143,20 @@ def test_null_scenario_identity_is_not_coerced_into_a_reference_id():
     assert value["unknown_refs"]["scenario_refs"] == []
 
 
-def test_unknown_nonempty_scenario_identity_remains_in_diagnostics():
+def test_host_owned_scenario_identity_is_not_a_provider_reference_field():
     request, registry = setup("QUICK")
     report = json.loads(FakeAIReportProvider().generate(request).raw_text)
     report["scenarios"] = [{"scenario_id": "SCENARIO_INVENTED", "fact_refs": [], "level_refs": []}]
+
+    value = reference_diagnostics(report, request, registry)
+
+    assert value["unknown_refs"]["scenario_refs"] == []
+
+
+def test_unknown_section_scenario_reference_remains_in_diagnostics():
+    request, registry = setup("QUICK")
+    report = json.loads(FakeAIReportProvider().generate(request).raw_text)
+    report["sections"][0]["scenario_refs"] = ["SCENARIO_INVENTED"]
 
     value = reference_diagnostics(report, request, registry)
 

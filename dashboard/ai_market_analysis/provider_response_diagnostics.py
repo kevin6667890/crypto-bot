@@ -65,9 +65,9 @@ def reference_diagnostics(report: dict[str, Any], request: dict[str, Any], regis
     for item in report.get("scenarios", []):
         used["fact_refs"].update(str(value) for value in item.get("fact_refs", []))
         used["level_refs"].update(str(value) for value in item.get("level_refs", []))
-        scenario_id = item.get("scenario_id")
-        if scenario_id:
-            used["scenario_refs"].add(str(scenario_id))
+        # Top-level scenario projections are host-owned and replaced from the
+        # deterministic claim pack before canonical validation. Only explicit
+        # reference fields are provider reference-bearing inputs here.
     used["macro_refs"].update(
         str(item.get("evidence_id")) for item in report.get("citations", [])
         if isinstance(item, dict) and item.get("evidence_id")

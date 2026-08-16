@@ -61,7 +61,7 @@ def build_provider_claim_pack(compiled_context: dict[str, Any], mode: str) -> di
                 "exact_display": item.get("exact_display", str(item["canonical_value"])), "unit": item.get("unit")}
                for item in compiled_context.get("numeric_registry", [])]
     return {
-        "claim_pack_version": "ai6b-provider-claim-pack-v2", "mode": mode, "allowed_numeric_values": numeric,
+        "claim_pack_version": "ai6b-provider-claim-pack-v3", "mode": mode, "allowed_numeric_values": numeric,
         "levels": levels, "scenarios": scenarios, "macro_evidence_ids": macro_ids,
         "macro_unavailable_statement": None if macro_ids else unavailable_macro,
         "evidence_status": {"flow_available": bool(usable_flow),
@@ -115,7 +115,7 @@ def provider_claim_pack_contract(claim_pack: dict[str, Any]) -> dict[str, Any]:
 def _section_categories(section_id: str) -> set[str]:
     if section_id == "QUICK_SUMMARY": return {"TIMELINE", "TIMEFRAME", "ORDER_FLOW", "LEVEL", "SCENARIO", "WARNING", "MACRO", "POSITION"}
     if section_id == "CONCLUSION": return {"TIMELINE", "TIMEFRAME", "LEVEL", "SCENARIO", "WARNING"}
-    if section_id == "RECENT_PROCESS": return {"TIMELINE", "LEVEL"}
+    if section_id == "RECENT_PROCESS": return {"TIMELINE", "LEVEL", "ORDER_FLOW"}
     if section_id == "MOVE_NATURE": return {"TIMELINE", "TIMEFRAME", "ORDER_FLOW", "LEVEL"}
     if section_id.startswith("TF_"): return {"TIMEFRAME", "WARNING"}
     if section_id == "ORDER_FLOW": return {"ORDER_FLOW", "WARNING"}
@@ -183,6 +183,34 @@ def _macro_limitation_text(value: str, statement: str | None) -> str:
     return result
 
 
+def _dedupe_section_bodies(sections: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Remove repeated prose while deterministic projections retain all facts."""
+    from .report_claim_extractor import split_sentences
+
+    seen: set[str] = set(); output: list[dict[str, Any]] = []
+    for original in sections:
+        section = dict(original); retained: list[str] = []
+        for sentence in split_sentences(str(section.get("body") or "")):
+            key = re.sub(r"[\W_]+", "", re.sub(r"\d+(?:\.\d+)?", "#", sentence), flags=re.UNICODE)
+            canonical_flow_limitation = sentence == (
+                "\u5f53\u524d\u65e0\u53ef\u5ba1\u8ba1\u8ba2\u5355\u6d41\u8bc1\u636e\uff0c\u65e0\u6cd5\u5224\u5b9a\u9a71\u52a8\u6027\u8d28"
+            )
+            if not canonical_flow_limitation and key in seen:
+                continue
+            if not canonical_flow_limitation:
+                seen.add(key)
+            retained.append(sentence)
+        if retained:
+            section["body"] = "\u3002".join(retained) + "\u3002"
+        else:
+            section["body"] = (
+                f"{section.get('title') or section.get('section_id')}"
+                "\u4e0d\u91cd\u590d\u524d\u8ff0\u5185\u5bb9\uff0c\u786e\u5b9a\u6027\u8bc1\u636e\u89c1\u7ed3\u6784\u5316\u6295\u5f71\u3002"
+            )
+        output.append(section)
+    return output
+
+
 def ground_provider_report(report: dict[str, Any], claim_pack: dict[str, Any]) -> dict[str, Any]:
     """Attach deterministic evidence/projections while retaining provider narrative text."""
     by_category = claim_pack["fact_ids_by_category"]; level_ids = [item["level_id"] for item in claim_pack["levels"]]
@@ -216,7 +244,7 @@ def ground_provider_report(report: dict[str, Any], claim_pack: dict[str, Any]) -
         section["macro_refs"] = macro_ids if "MACRO" in categories else []
         section["position_refs"] = position_ids if "POSITION" in categories else []
         sections.append(section)
-    grounded["sections"] = sections
+    grounded["sections"] = _dedupe_section_bodies(sections)
     grounded["key_levels"] = [
         {**item, "analysis_text": _narrative_text(str(provider_levels.get(item["level_id"], {}).get("analysis_text") or item["analysis_text"]))}
         for item in claim_pack["levels"]

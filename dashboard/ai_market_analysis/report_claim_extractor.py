@@ -48,6 +48,7 @@ def _claim_type(section_id:str,text:str)->ClaimType:
     # market timeline. Resolve it before the generic phase keyword below.
     if section_id in {"ORDER_FLOW","MOVE_NATURE"} and any(term in text for term in (
         "\u8ba2\u5355\u6d41\u9636\u6bb5", "\u8ba2\u5355\u6d41\u7a97\u53e3", "\u8ba2\u5355\u6d41\u8bc1\u636e", "\u8ba2\u5355\u6d41\u8f6c\u53d8",
+        "\u8ba2\u5355\u6d41\u90e8\u5206\u53ef\u7528", "\u6df7\u5408\u6301\u4ed3",
     )):
         return ClaimType.ORDER_FLOW_ATTRIBUTION
     if section_id in {"TF_15M","TF_1H","TF_4H","TF_1D","TF_1W","SCENARIOS","KEY_LEVELS","POSITION_PLAN","MACRO_BACKGROUND"}:

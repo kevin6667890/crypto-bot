@@ -16,6 +16,7 @@ from dashboard.ai_market_analysis.report_macro_audit import audit_macro
 from dashboard.ai_market_analysis.report_numeric_audit import audit_numeric_claims
 from dashboard.ai_market_analysis.report_provider import FakeAIReportProvider
 from dashboard.ai_market_analysis.report_reference_audit import audit_references
+from dashboard.ai_market_analysis.report_repetition_audit import audit_repetition
 from dashboard.ai_market_analysis.report_scenario_audit import audit_report_scenarios
 from tests.ai_market_analysis.test_report_provider_validation import setup
 
@@ -324,3 +325,16 @@ def test_partial_flow_and_missing_macro_are_rendered_as_grounded_limitations():
     assert flow_claim["claim_type"]=="ORDER_FLOW_ATTRIBUTION"
     assert flow_claim["modality"]=="UNCERTAIN"
     assert audit_macro(claims,{"items":[]},"2099-01-01T00:00:00Z")["failure_codes"]==[]
+
+
+def test_grounding_deduplicates_repeated_numeric_templates_across_full_sections():
+    request, registry, report = _real_style_report("FULL")
+    repeated="\u6210\u4ea4\u91cf 4096.768287579999\u3002\u6210\u4ea4\u91cf\u4f53\u5236\u6536\u7f29\u3002"
+    next(item for item in report["sections"] if item["section_id"]=="RECENT_PROCESS")["body"]=repeated
+    next(item for item in report["sections"] if item["section_id"]=="ORDER_FLOW")["body"]=(
+        "\u6210\u4ea4\u91cf 1025.74710114\u3002\u6210\u4ea4\u91cf\u4f53\u5236\u6536\u7f29\u3002"
+    )
+    grounded=ground_provider_report(report,compile_report_context(registry,"FULL")["provider_claim_pack"])
+    repetition=audit_repetition(extract_claims("deduped",grounded))
+    assert repetition["exact_duplicate_count"]==0
+    assert repetition["repeated_claim_ratio"]==0

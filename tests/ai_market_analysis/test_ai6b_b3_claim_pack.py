@@ -288,3 +288,39 @@ def test_unavailable_flow_facts_render_only_auditable_limitation():
         claims = extract_claims("report_unavailable_flow", {"sections": [section]})
         assert len(claims) == 1
         assert claims[0]["claim_type"] == "LIMITATION"
+
+
+def test_real_full_mixed_volume_and_price_clause_is_split_before_numeric_audit():
+    body = _narrative_text(
+        "\u8ba2\u5355\u6d41\u6570\u636e\u663e\u793a\u5f53\u524d\u9636\u6bb5\u6210\u4ea4\u91cf\u6536\u7f29\uff0c"
+        "\u4ef7\u683c\u53d8\u52a8 434.59999999999854\uff0c"
+        "\u4ef7\u683c\u53d8\u52a8\u767e\u5206\u6bd4 0.0066715380458810015\uff0c\u4f46 CVD \u4e0e OI \u4e0d\u53ef\u7528"
+    )
+    report={"sections":[{"section_id":"ORDER_FLOW","body":body,"fact_refs":["FLOW_PHASE_03"],
+                         "level_refs":[],"scenario_refs":[],"macro_refs":[],"position_refs":[]}]}
+    claims=extract_claims("real_full",report)
+    registry=[
+        {"source_fact_id":"FLOW_PHASE_03","canonical_value":434.59999999999854,"absolute_tolerance":0.51},
+        {"source_fact_id":"FLOW_PHASE_03","canonical_value":0.0066715380458810015,"absolute_tolerance":0.00001},
+    ]
+    assert len(claims)==4
+    assert audit_numeric_claims(claims,registry)["failure_codes"]==[]
+
+
+def test_partial_flow_and_missing_macro_are_rendered_as_grounded_limitations():
+    request, registry, report = _real_style_report("FULL")
+    compiled=copy.deepcopy(request["compiled_context"])
+    for fact in compiled["facts"]:
+        if fact["category"]=="ORDER_FLOW":
+            fact["quality"]="PARTIAL"
+            if isinstance(fact.get("value"),dict):fact["value"]["quality"]="PARTIAL"
+    report["sections"][0]["body"]="\u5b8f\u89c2\u8bc1\u636e\u7f3a\u5931\uff0c\u6574\u4f53\u5224\u65ad\u57fa\u4e8e\u6709\u9650\u7684\u6280\u672f\u7ed3\u6784"
+    flow=next(item for item in report["sections"] if item["section_id"]=="ORDER_FLOW")
+    flow["body"]="\u8ba2\u5355\u6d41\u8f6c\u53d8\u663e\u793a\u89e3\u91ca\u4e3a\u6df7\u5408\u6301\u4ed3"
+    grounded=ground_provider_report(report,build_provider_claim_pack(compiled,"FULL"))
+    claims=extract_claims("grounded",grounded)
+    assert "\u672c\u6b21\u672a\u52a0\u5165\u5df2\u9a8c\u8bc1\u5b8f\u89c2\u8bc1\u636e" in grounded["sections"][0]["body"]
+    flow_claim=next(item for item in claims if item["section_id"]=="ORDER_FLOW")
+    assert flow_claim["claim_type"]=="ORDER_FLOW_ATTRIBUTION"
+    assert flow_claim["modality"]=="UNCERTAIN"
+    assert audit_macro(claims,{"items":[]},"2099-01-01T00:00:00Z")["failure_codes"]==[]

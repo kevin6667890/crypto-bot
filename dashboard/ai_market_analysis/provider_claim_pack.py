@@ -61,10 +61,14 @@ def build_provider_claim_pack(compiled_context: dict[str, Any], mode: str) -> di
                 "exact_display": item.get("exact_display", str(item["canonical_value"])), "unit": item.get("unit")}
                for item in compiled_context.get("numeric_registry", [])]
     return {
-        "claim_pack_version": "ai6b-provider-claim-pack-v1", "mode": mode, "allowed_numeric_values": numeric,
+        "claim_pack_version": "ai6b-provider-claim-pack-v2", "mode": mode, "allowed_numeric_values": numeric,
         "levels": levels, "scenarios": scenarios, "macro_evidence_ids": macro_ids,
         "macro_unavailable_statement": None if macro_ids else unavailable_macro,
-        "evidence_status": {"flow_available": bool(usable_flow), "macro_available": bool(macro_ids),
+        "evidence_status": {"flow_available": bool(usable_flow),
+                            "flow_partial": any(str(item.get("quality") or "").upper() in {"PARTIAL","GAP_AFFECTED","MISSING","UNKNOWN"}
+                                                or str((item.get("value") or {}).get("quality") or "").upper() in {"PARTIAL","GAP_AFFECTED","MISSING","UNKNOWN"}
+                                                for item in usable_flow),
+                            "macro_available": bool(macro_ids),
                             "levels_available": bool(levels), "scenarios_available": bool(scenarios)},
         "fact_ids_by_category": {category: [item["fact_id"] for item in items] for category, items in sorted(by_category.items())},
     }
@@ -111,8 +115,8 @@ def provider_claim_pack_contract(claim_pack: dict[str, Any]) -> dict[str, Any]:
 def _section_categories(section_id: str) -> set[str]:
     if section_id == "QUICK_SUMMARY": return {"TIMELINE", "TIMEFRAME", "ORDER_FLOW", "LEVEL", "SCENARIO", "WARNING", "MACRO", "POSITION"}
     if section_id == "CONCLUSION": return {"TIMELINE", "TIMEFRAME", "LEVEL", "SCENARIO", "WARNING"}
-    if section_id == "RECENT_PROCESS": return {"TIMELINE", "TIMEFRAME", "ORDER_FLOW", "LEVEL", "SCENARIO", "WARNING"}
-    if section_id == "MOVE_NATURE": return {"TIMELINE", "TIMEFRAME", "ORDER_FLOW", "LEVEL", "WARNING"}
+    if section_id == "RECENT_PROCESS": return {"TIMELINE", "LEVEL"}
+    if section_id == "MOVE_NATURE": return {"TIMELINE", "TIMEFRAME", "ORDER_FLOW", "LEVEL"}
     if section_id.startswith("TF_"): return {"TIMEFRAME", "WARNING"}
     if section_id == "ORDER_FLOW": return {"ORDER_FLOW", "WARNING"}
     if section_id == "KEY_LEVELS": return {"LEVEL"}
@@ -141,6 +145,14 @@ def _narrative_text(value: str) -> str:
         result,
         flags=re.I,
     )
+    # Keep a volume-regime direction word from being applied to sibling
+    # price-change numbers by the deterministic numeric-direction audit.
+    result = re.sub(
+        r"\uff0c(?=(?:\u4ef7\u683c\u53d8\u52a8(?:\u767e\u5206\u6bd4)?|\u4f46\s*(?:CVD|OI)))",
+        "\u3002",
+        result,
+        flags=re.I,
+    )
     # Level identity and membership are projected by the host below.  Provider
     # prose must not introduce an independently audited numeric count for the
     # same deterministic collection (for example, "两个支撑").
@@ -165,7 +177,8 @@ def _macro_limitation_text(value: str, statement: str | None) -> str:
     if not statement:
         return result
     canonical = statement.rstrip("。")
-    for wording in ("宏观证据未加入", "未加入宏观证据", "无已验证宏观证据", "宏观证据未纳入"):
+    for wording in ("宏观证据未加入", "未加入宏观证据", "无已验证宏观证据", "宏观证据未纳入",
+                    "宏观证据缺失", "缺少宏观证据"):
         result = result.replace(wording, canonical)
     return result
 
@@ -183,6 +196,12 @@ def ground_provider_report(report: dict[str, Any], claim_pack: dict[str, Any]) -
     for original in report.get("sections", []):
         section = dict(original); categories = _section_categories(str(section.get("section_id")))
         section["body"] = _macro_limitation_text(_narrative_text(section["body"]), macro_statement)
+        if claim_pack["evidence_status"].get("flow_partial") and section.get("section_id") in {"MOVE_NATURE", "ORDER_FLOW"}:
+            section["body"] = section["body"].replace(
+                "\u8ba2\u5355\u6d41\u6570\u636e\u663e\u793a", "\u90e8\u5206\u53ef\u7528\u7684\u8ba2\u5355\u6d41\u8bc1\u636e\u663e\u793a"
+            ).replace(
+                "\u8ba2\u5355\u6d41\u8f6c\u53d8\u663e\u793a", "\u90e8\u5206\u53ef\u7528\u7684\u8ba2\u5355\u6d41\u8f6c\u53d8\u8bc1\u636e\u663e\u793a"
+            )
         if section.get("section_id") == "SCENARIOS":
             section["body"] = _scenario_narrative_text(section["body"])
         if (not claim_pack["evidence_status"]["flow_available"]

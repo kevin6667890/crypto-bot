@@ -26,3 +26,11 @@ def test_waiting_for_clearer_confirmation_is_uncertain_not_confirmed():
         "fact_refs":["FLOW"],"level_refs":[],"scenario_refs":[],"macro_refs":[],"position_refs":[]}]}
     claim=extract_claims("report",report)[0]
     assert claim["modality"]=="UNCERTAIN"
+
+def test_partial_orderflow_transition_is_scoped_and_uncertain():
+    report={"sections":[{"section_id":"ORDER_FLOW",
+        "body":"\u90e8\u5206\u53ef\u7528\u7684\u8ba2\u5355\u6d41\u8f6c\u53d8\u8bc1\u636e\u663e\u793a\u89e3\u91ca\u4e3a\u6df7\u5408\u6301\u4ed3",
+        "fact_refs":["FLOW_TRANSITION_01"],"level_refs":[],"scenario_refs":[],"macro_refs":[],"position_refs":[]}]}
+    claim=extract_claims("report",report)[0]
+    assert claim["claim_type"]=="ORDER_FLOW_ATTRIBUTION"
+    assert claim["modality"]=="UNCERTAIN"

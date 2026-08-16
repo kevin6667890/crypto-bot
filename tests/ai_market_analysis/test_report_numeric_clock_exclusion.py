@@ -6,6 +6,10 @@ def test_clock_components_are_not_market_numbers():
     assert normalize_numbers("17:30:00") == []
 
 
+def test_iso_datetime_clock_components_are_not_market_numbers():
+    assert normalize_numbers("timestamp 2026-08-15T21:45:00Z") == []
+
+
 def test_clock_is_excluded_without_hiding_adjacent_market_price():
     assert [item["value"] for item in normalize_numbers(
         "2026-08-13 17:30 price 1873.78"

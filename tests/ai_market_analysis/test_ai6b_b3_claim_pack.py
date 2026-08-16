@@ -162,6 +162,29 @@ def test_empty_scenario_grounding_does_not_duplicate_existing_invalidation():
     assert grounded["sections"][0]["body"].count("当前没有可审计的情景失效路径") == 1
 
 
+def test_full_empty_scenario_grounding_puts_invalidation_in_canonical_limitations_section():
+    request, registry, report = _real_style_report("FULL")
+    request = copy.deepcopy(request)
+    registry = copy.deepcopy(registry)
+    registry["facts"] = [item for item in registry["facts"] if item["category"] != "SCENARIO"]
+    request["compiled_context"]["facts"] = [
+        item for item in request["compiled_context"]["facts"] if item["category"] != "SCENARIO"
+    ]
+    report["scenarios"] = []
+    scenarios = next(item for item in report["sections"] if item["section_id"] == "SCENARIOS")
+    limitations = next(item for item in report["sections"] if item["section_id"] == "LIMITATIONS")
+    scenarios["body"] = "场景数据不可用，当前没有可审计的情景路径。"
+    limitations["body"] = "订单流数据部分缺失。"
+
+    grounded = ground_provider_report(report, build_provider_claim_pack(request["compiled_context"], "FULL"))
+
+    grounded_scenarios = next(item for item in grounded["sections"] if item["section_id"] == "SCENARIOS")
+    grounded_limitations = next(item for item in grounded["sections"] if item["section_id"] == "LIMITATIONS")
+    assert grounded_scenarios["body"] == scenarios["body"]
+    assert grounded_limitations["body"].endswith("证据不足，当前没有可审计的情景失效路径。")
+    assert validate_report(grounded, request, registry)["status"] == "VALID"
+
+
 def test_grounding_removes_provider_level_counts_not_present_in_numeric_registry():
     request, registry, report = _real_style_report("QUICK")
     report["sections"][0]["body"] = "两个支撑保持有效，两个压力仍需关注。"

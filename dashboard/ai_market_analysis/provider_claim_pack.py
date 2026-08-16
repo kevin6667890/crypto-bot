@@ -177,6 +177,8 @@ def ground_provider_report(report: dict[str, Any], claim_pack: dict[str, Any]) -
     position_ids = list(by_category.get("POSITION", [])); provider_levels = {item.get("level_id"): item for item in report.get("key_levels", [])}
     provider_scenarios = {item.get("scenario_id"): item for item in report.get("scenarios", [])}; grounded = dict(report)
     macro_statement = claim_pack.get("macro_unavailable_statement")
+    section_ids = {str(item.get("section_id")) for item in report.get("sections", [])}
+    empty_scenario_limitation_section = "QUICK_SUMMARY" if "QUICK_SUMMARY" in section_ids else "LIMITATIONS"
     grounded["headline"] = _macro_limitation_text(_narrative_text(report["headline"]), macro_statement); sections = []
     for original in report.get("sections", []):
         section = dict(original); categories = _section_categories(str(section.get("section_id")))
@@ -186,7 +188,7 @@ def ground_provider_report(report: dict[str, Any], claim_pack: dict[str, Any]) -
         if (not claim_pack["evidence_status"]["flow_available"]
                 and section.get("section_id") in {"MOVE_NATURE", "ORDER_FLOW"}):
             section["body"] = "当前无可审计订单流证据，无法判定驱动性质。"
-        if (not scenario_ids and section.get("section_id") in {"QUICK_SUMMARY", "SCENARIOS"}
+        if (not scenario_ids and section.get("section_id") == empty_scenario_limitation_section
                 and "失效" not in section["body"] and "限制" not in section["body"]):
             section["body"] = section["body"].rstrip("。") + "。证据不足，当前没有可审计的情景失效路径。"
         section["fact_refs"] = [fact_id for category in sorted(categories) for fact_id in by_category.get(category, [])]

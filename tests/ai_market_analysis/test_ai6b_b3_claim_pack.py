@@ -264,6 +264,21 @@ def test_grounding_formats_unix_evidence_timestamps_as_utc_dates():
     assert _narrative_text("该区域动态有效至 1786763700。") == "该区域动态有效至 2026-08-15。"
 
 
+def test_grounding_canonicalizes_chinese_timeframe_aliases_without_numeric_claims():
+    value=_narrative_text(
+        "\u5728 15 \u5206\u949f\u4e0e\u5341\u4e94\u5206\u949f\u7ed3\u6784\u4e2d\uff0c\u4e00\u5c0f\u65f6\u4e0e\u56db\u5c0f\u65f6\u4ec5\u4f5c\u80cc\u666f"
+    )
+    assert not any(token in value for token in ("15 \u5206\u949f","\u5341\u4e94\u5206\u949f","\u4e00\u5c0f\u65f6","\u56db\u5c0f\u65f6"))
+    report={"sections":[{"section_id":"RECENT_PROCESS","body":value,"fact_refs":[],"level_refs":[],
+                         "scenario_refs":[],"macro_refs":[],"position_refs":[]}]}
+    assert all(not claim["quantities"] for claim in extract_claims("timeframes",report))
+    request, registry, full_report=_real_style_report("FULL")
+    timeframe=next(item for item in full_report["sections"] if item["section_id"]=="TF_15M")
+    timeframe["title"]="\u5341\u4e94\u5206\u949f\u7ea7\u522b"
+    grounded=ground_provider_report(full_report,compile_report_context(registry,"FULL")["provider_claim_pack"])
+    assert "\u5341\u4e94" not in next(item for item in grounded["sections"] if item["section_id"]=="TF_15M")["title"]
+
+
 def test_grounding_removes_presentation_only_scenario_counts_and_numbering():
     value = "基于当前结构，存在三个情景：1) 看涨延续，2) 正常回测，3) 失败突破。"
     assert _scenario_narrative_text(value) == "基于当前结构，存在情景：看涨延续，正常回测，失败突破。"

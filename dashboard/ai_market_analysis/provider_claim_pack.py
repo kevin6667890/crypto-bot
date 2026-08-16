@@ -8,7 +8,13 @@ from typing import Any
 # Narrative labels intentionally contain no numeric glyphs or number words.
 # The numeric auditor treats every number as a market claim, while exact
 # timeframe identity remains available in deterministic facts/projections.
-_TIMEFRAME_WORDS = {"15m": "超短周期", "1H": "小时周期", "4H": "中周期", "1D": "日线", "1W": "周线"}
+_TIMEFRAME_WORDS = {
+    "15m": "超短周期", "15分钟": "超短周期", "15 分钟": "超短周期",
+    "十五分钟": "超短周期", "十五 分钟": "超短周期",
+    "1H": "小时周期", "1小时": "小时周期", "1 小时": "小时周期", "一小时": "小时周期",
+    "4H": "中周期", "4小时": "中周期", "4 小时": "中周期", "四小时": "中周期",
+    "1D": "日线", "1W": "周线",
+}
 
 
 def _scenario_projection(fact: dict[str, Any], narrative: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -223,6 +229,7 @@ def ground_provider_report(report: dict[str, Any], claim_pack: dict[str, Any]) -
     grounded["headline"] = _macro_limitation_text(_narrative_text(report["headline"]), macro_statement); sections = []
     for original in report.get("sections", []):
         section = dict(original); categories = _section_categories(str(section.get("section_id")))
+        section["title"] = _narrative_text(str(section.get("title") or section.get("section_id") or ""))
         section["body"] = _macro_limitation_text(_narrative_text(section["body"]), macro_statement)
         if claim_pack["evidence_status"].get("flow_partial") and section.get("section_id") in {"MOVE_NATURE", "ORDER_FLOW"}:
             section["body"] = section["body"].replace(

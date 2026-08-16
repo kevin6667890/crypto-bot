@@ -126,6 +126,19 @@ def test_provider_prompt_contains_one_claim_pack_copy():
     assert prompt["messages"][1]["content"].count('"claim_pack_version"') == 1
 
 
+def test_provider_prompt_forbids_derived_numbers_numeric_lists_and_unregistered_indicator_periods():
+    _request, registry = setup("FULL")
+    prompt = compile_prompt(compile_report_context(registry, "FULL"), "FULL")
+    system = prompt["messages"][0]["content"]
+    contract = prompt["messages"][1]["content"]
+    assert "不得计算、舍入、插值、换算涨跌幅或价差" in system
+    assert "不得使用阿拉伯数字给段落或限制事项编号" in system
+    assert "不得提及没有对应允许值的指标周期" in system
+    assert "never derive percentages, differences, averages, ratios" in contract
+    assert "never use ASCII digits as list or paragraph numbering" in contract
+    assert "never mention an indicator period unless its exact numeric value" in contract
+
+
 def test_empty_scenario_grounding_adds_canonical_invalidation_limitation():
     request, registry, report = _real_style_report("QUICK")
     request = copy.deepcopy(request)

@@ -243,6 +243,9 @@ def provider_json_schema(metadata: dict[str, Any], compiled_context: dict[str, A
         ),
         "claim_pack_rules": [
             "copy numeric values only from provider_claim_pack.allowed_numeric_values and never round or recalculate",
+            "never derive percentages, differences, averages, ratios, or any other numeric value",
+            "never use ASCII digits as list or paragraph numbering in narrative text",
+            "never mention an indicator period unless its exact numeric value is present in allowed_numeric_values",
             "key_levels and scenarios are immutable deterministic projections; narrative may explain but never alter them",
             "when evidence_status is false, emit only the supplied limitation/status statement for that domain",
             "do not write ASCII timeframe tokens in narrative; use Chinese timeframe words to avoid numeric ambiguity",

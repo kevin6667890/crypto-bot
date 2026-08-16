@@ -12,3 +12,17 @@ def test_macro_unavailable_status_is_a_limitation_not_a_macro_claim():
     report={"sections":[{"section_id":"QUICK_SUMMARY","body":"宏观证据未纳入。","fact_refs":["MACRO_UNAVAILABLE"],"level_refs":[],"scenario_refs":[],"macro_refs":[],"position_refs":[]}]}
     claim=extract_claims("r",report)[0]
     assert claim["claim_type"]=="LIMITATION"
+
+def test_orderflow_phase_is_not_misclassified_as_market_timeline():
+    report={"sections":[{"section_id":"ORDER_FLOW",
+        "body":"\u5f53\u524d\u8ba2\u5355\u6d41\u9636\u6bb5\u4e3a CURRENT\uff0c\u8d28\u91cf\u90e8\u5206\u53ef\u7528",
+        "fact_refs":["FLOW_PHASE_03","DATA_QUALITY"],"level_refs":[],"scenario_refs":[],"macro_refs":[],"position_refs":[]}]}
+    claim=extract_claims("report",report)[0]
+    assert claim["claim_type"]=="ORDER_FLOW_ATTRIBUTION"
+
+def test_waiting_for_clearer_confirmation_is_uncertain_not_confirmed():
+    report={"sections":[{"section_id":"CONCLUSION",
+        "body":"\u5efa\u8bae\u7b49\u5f85\u66f4\u660e\u786e\u7684\u8ba2\u5355\u6d41\u786e\u8ba4",
+        "fact_refs":["FLOW"],"level_refs":[],"scenario_refs":[],"macro_refs":[],"position_refs":[]}]}
+    claim=extract_claims("report",report)[0]
+    assert claim["modality"]=="UNCERTAIN"

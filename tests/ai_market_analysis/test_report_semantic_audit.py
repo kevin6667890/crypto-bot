@@ -20,3 +20,12 @@ def test_move_nature_timeframe_sentence_is_not_classified_as_orderflow():
     report={"sections":[{"section_id":"MOVE_NATURE","body":"超短周期级别结构为 RANGE，价格位于均线混合区域。",
                          "fact_refs":[],"level_refs":[],"scenario_refs":[],"macro_refs":[],"position_refs":[]}]}
     assert extract_claims("report",report)[0]["claim_type"]=="TIMEFRAME_TREND"
+
+def test_deferred_orderflow_confirmation_does_not_promote_partial_evidence():
+    facts=[{"fact_id":"FLOW","category":"ORDER_FLOW","quality":"PARTIAL","value":{"status":"PARTIAL"}}]
+    report={"sections":[{"section_id":"CONCLUSION",
+        "body":"\u5efa\u8bae\u7b49\u5f85\u66f4\u660e\u786e\u7684\u8ba2\u5355\u6d41\u786e\u8ba4",
+        "fact_refs":["FLOW"],"level_refs":[],"scenario_refs":[],"macro_refs":[],"position_refs":[]}]}
+    claim=extract_claims("report",report)[0]
+    assert claim["modality"]=="UNCERTAIN"
+    assert audit_semantics([claim],facts)["failure_codes"]==[]

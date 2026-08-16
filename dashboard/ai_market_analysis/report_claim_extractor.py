@@ -44,6 +44,12 @@ def _claim_type(section_id:str,text:str)->ClaimType:
         return ClaimType.LIMITATION
     if any(term in text for term in ("本次未加入已验证宏观证据", "无已验证宏观证据", "宏观证据未纳入")):
         return ClaimType.LIMITATION
+    # A qualified "order-flow phase" describes order-flow evidence, not the
+    # market timeline. Resolve it before the generic phase keyword below.
+    if section_id in {"ORDER_FLOW","MOVE_NATURE"} and any(term in text for term in (
+        "\u8ba2\u5355\u6d41\u9636\u6bb5", "\u8ba2\u5355\u6d41\u7a97\u53e3", "\u8ba2\u5355\u6d41\u8bc1\u636e",
+    )):
+        return ClaimType.ORDER_FLOW_ATTRIBUTION
     if section_id in {"TF_15M","TF_1H","TF_4H","TF_1D","TF_1W","SCENARIOS","KEY_LEVELS","POSITION_PLAN","MACRO_BACKGROUND"}:
         return SECTION_TYPES[section_id]
     if section_id=="MOVE_NATURE" and any(token in text for token in ("均线","趋势","周期级别结构")):
@@ -53,6 +59,13 @@ def _claim_type(section_id:str,text:str)->ClaimType:
     return SECTION_TYPES.get(section_id,ClaimType.OTHER)
 
 def _modality(text:str)->Modality:
+    # These phrases explicitly defer a conclusion. The embedded word
+    # "clear" must not promote the sentence to CONFIRMED modality.
+    if any(term in text for term in (
+        "\u7b49\u5f85\u66f4\u660e\u786e", "\u7b49\u5f85\u8fdb\u4e00\u6b65\u786e\u8ba4",
+        "\u5c1a\u5f85\u786e\u8ba4", "\u9700\u7b49\u5f85\u786e\u8ba4",
+    )):
+        return Modality.UNCERTAIN
     for modality,terms in MODALITY_TERMS:
         if any(t in text for t in terms):return modality
     return Modality.FACT

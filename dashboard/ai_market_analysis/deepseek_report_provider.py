@@ -1,6 +1,7 @@
 """DeepSeek report provider isolated from PaperService and the legacy AI Brief."""
 from __future__ import annotations
 import json, os, time
+from http.client import IncompleteRead
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
@@ -35,6 +36,7 @@ class DeepSeekAIReportProvider:
         return value
     def generate(self, request: dict) -> ProviderResult:
         assert_live_provider_allowed()
+        on_transport=request.get("on_transport_event")
         maximum_output=int(request["max_output_tokens"])
         predicted_input=int(request.get("token_estimate",0))
         if maximum_output<=0 or predicted_input<0 or predicted_input+maximum_output>PROVIDER_CONTEXT_TOKEN_MAX:
@@ -49,6 +51,8 @@ class DeepSeekAIReportProvider:
         try:
             req=Request(self.endpoint,data=wire,headers={"Authorization":f"Bearer {self._secret()}","Content-Type":"application/json","User-Agent":f"crypto-bot/{AI_REPORT_PROVIDER_VERSION}"})
             with urlopen(req,timeout=self.timeout) as response:  # noqa: S310 - fixed HTTPS endpoint
+                if on_transport is not None: on_transport("RESPONSE_HEADERS_RECEIVED")
+                if on_transport is not None: on_transport("BODY_STREAMING")
                 raw=response.read(PROVIDER_RESPONSE_BYTES_MAX+1)
                 if len(raw)>PROVIDER_RESPONSE_BYTES_MAX: raise ProviderError("RESPONSE_TOO_LARGE",retryable=False,http_status=response.status)
                 payload=json.loads(raw.decode("utf-8")); choice=payload["choices"][0]; content=choice["message"]["content"] or ""
@@ -56,8 +60,15 @@ class DeepSeekAIReportProvider:
                 reported={key:int(usage[key]) for key in ("prompt_tokens","completion_tokens","total_tokens","prompt_cache_hit_tokens","prompt_cache_miss_tokens") if isinstance(usage.get(key),int)}
                 details=usage.get("completion_tokens_details")
                 if isinstance(details,dict):reported["completion_tokens_details"]={key:int(value) for key,value in details.items() if isinstance(value,int)}
+                if on_transport is not None: on_transport("USAGE_RECONCILED")
                 return ProviderResult(content,payload.get("id"),str(payload.get("model") or self.model),reported,
                     choice.get("finish_reason"),response.status,int((time.monotonic()-started)*1000),stable_hash(content))
+        except (IncompleteRead,ConnectionResetError):
+            # Mid-body transport cut: the Provider accepted and started streaming, so the
+            # charge is uncertain and the call must never be retried automatically.
+            raise ProviderError("PROVIDER_RESPONSE_INTERRUPTED",retryable=False,
+                                request_body_sent=True,provider_accepted=True,
+                                charge_state="UNKNOWN_CHARGE_STATE") from None
         except HTTPError as error:
             charge="FAILED_BEFORE_CHARGE" if error.code in {400,401,402,403,422} else "UNKNOWN_CHARGE_STATE"
             raise ProviderError(f"HTTP_{error.code}",retryable=False,http_status=error.code,

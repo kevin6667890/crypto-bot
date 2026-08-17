@@ -98,24 +98,36 @@ class ReportRepository:
         if status in {"COMPLETED","FAILED_FINAL","CANCELLED"}:return status
         self.event(request_id,"CANCEL_REQUESTED",{});self.event(request_id,"CANCELLED",{});return "CANCELLED"
     def save_attempt(self,a:dict[str,Any])->None:
-        cols=("attempt_id","request_id","attempt_number","provider","model","started_at","completed_at","latency_ms","http_status","input_tokens","output_tokens","total_tokens","finish_reason","raw_response_hash","parse_status","validation_status","failure_code","sanitized_error","cost_status","currency","price_schedule_version","estimated_cost","prompt_hash")
-        diagnostic=a.get("diagnostic")
+        cols=("attempt_id","request_id","attempt_number","provider","model","started_at","completed_at","latency_ms","http_status","input_tokens","output_tokens","total_tokens","finish_reason","raw_response_hash","parse_status","validation_status","failure_code","sanitized_error","cost_status","currency","price_schedule_version","estimated_cost","prompt_hash","lifecycle_state","charge_state")
         with self.connect() as c:
             c.execute(f"INSERT INTO ai_report_attempts({','.join(cols)}) VALUES({','.join('?' for _ in cols)})",tuple(a.get(k) for k in cols))
-            if diagnostic is not None:
-                payloads=(
-                    str(diagnostic["sanitized_raw_response"]),
-                    canonical_json(diagnostic["normalized_response"]) if diagnostic.get("normalized_response") is not None else None,
-                    canonical_json(diagnostic.get("parse_diagnostic") or {}),
-                    canonical_json(diagnostic.get("validation_diagnostic") or {}),
-                )
-                if sum(len(value.encode("utf-8")) for value in payloads if value is not None)>MAX_ATTEMPT_DIAGNOSTIC_BYTES:
-                    raise ValueError("ATTEMPT_DIAGNOSTIC_TOO_LARGE")
-                c.execute(
-                    "INSERT INTO ai_report_attempt_diagnostics VALUES(?,?,?,?,?,?,?,?,?)",
-                    (a["attempt_id"],a["request_id"],a.get("raw_response_hash") or "UNKNOWN",*payloads,
-                     str(diagnostic["sanitizer_version"]),utc_now()),
-                )
+
+    def update_attempt(self,attempt_id:str,values:dict[str,Any])->None:
+        """Progressively update a persisted attempt identity. Identity columns are immutable."""
+        mutable=("completed_at","latency_ms","http_status","input_tokens","output_tokens","total_tokens",
+                 "finish_reason","raw_response_hash","parse_status","validation_status","failure_code",
+                 "sanitized_error","lifecycle_state","charge_state")
+        keys=[k for k in mutable if k in values]
+        if not keys:return
+        with self.connect() as c:
+            c.execute(f"UPDATE ai_report_attempts SET {','.join(k+'=?' for k in keys)} WHERE attempt_id=?",
+                      (*[values[k] for k in keys],attempt_id))
+
+    def save_attempt_diagnostic(self,attempt_id:str,request_id:str,raw_response_hash:str,diagnostic:dict[str,Any])->None:
+        payloads=(
+            str(diagnostic["sanitized_raw_response"]),
+            canonical_json(diagnostic["normalized_response"]) if diagnostic.get("normalized_response") is not None else None,
+            canonical_json(diagnostic.get("parse_diagnostic") or {}),
+            canonical_json(diagnostic.get("validation_diagnostic") or {}),
+        )
+        if sum(len(value.encode("utf-8")) for value in payloads if value is not None)>MAX_ATTEMPT_DIAGNOSTIC_BYTES:
+            raise ValueError("ATTEMPT_DIAGNOSTIC_TOO_LARGE")
+        with self.connect() as c:
+            c.execute(
+                "INSERT INTO ai_report_attempt_diagnostics VALUES(?,?,?,?,?,?,?,?,?)",
+                (attempt_id,request_id,raw_response_hash or "UNKNOWN",*payloads,
+                 str(diagnostic["sanitizer_version"]),utc_now()),
+            )
 
     def attempt_diagnostic(self,attempt_id:str)->dict[str,Any]|None:
         with self.connect() as c:

@@ -1,6 +1,6 @@
 """Persistent independent AI report worker with bounded retries and single flight."""
 from __future__ import annotations
-import os, threading
+import json, os, threading
 from decimal import Decimal
 from datetime import datetime, timezone
 from typing import Any, Callable
@@ -30,6 +30,9 @@ from .provider_limits import (
 EVENT_TYPES=("QUEUED","RUNNING","RETRY_SCHEDULED","COMPLETED","FAILED_RETRYABLE","FAILED_FINAL","CANCEL_REQUESTED","CANCELLED","INTERRUPTED","BUDGET_BLOCKED","VALIDATION_FAILED")
 RETRY_DELAYS=(2,5,10)
 NON_CHARGEABLE_PROVIDERS=frozenset({"fake","mock","local","dry-run","dry_run","test"})
+ATTEMPT_LIFECYCLE_EVENTS=("SUBMITTED","RESPONSE_HEADERS_RECEIVED","BODY_STREAMING","USAGE_RECONCILED","SUCCEEDED","FAILED","UNKNOWN")
+CHARGE_STATES=("SUCCEEDED","FAILED_BEFORE_CHARGE","FAILED_AFTER_REQUEST_SENT","UNKNOWN_CHARGE_STATE")
+INTERRUPTED_LIVE_CALL_CODE="INTERRUPTED_LIVE_CALL_CHARGE_UNCERTAIN"
 
 
 def provider_budget_chargeable(provider:str)->bool:
@@ -86,28 +89,82 @@ class ReportWorker:
         request=queued[0]
         if request["provider"]!="fake" and self.repository.status(request["request_id"])["status"]=="INTERRUPTED":
             trip_if_armed("DUPLICATE_PROVIDER_CHARGE",evidence_id=request["request_id"])
-            self.repository.event(request["request_id"],"FAILED_FINAL",{"code":"INTERRUPTED_LIVE_CALL_CHARGE_UNCERTAIN"});return True
+            self._record_interrupted_attempt(request)
+            self.repository.event(request["request_id"],"FAILED_FINAL",{"code":INTERRUPTED_LIVE_CALL_CODE});return True
         if not self.gate.acquire(request["request_id"],request["instrument"]):return False
         try:self._run(request)
         finally:self.gate.release(request["request_id"],request["instrument"])
         return True
     def _attempt_count(self,request_id:str)->int:
         with self.repository.connect() as c:return int(c.execute("SELECT COUNT(*) FROM ai_report_attempts WHERE request_id=?",(request_id,)).fetchone()[0])
-    def _record_attempt(self,request:dict[str,Any],number:int,result:Any=None,*,parse_status:str="NOT_RUN",validation_status:str="NOT_RUN",failure_code:str|None=None,error:str|None=None,normalized_response:dict[str,Any]|None=None,parse_diagnostic:dict[str,Any]|None=None,validation_diagnostic:dict[str,Any]|None=None)->None:
+    @staticmethod
+    def _attempt_id(request_id:str,number:int)->str:
+        return f"attempt_{stable_hash([request_id,number])}"
+    def _record_attempt_start(self,request:dict[str,Any],number:int)->str:
+        """Persist paid-attempt identity at the send boundary; update progressively after."""
+        audited=self.budget.cost_status=="AUDITED" and self.budget.input_price>0 and self.budget.output_price>0
+        controlled=self.budget.cost_status=="B3_CONTROL_LEDGER"
+        attempt_id=self._attempt_id(request["request_id"],number)
+        self.repository.save_attempt({"attempt_id":attempt_id,"request_id":request["request_id"],"attempt_number":number,
+          "provider":request["provider"],"model":request["model"],"started_at":utc_now(),"completed_at":None,
+          "latency_ms":None,"http_status":None,"input_tokens":None,"output_tokens":None,"total_tokens":None,
+          "finish_reason":None,"raw_response_hash":None,"parse_status":"NOT_RUN","validation_status":"NOT_RUN",
+          "failure_code":None,"sanitized_error":None,
+          "cost_status":"B3_CONTROL_LEDGER" if controlled else ("AUDITED" if audited else "REQUIRES_RUNTIME_AUDIT"),
+          "currency":"USD" if audited or controlled else None,
+          "price_schedule_version":os.getenv("AI_REPORT_PRICE_SCHEDULE_VERSION") if audited or controlled else None,
+          "estimated_cost":None,"prompt_hash":request.get("generation_prompt_hash"),
+          "lifecycle_state":"SUBMITTED","charge_state":None})
+        return attempt_id
+    def _record_attempt(self,request:dict[str,Any],number:int,result:Any=None,*,parse_status:str="NOT_RUN",validation_status:str="NOT_RUN",failure_code:str|None=None,error:str|None=None,normalized_response:dict[str,Any]|None=None,parse_diagnostic:dict[str,Any]|None=None,validation_diagnostic:dict[str,Any]|None=None,lifecycle_state:str|None=None,charge_state:str|None=None)->None:
         usage=result.usage if result else {}
+        chargeable=provider_budget_chargeable(request["provider"])
         audited=self.budget.cost_status=="AUDITED" and self.budget.input_price>0 and self.budget.output_price>0
         controlled=self.budget.cost_status=="B3_CONTROL_LEDGER"
         exact=self.budget.projected_cost(int(usage.get("prompt_tokens",0)),int(usage.get("completion_tokens",0))) if audited else None
         # The legacy column has SQLite REAL affinity. Formal B3 therefore keeps
         # authoritative exact costs in the separate TEXT control ledger.
         estimated_cost=format(exact,"f") if exact is not None else None
-        diagnostic=None
-        if result is not None and provider_budget_chargeable(request["provider"]):
+        if lifecycle_state is None:lifecycle_state="SUCCEEDED" if not failure_code else "FAILED"
+        if charge_state is None:charge_state="SUCCEEDED" if chargeable and result is not None else None
+        attempt_id=self._attempt_id(request["request_id"],number)
+        self.repository.update_attempt(attempt_id,{"completed_at":utc_now(),"latency_ms":getattr(result,"latency_ms",None),
+          "http_status":getattr(result,"http_status",None),"input_tokens":usage.get("prompt_tokens",0),
+          "output_tokens":usage.get("completion_tokens",0),"total_tokens":usage.get("total_tokens",0),
+          "finish_reason":getattr(result,"finish_reason",None),"raw_response_hash":getattr(result,"raw_response_hash",None),
+          "parse_status":parse_status,"validation_status":validation_status,"failure_code":failure_code,
+          "sanitized_error":(error or "")[:200] or None,"lifecycle_state":lifecycle_state,"charge_state":charge_state})
+        if result is not None and chargeable:
             diagnostic={"sanitizer_version":DIAGNOSTIC_VERSION,
               "sanitized_raw_response":sanitize_provider_response(result.raw_text),
               "normalized_response":normalized_response,"parse_diagnostic":parse_diagnostic or {},
               "validation_diagnostic":validation_diagnostic or {}}
-        self.repository.save_attempt({"attempt_id":f"attempt_{stable_hash([request['request_id'],number])}","request_id":request["request_id"],"attempt_number":number,"provider":request["provider"],"model":request["model"],"started_at":utc_now(),"completed_at":utc_now(),"latency_ms":getattr(result,"latency_ms",None),"http_status":getattr(result,"http_status",None),"input_tokens":usage.get("prompt_tokens",0),"output_tokens":usage.get("completion_tokens",0),"total_tokens":usage.get("total_tokens",0),"finish_reason":getattr(result,"finish_reason",None),"raw_response_hash":getattr(result,"raw_response_hash",None),"parse_status":parse_status,"validation_status":validation_status,"failure_code":failure_code,"sanitized_error":(error or "")[:200] or None,"cost_status":"B3_CONTROL_LEDGER" if controlled else ("AUDITED" if audited else "REQUIRES_RUNTIME_AUDIT"),"currency":"USD" if audited or controlled else None,"price_schedule_version":os.getenv("AI_REPORT_PRICE_SCHEDULE_VERSION") if audited or controlled else None,"estimated_cost":estimated_cost,"prompt_hash":request.get("generation_prompt_hash"),"diagnostic":diagnostic})
+            self.repository.save_attempt_diagnostic(attempt_id,request["request_id"],
+                getattr(result,"raw_response_hash",None) or "UNKNOWN",diagnostic)
+    def _record_interrupted_attempt(self,request:dict[str,Any])->None:
+        """A live request interrupted by worker death: the paid call exists even if the
+        process died mid-response, so its attempt identity must exist with UNKNOWN charge."""
+        number=1
+        for event in self.repository.status(request["request_id"]).get("events",[]):
+            if event["event_type"]=="RUNNING":
+                payload=json.loads(event["payload_json"]) if isinstance(event["payload_json"],str) else event["payload_json"]
+                if isinstance(payload,dict) and isinstance(payload.get("attempt"),int):number=payload["attempt"]
+        attempt_id=self._attempt_id(request["request_id"],number)
+        with self.repository.connect() as c:
+            exists=c.execute("SELECT 1 FROM ai_report_attempts WHERE attempt_id=?",(attempt_id,)).fetchone() is not None
+        if exists:
+            self.repository.update_attempt(attempt_id,{"completed_at":utc_now(),"failure_code":INTERRUPTED_LIVE_CALL_CODE,
+              "sanitized_error":INTERRUPTED_LIVE_CALL_CODE,"parse_status":"NOT_RUN","validation_status":"NOT_RUN",
+              "lifecycle_state":"UNKNOWN","charge_state":"UNKNOWN_CHARGE_STATE"})
+        else:
+            self.repository.save_attempt({"attempt_id":attempt_id,"request_id":request["request_id"],"attempt_number":number,
+              "provider":request["provider"],"model":request["model"],"started_at":utc_now(),"completed_at":utc_now(),
+              "latency_ms":None,"http_status":None,"input_tokens":0,"output_tokens":0,"total_tokens":0,
+              "finish_reason":None,"raw_response_hash":None,"parse_status":"NOT_RUN","validation_status":"NOT_RUN",
+              "failure_code":INTERRUPTED_LIVE_CALL_CODE,"sanitized_error":INTERRUPTED_LIVE_CALL_CODE,
+              "cost_status":self.budget.cost_status,"currency":None,"price_schedule_version":None,"estimated_cost":None,
+              "prompt_hash":request.get("generation_prompt_hash"),"lifecycle_state":"UNKNOWN",
+              "charge_state":"UNKNOWN_CHARGE_STATE"})
     def _run(self,request:dict[str,Any])->None:
         context=self.repository.load_context(request["context_id"])
         try:snapshot=self.repository.load_registry_snapshot(registry_snapshot_id=request.get("registry_snapshot_id"))
@@ -126,9 +183,15 @@ class ReportWorker:
         prompt=compile_prompt(compiled,request["mode"],response_metadata)
         if prompt["prompt_hash"]!=snapshot["prompt_hash"]:self.repository.event(request["request_id"],"FAILED_FINAL",{"code":"REGISTRY_PROMPT_HASH_MISMATCH"});return
         provider_request={**request,"source_versions":source_versions,"compiled_context":compiled,"token_estimate":compiled["token_estimate"],"messages":prompt["messages"],"max_output_tokens":request["max_output_tokens"],"macro_items":context["macro_context"]["items"],"position_source":context["position_context"]["source"]}
+        attempt_id=self._record_attempt_start(request,number)
+        def on_transport(event:str)->None:
+            if event in ATTEMPT_LIFECYCLE_EVENTS:
+                self.repository.update_attempt(attempt_id,{"lifecycle_state":event})
+        provider_request["on_transport_event"]=on_transport
         try:result=provider.generate(provider_request)
         except ProviderError as error:
-            self._record_attempt(request,number,failure_code=error.code,error=error.code)
+            charge=error.charge_state if error.charge_state in CHARGE_STATES else "UNKNOWN_CHARGE_STATE"
+            self._record_attempt(request,number,failure_code=error.code,error=error.code,lifecycle_state="FAILED",charge_state=charge)
             if provider_retry_allowed(error) and number<3:self.repository.event(request["request_id"],"RETRY_SCHEDULED",{"delay_seconds":RETRY_DELAYS[number-1],"code":error.code})
             else:self.repository.event(request["request_id"],"FAILED_FINAL",{"code":error.code})
             return

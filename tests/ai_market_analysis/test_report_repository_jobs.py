@@ -14,7 +14,7 @@ def repo(tmp_path):
 def submit(repo,mode="FULL"):return ReportService(repo).submit(base_context(),mode=mode)
 
 def test_migration_empty_and_idempotent(tmp_path):
-    path=tmp_path/"r.db";migrate_database(path);migrate_database(path);connection=sqlite3.connect(path);assert connection.execute("select count(*) from ai_report_migrations").fetchone()[0]==5
+    path=tmp_path/"r.db";migrate_database(path);migrate_database(path);connection=sqlite3.connect(path);assert connection.execute("select count(*) from ai_report_migrations").fetchone()[0]==6
 
 def test_import_does_not_migrate(tmp_path):
     repository=ReportRepository(tmp_path/"missing.db");assert repository.schema_version() is None and not repository.path.exists()
@@ -66,7 +66,7 @@ def test_fake_tokens_are_telemetry_but_not_paid_budget(repo,monkeypatch):
 
 def test_paid_budget_classification_needs_no_history_migration(repo):
     with repo.connect() as connection:
-        assert connection.execute("SELECT COUNT(*) FROM ai_report_migrations").fetchone()[0]==5
+        assert connection.execute("SELECT COUNT(*) FROM ai_report_migrations").fetchone()[0]==6
         columns={row[1] for row in connection.execute("PRAGMA table_info(ai_report_attempts)")}
     assert "budget_chargeable" not in columns
     assert repo.daily_tokens(chargeable_only=True)=={"input":0,"output":0,"total":0}

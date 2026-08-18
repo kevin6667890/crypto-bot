@@ -1,0 +1,39 @@
+{
+  "artifacts": [
+    {
+      "path": "events.jsonl",
+      "sha256": "e478430f1fddd9ac4d0d38e260c7208b7b3a2bbe7d6937519be4155e83a1af32"
+    },
+    {
+      "path": "result.json",
+      "sha256": "319ca67c06af9252c2fa201d3bb254341d91359fd0d6d98a7c2f310c979fce22"
+    },
+    {
+      "path": "runtime-samples.jsonl",
+      "sha256": "ba8466d32a7780efeab795a1b92effc866625b0e5937352144dddcd2f16f955a"
+    },
+    {
+      "path": "supervisor-exit-code.txt",
+      "sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865"
+    },
+    {
+      "path": "rendered-config.sanitized.yml",
+      "sha256": "ada6dd654ff7a4cf84ecaa2ac3d6dc9346ee619d45a87afe5a7736e4e49342a7"
+    },
+    {
+      "path": "start.json",
+      "sha256": "2d2617ac2b5e2ed630355406021941b347f0364d0f331597fa33bb4e8123752f"
+    },
+    {
+      "path": "schema-preflight.txt",
+      "sha256": "25196aec60df11f234eb82e01eb055fbb5c7e5dfa3073dcc8d55ed4afbf25d4a"
+    },
+    {
+      "path": "failure-summary.json",
+      "sha256": "b03304a6fa3072e54f36b2c9468e7ba70e7cf4e14ff477c3517ebbee8a0d9be5"
+    }
+  ],
+  "schema_version": "ai6b-evidence-manifest-v1",
+  "sensitive_findings": 0,
+  "status": "AI6B_B4_FAILED"
+}

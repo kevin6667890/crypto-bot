@@ -5,7 +5,10 @@ from .report_semantic_registry import REFERENCE_COMPATIBILITY, SEMANTIC_REGISTRY
 from .report_numeric_normalizer import normalize_numbers
 from .versions import AI_REPORT_SEMANTIC_AUDIT_VERSION
 
-UNKNOWN_VALUES={"UNKNOWN","NOT_AVAILABLE","NOT_IMPLEMENTED","INSUFFICIENT_EVIDENCE","PARTIAL","GAP_AFFECTED","UNAVAILABLE"}
+UNKNOWN_VALUES={"UNKNOWN","NOT_AVAILABLE","NOT_IMPLEMENTED","INSUFFICIENT_EVIDENCE","PARTIAL","PARTIAL_AFTER_GAP","GAP_AFFECTED","UNAVAILABLE"}
+PARTIAL_VALUES={"PARTIAL","PARTIAL_AFTER_GAP","GAP_AFFECTED"}
+FLOW_ASSERTION_TERMS=("订单流显示","订单流数据显示","订单流证据显示","净流入","净流出","资金正在")
+PARTIAL_MARKERS=("部分观察","部分可用","部分数据","仅覆盖","无法判断","证据不足","数据不足")
 
 def _has_liquidation_evidence(value:Any)->bool:
     if not isinstance(value,dict):return False
@@ -30,6 +33,14 @@ def audit_semantics(claims:list[dict[str,Any]],facts:list[dict[str,Any]])->dict[
             and any(unavailable(f) for f in refs)
             and any(x in text for x in SEMANTIC_REGISTRY["UNKNOWN"]["forbidden_certainty"])):
             codes.append("UNKNOWN_PROMOTED_TO_FACT")
+        partial_flow_refs=[fact for fact in refs if fact.get("category")=="ORDER_FLOW" and (
+            str(fact.get("quality") or "").upper() in PARTIAL_VALUES
+            or (isinstance(fact.get("value"),dict) and str(fact["value"].get("quality") or "").upper() in PARTIAL_VALUES)
+        )]
+        if (partial_flow_refs and any(term in text for term in FLOW_ASSERTION_TERMS)
+                and (claim.get("modality") not in {"UNKNOWN","NOT_AVAILABLE","UNCERTAIN","CONDITIONAL"}
+                     or not any(marker in text for marker in PARTIAL_MARKERS))):
+            codes.append("UNKNOWN_PROMOTED_TO_FACT")
         if ("LIKELY" in flat or "likely" in flat.lower()) and any(x in text for x in SEMANTIC_REGISTRY["LIKELY"]["forbidden_certainty"]):codes.append("LIKELY_PROMOTED_TO_CONFIRMED")
         for value in ("POST_BREAKOUT_PULLBACK","SHORT_COVERING_DOMINANT","STRONG_BEAR"):
             if value in flat and any(x in text for x in SEMANTIC_REGISTRY[value]["forbidden"]):
@@ -50,5 +61,7 @@ def audit_semantics(claims:list[dict[str,Any]],facts:list[dict[str,Any]])->dict[
             numeric_supported=not mentioned or any(any(abs(value-cvd)<=1e-12 for cvd in cvd_values) for value in mentioned)
             if not cvd_values or not numeric_supported:
                 codes.append("ORDER_FLOW_SEMANTIC_NAMESPACE_MISMATCH")
+        if "订单流" in text and any(term in text for term in ("价格变化","价格变动","净正价格","净负价格")):
+            codes.append("ORDER_FLOW_SEMANTIC_NAMESPACE_MISMATCH")
         failures.extend(codes);audits.append({"version":AI_REPORT_SEMANTIC_AUDIT_VERSION,"claim_id":claim["claim_id"],"result":"FAILED" if codes else "SUPPORTED","codes":sorted(set(codes))})
     return {"version":AI_REPORT_SEMANTIC_AUDIT_VERSION,"audits":audits,"failure_codes":sorted(set(failures))}

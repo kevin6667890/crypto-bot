@@ -87,6 +87,33 @@ def test_unavailable_cvd_cannot_support_certain_net_flow():
     assert "ORDER_FLOW_SEMANTIC_NAMESPACE_MISMATCH" in audit_semantics(claims, facts)["failure_codes"]
 
 
+def test_partial_flow_observation_requires_explicit_partial_modality():
+    facts=[{"fact_id":"FLOW_PHASE_03","category":"ORDER_FLOW","quality":"PARTIAL",
+            "value":{"cvd_delta":12.0,"cvd_status":"PARTIAL","quality":"PARTIAL"}}]
+    qualified=_claim("订单流仅为部分观察，数据不足，无法判断净流方向",["FLOW_PHASE_03"])
+    promoted=_claim("订单流显示净流入 12，方向已经确认",["FLOW_PHASE_03"])
+
+    assert qualified[0]["modality"]=="UNKNOWN"
+    assert audit_semantics(qualified,facts)["failure_codes"]==[]
+    assert "UNKNOWN_PROMOTED_TO_FACT" in audit_semantics(promoted,facts)["failure_codes"]
+
+
+def test_available_valid_flow_fact_allows_factual_flow_wording():
+    facts=[{"fact_id":"FLOW_PHASE_03","category":"ORDER_FLOW","quality":"VALID",
+            "value":{"cvd_delta":12.0,"cvd_status":"AVAILABLE","quality":"VALID"}}]
+    claims=_claim("订单流数据显示净流入 12",["FLOW_PHASE_03"])
+
+    assert audit_semantics(claims,facts)["failure_codes"]==[]
+
+
+def test_price_change_wording_cannot_inherit_order_flow_namespace_without_number():
+    facts=[{"fact_id":"FLOW_PHASE_03","category":"ORDER_FLOW","quality":"VALID",
+            "value":{"price_change_pct":0.01,"cvd_delta":12.0,"cvd_status":"AVAILABLE"}}]
+    claims=_claim("订单流数据显示净正价格变化",["FLOW_PHASE_03"])
+
+    assert "ORDER_FLOW_SEMANTIC_NAMESPACE_MISMATCH" in audit_semantics(claims,facts)["failure_codes"]
+
+
 def test_frozen_failure_replay_removes_wrong_flow_claim_and_four_false_positives():
     flow_3 = {"fact_id": "FLOW_PHASE_03", "category": "ORDER_FLOW", "quality": "UNAVAILABLE",
               "value": {"price_change_pct": 0.043265219857840445, "volume": 329475.245672,

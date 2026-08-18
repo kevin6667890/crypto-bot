@@ -96,7 +96,10 @@ def test_quick_claim_pack_uses_complete_frozen_registry_after_narrative_pruning(
     pack = compiled["provider_claim_pack"]
     categories = pack["fact_ids_by_category"]
     assert categories.get("LEVEL") == [item["fact_id"] for item in registry["facts"] if item["category"] == "LEVEL"]
-    assert categories.get("ORDER_FLOW") == [item["fact_id"] for item in registry["facts"] if item["category"] == "ORDER_FLOW"]
+    assert set(categories.get("ORDER_FLOW",[])) <= {
+        item["fact_id"] for item in registry["facts"] if item["category"] == "ORDER_FLOW"
+    }
+    assert "FLOW_TRANSITION_01" not in categories.get("ORDER_FLOW",[])
     refs = provider_reference_allowlists(compiled)
     assert set(categories["LEVEL"]).issubset(refs["fact_refs"])
     assert set(categories["ORDER_FLOW"]).issubset(refs["fact_refs"])
@@ -302,7 +305,7 @@ def test_unavailable_flow_facts_render_only_auditable_limitation():
     assert pack["fact_ids_by_category"]["ORDER_FLOW"] == []
     for section_id in ("MOVE_NATURE", "ORDER_FLOW"):
         section = next(item for item in grounded["sections"] if item["section_id"] == section_id)
-        assert section["body"] == "当前无可审计订单流证据，无法判定驱动性质。"
+        assert section["body"] == "订单流数据不足，无法判断净流方向。"
         assert all(not ref.startswith("FLOW_") for ref in section["fact_refs"])
         claims = extract_claims("report_unavailable_flow", {"sections": [section]})
         assert len(claims) == 1
@@ -340,9 +343,58 @@ def test_partial_flow_and_missing_macro_are_rendered_as_grounded_limitations():
     claims=extract_claims("grounded",grounded)
     assert "\u672c\u6b21\u672a\u52a0\u5165\u5df2\u9a8c\u8bc1\u5b8f\u89c2\u8bc1\u636e" in grounded["sections"][0]["body"]
     flow_claim=next(item for item in claims if item["section_id"]=="ORDER_FLOW")
-    assert flow_claim["claim_type"]=="ORDER_FLOW_ATTRIBUTION"
-    assert flow_claim["modality"]=="UNCERTAIN"
+    assert flow_claim["original_text"]=="订单流数据不足，无法判断净流方向"
+    assert flow_claim["claim_type"]=="LIMITATION"
+    assert flow_claim["modality"]=="UNKNOWN"
     assert audit_macro(claims,{"items":[]},"2099-01-01T00:00:00Z")["failure_codes"]==[]
+
+
+def test_frozen_btc_partial_price_change_is_not_rendered_as_order_flow_fact():
+    flow={"fact_id":"FLOW_PHASE_03","category":"ORDER_FLOW","quality":"PARTIAL","value":{
+        "price_change":434.59999999999854,"price_change_pct":0.0066715380458810015,
+        "volume":1025.74710114,"cvd_delta":None,"cvd_status":"PARTIAL",
+        "oi_change":None,"oi_status":"PARTIAL","quality":"PARTIAL"}}
+    numeric=[
+        {"source_fact_id":"FLOW_PHASE_03","canonical_value":0.0066715380458810015,
+         "exact_display":"0.0066715380458810015","unit":None,"semantic_field":"price_change_pct",
+         "semantic_role":"SIGNED_DELTA","semantic_namespace":"PRICE_CHANGE"},
+    ]
+    pack=build_provider_claim_pack({"facts":[flow],"numeric_registry":numeric},"QUICK")
+    report={"headline":"BTC 快速摘要","sections":[{"section_id":"QUICK_SUMMARY","title":"快速摘要",
+        "body":"订单流数据显示净正价格变化，但数据仅覆盖至 2026-07-21T04:00:00Z，且为部分数据。",
+        "fact_refs":["FLOW_PHASE_03"],"level_refs":[],"scenario_refs":[],"macro_refs":[],"position_refs":[]}],
+        "key_levels":[],"scenarios":[],"citations":[]}
+
+    grounded=ground_provider_report(report,pack)
+
+    assert pack["evidence_status"] == {
+        "flow_available":False,"flow_partial":True,"flow_coverage_state":"PARTIAL",
+        "macro_available":False,"levels_available":False,"scenarios_available":False,
+    }
+    assert all(item["source_fact_id"]!="FLOW_PHASE_03" for item in pack["allowed_numeric_values"])
+    assert "0.0066715380458810015" in pack["suppressed_flow_numeric_values"]
+    assert grounded["sections"][0]["body"].startswith("订单流数据不足，无法判断净流方向。")
+    assert "净正价格变化" not in grounded["sections"][0]["body"]
+    assert grounded["sections"][0]["fact_refs"]==[]
+
+
+def test_unavailable_flow_suppresses_orphan_volume_funding_and_basis_claims():
+    flow={"fact_id":"FLOW_PHASE_03","category":"ORDER_FLOW","quality":"UNAVAILABLE","value":{
+        "volume":1025.74710114,"cvd_delta":None,"cvd_status":"UNAVAILABLE","quality":"UNAVAILABLE"}}
+    numeric=[{"source_fact_id":"FLOW_PHASE_03","canonical_value":1025.74710114,
+              "exact_display":"1025.74710114","unit":None,"semantic_field":"volume",
+              "semantic_role":"ABSOLUTE_VALUE","semantic_namespace":"VOLUME"}]
+    pack=build_provider_claim_pack({"facts":[flow],"numeric_registry":numeric},"QUICK")
+    report={"headline":"快速摘要","sections":[{"section_id":"QUICK_SUMMARY","title":"快速摘要",
+        "body":"成交量 1025.74710114，量能收缩。资金费率/基差不得出现极端杠杆扩张。",
+        "fact_refs":["FLOW_PHASE_03"],"level_refs":[],"scenario_refs":[],"macro_refs":[],"position_refs":[]}],
+        "key_levels":[],"scenarios":[],"citations":[]}
+
+    grounded=ground_provider_report(report,pack)
+
+    assert grounded["sections"][0]["body"].startswith("订单流数据不足，无法判断净流方向。")
+    assert "1025.74710114" not in grounded["sections"][0]["body"]
+    assert "资金费率" not in grounded["sections"][0]["body"]
 
 
 def test_grounding_deduplicates_repeated_numeric_templates_across_full_sections():

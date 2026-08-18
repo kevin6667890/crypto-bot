@@ -52,11 +52,30 @@ def _level_projection(fact: dict[str, Any], narrative: dict[str, Any] | None = N
 def build_provider_claim_pack(compiled_context: dict[str, Any], mode: str) -> dict[str, Any]:
     facts = list(compiled_context.get("facts", [])); by_category: dict[str, list[dict[str, Any]]] = {}
     for fact in facts: by_category.setdefault(str(fact.get("category")), []).append(fact)
+    all_flow = list(by_category.get("ORDER_FLOW", []))
+
+    def confirmed_flow_direction(item: dict[str, Any]) -> bool:
+        value = item.get("value") if isinstance(item.get("value"), dict) else {}
+        qualities = {str(item.get("quality") or "").upper(), str(value.get("quality") or "").upper()}
+        if qualities & {"PARTIAL", "GAP_AFFECTED", "PARTIAL_AFTER_GAP", "MISSING", "UNAVAILABLE", "UNKNOWN"}:
+            return False
+        cvd_status = str(value.get("cvd_status") or "").upper()
+        flow_status = str(value.get("net_flow_status") or value.get("flow_status") or "").upper()
+        if cvd_status in {"PARTIAL", "GAP_AFFECTED", "MISSING", "UNAVAILABLE", "UNKNOWN"}:
+            return False
+        if flow_status in {"PARTIAL", "GAP_AFFECTED", "MISSING", "UNAVAILABLE", "UNKNOWN"}:
+            return False
+        return value.get("cvd_delta") is not None or value.get("net_flow") is not None
+
     usable_flow = [
-        item for item in by_category.get("ORDER_FLOW", [])
-        if str(item.get("quality") or "").upper() != "UNAVAILABLE"
-        and str((item.get("value") or {}).get("quality") or "").upper() != "UNAVAILABLE"
+        item for item in all_flow if confirmed_flow_direction(item)
     ]
+    partial_flow_present = any(
+        str(item.get("quality") or "").upper() in {"PARTIAL", "GAP_AFFECTED", "PARTIAL_AFTER_GAP", "MISSING", "UNKNOWN"}
+        or (isinstance(item.get("value"), dict)
+            and str(item["value"].get("quality") or "").upper() in {"PARTIAL", "GAP_AFFECTED", "PARTIAL_AFTER_GAP", "MISSING", "UNKNOWN"})
+        for item in all_flow
+    )
     by_category["ORDER_FLOW"] = usable_flow
     levels = [_level_projection(item) for item in by_category.get("LEVEL", [])
               if isinstance(item.get("value"), dict) and all(key in item["value"] for key in ("level_id", "role", "state", "strength"))]
@@ -67,9 +86,12 @@ def build_provider_claim_pack(compiled_context: dict[str, Any], mode: str) -> di
     facts_by_id = {str(item["fact_id"]): item for item in facts}
     eligible_fact_ids = {str(item["fact_id"]) for items in by_category.values() for item in items}
     numeric = []
+    suppressed_flow_numeric_values = []
     for original in compiled_context.get("numeric_registry", []):
         source_fact_id = str(original["source_fact_id"])
         if source_fact_id not in eligible_fact_ids:
+            if any(str(item.get("fact_id")) == source_fact_id for item in all_flow):
+                suppressed_flow_numeric_values.append(str(original.get("exact_display", original["canonical_value"])))
             continue
         item = {"source_fact_id": source_fact_id, "canonical_value": original["canonical_value"],
                 "exact_display": original.get("exact_display", str(original["canonical_value"])),
@@ -81,13 +103,13 @@ def build_provider_claim_pack(compiled_context: dict[str, Any], mode: str) -> di
             semantic = numeric_semantics(source_fact_id, field, original.get("unit"))
         numeric.append({**item, **semantic})
     return {
-        "claim_pack_version": "ai6b-provider-claim-pack-v4", "mode": mode, "allowed_numeric_values": numeric,
+        "claim_pack_version": "ai6b-provider-claim-pack-v5", "mode": mode, "allowed_numeric_values": numeric,
+        "suppressed_flow_numeric_values": sorted(set(suppressed_flow_numeric_values)),
         "levels": levels, "scenarios": scenarios, "macro_evidence_ids": macro_ids,
         "macro_unavailable_statement": None if macro_ids else unavailable_macro,
         "evidence_status": {"flow_available": bool(usable_flow),
-                            "flow_partial": any(str(item.get("quality") or "").upper() in {"PARTIAL","GAP_AFFECTED","MISSING","UNKNOWN"}
-                                                or str((item.get("value") or {}).get("quality") or "").upper() in {"PARTIAL","GAP_AFFECTED","MISSING","UNKNOWN"}
-                                                for item in usable_flow),
+                            "flow_partial": partial_flow_present,
+                            "flow_coverage_state": "CONFIRMED" if usable_flow else ("PARTIAL" if partial_flow_present else "UNAVAILABLE"),
                             "macro_available": bool(macro_ids),
                             "levels_available": bool(levels), "scenarios_available": bool(scenarios)},
         "fact_ids_by_category": {category: [item["fact_id"] for item in items] for category, items in sorted(by_category.items())},
@@ -204,8 +226,12 @@ def _macro_limitation_text(value: str, statement: str | None) -> str:
     return result
 
 
-_FLOW_ASSERTION_TERMS = ("FLOW_PHASE_", "资金净流入", "资金净流出", "净流入", "净流出", "CVD", "OI")
-_FLOW_LIMITATION = "当前无可审计订单流证据，无法判定驱动性质"
+_FLOW_ASSERTION_TERMS = (
+    "FLOW_PHASE_", "订单流数据", "订单流证据", "订单流显示", "订单流转变",
+    "资金净流入", "资金净流出", "净流入", "净流出", "CVD", "OI",
+    "成交量", "量能", "资金费率", "Funding", "基差", "Basis", "强平", "爆仓", "Liquidation",
+)
+_FLOW_LIMITATION = "订单流数据不足，无法判断净流方向"
 
 
 def _enforce_numeric_namespaces(value: str, claim_pack: dict[str, Any]) -> str:
@@ -219,11 +245,18 @@ def _enforce_numeric_namespaces(value: str, claim_pack: dict[str, Any]) -> str:
     for sentence in split_sentences(result):
         phase_ids=set(re.findall(r"FLOW_PHASE_\d+",sentence))
         net_flow=any(term in sentence for term in ("资金净流入","资金净流出","净流入","净流出"))
+        order_flow_wording=any(term in sentence for term in ("订单流", "资金净流"))
+        price_change_wording=any(term in sentence for term in ("价格变化", "价格变动", "净正价格", "净负价格"))
         unsupported_phase=bool(phase_ids-allowed_flow_ids)
         unsupported_flow_claim=net_flow and not any(exact in sentence for exact in cvd_values)
         unavailable_flow=(not claim_pack["evidence_status"]["flow_available"]
                           and any(term in sentence for term in _FLOW_ASSERTION_TERMS))
-        replaced.append(_FLOW_LIMITATION if unsupported_phase or unsupported_flow_claim or unavailable_flow else sentence)
+        suppressed_flow_number=any(
+            re.search(rf"(?<![\d.]){re.escape(exact)}(?![\d.])",sentence)
+            for exact in claim_pack.get("suppressed_flow_numeric_values",[])
+        )
+        namespace_mismatch=order_flow_wording and price_change_wording
+        replaced.append(_FLOW_LIMITATION if unsupported_phase or unsupported_flow_claim or unavailable_flow or suppressed_flow_number or namespace_mismatch else sentence)
     result = "。".join(dict.fromkeys(replaced)) + ("。" if replaced else "")
     for item in claim_pack["allowed_numeric_values"]:
         if item.get("semantic_namespace") != "PRICE_CHANGE":
@@ -243,9 +276,7 @@ def _dedupe_section_bodies(sections: list[dict[str, Any]]) -> list[dict[str, Any
         section = dict(original); retained: list[str] = []
         for sentence in split_sentences(str(section.get("body") or "")):
             key = re.sub(r"[\W_]+", "", re.sub(r"\d+(?:\.\d+)?", "#", sentence), flags=re.UNICODE)
-            canonical_flow_limitation = sentence == (
-                "\u5f53\u524d\u65e0\u53ef\u5ba1\u8ba1\u8ba2\u5355\u6d41\u8bc1\u636e\uff0c\u65e0\u6cd5\u5224\u5b9a\u9a71\u52a8\u6027\u8d28"
-            )
+            canonical_flow_limitation = sentence == _FLOW_LIMITATION
             if not canonical_flow_limitation and key in seen:
                 continue
             if not canonical_flow_limitation:
@@ -290,7 +321,7 @@ def ground_provider_report(report: dict[str, Any], claim_pack: dict[str, Any]) -
             section["body"] = _scenario_narrative_text(section["body"])
         if (not claim_pack["evidence_status"]["flow_available"]
                 and section.get("section_id") in {"MOVE_NATURE", "ORDER_FLOW"}):
-            section["body"] = "当前无可审计订单流证据，无法判定驱动性质。"
+            section["body"] = f"{_FLOW_LIMITATION}。"
         if (not scenario_ids and section.get("section_id") == empty_scenario_limitation_section
                 and "失效" not in section["body"] and "限制" not in section["body"]):
             section["body"] = section["body"].rstrip("。") + "。证据不足，当前没有可审计的情景失效路径。"

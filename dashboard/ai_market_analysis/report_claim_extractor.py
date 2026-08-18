@@ -38,7 +38,7 @@ def _restore(text:str,protected:dict[str,str])->str:
     return text
 
 def _claim_type(section_id:str,text:str)->ClaimType:
-    if "当前无可审计订单流证据" in text:
+    if "当前无可审计订单流证据" in text or "订单流数据不足，无法判断净流方向" in text:
         return ClaimType.LIMITATION
     if "当前没有可审计的情景失效路径" in text:
         return ClaimType.LIMITATION

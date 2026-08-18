@@ -1,0 +1,44 @@
+{
+  "schema_version": "ai6b-b4-failure-evidence-v1",
+  "status": "AI6B_B4_FAILED",
+  "source_commit": "af7e57ba1f0db88342e2efc192a3d3413c922ec6",
+  "source_tree": "82f933fc611deafd6141d7bf130a45c68a2e3111",
+  "runtime_image": "sha256:3c98d55f31a2bc208c76f69cdddf96a684d219f5229ae0f23f6f454c0c1ac4c6",
+  "window": {
+    "start_utc": "2026-08-15T04:29:59Z",
+    "failed_at_utc": "2026-08-15T08:30:30Z",
+    "end_earliest_utc": "2026-08-16T04:29:59Z",
+    "qualifying_duration_seconds": 14431
+  },
+  "failure": {
+    "case": "BTC-USDT-SWAP/FULL/NONE",
+    "request_id": "request_087f937d793b00c340317b7afe34bf83be6c8d857569fb64c2cf72127ac0ce5c",
+    "attempt_id": "attempt_bb7baf1f5fea5b8ae5bd21b894b53390517eadaef43938e1a6eb805725c08281",
+    "failure_code": "EMPTY_INVALIDATION",
+    "provider_http": 200,
+    "finish_reason": "stop",
+    "parse_status": "VALID",
+    "validation_status": "FAILED",
+    "input_tokens": 13968,
+    "output_tokens": 3856,
+    "automatic_retries": 0,
+    "report_persisted": false,
+    "audit_persisted": false,
+    "presentation_persisted": false
+  },
+  "root_cause": {
+    "classification": "FULL_EMPTY_SCENARIO_INVALIDATION_GROUNDING",
+    "scenario_count": 0,
+    "provider_scenario_refs": [],
+    "detail": "The deterministic grounder placed the no-scenario invalidation fallback in SCENARIOS, while canonical FULL validation requires it in LIMITATIONS."
+  },
+  "safety": {
+    "fail_closed": true,
+    "kill_switch_tripped": true,
+    "paper_trade_count_before": 10,
+    "paper_trade_count_after": 10,
+    "paper_order_delta": 0,
+    "service_restarts": 0,
+    "sensitive_findings": 0
+  }
+}

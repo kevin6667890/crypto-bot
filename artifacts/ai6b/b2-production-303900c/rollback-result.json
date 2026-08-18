@@ -1,0 +1,37 @@
+{
+  "sequence": [
+    "SHADOW_ON",
+    "FAKE_CANARY",
+    "SHADOW_OFF"
+  ],
+  "before": {
+    "counts": {
+      "ai_market_contexts": 17,
+      "ai_report_requests": 17,
+      "ai_report_attempts": 16,
+      "ai_report_registry_snapshots": 17,
+      "ai_market_reports": 15,
+      "ai_report_audits": 15,
+      "ai_report_migrations": 4
+    },
+    "reports_identity_sha256": "d82a8286ce0da768aa6437717cf46619b41b2ccaed2e8065b489df971cea6d4f",
+    "audits_identity_sha256": "4046bbd869739ff8dd478011ce022611d28f2537095a17b5606ddc9cd78955d5",
+    "migrations_identity_sha256": "03ad41058a4008d369974ea30a92de01ba267ad3e75bd844f4867fecba78b3ca"
+  },
+  "after": {
+    "counts": {
+      "ai_market_contexts": 17,
+      "ai_report_requests": 17,
+      "ai_report_attempts": 16,
+      "ai_report_registry_snapshots": 17,
+      "ai_market_reports": 15,
+      "ai_report_audits": 15,
+      "ai_report_migrations": 4
+    },
+    "reports_identity_sha256": "d82a8286ce0da768aa6437717cf46619b41b2ccaed2e8065b489df971cea6d4f",
+    "audits_identity_sha256": "4046bbd869739ff8dd478011ce022611d28f2537095a17b5606ddc9cd78955d5",
+    "migrations_identity_sha256": "03ad41058a4008d369974ea30a92de01ba267ad3e75bd844f4867fecba78b3ca"
+  },
+  "immutable_evidence_retained": true,
+  "passed": true
+}

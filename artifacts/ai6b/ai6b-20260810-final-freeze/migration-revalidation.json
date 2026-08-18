@@ -1,0 +1,99 @@
+{
+  "atomic_batch_rollback": {
+    "expected_error": "EXPECTED_SQL_ERROR",
+    "remaining_user_table_count": 0,
+    "status": "PASS"
+  },
+  "captured_at": "2026-08-10T06:36:40.450891Z",
+  "dry_run": {
+    "applied": [
+      "ai-market-report-db-v1",
+      "ai-report-audit-db-v1",
+      "ai-report-registry-snapshot-strict-audit-v1",
+      "ai-shadow-presentation-indexes-v1"
+    ],
+    "index_count": 11,
+    "integrity_check": "ok",
+    "schema_version": "ai-market-presentation-v1",
+    "status": "PASS",
+    "table_count": 15,
+    "trigger_count": 2
+  },
+  "gate": "AI6B-B0-MIGRATIONS",
+  "hash_approval_invalidated": false,
+  "idempotence": {
+    "second_applied": [],
+    "second_skipped": [
+      "ai-market-report-db-v1",
+      "ai-report-audit-db-v1",
+      "ai-report-registry-snapshot-strict-audit-v1",
+      "ai-shadow-presentation-indexes-v1"
+    ],
+    "status": "PASS"
+  },
+  "manifest_sha256": "8e5c7d1bb9d2471893c19145548c92354bd9a2d64055b72395962c3f273ee238",
+  "migrations": [
+    {
+      "destructive": false,
+      "file": "001_ai_report_database.sql",
+      "key": "ai-market-report-db-v1",
+      "order": 1,
+      "sha256": "9c65f71a6dd14852cafb35207a329e1ef81e04c22eaa33f8c9516d64ded0f980",
+      "touches_microstructure_db": false,
+      "touches_paper_db": false
+    },
+    {
+      "destructive": false,
+      "file": "002_ai_report_audit.sql",
+      "key": "ai-report-audit-db-v1",
+      "order": 2,
+      "sha256": "20f1f5584328f61603a77fcd17476aab1d643f73f990673138bbb317a80a3830",
+      "touches_microstructure_db": false,
+      "touches_paper_db": false
+    },
+    {
+      "destructive": false,
+      "file": "003_ai_report_registry_snapshots_and_strict_audit.sql",
+      "key": "ai-report-registry-snapshot-strict-audit-v1",
+      "order": 3,
+      "sha256": "b152238b9593e6081081ea919368aed57549b4eb7a5c94f8a4e7e2e62020a378",
+      "touches_microstructure_db": false,
+      "touches_paper_db": false
+    },
+    {
+      "destructive": false,
+      "file": "004_ai_shadow_presentation_indexes.sql",
+      "key": "ai-shadow-presentation-indexes-v1",
+      "order": 4,
+      "sha256": "c411d4e2fedf9725730e615236f635c8894e2727f907c14ecb2967d9ad5f095a",
+      "touches_microstructure_db": false,
+      "touches_paper_db": false
+    }
+  ],
+  "production_migration_executed": false,
+  "query_plan": {
+    "plans": {
+      "idx_ai_contexts_watermark": "(5, 0, 62, 'SEARCH ai_market_contexts USING INDEX idx_ai_contexts_watermark (instrument=?)')",
+      "idx_ai_reports_presentation": "(5, 0, 61, 'SEARCH ai_market_reports USING INDEX idx_ai_reports_presentation (mode=? AND language=?)')",
+      "idx_ai_requests_presentation": "(5, 0, 60, 'SEARCH ai_report_requests USING INDEX idx_ai_requests_presentation (instrument=? AND mode=? AND language=?)')"
+    },
+    "status": "PASS"
+  },
+  "rollback": {
+    "integrity_check": "ok",
+    "migration_count": 1,
+    "restored_sha256": "a501293a09005c681109bcec3780125c38700d587633e33b1c3c05e38b3a452f",
+    "sentinel_context_count": 1,
+    "source_backup_sha256": "a501293a09005c681109bcec3780125c38700d587633e33b1c3c05e38b3a452f",
+    "status": "PASS"
+  },
+  "scope": "LOCAL_ISOLATED_ONLY",
+  "upgrade_path": {
+    "ai4_v1_to_current": "PASS",
+    "applied": [
+      "ai-report-audit-db-v1",
+      "ai-report-registry-snapshot-strict-audit-v1",
+      "ai-shadow-presentation-indexes-v1"
+    ]
+  }
+}

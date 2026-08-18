@@ -30,6 +30,11 @@ RESOLUTIONS = {"1m": 60_000, "5m": 300_000, "15m": 900_000, "1H": 3_600_000,
                "4H": 14_400_000, "1D": 86_400_000}
 RAW_RETENTION_MS = 90 * 86_400_000
 LIQUIDATION_RETENTION_MS = 180 * 86_400_000
+LIQUIDATION_QUERY_INDEX_NAME = "idx_liquidation_time"
+LIQUIDATION_QUERY_INDEX_SQL = (
+    f"CREATE INDEX IF NOT EXISTS {LIQUIDATION_QUERY_INDEX_NAME} "
+    "ON liquidation_observations(instrument,source_ts_ms)"
+)
 FORMAL_SAMPLE_DAYS = 90
 MINIMUM_SAMPLE_DAYS = 14
 TRADE_LIVE_WARNING_MS = 30_000
@@ -418,6 +423,7 @@ class MicrostructureStore:
                 CREATE TABLE IF NOT EXISTS liquidation_observations(
                     {OBSERVATION_COLUMNS}, side TEXT NOT NULL, size REAL NOT NULL,
                     price REAL, bankruptcy_loss REAL, reliability_note TEXT NOT NULL);
+                {LIQUIDATION_QUERY_INDEX_SQL};
                 CREATE TABLE IF NOT EXISTS cvd_aggregates(
                     instrument TEXT NOT NULL, resolution TEXT NOT NULL, bucket_ms INTEGER NOT NULL,
                     buy_notional REAL NOT NULL, sell_notional REAL NOT NULL, delta REAL NOT NULL,

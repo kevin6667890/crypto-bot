@@ -1,7 +1,7 @@
 """Context-to-claim semantic and modality protection."""
 from __future__ import annotations
 from typing import Any
-from .report_semantic_registry import SEMANTIC_REGISTRY
+from .report_semantic_registry import REFERENCE_COMPATIBILITY, SEMANTIC_REGISTRY
 from .versions import AI_REPORT_SEMANTIC_AUDIT_VERSION
 
 UNKNOWN_VALUES={"UNKNOWN","NOT_AVAILABLE","NOT_IMPLEMENTED","INSUFFICIENT_EVIDENCE","PARTIAL","GAP_AFFECTED","UNAVAILABLE"}
@@ -10,6 +10,8 @@ def audit_semantics(claims:list[dict[str,Any]],facts:list[dict[str,Any]])->dict[
     lookup={f["fact_id"]:f for f in facts};audits=[];failures=[]
     for claim in claims:
         text=claim["original_text"];refs=[lookup[r] for r in claim.get("fact_refs",[]) if r in lookup];codes=[]
+        expected_categories=REFERENCE_COMPATIBILITY.get(claim.get("claim_type"),set())
+        if expected_categories:refs=[fact for fact in refs if fact.get("category") in expected_categories]
         values=[f.get("value") for f in refs]
         flat=" ".join(str(v) for v in values)
         def unavailable(fact):
@@ -18,7 +20,10 @@ def audit_semantics(claims:list[dict[str,Any]],facts:list[dict[str,Any]])->dict[
             if isinstance(value,str):return value in UNKNOWN_VALUES
             if isinstance(value,dict):return any(str(value.get(k)) in UNKNOWN_VALUES for k in ("status","quality","cvd_status","oi_status"))
             return False
-        if any(unavailable(f) for f in refs) and any(x in text for x in SEMANTIC_REGISTRY["UNKNOWN"]["forbidden_certainty"]):codes.append("UNKNOWN_PROMOTED_TO_FACT")
+        if (claim.get("modality") not in {"UNKNOWN","NOT_AVAILABLE","UNCERTAIN","CONDITIONAL"}
+            and any(unavailable(f) for f in refs)
+            and any(x in text for x in SEMANTIC_REGISTRY["UNKNOWN"]["forbidden_certainty"])):
+            codes.append("UNKNOWN_PROMOTED_TO_FACT")
         if ("LIKELY" in flat or "likely" in flat.lower()) and any(x in text for x in SEMANTIC_REGISTRY["LIKELY"]["forbidden_certainty"]):codes.append("LIKELY_PROMOTED_TO_CONFIRMED")
         for value in ("POST_BREAKOUT_PULLBACK","SHORT_COVERING_DOMINANT","STRONG_BEAR"):
             if value in flat and any(x in text for x in SEMANTIC_REGISTRY[value]["forbidden"]):

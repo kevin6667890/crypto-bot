@@ -1,25 +1,24 @@
-# AI-6 Production Readiness Checklist
+# AI-6B Production Readiness Checklist
 
-Overall: **NOT_READY**. AI-6A evidence cannot satisfy AI-6B deployment or 24-hour acceptance.
+Overall B0 result: **AI6B_B0_READY_FOR_B1** on 2026-08-07. This is a B0 candidate/readiness result only: B1 was not entered, production migration was not run, production AI remained disabled, and no 24-hour Canary acceptance window has started.
 
-| Gate | Status | Required evidence / owner |
+| B0 gate | Status | Evidence |
 |---|---|---|
-| Database backup and restore verification | NOT_READY | DBA owner and checksum |
-| Migration 004 review and explicit approval | NOT_READY | DBA + application owner |
-| Disk capacity, pagefile and DB permissions | NOT_READY | Operations snapshot |
-| Backend/frontend flags default off | READY_FOR_CODE_REVIEW | Config diff; runtime still NOT_READY |
-| Provider secret handling | NOT_READY | Security review; never bundle |
-| Token and cost budget | NOT_READY | Approved limits and alert owner |
-| Read/write rate limits | NOT_READY | Canary load evidence |
-| Worker concurrency/retry bounds | NOT_READY | Runtime evidence |
-| Report/audit retention | NOT_READY | Approved immutable retention policy |
-| Position privacy | REQUIRES_PRIVACY_REVIEW | Privacy owner sign-off |
-| Health alerts and stop conditions | NOT_READY | On-call owner |
-| Independent rollback rehearsal | NOT_READY | Timestamped rehearsal artifact |
-| Frontend internal canary audience | NOT_READY | Access list |
-| Old AI Brief fallback | NOT_READY | AI-6B regression evidence |
-| No order path impact | NOT_READY | Diff plus runtime counts |
-| No Router/collector/aggregation impact | NOT_READY | Diff plus runtime health |
-| 24h evidence directory and manifest | NOT_READY | AI-6B acceptance owner |
+| 30-day hot retention and 31–365 archive | PASS | `capacity-revalidation.json`; retention/archive tests |
+| Database backup and isolated restore | PASS | `backup-restore-revalidation.json`; production-state backup manifest |
+| Migration governance and exact hashes | PASS | `migration-revalidation.json`; production apply remains prohibited |
+| Permissions, resource limits, secret isolation | PASS_CANDIDATE | Candidate Compose static and isolation tests; not deployed |
+| HTTP headers, query/log privacy, access topology | PASS_CANDIDATE | TLS loopback/owner SSH tunnel candidate; no production network change |
+| Approved budgets, concurrency, retry and rates | PASS | `config/ai6b_canary_policy.json`; B0 tests |
+| Frontend error budget | PASS_CANDIDATE | Frozen policy plus frontend contract/error handling tests |
+| Alerts and durable kill switch | PASS | Local/isolated trip and fail-closed tests; 60-second policy SLA |
+| NONE/PAPER privacy | APPROVED | Internal Shadow owner-only; USER_DECLARED remains not approved and disabled |
+| Runtime image drift | EXPLAINED | `runtime-image-drift.json`; immutable staging source matches running commit |
+| SOL old AI Brief | EXPECTED_INACTIVITY | `sol-legacy-classification.json`; running scheduler only selects BTC/ETH |
+| 30-minute production baseline | PASS | 1803.386 seconds, 30 samples, no failed probes or production mutations |
+| Backend/frontend regression | PASS | 1538 backend passed, 1 skipped; 147 frontend passed; build/bundle PASS |
+| Production AI writes / migrations / live calls | PASS_ZERO | DB absent, flags off, migrations 0, real DeepSeek calls 0 |
 
-Stop immediately for wrong-symbol/mode/context/registry, unaudited body display, position leak, order/Router/collector change, duplicate charge, runaway retries, budget breach, critical warning invisibility, or rollback failure.
+AI-6B acceptance artifacts and golden/evaluation fixtures are retained indefinitely. The 24-hour window thresholds are frozen but have not yet been exercised. Provider official pricing must be revalidated before B3.
+
+Stop immediately for wrong symbol/mode/context/audit/registry, unaudited body display, position leak, secret exposure, duplicate charge, budget or retry/queue runaway, hidden critical warning, order/Router/Collector/Aggregation change, database corruption, or critical disk pressure.

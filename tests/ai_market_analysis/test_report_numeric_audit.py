@@ -1,4 +1,5 @@
 from dashboard.ai_market_analysis.report_audit_service import audit_report
+from dashboard.ai_market_analysis.report_numeric_audit import audit_numeric_claims
 from .ai5_helpers import adversarial_bundle,golden_bundle
 def test_exact_chinese_direction_unit_hallucination_and_probability_gates():
     assert audit_report(golden_bundle())["scorecard"]["ratios"]["numeric_grounding"]==1
@@ -9,3 +10,11 @@ def test_unparsed_market_number_is_not_ignored():
     b=golden_bundle();next(s for s in b["report"]["sections"] if s["section_id"]=="KEY_LEVELS")["body"]+="。关键位一千九百廿五美元"
     from dashboard.ai_market_analysis.canonical import stable_hash
     b["report_hash"]=stable_hash(b["report"]);assert "UNPARSED_NUMERIC_CLAIM" in audit_report(b)["hard_failures"]
+
+def test_registry_identifier_r_is_not_a_unit_and_scenario_level_is_not_directional():
+    registry=[{"source_fact_id":"STRUCT_IMPULSE_HIGH","canonical_value":1808.2,"unit":"USDT","absolute_tolerance":.51}]
+    claim={"claim_id":"c","section_id":"RECENT_PROCESS","sentence_index":0,"claim_type":"PRICE_STRUCTURE",
+           "original_text":"STRUCT_IMPULSE_HIGH 1808.2","quantities":[{"value":1808.2,"unit":None,"original":"1808.2"}]}
+    assert audit_numeric_claims([claim],registry)["failure_codes"]==[]
+    claim={**claim,"claim_type":"SCENARIO","original_text":"pullback path 1808.2"}
+    assert audit_numeric_claims([claim],registry)["failure_codes"]==[]

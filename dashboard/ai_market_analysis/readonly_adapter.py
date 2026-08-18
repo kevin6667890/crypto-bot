@@ -9,6 +9,7 @@ from typing import Any
 from .versions import ORDERFLOW_RESOLUTIONS, SUPPORTED_INSTRUMENTS
 
 TABLES={"cvd":"cvd_aggregates","oi":"oi_aggregates","basis":"basis_aggregates"}
+MAX_ORDERFLOW_QUERY_SECONDS=366*86400
 
 
 class ReadOnlyOrderflowAdapter:
@@ -18,7 +19,7 @@ class ReadOnlyOrderflowAdapter:
     def read(self,instrument:str,start:int,end:int,resolution:str="15m") -> dict[str,list[dict[str,Any]]]:
         if instrument not in SUPPORTED_INSTRUMENTS: raise ValueError("unsupported instrument")
         if resolution not in ORDERFLOW_RESOLUTIONS: raise ValueError("unsupported resolution")
-        if end<=start or end-start>366*86400: raise ValueError("query range must be positive and bounded to 366 days")
+        if end<=start or end-start>MAX_ORDERFLOW_QUERY_SECONDS: raise ValueError("query range must be positive and bounded to 366 days")
         uri=f"file:{self.path.resolve().as_posix()}?mode=ro"
         output={}
         with sqlite3.connect(uri,uri=True) as connection:

@@ -1,0 +1,1 @@
+{"production_restore_status":"NOT_EXECUTED","result":"BACKUP_RESTORE_NOT_PROVEN","local_isolated_dry_run":{"status":"PASSED","integrity_check":"ok","table_count":15,"schema_migration_count":4,"artifact_hashes_valid":true,"temporary_copy_deleted":true},"verification_script_sha256":"7db93e318d7cccefdd630f4a0f59eb87b4c1e2d4ae4551027b54fa5bdb9a1ce3"}

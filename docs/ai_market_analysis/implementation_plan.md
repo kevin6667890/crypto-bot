@@ -36,7 +36,7 @@ All phases preserve the current Paper order, strategy router, collector and aggr
 - Input: frozen context plus explicit Paper or user-declared plan and sourced macro items.
 - Output: schema-valid QUICK/FULL/POSITION_AWARE response with citations, initially `audit_status=PENDING`.
 - Tests: source boundary, legacy Paper rows, no position assumptions, macro timestamp/source, prompt serialization, idempotent `context_id`, timeouts/retries/rate limits, structured parse failure.
-- Performance/cost: context input ≤12k tokens; QUICK output ≤900 tokens, FULL/POSITION ≤4k; generation timeout 45 s; at most one active LLM request per instrument and four globally; same context/mode/prompt/model is idempotent. Cost ceiling configured per day and per instrument; exact currency budget requires provider pricing review (`REQUIRES_RUNTIME_AUDIT`).
+- Performance/safety: context input ≤12k tokens; QUICK output hard ceiling ≤3k tokens, FULL/POSITION ≤8k; generation timeout 45 s; at most one active live-provider request per instrument and one globally; same context/mode/prompt/model is idempotent. Approved 24h technical ceilings are 10 live calls, 150k input tokens and 80k output tokens. Provider cost remains measured. Official provider pricing still requires revalidation before B3 (`REQUIRES_RUNTIME_AUDIT`).
 - DB/API: append-only tables with unique `(context_id,mode,prompt_version,model)`; no production migration until reviewed. POST report request and GET report/status endpoints.
 - Deploy/rollback: separate report worker + Paper API feature flag, shadow-only; rollback stops worker and hides route, retaining immutable audit rows.
 - Acceptance: all modes schema-valid; exact request context persisted; no duplicate call for same identity; no AI output enters order/strategy paths.
@@ -72,10 +72,10 @@ All phases preserve the current Paper order, strategy router, collector and aggr
 - Cache key: `(schema_version,instrument,decision_time,source_versions,source_watermarks,analysis_mode)`; immutable `context_id` is the content identity. Invalidate on any source watermark/version/position/macro change, never only on wall-clock TTL.
 - Compute cadence: facts may refresh once per confirmed 15m bar per instrument; live incomplete observation may refresh every 60 seconds but cannot change confirmed structure. 1H/4H/1D/1W recompute only on their close or dependency change.
 - Storage: canonical context target ≤500 KB uncompressed; request metadata ≤32 KB excluding the referenced/deduplicated context; report ≤128 KB; audit ≤32 KB. Store context once and reference by ID.
-- Retention proposal: contexts/reports/audits hot 90 days; compressed immutable archive 365 days; golden/evaluation manifests retained indefinitely. User-declared plans follow explicit privacy/deletion policy and are not embedded redundantly in every archive. Final retention requires storage/privacy review.
+- Approved retention: contexts, registry snapshots, reports and audits are hot for 30 days. Days 31–365 use an independent verified content-addressed archive. Each request identity closure is archived together; its request/context/registry/report/audit ID/hash manifest is retained indefinitely even after an eligible payload expires. AI-6B acceptance artifacts and golden/evaluation fixtures are retained indefinitely. USER_DECLARED production remains disabled.
 - No unbounded/full-table query. CVD/OI maximum online window is 30 days/50k minute rows per lane; downsampled summaries only enter the LLM.
-- Cost controls: no repeat call for identical identity, per-client API rate limit, per-instrument single flight, global concurrency four, daily token/currency circuit breaker, and explicit usage persisted per report.
-- Token budgets: deterministic context ≤12k input tokens; QUICK ≤900 output tokens; FULL/POSITION ≤4k output tokens. The LLM never receives multi-year/raw full series.
+- Cost controls: no repeat call for identical identity; approved per-admin-session rate limits; per-instrument and global single flight of one; a 10-call/100k-input/25k-output/USD-2 daily circuit breaker; and explicit usage persisted per report.
+- Token budgets: deterministic context ≤12k input tokens; QUICK ≤3k output hard ceiling; FULL/POSITION ≤8k output hard ceiling. The LLM never receives multi-year/raw full series.
 
 ## Integration procedure
 

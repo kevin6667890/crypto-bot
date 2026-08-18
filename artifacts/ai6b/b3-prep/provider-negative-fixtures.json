@@ -1,0 +1,31 @@
+{
+  "fixture_schema_version": "ai6b-b3-negative-provider-fixtures-v1",
+  "provider": "fake_stub_only",
+  "real_provider_calls": 0,
+  "fixtures": [
+    {"fixture_id":"NEG-01","fixture_type":"invalid_json","expected_failure":"INVALID_JSON"},
+    {"fixture_id":"NEG-02","fixture_type":"markdown_wrapper","expected_failure":"MARKDOWN_WRAPPER_FORBIDDEN"},
+    {"fixture_id":"NEG-03","fixture_type":"schema_missing_field","expected_failure":"SCHEMA_MISSING_FIELD"},
+    {"fixture_id":"NEG-04","fixture_type":"extra_unsupported_number","expected_failure":"UNSUPPORTED_NUMERIC_CLAIM"},
+    {"fixture_id":"NEG-05","fixture_type":"wrong_symbol","expected_failure":"WRONG_SYMBOL"},
+    {"fixture_id":"NEG-06","fixture_type":"wrong_timeframe","expected_failure":"WRONG_TIMEFRAME"},
+    {"fixture_id":"NEG-07","fixture_type":"stale_context_reference","expected_failure":"CONTEXT_MISMATCH"},
+    {"fixture_id":"NEG-08","fixture_type":"hallucinated_level","expected_failure":"UNSUPPORTED_NUMERIC_CLAIM"},
+    {"fixture_id":"NEG-09","fixture_type":"hallucinated_macro_fact","expected_failure":"REFERENCE_SUPPORT_FAILURE"},
+    {"fixture_id":"NEG-10","fixture_type":"unsupported_scenario_probability","expected_failure":"UNSUPPORTED_NUMERIC_CLAIM"},
+    {"fixture_id":"NEG-11","fixture_type":"truncated_output","expected_failure":"TRUNCATED_OUTPUT"},
+    {"fixture_id":"NEG-12","fixture_type":"timeout","expected_failure":"UNKNOWN_CHARGE_STATE"},
+    {"fixture_id":"NEG-13","fixture_type":"http_401","expected_failure":"HTTP_401"},
+    {"fixture_id":"NEG-14","fixture_type":"http_403","expected_failure":"HTTP_403"},
+    {"fixture_id":"NEG-15","fixture_type":"http_429","expected_failure":"UNKNOWN_CHARGE_STATE"},
+    {"fixture_id":"NEG-16","fixture_type":"http_500","expected_failure":"UNKNOWN_CHARGE_STATE"},
+    {"fixture_id":"NEG-17","fixture_type":"connection_reset","expected_failure":"UNKNOWN_CHARGE_STATE"},
+    {"fixture_id":"NEG-18","fixture_type":"duplicate_response","expected_failure":"DUPLICATE_RESPONSE"},
+    {"fixture_id":"NEG-19","fixture_type":"delayed_response","expected_failure":"STALE_RESPONSE"}
+  ],
+  "required_result": {
+    "audit_passed": false,
+    "presentation_body_allowed": false,
+    "automatic_retry_allowed": false
+  }
+}

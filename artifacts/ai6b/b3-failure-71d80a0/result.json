@@ -1,0 +1,69 @@
+{
+  "schema_version": "ai6b-b3-failure-evidence-v1",
+  "status": "AI6B_B3_BLOCKED",
+  "candidate": {
+    "commit": "71d80a074b3bdf2c36319035cd125c01a2a8fd9b",
+    "tree": "ed172a99437f75826cba96d8e7f1c5f8ada1d446",
+    "image": "sha256:8a75801598163ade0d9b966c912fe14e7003e22d9d1690c6d9a7c03a8c6c4fa0"
+  },
+  "official_audit": {
+    "retrieved_utc": "2026-08-14T05:04:04Z",
+    "model": "deepseek-v4-flash",
+    "thinking": "disabled",
+    "endpoint": "https://api.deepseek.com/chat/completions",
+    "pricing_usd_per_million": {
+      "input_cache_hit": "0.0028",
+      "input_cache_miss": "0.14",
+      "output": "0.28"
+    }
+  },
+  "approval_id": "AI6B-B3-USER-APPROVED-20260812",
+  "dry_run": {
+    "provider_call_attempted": false,
+    "passed": true
+  },
+  "smoke": {
+    "number": 1,
+    "instrument": "ETH-USDT-SWAP",
+    "mode": "QUICK",
+    "position_source": "NONE",
+    "request_id": "request_af4bde7302f563fe92eed3911e08de43c5ae86a691fdd9eb2535931b3b4459d2",
+    "attempt_id": "attempt_f458bbaeda5fb2a04d8c58c25e68c97276f848daa53b22622af1d00b77e8d1ae",
+    "provider_request_id": "a82d6cf7-c574-41b7-b13a-7a5dee36c71f",
+    "http_status": 200,
+    "paid_attempts": 1,
+    "automatic_retries": 0,
+    "predicted_input_tokens": 4269,
+    "predicted_output_tokens": 900,
+    "provider_input_tokens": 5118,
+    "provider_output_tokens": 900,
+    "predicted_cost_usd": "0.000849660000",
+    "reconciled_cost_usd": "0.000968520000",
+    "finish_reason": "length",
+    "parse_status": "FAILED",
+    "failure_code": "INVALID_JSON",
+    "sanitized_error": "invalid JSON at 2045",
+    "request_status": "FAILED_FINAL",
+    "report_persisted": false,
+    "audit_created": false,
+    "presentation_body_present": false,
+    "charge_state": "SUCCEEDED"
+  },
+  "hard_stop": {
+    "event": "SCHEMA_CORRUPTION",
+    "tripped_at": "2026-08-14T05:11:46Z",
+    "active": true
+  },
+  "post_failure": {
+    "remaining_smokes_executed": 0,
+    "ai_flags_enabled": false,
+    "shadow_enabled": false,
+    "live_provider_enabled": false,
+    "collector_healthy": true,
+    "collector_restart_count": 0,
+    "frontend_public_http_status": 200,
+    "paper_healthy": true,
+    "paper_order_delta": 0,
+    "b4_started": false
+  }
+}

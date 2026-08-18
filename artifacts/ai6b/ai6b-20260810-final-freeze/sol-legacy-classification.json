@@ -1,0 +1,11 @@
+{
+  "classification": "EXPECTED_INACTIVITY",
+  "legacy_ai_brief_modified": false,
+  "production_scheduler_instruments": [
+    "BTC-USDT",
+    "ETH-USDT"
+  ],
+  "scheduler_contract_source": "dashboard/paper_api.py:INSTRUMENTS",
+  "semantic_change_made": false,
+  "sol_scheduler_selected": false
+}

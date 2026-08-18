@@ -1,0 +1,2 @@
+{"at":"2026-08-07T06:33:58Z","code":"BOUNDED_DIAGNOSTIC_QUERY_TERMINATED","detail":"an unbounded exact row-count diagnostic was terminated after 56 seconds; its process was explicitly stopped; no service restart occurred","gate_stop":false}
+{"at":"2026-08-07T06:39:30Z","code":"AI6B_READINESS_BLOCKED","detail":"hard B0 readiness prerequisites remain open","gate_stop":false}

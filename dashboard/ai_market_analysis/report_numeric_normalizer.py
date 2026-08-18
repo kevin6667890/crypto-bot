@@ -10,7 +10,7 @@ CN_CHARS="零〇一二两三四五六七八九十百千万亿点"
 ARABIC_RE=re.compile(r"(?<![A-Za-z_\d])(?P<approx>约|接近|附近|超过|低于)?\s*(?P<sign>[+-]|负)?\s*(?P<num>\d[\d, ]*(?:\.\d+)?)(?P<scale>[kK万亿])?\s*(?P<unit>%|个百分点|USDT|USD|美元|枚|张|合约|倍|R|ATR)?")
 CHINESE_RE=re.compile(rf"(?P<approx>约|接近|附近|超过|低于)?(?P<prefix>百分之)?(?P<sign>负)?(?P<num>[{CN_CHARS}]+)(?P<unit>个百分点|美元|USDT|USD|枚|张|合约|倍|R)?")
 RANGE_SEP_RE=re.compile(r"\s*(?:到|至|—|–|-)\s*")
-EXCLUDED=re.compile(r"(?:\d{4}-\d{2}-\d{2}|\b(?:15m|1H|4H|1D|1W|v\d+(?:\.\d+)*|[A-Z_]+_\d+)\b|\d+\s*(?:分钟|小时|日|周))",re.I)
+EXCLUDED=re.compile(r"(?:\d{4}-\d{2}-\d{2}(?:\s*(?:至|到|~)\s*\d{2}-\d{2})?|\b(?:15m|1H|4H|1D|1W|v\d+(?:\.\d+)*|[A-Z_]+_\d+(?:/\d+)*)\b|\d+\s*(?:分钟|小时|日|周))",re.I)
 
 def chinese_to_number(token:str)->float:
     if not token or any(c not in CN_DIGITS and c not in CN_UNITS and c!="点" for c in token): raise ValueError("unparsed Chinese number")
@@ -34,14 +34,37 @@ def _unit(raw:str|None, percent:bool=False)->str|None:
     return {"美元":"USDT","USD":"USDT","USDT":"USDT","枚":"coin","张":"contracts","合约":"contracts",
             "倍":"multiple","R":"R","ATR":"ATR","个百分点":"percentage_point"}.get(raw,raw)
 
+CLOCK_RE = re.compile(r"(?<!\d)(?:[01]?\d|2[0-3]):[0-5]\d(?::[0-5]\d)?(?!\d)")
+UNICODE_TIMEFRAME_RE = re.compile(
+    r"(?:15\s*\u5206\u949f|1\s*\u5c0f\u65f6|4\s*\u5c0f\u65f6|1\s*\u65e5|1\s*\u5468|\u65e5\u7ebf|\u5468\u7ebf)",
+    re.I,
+)
+ENUMERATOR_RE = re.compile(
+    r"(?:^|[\s\u3002\uff1a\uff1b:;.!?])\d{1,2}[\uff09)]"
+    r"|(?:^|[\r\n])\s*\d{1,2}\s*(?:[.\uff0e](?=\s)|\u3001|[\uff1a:])"
+)
+SCENARIO_LABEL_RE = re.compile(r"(?:\u60c5\u666f|\u573a\u666f|scenario)\s*\d{1,2}\s*[\uff1a:]", re.I)
+VALID_UNTIL_RE = re.compile(r"(?:valid(?:\s+until)?|\u6709\u6548\u81f3)\s*\d{10}\b", re.I)
+TIMESTAMP_ASSIGNMENT_RE = re.compile(
+    r"\b(?:[A-Za-z_]+_at|timestamp|source_ts_ms)\s*=\s*\d{10,13}\b", re.I,
+)
+
 def _excluded(text:str,start:int,end:int)->bool:
-    return any(m.start()<=start and end<=m.end() for m in EXCLUDED.finditer(text))
+    return (any(m.start()<end and start<m.end() for m in EXCLUDED.finditer(text))
+            or any(m.start()<end and start<m.end() for pattern in (
+                CLOCK_RE, UNICODE_TIMEFRAME_RE, ENUMERATOR_RE, SCENARIO_LABEL_RE,
+                VALID_UNTIL_RE, TIMESTAMP_ASSIGNMENT_RE,
+            ) for m in pattern.finditer(text)))
 
 def normalize_numbers(text:str)->list[dict[str,Any]]:
     values=[]
     for pattern,kind in ((ARABIC_RE,"ARABIC"),(CHINESE_RE,"CHINESE")):
         for m in pattern.finditer(text):
-            if _excluded(text,m.start(),m.end()):continue
+            # Exclusion spans apply to the numeric token itself. ARABIC_RE may
+            # consume trailing whitespace for a following unit; using the full
+            # match would incorrectly hide a price immediately before the next
+            # line's list enumerator.
+            if _excluded(text,m.start("num"),m.end("num")):continue
             if kind=="CHINESE" and (m.group("num")=="点" or (len(m.group("num"))==1 and not any(m.groupdict().get(k) for k in ("approx","prefix","sign","unit")))):continue
             try:
                 if kind=="ARABIC":

@@ -1,0 +1,8 @@
+{
+  "failed_at_utc": "2026-08-15T08:30:30Z",
+  "failure_code": "RuntimeError:REPORT_VALIDATION_FAILED",
+  "instrument": "BTC-USDT-SWAP",
+  "mode": "FULL",
+  "position_source": "NONE",
+  "status": "AI6B_B4_FAILED"
+}

@@ -1,0 +1,14 @@
+{
+  "schema_version": "ai6b-b4-start-v1",
+  "B4_START_UTC": "2026-08-17T05:12:58Z",
+  "B4_END_EARLIEST_UTC": "2026-08-18T05:12:58Z",
+  "B4_START_EPOCH": 1786943578,
+  "B4_END_EPOCH": 1787029978,
+  "source_commit": "626b2e64956b8f5c5fdb66f1b645490e7f16b829",
+  "source_tree": "39abb62aac76e9f8189b15c5f0705dc40a0a9872",
+  "runtime_image": "sha256:2f8ead2d6a53b060fb3d08ca9364b1febb879e713e599eecf7e58de6757fbef2",
+  "prior_aborted_window": "evidence-aborted-w1",
+  "kill_switch_state_at_start": "CLEARED_BY_OWNER_DECISION_A_EXTENDED",
+  "reset_evidence": ["evidence-aborted-w1/reset-evidence.json", "evidence-aborted-w1/reset-evidence-2.json"],
+  "source_freeze": "ACTIVE"
+}

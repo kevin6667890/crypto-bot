@@ -1,0 +1,10 @@
+{
+  "schema_version": "ai6b-sensitive-scan-v1",
+  "scope": "artifacts/ai6b/b3-failure-71d80a0",
+  "private_key_pem": 0,
+  "provider_api_key": 0,
+  "bearer_credential": 0,
+  "credential_assignment": 0,
+  "total_findings": 0,
+  "passed": true
+}

@@ -1,0 +1,27 @@
+{
+  "schema_version": "ai6b-real-provider-schema-diagnostic-v1",
+  "request_id": "request_97a51a1809118390a4b93349890aad37d74e1c33059a42722310264eae0c4d85",
+  "attempt_id": "attempt_9013f4264066f4248b99c03fdabeb6aab4a43843772a0b3e0237255244dea9df",
+  "raw_response_recoverable": false,
+  "raw_response_hash": "9890f3bc3d20f41d9f67e8d6cf0c22aa45751266568be2ab8cfc4075c8c8d514",
+  "finish_reason": "stop",
+  "sanitized_error": "response fields mismatch: ['audit_status', 'citations', 'confidence', 'context_id', 'current_phase', 'direction', 'directional_bias', 'invalidation_condition', 'language', 'market_phase', 'mode', 'mod",
+  "observed_symmetric_difference_prefix": [
+    "audit_status",
+    "citations",
+    "confidence",
+    "context_id",
+    "current_phase",
+    "direction",
+    "directional_bias",
+    "invalidation_condition",
+    "language",
+    "market_phase",
+    "mode",
+    "mod"
+  ],
+  "first_schema_mismatch": "audit_status",
+  "schema_mismatch_count": "UNKNOWN_RAW_NOT_PERSISTED",
+  "schema_mismatch_count_lower_bound": 12,
+  "provider_call_required_to_recover_more": false
+}

@@ -1,0 +1,71 @@
+{
+  "schema_version": "ai6b-b4-failure-evidence-v1",
+  "status": "AI6B_B4_FAILED",
+  "source_commit": "7c300f37234b9081079f9bde354a068069c0ef6e",
+  "runtime_image": "sha256:d2f63400ec3c852f987db9ee63dc2fcabe4d30267a8ef48cd458bbf7d37f05e7",
+  "observer_commit": "4832ad7631ba271b13ffbbc5248d49bd2f88eafa",
+  "window": {
+    "start_utc": "2026-08-15T04:05:39Z",
+    "failed_at_utc": "2026-08-15T04:06:23Z",
+    "qualifying_duration_seconds": 44,
+    "completed_24h": false
+  },
+  "failed_case": {
+    "instrument": "ETH-USDT-SWAP",
+    "mode": "QUICK",
+    "position_source": "NONE",
+    "request_id": "request_54e30fb2486f2a74114be5c4dc50eda30d231e2e778cd3b5b91f471bf4f839e3",
+    "attempt_id": "attempt_fcf5670bdc660b166d555f18bd72a51f2ede532e1bd733e420f1e77aa51e6dc9",
+    "report_id": "report_52cb319a7bad259f9dabb02876ef6e8fdd5fc1af0f2ed751d0b080e73faf7008",
+    "audit_id": "audit_764897dca3aa453050ba44aa78a84d731b8da4556aaddb9aefa4c56d2be91b2a",
+    "provider_http": 200,
+    "input_tokens": 12395,
+    "output_tokens": 5620,
+    "estimated_cost_usd": "0.0033089000",
+    "finish_reason": "stop",
+    "parse": "VALID",
+    "schema_validation": "VALID",
+    "audit": "FAILED",
+    "audit_score": 90.625,
+    "promotion_eligible": false,
+    "presentation": "NOT_PRODUCED",
+    "hard_failures": [
+      "NUMERIC_DIRECTION_MISMATCH"
+    ]
+  },
+  "exact_failed_claim": {
+    "section_id": "QUICK_SUMMARY",
+    "sentence_index": 3,
+    "claim_type": "CVD",
+    "text": "订单流显示资金费率转负（-0.005012677565483098），但成交量放大（2182680.532165999），CVD 为正（0.002984441853589368），表明空头回补可能推动反弹",
+    "failed_values": [
+      -0.005012677565483098,
+      2182680.532165999,
+      0.002984441853589368
+    ],
+    "numeric_grounding_ratio": 0.625,
+    "reference_semantic_support": 1.0,
+    "level_field_coverage": 1.0,
+    "scenario_field_coverage": 1.0
+  },
+  "safety": {
+    "automatic_retry": 0,
+    "duplicate_charge": 0,
+    "paper_trade_count_before": 10,
+    "paper_trade_count_after": 10,
+    "paper_order_delta": 0,
+    "kill_switch": "TRIPPED",
+    "ai_flags_after_rollback": "OFF",
+    "shadow_after_rollback": "OFF",
+    "live_provider_after_rollback": "OFF",
+    "paper_health": "healthy",
+    "collector_health": "healthy",
+    "frontend_health": "healthy",
+    "public_frontend_http": 200,
+    "restart_counts": 0,
+    "sensitive_findings": 0
+  },
+  "b3_status": "AI6B_B3_REAL_PROVIDER_CANARY_PASSED",
+  "b4_restarted": false,
+  "final_status": "AI6B_B4_FAILED"
+}

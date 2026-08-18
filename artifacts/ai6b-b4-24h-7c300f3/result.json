@@ -1,0 +1,8 @@
+{
+  "failed_at_utc": "2026-08-15T04:06:23Z",
+  "failure_code": "RuntimeError:AUDIT_FAILED",
+  "instrument": "ETH-USDT-SWAP",
+  "mode": "QUICK",
+  "position_source": "NONE",
+  "status": "AI6B_B4_FAILED"
+}

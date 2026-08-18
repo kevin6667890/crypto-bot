@@ -1,0 +1,1 @@
+{"at":"2026-08-07T06:32:40Z","services":{"frontend":"healthy","microstructure-collector":"healthy","paper-api":"healthy"},"cpu_limits":"NOT_CONFIGURED_CURRENT_PRODUCTION","memory_limits":"NOT_CONFIGURED_CURRENT_PRODUCTION","pid_limits":"NOT_CONFIGURED_CURRENT_PRODUCTION","read_only_rootfs":false,"service_user":"root_default"}

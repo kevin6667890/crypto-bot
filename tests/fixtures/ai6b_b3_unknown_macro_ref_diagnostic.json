@@ -1,0 +1,32 @@
+{
+  "request_id": "request_c77233cdf47b1e2f409d1ae713b8b41a0e2d0df0bbf6920ac4e71be088b987b5",
+  "attempt_id": "attempt_b31a2534d4ca815a5578ac8d5d86cc077db9d69b5d6f84f4767df99f6121beea",
+  "raw_response_hash": "b0577370a5138b914c05003d79a2b738b36188fa2db2163823946c55af2ed582",
+  "parse_status": "VALID",
+  "validation_status": "FAILED",
+  "failure_code": "UNKNOWN_MACRO_REF",
+  "allowed_macro_refs": [],
+  "macro_evidence_count": 0,
+  "unknown_macro_ref_value": "UNRECOVERABLE_FROM_PERSISTED_EVIDENCE",
+  "raw_response_recoverable": false
+  ,
+  "next_attempt_exact_citation_failure": {
+    "request_id": "request_78f60350ad3d473be669a842ee769e6fabf3d84d575fb5f543d94f747bacfa2c",
+    "raw_response_hash": "0bd541ebfbf1dd331a6518839f5966298dbfeebb32c06050d113a50ea905c275",
+    "allowed_macro_refs": [],
+    "section_macro_refs": [],
+    "citation_evidence_ids": [
+      "TIMELINE_CURRENT_PHASE",
+      "TF15_SUMMARY",
+      "TF4H_SUMMARY",
+      "SCENARIO_02",
+      "STRUCT_BREAKOUT_BOUNDARY",
+      "DATA_QUALITY",
+      "DATA_WARNING_01",
+      "DATA_WARNING_02",
+      "DATA_WARNING_03",
+      "POSITION_SOURCE"
+    ],
+    "failure_code": "UNKNOWN_MACRO_REF"
+  }
+}

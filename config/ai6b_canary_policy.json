@@ -1,0 +1,73 @@
+{
+  "policy_version": "ai6b-canary-policy-v1",
+  "approved_by": "project_owner",
+  "approval_recorded_at": "2026-08-07T06:01:30Z",
+  "audience": ["project_owner"],
+  "budget": {
+    "live_provider_requests_per_24h": 15,
+    "global_live_provider_concurrency": 1,
+    "per_instrument_concurrency": 1,
+    "queue_max": 10,
+    "per_request_input_tokens": 500000,
+    "quick_output_tokens": 200000,
+    "full_output_tokens": 200000,
+    "position_output_tokens": 200000,
+    "daily_input_tokens": 500000,
+    "daily_output_tokens": 1000000,
+    "daily_total_tokens": 1500000,
+    "daily_currency_cap_usd": 2.0,
+    "cost_status": "REQUIRES_RUNTIME_AUDIT",
+    "on_any_limit": "BLOCK_NEW_LIVE_PROVIDER_CALLS"
+  },
+  "retention": {
+    "context_hot_days": 30,
+    "registry_hot_days": 30,
+    "report_hot_days": 30,
+    "audit_hot_days": 30,
+    "archive_min_day": 31,
+    "archive_max_day": 365,
+    "archive_backend": "INDEPENDENT_CONTENT_ADDRESSED_DIRECTORY",
+    "external_archive_status": "NOT_CONNECTED",
+    "on_local_capacity_limit": "BLOCK_NEW_LIVE_PROVIDER_CALLS",
+    "golden_evaluation": "INDEFINITE",
+    "ai6b_acceptance_evidence": "INDEFINITE",
+    "user_declared_production_canary": "DISABLED"
+  },
+  "workers": {
+    "report_concurrency": 1,
+    "audit_concurrency": 1,
+    "provider_retry_max": 3,
+    "provider_retryable": ["CONNECTION_ERROR", "TIMEOUT", "HTTP_429", "HTTP_5XX"],
+    "provider_non_retryable": ["SCHEMA_FAILURE", "AUDIT_FAILURE", "NUMERIC_HALLUCINATION", "REFERENCE_FAILURE", "HTTP_4XX_BUSINESS"]
+  },
+  "rate_limits_per_admin_session": {
+    "presentation_read_per_minute": 10,
+    "position_detail_per_minute": 5,
+    "report_generation_per_minute": 2,
+    "audit_trigger_per_minute": 5
+  },
+  "frontend_error_budget_24h": {
+    "critical_or_uncaught_js": 0,
+    "xss_authorization_cross_instrument": 0,
+    "presentation_contract_errors": 0,
+    "recoverable_network_error_rate_max_exclusive": 0.01,
+    "persistent_401": "STOP_SESSION_NO_RETRY",
+    "persistent_429": "STOP_POLL_AND_BACK_OFF",
+    "audited_body_selection_mismatch": "HARD_STOP",
+    "frozen_after_window_start": true
+  },
+  "privacy": {
+    "status": "APPROVED_FOR_NONE_AND_PAPER_INTERNAL_SHADOW",
+    "audience": ["project_owner"],
+    "allowed_position_sources": ["NONE", "PAPER"],
+    "user_declared": "NOT_APPROVED"
+  },
+  "access_topology": {
+    "audience": "PROJECT_OWNER_ONLY",
+    "candidate_listener": "127.0.0.1:8443",
+    "transport": "TLS_OVER_OWNER_SSH_TUNNEL",
+    "admin_token_transport": "AUTHORIZATION_HEADER_ONLY_NEVER_URL",
+    "production_network_change_in_B0": false
+  },
+  "provider_price_requirement": "OFFICIAL_DOCUMENT_REVALIDATION_REQUIRED_BEFORE_B3"
+}

@@ -1,0 +1,13 @@
+FROM python:3.11-slim
+
+RUN groupadd --gid 10001 crypto-bot \
+    && useradd --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin crypto-bot
+WORKDIR /app
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+COPY --chown=10001:10001 . .
+RUN mkdir -p /var/lib/paper /var/lib/microstructure /var/lib/ai-report \
+    && chown -R 10001:10001 /var/lib/paper /var/lib/microstructure /var/lib/ai-report
+USER 10001:10001
+ENV HOME=/tmp PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
+CMD ["python", "ultimate_bot.py"]

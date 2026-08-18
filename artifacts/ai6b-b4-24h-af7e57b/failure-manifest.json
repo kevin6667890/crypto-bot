@@ -1,0 +1,14 @@
+{
+  "schema_version": "ai6b-evidence-manifest-v1",
+  "status": "AI6B_B4_FAILED",
+  "artifacts": [
+    {"path": "events.jsonl", "sha256": "3afb014ae39ffb7032bf5b43e95dd0a9a29dd6509d4df04296483afaaf16144b"},
+    {"path": "failure-summary.json", "sha256": "551fc89dce8e2620d326295af63ccebecb79c0fa6ab122ea607e1dc505107693"},
+    {"path": "rendered-config.sanitized.yml", "sha256": "21e494dbc9070001d5522f54d4a63a451e5d642335c520e0d65233b19b463795"},
+    {"path": "result.json", "sha256": "6a5cac08ed1d9758d7247c41241dfaa76afc72a48d5af8a967eda0fa626fa3c7"},
+    {"path": "runtime-samples.jsonl", "sha256": "c683e4d0621c247ddc0995ca81fedac81c479cc365c7a36d62323e51d9238e78"},
+    {"path": "start.json", "sha256": "1c722a6b0d53704b51558ec8cb2a48ab2b3d19c3705ccf11affa3a2decf786b6"},
+    {"path": "supervisor-exit-code.txt", "sha256": "4355a46b19d348dc2f57c046f8ef63d4538ebb936000f3c9ee954a27460dd865"}
+  ],
+  "sensitive_findings": 0
+}

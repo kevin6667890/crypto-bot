@@ -5,6 +5,14 @@ from .report_semantic_registry import REFERENCE_COMPATIBILITY
 from .versions import AI_REPORT_REFERENCE_AUDIT_VERSION
 
 NON_FACTUAL={"UNCERTAINTY","LIMITATION","SAFETY"}
+TIMEFRAME_ALIASES={
+    "15m":"15m","1h":"1H","4h":"4H","1d":"1D","1w":"1W",
+    "15分钟":"15m","1小时":"1H","4小时":"4H","日线":"1D","周线":"1W",
+}
+
+def _canonical_timeframe(value:str|None)->str|None:
+    if value is None:return None
+    return TIMEFRAME_ALIASES.get(value.lower(),value)
 
 def _timeframe_for_fact(fact_id:str)->str|None:
     return next((tf for prefix,tf in (("TF15_","15m"),("TF1H_","1H"),("TF4H_","4H"),("TF1D_","1D"),("TF1W_","1W")) if fact_id.startswith(prefix)),None)
@@ -24,8 +32,9 @@ def audit_references(claims:list[dict[str,Any]],registry:dict[str,Any])->dict[st
         elif is_factual and not refs:code="UNSUPPORTED_CLAIM";reason="factual claim has no reference"
         elif is_factual and expected and not categories.intersection(expected):code="REFERENCE_NOT_SUPPORTING_CLAIM";reason=f"expected {sorted(expected)}, got {sorted(categories)}"
         else:
-            mentioned=set(claim.get("timeframe_mentions",[]));mapped={_timeframe_for_fact(r) for r in refs}-{None}
-            if mentioned and mapped and not any(m in mapped or {"15分钟":"15m","1小时":"1H","4小时":"4H","日线":"1D","周线":"1W"}.get(m) in mapped for m in mentioned):
+            mentioned={_canonical_timeframe(value) for value in claim.get("timeframe_mentions",[])}-{None}
+            mapped={_canonical_timeframe(_timeframe_for_fact(ref)) for ref in refs}-{None}
+            if mentioned and mapped and not mentioned.intersection(mapped):
                 code="TIMEFRAME_MISMATCH";reason=f"claim {sorted(mentioned)} refs {sorted(mapped)}"
             elif claim.get("instrument_mentions") and any(registry["instrument"].split("-")[0] not in x for x in claim["instrument_mentions"]):
                 code="INSTRUMENT_MISMATCH";reason="claim instrument differs from frozen context"

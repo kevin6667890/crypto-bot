@@ -1,0 +1,30 @@
+{
+  "captured_at": "2026-08-10T07:16:41.272215Z",
+  "gates": {
+    "alerts_kill_switch": "PASS",
+    "approved_budgets": "PASS",
+    "approved_concurrency": "PASS",
+    "approved_frontend_error_budget": "PASS",
+    "approved_rate_limits": "PASS",
+    "approved_retry": "PASS",
+    "backup_restore": "PASS",
+    "capacity": "PASS",
+    "capacity_ram": "CAPACITY_RAM_PASS",
+    "http_privacy_candidate": "PASS",
+    "limited_none_paper_privacy": "PASS",
+    "migration_dry_run": "PASS",
+    "migration_governance": "PASS",
+    "permissions_candidate": "PASS",
+    "production_ai_writes": "ZERO",
+    "production_baseline_30m": "PASS",
+    "production_flags": "ALL_OFF",
+    "production_migration": "NOT_EXECUTED",
+    "real_deepseek_calls": "ZERO",
+    "resource_limits_candidate": "PASS",
+    "retention_implementation": "PASS",
+    "runtime_image_drift": "EXPLAINED",
+    "secret_isolation_candidate": "PASS",
+    "sol_legacy": "EXPECTED_INACTIVITY"
+  },
+  "status": "PASS"
+}

@@ -1,0 +1,71 @@
+{
+  "result_schema_version": "ai6b-b3-preparation-result-v1",
+  "status": "AI6B_B3_PREPARATION_READY",
+  "scope": "B3_REAL_PROVIDER_SMOKE_AND_BOUNDED_CANARY_PREPARATION_ONLY",
+  "base": {
+    "remote_branch": "origin/ops/ai-market-analysis-production-canary",
+    "commit": "3a788d84ca88fc6ae09f1f170a207cd07b056bcd",
+    "tree": "fa28ac452695c784afc667eb9004912012b578a1",
+    "worktree": "C:\\Users\\ASUS\\PycharmProjects\\crypto-bot-ai6b-b3-prep",
+    "remote_commit_at_final_recheck": "3a788d84ca88fc6ae09f1f170a207cd07b056bcd",
+    "base_drift": false,
+    "drift_policy": "RECORD_ONLY_NO_AUTOMATIC_REBASE"
+  },
+  "provider_official_audit": {
+    "result": "PASSED_WITH_EXPLICIT_UNKNOWNS",
+    "retrieved_utc": "2026-08-11T02:02:35Z",
+    "model": "deepseek-v4-flash",
+    "endpoint": "https://api.deepseek.com/chat/completions",
+    "price_version": "deepseek-official-2026-08-11T02:02:35Z",
+    "official_sources_only": true,
+    "live_api_request_performed": false
+  },
+  "controls": {
+    "cost_calculator": "DECIMAL_GOLDEN_TESTED",
+    "budget_guard": "PRE_CALL_STRUCTURED_BUDGET_BLOCKED_TESTED",
+    "duplicate_charge_guard": "DURABLE_SINGLE_FLIGHT_TESTED",
+    "retry_policy": "CHARGE_SAFE_NO_BLIND_RETRY_TESTED",
+    "unknown_charge_state": "NO_AUTOMATIC_RETRY_HUMAN_REVIEW",
+    "secret_isolation": "PREPARED_RUNTIME_VERIFICATION_DEFERRED",
+    "kill_switch": "DURABLE_FAIL_CLOSED_TESTED",
+    "dry_run_smoke_script": "DEFAULT_NO_CALL_APPROVAL_REQUIRED_TESTED",
+    "human_approval": "MISSING_BY_DESIGN",
+    "user_declared": "DISABLED",
+    "formal_b3_entered": false
+  },
+  "smoke_sequence": [
+    "ETH QUICK NONE",
+    "ETH FULL NONE",
+    "BTC QUICK NONE",
+    "SOL QUICK NONE",
+    "ETH FULL PAPER"
+  ],
+  "acceptance_matrix": {
+    "required_check_count": 15,
+    "presentation_policy": "PASSED_AUDIT_ONLY",
+    "negative_fixture_count": 19,
+    "all_negative_fixtures_fail_closed": true
+  },
+  "tests": {
+    "new_b3_preparation": {"passed": 20, "failed": 0},
+    "related_report_audit_presentation": {"passed": 102, "failed": 0},
+    "total_targeted": {"passed": 122, "failed": 0},
+    "secret_scanner_files": 650,
+    "secret_scanner_findings": 0,
+    "compileall": "PASSED",
+    "git_diff_check": "PASSED"
+  },
+  "deferred": [
+    "FULL_PYTEST_DEFERRED_UNTIL_B1_AGENT_IDLE",
+    "LARGE_FRONTEND_BUILD_DEFERRED_UNTIL_B1_AGENT_IDLE",
+    "ROUTER_BENCHMARK_DEFERRED_UNTIL_B1_AGENT_IDLE"
+  ],
+  "proof": {
+    "production_connections": 0,
+    "production_writes": 0,
+    "real_provider_calls": 0,
+    "ssh_connections": 0,
+    "paid_provider_requests": 0,
+    "production_write_owner": "B1_AGENT_ONLY"
+  }
+}

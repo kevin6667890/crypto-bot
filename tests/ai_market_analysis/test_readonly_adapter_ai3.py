@@ -8,7 +8,7 @@ import sys
 
 import pytest
 
-from dashboard.ai_market_analysis.readonly_adapter import ReadOnlyOrderflowAdapter
+from dashboard.ai_market_analysis.readonly_adapter import MAX_ORDERFLOW_QUERY_SECONDS,ReadOnlyOrderflowAdapter
 
 
 def database(path:Path,indexed=True):
@@ -41,6 +41,19 @@ def test_adapter_never_creates_tables(tmp_path):
 def test_bounded_range_guard(tmp_path):
     path=tmp_path/"flow.db"; database(path)
     with pytest.raises(ValueError): ReadOnlyOrderflowAdapter(path).read("ETH-USDT-SWAP",0,400*86400,"15m")
+
+
+def test_exact_maximum_range_is_allowed(tmp_path):
+    path=tmp_path/"flow.db"; database(path)
+    ReadOnlyOrderflowAdapter(path).read("ETH-USDT-SWAP",0,MAX_ORDERFLOW_QUERY_SECONDS,"15m")
+
+
+def test_one_second_over_maximum_range_is_rejected(tmp_path):
+    path=tmp_path/"flow.db"; database(path)
+    with pytest.raises(ValueError,match="bounded to 366 days"):
+        ReadOnlyOrderflowAdapter(path).read(
+            "ETH-USDT-SWAP",0,MAX_ORDERFLOW_QUERY_SECONDS+1,"15m"
+        )
 
 
 def test_supported_instrument_guard(tmp_path):

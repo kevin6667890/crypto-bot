@@ -1,11 +1,14 @@
 from __future__ import annotations
-import argparse
-from dashboard.ai_market_analysis.report_repository import DEFAULT_REPORT_DB,migrate_database
-from dashboard.ai_market_analysis.report_audit_repository import migrate_audit_database
+import argparse,json
+from dashboard.ai_market_analysis.report_migrations import apply_migrations,manifest_sha256
 
 def main()->int:
-    p=argparse.ArgumentParser(description="Explicitly migrate the isolated AI report database")
-    p.add_argument("--database",default=str(DEFAULT_REPORT_DB));p.add_argument("--include-audit",action="store_true");a=p.parse_args();result={"report":migrate_database(a.database)}
-    if a.include_audit:result["audit"]=migrate_audit_database(a.database)
-    print(result);return 0
+    p=argparse.ArgumentParser(description="Explicitly apply verified AI report migrations 001-004")
+    p.add_argument("--database",required=True)
+    p.add_argument("--expected-manifest-sha256",required=True)
+    a=p.parse_args()
+    actual=manifest_sha256()
+    if a.expected_manifest_sha256.lower()!=actual:
+        p.error("MIGRATION_MANIFEST_APPROVAL_MISMATCH")
+    print(json.dumps(apply_migrations(a.database),sort_keys=True));return 0
 if __name__=="__main__":raise SystemExit(main())

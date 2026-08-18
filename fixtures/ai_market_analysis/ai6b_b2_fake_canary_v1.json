@@ -1,0 +1,37 @@
+{
+  "schema_version": "ai6b-b2-fake-canary-fixtures-v1",
+  "enabled_by_default": false,
+  "provider": "fake",
+  "provider_model": "fake-ai6b-b2-v1",
+  "language": "zh-CN",
+  "decision_time": "2027-11-01T00:00:00Z",
+  "instruments": ["BTC-USDT-SWAP", "ETH-USDT-SWAP", "SOL-USDT-SWAP"],
+  "modes": ["QUICK", "FULL"],
+  "position_sources": ["NONE", "PAPER"],
+  "paper_positions": {
+    "BTC-USDT-SWAP": {"id": 6101, "side": "BUY", "entry": 68000.0, "mark": 68400.0, "quantity": 0.01, "stop": 66500.0, "target": 71000.0},
+    "ETH-USDT-SWAP": {"id": 6102, "side": "BUY", "entry": 1835.0, "mark": 1900.0, "quantity": 0.2, "stop": 1810.0, "target": 1990.0},
+    "SOL-USDT-SWAP": {"id": 6103, "side": "BUY", "entry": 145.0, "mark": 148.0, "quantity": 1.0, "stop": 138.0, "target": 160.0}
+  },
+  "positive_scenarios": [
+    {"id": "normal_report", "context_variant": "complete", "provider_behavior": "success", "audit": "run"},
+    {"id": "warning_report", "context_variant": "warning", "provider_behavior": "success", "audit": "run"},
+    {"id": "stale_context", "context_variant": "stale", "provider_behavior": "success", "audit": "run"},
+    {"id": "missing_orderflow", "context_variant": "missing_orderflow", "provider_behavior": "success", "audit": "run"}
+  ],
+  "negative_scenarios": [
+    {"id": "audit_failure", "provider_behavior": "probability", "expected": "AUDIT_FAILED_OR_VALIDATION_FAILED"},
+    {"id": "registry_mismatch", "mutation": "registry_snapshot_hash", "expected": "FAILED_FINAL"},
+    {"id": "wrong_instrument", "mutation": "presentation_selection", "expected": "PRESENTATION_SELECTION_MISMATCH"},
+    {"id": "wrong_mode", "mutation": "presentation_selection", "expected": "PRESENTATION_SELECTION_MISMATCH"},
+    {"id": "pending", "audit": "queue_only", "expected": "AUDIT_PENDING_WITHOUT_BODY"},
+    {"id": "failed", "audit_result": "FAILED", "expected": "AUDIT_FAILED_WITHOUT_BODY"},
+    {"id": "error", "audit_result": "ERROR", "expected": "AUDIT_ERROR_WITHOUT_BODY"},
+    {"id": "legacy_schema", "audit_schema_version": "legacy", "expected": "AUDIT_SCHEMA_UPGRADE_REQUIRED_WITHOUT_BODY"}
+  ],
+  "forbidden": {
+    "position_sources": ["USER_DECLARED"],
+    "providers": ["deepseek", "live"],
+    "side_effects": ["paper_order", "router_write", "collector_write", "aggregation_write"]
+  }
+}

@@ -1,0 +1,475 @@
+{
+  "basis": "origin/main...FINAL_EXECUTABLE_CANDIDATE plus pending sanitized evidence",
+  "code_freeze_commit": "ccc8946f5a15ff39d0973c3185ee3282bfd08e05",
+  "counts": {
+    "A_B0_REQUIRED_CODE": 38,
+    "B_B0_REQUIRED_CONFIG": 6,
+    "C_B0_REQUIRED_MIGRATION": 7,
+    "D_B0_REQUIRED_TEST": 5,
+    "E_B0_REQUIRED_DOC": 4,
+    "F_SANITIZED_EVIDENCE": 52
+  },
+  "generated_but_reproducible_committed_count": 0,
+  "items": [
+    {
+      "category": "B_B0_REQUIRED_CONFIG",
+      "path": ".dockerignore"
+    },
+    {
+      "category": "B_B0_REQUIRED_CONFIG",
+      "path": "Dockerfile.ai6b"
+    },
+    {
+      "category": "F_SANITIZED_EVIDENCE",
+      "path": "artifacts/ai6b/ai6b-20260807-262b30b/acceptance-manifest.json"
+    },
+    {
+      "category": "F_SANITIZED_EVIDENCE",
+      "path": "artifacts/ai6b/ai6b-20260807-262b30b/acceptance-result.json"
+    },
+    {
+      "category": "F_SANITIZED_EVIDENCE",
+      "path": "artifacts/ai6b/ai6b-20260807-262b30b/approvals.json"
+    },
+    {
+      "category": "F_SANITIZED_EVIDENCE",
+      "path": "artifacts/ai6b/ai6b-20260807-262b30b/artifact-hashes.json"
+    },
+    {
+      "category": "F_SANITIZED_EVIDENCE",
+      "path": "artifacts/ai6b/ai6b-20260807-262b30b/audit-metrics.jsonl"
+    },
+    {
+      "category": "F_SANITIZED_EVIDENCE",
+      "path": "artifacts/ai6b/ai6b-20260807-262b30b/backup-manifest.json"
+    },
+    {
+      "category": "F_SANITIZED_EVIDENCE",
+      "path": "artifacts/ai6b/ai6b-20260807-262b30b/deployment-manifest.json"
+    },
+    {
+      "category": "F_SANITIZED_EVIDENCE",
+      "path": "artifacts/ai6b/ai6b-20260807-262b30b/environment-baseline.json"
+    },
+    {
+      "category": "F_SANITIZED_EVIDENCE",
+      "path": "artifacts/ai6b/ai6b-20260807-262b30b/error-events.jsonl"
+    },
+    {
+      "category": "F_SANITIZED_EVIDENCE",
+      "path": "artifacts/ai6b/ai6b-20260807-262b30b/flag-snapshots.jsonl"
+    },
+    {
+      "category": "F_SANITIZED_EVIDENCE",
+      "path": "artifacts/ai6b/ai6b-20260807-262b30b/gate-events.jsonl"
+    },
+    {
+      "category": "F_SANITIZED_EVIDENCE",
+      "path": "artifacts/ai6b/ai6b-20260807-262b30b/health-snapshots.jsonl"
+    },
+    {
+      "category": "F_SANITIZED_EVIDENCE",
+      "path": "artifacts/ai6b/ai6b-20260807-262b30b/isolation-evidence.json"
+    },
+    {
+      "category": "F_SANITIZED_EVIDENCE",
+      "path": "artifacts/ai6b/ai6b-20260807-262b30b/legacy-baseline.json"
+    },
+    {
+      "category": "F_SANITIZED_EVIDENCE",
+      "path": "artifacts/ai6b/ai6b-20260807-262b30b/migration-manifest.json"
+    },
+    {
+      "category": "F_SANITIZED_EVIDENCE",
+      "path": "artifacts/ai6b/ai6b-20260807-262b30b/owners.json"
+    },
+    {
+      "category": "F_SANITIZED_EVIDENCE",
+      "path": "artifacts/ai6b/ai6b-20260807-262b30b/presentation-metrics.jsonl"
+    },
+    {
+      "category": "F_SANITIZED_EVIDENCE",
+      "path": "artifacts/ai6b/ai6b-20260807-262b30b/provider-usage.jsonl"
+    },
+    {
+      "category": "F_SANITIZED_EVIDENCE",
+      "path": "artifacts/ai6b/ai6b-20260807-262b30b/report-metrics.jsonl"
+    },
+    {
+      "category": "F_SANITIZED_EVIDENCE",
+      "path": "artifacts/ai6b/ai6b-20260807-262b30b/restore-verification.json"
+    },
+    {
+      "category": "F_SANITIZED_EVIDENCE",
+      "path": "artifacts/ai6b/ai6b-20260807-262b30b/rollback-rehearsal.json"
+    },
+    {
+      "category": "F_SANITIZED_EVIDENCE",
+      "path": "artifacts/ai6b/ai6b-20260807-8aaae5c-b0/acceptance-manifest.json"
+    },
+    {
+      "category": "F_SANITIZED_EVIDENCE",
+      "path": "artifacts/ai6b/ai6b-20260807-8aaae5c-b0/acceptance-result.json"
+    },
+    {
+      "category": "F_SANITIZED_EVIDENCE",
+      "path": "artifacts/ai6b/ai6b-20260807-8aaae5c-b0/approvals.json"
+    },
+    {
+      "category": "F_SANITIZED_EVIDENCE",
+      "path": "artifacts/ai6b/ai6b-20260807-8aaae5c-b0/artifact-hashes.json"
+    },
+    {
+      "category": "F_SANITIZED_EVIDENCE",
+      "path": "artifacts/ai6b/ai6b-20260807-8aaae5c-b0/audit-metrics.jsonl"
+    },
+    {
+      "category": "F_SANITIZED_EVIDENCE",
+      "path": "artifacts/ai6b/ai6b-20260807-8aaae5c-b0/backup-manifest.json"
+    },
+    {
+      "category": "F_SANITIZED_EVIDENCE",
+      "path": "artifacts/ai6b/ai6b-20260807-8aaae5c-b0/deployment-manifest.json"
+    },
+    {
+      "category": "F_SANITIZED_EVIDENCE",
+      "path": "artifacts/ai6b/ai6b-20260807-8aaae5c-b0/environment-baseline.json"
+    },
+    {
+      "category": "F_SANITIZED_EVIDENCE",
+      "path": "artifacts/ai6b/ai6b-20260807-8aaae5c-b0/error-events.jsonl"
+    },
+    {
+      "category": "F_SANITIZED_EVIDENCE",
+      "path": "artifacts/ai6b/ai6b-20260807-8aaae5c-b0/flag-snapshots.jsonl"
+    },
+    {
+      "category": "F_SANITIZED_EVIDENCE",
+      "path": "artifacts/ai6b/ai6b-20260807-8aaae5c-b0/gate-events.jsonl"
+    },
+    {
+      "category": "F_SANITIZED_EVIDENCE",
+      "path": "artifacts/ai6b/ai6b-20260807-8aaae5c-b0/health-snapshots.jsonl"
+    },
+    {
+      "category": "F_SANITIZED_EVIDENCE",
+      "path": "artifacts/ai6b/ai6b-20260807-8aaae5c-b0/isolation-evidence.json"
+    },
+    {
+      "category": "F_SANITIZED_EVIDENCE",
+      "path": "artifacts/ai6b/ai6b-20260807-8aaae5c-b0/legacy-baseline.json"
+    },
+    {
+      "category": "F_SANITIZED_EVIDENCE",
+      "path": "artifacts/ai6b/ai6b-20260807-8aaae5c-b0/migration-manifest.json"
+    },
+    {
+      "category": "F_SANITIZED_EVIDENCE",
+      "path": "artifacts/ai6b/ai6b-20260807-8aaae5c-b0/owners.json"
+    },
+    {
+      "category": "F_SANITIZED_EVIDENCE",
+      "path": "artifacts/ai6b/ai6b-20260807-8aaae5c-b0/presentation-metrics.jsonl"
+    },
+    {
+      "category": "F_SANITIZED_EVIDENCE",
+      "path": "artifacts/ai6b/ai6b-20260807-8aaae5c-b0/provider-usage.jsonl"
+    },
+    {
+      "category": "F_SANITIZED_EVIDENCE",
+      "path": "artifacts/ai6b/ai6b-20260807-8aaae5c-b0/readiness-checklist.json"
+    },
+    {
+      "category": "F_SANITIZED_EVIDENCE",
+      "path": "artifacts/ai6b/ai6b-20260807-8aaae5c-b0/report-metrics.jsonl"
+    },
+    {
+      "category": "F_SANITIZED_EVIDENCE",
+      "path": "artifacts/ai6b/ai6b-20260807-8aaae5c-b0/restore-verification.json"
+    },
+    {
+      "category": "F_SANITIZED_EVIDENCE",
+      "path": "artifacts/ai6b/ai6b-20260807-8aaae5c-b0/rollback-rehearsal.json"
+    },
+    {
+      "category": "F_SANITIZED_EVIDENCE",
+      "path": "artifacts/ai6b/ai6b-20260807-8aaae5c-b0/test-results.json"
+    },
+    {
+      "category": "F_SANITIZED_EVIDENCE",
+      "path": "artifacts/ai6b/ai6b-20260810-final-freeze/backup-restore-revalidation.json"
+    },
+    {
+      "category": "F_SANITIZED_EVIDENCE",
+      "path": "artifacts/ai6b/ai6b-20260810-final-freeze/candidate-validation.json"
+    },
+    {
+      "category": "F_SANITIZED_EVIDENCE",
+      "path": "artifacts/ai6b/ai6b-20260810-final-freeze/change-classification.json"
+    },
+    {
+      "category": "F_SANITIZED_EVIDENCE",
+      "path": "artifacts/ai6b/ai6b-20260810-final-freeze/migration-revalidation.json"
+    },
+    {
+      "category": "F_SANITIZED_EVIDENCE",
+      "path": "artifacts/ai6b/ai6b-20260810-final-freeze/privacy-scope-result.json"
+    },
+    {
+      "category": "F_SANITIZED_EVIDENCE",
+      "path": "artifacts/ai6b/ai6b-20260810-final-freeze/runtime-image-drift.json"
+    },
+    {
+      "category": "F_SANITIZED_EVIDENCE",
+      "path": "artifacts/ai6b/ai6b-20260810-final-freeze/sol-legacy-classification.json"
+    },
+    {
+      "category": "F_SANITIZED_EVIDENCE",
+      "path": "artifacts/ai6b/ai6b-20260810-final-freeze/test-results.json"
+    },
+    {
+      "category": "B_B0_REQUIRED_CONFIG",
+      "path": "config/ai6b_alert_policy.json"
+    },
+    {
+      "category": "B_B0_REQUIRED_CONFIG",
+      "path": "config/ai6b_canary_policy.json"
+    },
+    {
+      "category": "A_B0_REQUIRED_CODE",
+      "path": "dashboard/ai_market_analysis/backup_restore.py"
+    },
+    {
+      "category": "A_B0_REQUIRED_CODE",
+      "path": "dashboard/ai_market_analysis/deepseek_report_provider.py"
+    },
+    {
+      "category": "A_B0_REQUIRED_CODE",
+      "path": "dashboard/ai_market_analysis/live_provider_guard.py"
+    },
+    {
+      "category": "A_B0_REQUIRED_CODE",
+      "path": "dashboard/ai_market_analysis/presentation.py"
+    },
+    {
+      "category": "A_B0_REQUIRED_CODE",
+      "path": "dashboard/ai_market_analysis/production_readiness.py"
+    },
+    {
+      "category": "A_B0_REQUIRED_CODE",
+      "path": "dashboard/ai_market_analysis/report_alerts.py"
+    },
+    {
+      "category": "A_B0_REQUIRED_CODE",
+      "path": "dashboard/ai_market_analysis/report_audit_repository.py"
+    },
+    {
+      "category": "A_B0_REQUIRED_CODE",
+      "path": "dashboard/ai_market_analysis/report_health.py"
+    },
+    {
+      "category": "A_B0_REQUIRED_CODE",
+      "path": "dashboard/ai_market_analysis/report_jobs.py"
+    },
+    {
+      "category": "A_B0_REQUIRED_CODE",
+      "path": "dashboard/ai_market_analysis/report_migrations.py"
+    },
+    {
+      "category": "A_B0_REQUIRED_CODE",
+      "path": "dashboard/ai_market_analysis/report_provider.py"
+    },
+    {
+      "category": "A_B0_REQUIRED_CODE",
+      "path": "dashboard/ai_market_analysis/report_repository.py"
+    },
+    {
+      "category": "A_B0_REQUIRED_CODE",
+      "path": "dashboard/ai_market_analysis/report_service.py"
+    },
+    {
+      "category": "A_B0_REQUIRED_CODE",
+      "path": "dashboard/ai_market_analysis/retention_archive.py"
+    },
+    {
+      "category": "A_B0_REQUIRED_CODE",
+      "path": "dashboard/ai_market_analysis/storage_budget.py"
+    },
+    {
+      "category": "A_B0_REQUIRED_CODE",
+      "path": "dashboard/paper_api.py"
+    },
+    {
+      "category": "A_B0_REQUIRED_CODE",
+      "path": "dashboard/strategy_router_v2.py"
+    },
+    {
+      "category": "B_B0_REQUIRED_CONFIG",
+      "path": "deploy/compose/ai6b-production-candidate.yml"
+    },
+    {
+      "category": "B_B0_REQUIRED_CONFIG",
+      "path": "deploy/nginx-ai6b-production.conf"
+    },
+    {
+      "category": "E_B0_REQUIRED_DOC",
+      "path": "docs/ai_market_analysis/ai6_privacy_review.md"
+    },
+    {
+      "category": "E_B0_REQUIRED_DOC",
+      "path": "docs/ai_market_analysis/ai6_production_canary_runbook.md"
+    },
+    {
+      "category": "E_B0_REQUIRED_DOC",
+      "path": "docs/ai_market_analysis/ai6_production_readiness_checklist.md"
+    },
+    {
+      "category": "E_B0_REQUIRED_DOC",
+      "path": "docs/ai_market_analysis/implementation_plan.md"
+    },
+    {
+      "category": "A_B0_REQUIRED_CODE",
+      "path": "frontend/src/aiMarketAnalysis/ShadowMarketAnalysisPage.tsx"
+    },
+    {
+      "category": "A_B0_REQUIRED_CODE",
+      "path": "frontend/src/aiMarketAnalysis/api.ts"
+    },
+    {
+      "category": "C_B0_REQUIRED_MIGRATION",
+      "path": "migrations/003_ai_report_registry_snapshots_and_strict_audit.sql"
+    },
+    {
+      "category": "C_B0_REQUIRED_MIGRATION",
+      "path": "migrations/004_ai_shadow_presentation_indexes.sql"
+    },
+    {
+      "category": "C_B0_REQUIRED_MIGRATION",
+      "path": "migrations/ai_report/001_ai_report_database.sql"
+    },
+    {
+      "category": "C_B0_REQUIRED_MIGRATION",
+      "path": "migrations/ai_report/002_ai_report_audit.sql"
+    },
+    {
+      "category": "C_B0_REQUIRED_MIGRATION",
+      "path": "migrations/ai_report/003_ai_report_registry_snapshots_and_strict_audit.sql"
+    },
+    {
+      "category": "C_B0_REQUIRED_MIGRATION",
+      "path": "migrations/ai_report/004_ai_shadow_presentation_indexes.sql"
+    },
+    {
+      "category": "C_B0_REQUIRED_MIGRATION",
+      "path": "migrations/ai_report/manifest.json"
+    },
+    {
+      "category": "A_B0_REQUIRED_CODE",
+      "path": "scripts/ai6b_kill_switch.py"
+    },
+    {
+      "category": "A_B0_REQUIRED_CODE",
+      "path": "scripts/backup_ai_report_state.py"
+    },
+    {
+      "category": "A_B0_REQUIRED_CODE",
+      "path": "scripts/capture_ai6b_production_baseline.py"
+    },
+    {
+      "category": "A_B0_REQUIRED_CODE",
+      "path": "scripts/capture_ai6b_production_state_backup.py"
+    },
+    {
+      "category": "A_B0_REQUIRED_CODE",
+      "path": "scripts/capture_ai6b_runtime_drift.py"
+    },
+    {
+      "category": "A_B0_REQUIRED_CODE",
+      "path": "scripts/check_ai6b_alerts.py"
+    },
+    {
+      "category": "A_B0_REQUIRED_CODE",
+      "path": "scripts/estimate_ai6b_storage.py"
+    },
+    {
+      "category": "A_B0_REQUIRED_CODE",
+      "path": "scripts/finalize_ai6b_b0_revalidation.py"
+    },
+    {
+      "category": "A_B0_REQUIRED_CODE",
+      "path": "scripts/manage_ai_report_retention.py"
+    },
+    {
+      "category": "A_B0_REQUIRED_CODE",
+      "path": "scripts/migrate_ai_report_database.py"
+    },
+    {
+      "category": "A_B0_REQUIRED_CODE",
+      "path": "scripts/revalidate_ai6b_backup_restore.py"
+    },
+    {
+      "category": "A_B0_REQUIRED_CODE",
+      "path": "scripts/revalidate_ai6b_migrations.py"
+    },
+    {
+      "category": "A_B0_REQUIRED_CODE",
+      "path": "scripts/router_performance_remediation.py"
+    },
+    {
+      "category": "A_B0_REQUIRED_CODE",
+      "path": "scripts/run_ai_audit_worker.py"
+    },
+    {
+      "category": "A_B0_REQUIRED_CODE",
+      "path": "scripts/run_ai_report_worker.py"
+    },
+    {
+      "category": "A_B0_REQUIRED_CODE",
+      "path": "scripts/run_paper_api_with_secrets.py"
+    },
+    {
+      "category": "A_B0_REQUIRED_CODE",
+      "path": "scripts/summarize_ai6b_production_baseline.py"
+    },
+    {
+      "category": "A_B0_REQUIRED_CODE",
+      "path": "scripts/summarize_ai6b_ram_capacity.py"
+    },
+    {
+      "category": "A_B0_REQUIRED_CODE",
+      "path": "scripts/verify_ai_report_restore.py"
+    },
+    {
+      "category": "D_B0_REQUIRED_TEST",
+      "path": "tests/ai_market_analysis/test_ai5_no_production_side_effects.py"
+    },
+    {
+      "category": "D_B0_REQUIRED_TEST",
+      "path": "tests/ai_market_analysis/test_ai6b_b0_operations.py"
+    },
+    {
+      "category": "D_B0_REQUIRED_TEST",
+      "path": "tests/ai_market_analysis/test_report_repository_jobs.py"
+    },
+    {
+      "category": "D_B0_REQUIRED_TEST",
+      "path": "tests/test_paper_provenance_risk_accounting.py"
+    },
+    {
+      "category": "D_B0_REQUIRED_TEST",
+      "path": "tests/test_strategy_router_v2_performance_equivalence.py"
+    }
+  ],
+  "post_freeze_remediation": {
+    "paper_test_fix_commit": "ccc8946f5a15ff39d0973c3185ee3282bfd08e05",
+    "router_performance_fix_commit": "57fcb2c03f65c9cef0ec4a14912b1006d3d36ca6",
+    "router_semantics_changed": false,
+    "tested_executable_candidate": "ccc8946f5a15ff39d0973c3185ee3282bfd08e05"
+  },
+  "secret_or_sensitive_count": 0,
+  "temporary_removed": [
+    "frontend/dist regenerated bundles",
+    "artifacts/ai6b/ai6b-20260807-b0-revalidation pre-freeze evidence"
+  ],
+  "unrelated_user_change_count": 0
+}

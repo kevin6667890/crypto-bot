@@ -1,0 +1,42 @@
+{
+  "captured_at": "2026-08-10T07:12:23Z",
+  "classification": "NONDETERMINISTIC_TEST_WALL_CLOCK_BOUNDARY",
+  "full_pytest_original_failure": {
+    "actual_first": "43f1b21ee1cc948604830246ccf81a5f29e9a706aa9ad41f9f44bdddb845507d",
+    "actual_second": "791c8294bace9c55cda3fcfc0854cbffe948aa6938d7e693e257079755d5b222",
+    "assertion": "assert first[\"signal_setup_id\"] == second[\"signal_setup_id\"]",
+    "failed": 1,
+    "failure_time_evidence_utc": {
+      "paper_db_created": "2026-08-10T06:22:19Z",
+      "paper_db_last_write": "2026-08-10T06:22:20Z"
+    },
+    "passed": 1555,
+    "pytest_temp_run_created_utc": "2026-08-10T06:21:35Z",
+    "skipped": 1
+  },
+  "identity_contract": {
+    "evaluation_id_includes_complete_evidence": true,
+    "production_code_modified": false,
+    "signal_setup_id_fields": [
+      "strategy_version",
+      "config_hash",
+      "instrument",
+      "execution_timeframe",
+      "candle_close_ts"
+    ],
+    "signal_setup_id_includes_live_flow": false
+  },
+  "order_sensitive": {
+    "A_target_alone": "3/3 PASS",
+    "B_preceding_optimization_and_paper_flow_then_target": "3/3 PASS",
+    "C_related_paper_decision_then_target_last": "3/3 PASS"
+  },
+  "related_suite": "5/5 PASS (21 tests per run)",
+  "reproducer": {
+    "different_candle_ts_setup_equal": false,
+    "same_candle_ts_evaluation_equal": false,
+    "same_candle_ts_setup_equal": true
+  },
+  "target_file_suite": "10/10 PASS (4 tests per run)",
+  "test_fix_commit": "ccc8946f5a15ff39d0973c3185ee3282bfd08e05"
+}

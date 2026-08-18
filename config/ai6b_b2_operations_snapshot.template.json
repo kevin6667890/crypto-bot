@@ -1,0 +1,10 @@
+{
+  "schema_version": "ai6b-b2-operations-snapshot-v1",
+  "presentation_calls": 0,
+  "stale_presentations": 0,
+  "frontend_errors": 0,
+  "router": {"status": "UNCHANGED", "requests": 0, "errors": 0},
+  "collector": {"status": "UNCHANGED", "lag_seconds": null, "errors": 0},
+  "aggregation": {"status": "UNCHANGED", "lag_seconds": null, "errors": 0},
+  "old_ai_brief": {"status": "AVAILABLE", "requests": 0, "errors": 0}
+}

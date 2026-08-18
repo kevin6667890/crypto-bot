@@ -1,0 +1,47 @@
+{
+  "audit_worker_memory_limit_mib": 256,
+  "candidate_memory_limits_mib": {
+    "audit-worker": 256,
+    "frontend": 128,
+    "microstructure-collector": 768,
+    "paper-api": 640,
+    "report-worker": 384,
+    "retention-dry-run": 128
+  },
+  "candidate_total_memory_limit_bytes": 2415919104,
+  "cloud_configuration_source": "PROJECT_OWNER_CONFIRMED",
+  "cloud_configured_memory_bytes": 4294967296,
+  "container_oom_killed": false,
+  "containers_healthy_all_samples": true,
+  "existing_container_rss": [
+    {
+      "memory_percent": "0.18%",
+      "memory_usage": "6.344MiB / 3.413GiB",
+      "name": "crypto-bot-frontend-1"
+    },
+    {
+      "memory_percent": "25.68%",
+      "memory_usage": "897.5MiB / 3.413GiB",
+      "name": "crypto-bot-microstructure-collector-1"
+    },
+    {
+      "memory_percent": "5.24%",
+      "memory_usage": "183MiB / 3.413GiB",
+      "name": "crypto-bot-paper-api-1"
+    }
+  ],
+  "guest_gate_min_bytes": 3489660928,
+  "guest_mem_available_bytes": 2713206784,
+  "guest_mem_available_min_bytes": 2679795712,
+  "guest_mem_total_bytes": 3664924672,
+  "headroom_model": "guest_MemTotal_minus_all_candidate_service_hard_limits",
+  "oom_kill_delta": 0,
+  "projected_memory_headroom_bytes": 1249005568,
+  "report_worker_memory_limit_mib": 384,
+  "status": "CAPACITY_RAM_PASS",
+  "swap_in_delta_pages": 0,
+  "swap_out_delta_pages": 0,
+  "swap_total_bytes": 2147479552,
+  "swap_used_bytes": 0,
+  "swap_used_max_bytes": 0
+}

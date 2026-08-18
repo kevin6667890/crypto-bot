@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any
 from .context_adapter import build_market_analysis_context
 from .position_plan_models import normalize_user_position_plan
-from .readonly_adapter import ReadOnlyOrderflowAdapter
+from .readonly_adapter import MAX_ORDERFLOW_QUERY_SECONDS,ReadOnlyOrderflowAdapter
 from .report_health import report_health
 from .report_repository import ReportRepository
 from .report_service import ReportService
@@ -43,7 +43,8 @@ def build_base_context_from_stores(payload:dict[str,Any],paper_db:str|Path,micro
     reader=BoundedMarketDataReaderV2(paper_db,micro_db);datasets={tf:reader.candles(instrument,tf,decision,1500 if tf=="1D" else 512) for tf in SUPPORTED_TIMEFRAMES if tf!="1W"}
     orderflow=None
     if micro_db and Path(micro_db).exists():
-        start=min((int(row["ts"]) for rows in datasets.values() for row in rows),default=decision-30*86400)
+        raw_start=min((int(row["ts"]) for rows in datasets.values() for row in rows),default=decision-30*86400)
+        start=max(raw_start,decision-MAX_ORDERFLOW_QUERY_SECONDS)
         orderflow=ReadOnlyOrderflowAdapter(micro_db).read(instrument,start,decision,"4H")
     return build_market_analysis_context(datasets,instrument,decision,payload.get("mode","FULL"),orderflow=orderflow)
 

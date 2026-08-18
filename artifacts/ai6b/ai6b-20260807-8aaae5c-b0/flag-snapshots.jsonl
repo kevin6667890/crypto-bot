@@ -1,0 +1,2 @@
+{"at":"2026-08-07T06:32:40Z","scope":"current_production","ai_environment_entries_present":0,"ai_routes":"404","provider_calls":0,"interpretation":"new AI path is absent/disabled; full explicit production flag snapshot requires candidate deployment and was not performed"}
+{"at":"2026-08-07T06:39:30Z","scope":"candidate_static","all_required_flags":false,"AI_MARKET_REPORT_SHADOW_ONLY":true,"VITE_AI_MARKET_ANALYSIS_SHADOW_ENABLED":false,"source_commit":"8aaae5c095318a716c76f91ded64c4f718eece9c"}

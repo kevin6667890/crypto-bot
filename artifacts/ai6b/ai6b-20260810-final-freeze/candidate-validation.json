@@ -1,0 +1,44 @@
+{
+  "candidate_commit": "ccc8946f5a15ff39d0973c3185ee3282bfd08e05",
+  "candidate_tree": "5ee72bced3bcbe7d455a55170df4cd31c1c09447",
+  "captured_at": "2026-08-10T07:12:23Z",
+  "executable_delta_since_d796": [
+    "dashboard/strategy_router_v2.py",
+    "scripts/router_performance_remediation.py",
+    "tests/test_paper_provenance_risk_accounting.py",
+    "tests/test_strategy_router_v2_performance_equivalence.py"
+  ],
+  "sensitive_ai6b_paths_unchanged_since_d796": true,
+  "compose_checks": {
+    "all_flags_disabled": true,
+    "audit_only_ai_db": true,
+    "bounded_restart": true,
+    "independent_archive_volume": true,
+    "limits_present_for_every_service": true,
+    "non_root_every_service": true,
+    "owner_tunnel_only": true,
+    "provider_secret_report_only": true,
+    "report_only_ai_db": true,
+    "two_cpu_budget": true,
+    "workers_isolated_from_legacy_db": true
+  },
+  "memory_limits_mib": {
+    "audit-worker": 256,
+    "frontend": 128,
+    "microstructure-collector": 768,
+    "paper-api": 640,
+    "report-worker": 384,
+    "retention-dry-run": 128
+  },
+  "nginx_checks": {
+    "authorization_not_logged": true,
+    "csp": true,
+    "frame_policy": true,
+    "hsts": true,
+    "query_not_logged": true,
+    "referrer_policy": true,
+    "sensitive_no_store": true,
+    "tls_listener": true
+  },
+  "status": "PASS"
+}

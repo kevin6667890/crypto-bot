@@ -1,0 +1,45 @@
+{
+  "schema_version": "ai6b-b2-acceptance-matrix-v1",
+  "phase": "AI-6B-B2",
+  "execution_authorized": false,
+  "default_enabled": false,
+  "positive_cartesian": {
+    "instruments": ["BTC-USDT-SWAP", "ETH-USDT-SWAP", "SOL-USDT-SWAP"],
+    "modes": ["QUICK", "FULL"],
+    "position_sources": ["NONE", "PAPER"],
+    "expected_case_count": 12
+  },
+  "production_batches": [
+    {"id": "utc-day-1", "selection": "all QUICK NONE/PAPER plus all FULL NONE", "maximum_reserved_output_tokens": 17400},
+    {"id": "utc-day-2", "selection": "all FULL PAPER", "maximum_reserved_output_tokens": 12000}
+  ],
+  "invariants": [
+    "instrument_isolation", "mode_isolation", "context_id_identity", "registry_snapshot_identity",
+    "numeric_grounding", "reference_support", "level_coverage", "scenario_coverage",
+    "warning_visibility", "stale_visibility", "pending_fail_closed", "failed_fail_closed",
+    "error_fail_closed", "legacy_schema_fail_closed", "no_user_declared", "no_secret",
+    "no_order_side_effect", "fake_provider_only", "live_provider_calls_zero"
+  ],
+  "negative_cases": [
+    {"id": "audit_failure", "assertions": ["body_absent_unless_audit_passed", "promotion_eligible_false"]},
+    {"id": "registry_mismatch", "assertions": ["generation_or_presentation_rejected"]},
+    {"id": "wrong_instrument", "assertions": ["404_selection_mismatch", "body_absent"]},
+    {"id": "wrong_mode", "assertions": ["404_selection_mismatch", "body_absent"]},
+    {"id": "pending", "assertions": ["eligibility_audit_pending", "body_absent"]},
+    {"id": "failed", "assertions": ["eligibility_audit_failed", "body_absent"]},
+    {"id": "error", "assertions": ["eligibility_audit_error", "body_absent"]},
+    {"id": "legacy_schema", "assertions": ["eligibility_schema_upgrade_required", "body_absent"]},
+    {"id": "missing_orderflow", "assertions": ["warning_visible", "no_fabricated_orderflow"]},
+    {"id": "stale_context", "assertions": ["freshness_stale_visible"]},
+    {"id": "user_declared", "assertions": ["request_rejected_by_b2_harness"]},
+    {"id": "live_provider", "assertions": ["request_rejected_by_b2_harness", "live_provider_calls_zero"]}
+  ],
+  "thresholds": {
+    "live_provider_calls": 0,
+    "paper_orders_created": 0,
+    "axe_critical": 0,
+    "axe_serious": 0,
+    "production_connections": 0,
+    "production_writes": 0
+  }
+}

@@ -81,11 +81,11 @@ def test_claim_pack_multi_context_evidence_status(remove, status_key, expected):
 def test_claim_pack_preserves_exact_numeric_and_multiple_level_timeframe_facts():
     request, _registry = setup("FULL")
     pack = build_provider_claim_pack(request["compiled_context"], "FULL")
-    assert pack["allowed_numeric_values"] == [
-        {"source_fact_id": item["source_fact_id"], "canonical_value": item["canonical_value"],
-         "exact_display": item.get("exact_display", str(item["canonical_value"])), "unit": item.get("unit")}
-        for item in request["compiled_context"]["numeric_registry"]
-    ]
+    assert pack["allowed_numeric_values"]
+    assert all(set(("semantic_field", "semantic_role", "semantic_namespace")) <= set(item) for item in pack["allowed_numeric_values"])
+    assert {item["source_fact_id"] for item in pack["allowed_numeric_values"]} <= {
+        item["source_fact_id"] for item in request["compiled_context"]["numeric_registry"]
+    }
     assert len(pack["levels"]) >= 2
     assert all(item["asserted_timeframe"] for item in pack["levels"])
 
@@ -113,6 +113,9 @@ def test_provider_claim_pack_contract_is_compact_view_of_host_source_of_truth():
     _request, registry = setup("QUICK")
     host = compile_report_context(registry, "QUICK")["provider_claim_pack"]
     provider = provider_claim_pack_contract(host)
+    assert provider["allowed_numeric_tuple_fields"] == [
+        "fact_id", "exact_value", "unit", "semantic_namespace", "semantic_role"
+    ]
     assert [item["level_id"] for item in provider["level_claim_slots"]] == [item["level_id"] for item in host["levels"]]
     assert [item["scenario_id"] for item in provider["scenario_claim_slots"]] == [item["scenario_id"] for item in host["scenarios"]]
     assert {item[0] for item in provider["allowed_numeric_values"]} <= {

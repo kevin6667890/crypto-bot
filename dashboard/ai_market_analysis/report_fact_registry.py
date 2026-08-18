@@ -5,6 +5,7 @@ from typing import Any
 from datetime import datetime
 from .canonical import stable_hash
 from .versions import AI_REPORT_FACT_REGISTRY_VERSION,AI_REPORT_NUMERIC_REGISTRY_VERSION
+from .report_numeric_semantics import numeric_semantics
 
 MAX_FACTS = 160
 MAX_KEY_LEVELS = 12
@@ -135,7 +136,8 @@ def build_fact_registry(enriched: dict[str, Any]) -> dict[str, Any]:
             if value > 100_000_000 or any(x in key.lower() for x in ("count","timestamp","duration","bucket")): return
             numeric.append({"canonical_value": value, "unit": unit, "exact_display": str(value),
                             "allowed_decimal_places": 4, "allow_percent": unit in {"percent","ratio"},
-                            "allow_range": unit == "USDT", "absolute_tolerance": .51, "source_fact_id": fact_id})
+                            "allow_range": unit == "USDT", "absolute_tolerance": .51, "source_fact_id": fact_id,
+                            **numeric_semantics(fact_id, key, unit)})
         elif isinstance(value, dict):
             for k,v in value.items(): collect(v, fact_id, unit, k)
         elif isinstance(value, list):

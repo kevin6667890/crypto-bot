@@ -4,6 +4,7 @@ from __future__ import annotations
 import re
 from datetime import datetime, timezone
 from typing import Any
+from .report_numeric_semantics import find_numeric_field, numeric_semantics
 
 # Narrative labels intentionally contain no numeric glyphs or number words.
 # The numeric auditor treats every number as a market claim, while exact
@@ -63,11 +64,24 @@ def build_provider_claim_pack(compiled_context: dict[str, Any], mode: str) -> di
                  if isinstance(item.get("value"), dict) and all(key in item["value"] for key in ("scenario_id", "type", "direction", "likelihood"))]
     macro_ids = [str(item["value"]["evidence_id"]) for item in by_category.get("MACRO", []) if isinstance(item.get("value"), dict) and item["value"].get("evidence_id")]
     unavailable_macro = next((str(item.get("value")) for item in facts if item.get("fact_id") == "MACRO_UNAVAILABLE"), "本次未加入已验证宏观证据。")
-    numeric = [{"source_fact_id": item["source_fact_id"], "canonical_value": item["canonical_value"],
-                "exact_display": item.get("exact_display", str(item["canonical_value"])), "unit": item.get("unit")}
-               for item in compiled_context.get("numeric_registry", [])]
+    facts_by_id = {str(item["fact_id"]): item for item in facts}
+    eligible_fact_ids = {str(item["fact_id"]) for items in by_category.values() for item in items}
+    numeric = []
+    for original in compiled_context.get("numeric_registry", []):
+        source_fact_id = str(original["source_fact_id"])
+        if source_fact_id not in eligible_fact_ids:
+            continue
+        item = {"source_fact_id": source_fact_id, "canonical_value": original["canonical_value"],
+                "exact_display": original.get("exact_display", str(original["canonical_value"])),
+                "unit": original.get("unit")}
+        semantic = {key: original.get(key) for key in ("semantic_field", "semantic_role", "semantic_namespace")}
+        if not all(semantic.values()):
+            fact = facts_by_id.get(source_fact_id, {})
+            field = find_numeric_field(fact.get("value"), float(original["canonical_value"]))
+            semantic = numeric_semantics(source_fact_id, field, original.get("unit"))
+        numeric.append({**item, **semantic})
     return {
-        "claim_pack_version": "ai6b-provider-claim-pack-v3", "mode": mode, "allowed_numeric_values": numeric,
+        "claim_pack_version": "ai6b-provider-claim-pack-v4", "mode": mode, "allowed_numeric_values": numeric,
         "levels": levels, "scenarios": scenarios, "macro_evidence_ids": macro_ids,
         "macro_unavailable_statement": None if macro_ids else unavailable_macro,
         "evidence_status": {"flow_available": bool(usable_flow),
@@ -83,7 +97,8 @@ def build_provider_claim_pack(compiled_context: dict[str, Any], mode: str) -> di
 def provider_claim_pack_contract(claim_pack: dict[str, Any]) -> dict[str, Any]:
     """Compact provider view derived from the canonical host grounding pack."""
     numeric = [
-        [item["source_fact_id"], item["canonical_value"], item.get("unit")]
+        [item["source_fact_id"], item["canonical_value"], item.get("unit"),
+         item["semantic_namespace"], item["semantic_role"]]
         for item in claim_pack["allowed_numeric_values"]
     ]
     levels = [
@@ -110,7 +125,7 @@ def provider_claim_pack_contract(claim_pack: dict[str, Any]) -> dict[str, Any]:
     ]
     return {
         "claim_pack_version": claim_pack["claim_pack_version"], "mode": claim_pack["mode"],
-        "allowed_numeric_tuple_fields": ["fact_id", "exact_value", "unit"],
+        "allowed_numeric_tuple_fields": ["fact_id", "exact_value", "unit", "semantic_namespace", "semantic_role"],
         "allowed_numeric_values": numeric, "level_claim_slots": levels, "scenario_claim_slots": scenarios,
         "macro_evidence_ids": claim_pack["macro_evidence_ids"],
         "macro_unavailable_statement": claim_pack["macro_unavailable_statement"],
@@ -189,6 +204,36 @@ def _macro_limitation_text(value: str, statement: str | None) -> str:
     return result
 
 
+_FLOW_ASSERTION_TERMS = ("FLOW_PHASE_", "资金净流入", "资金净流出", "净流入", "净流出", "CVD", "OI")
+_FLOW_LIMITATION = "当前无可审计订单流证据，无法判定驱动性质"
+
+
+def _enforce_numeric_namespaces(value: str, claim_pack: dict[str, Any]) -> str:
+    """Render provider numeric wording inside its deterministic semantic namespace."""
+    result = str(value)
+    from .report_claim_extractor import split_sentences
+    allowed_flow_ids=set(claim_pack["fact_ids_by_category"].get("ORDER_FLOW",[]))
+    cvd_values=[str(item.get("exact_display",item["canonical_value"])) for item in claim_pack["allowed_numeric_values"]
+                if item.get("semantic_namespace")=="FLOW_CVD"]
+    replaced=[]
+    for sentence in split_sentences(result):
+        phase_ids=set(re.findall(r"FLOW_PHASE_\d+",sentence))
+        net_flow=any(term in sentence for term in ("资金净流入","资金净流出","净流入","净流出"))
+        unsupported_phase=bool(phase_ids-allowed_flow_ids)
+        unsupported_flow_claim=net_flow and not any(exact in sentence for exact in cvd_values)
+        unavailable_flow=(not claim_pack["evidence_status"]["flow_available"]
+                          and any(term in sentence for term in _FLOW_ASSERTION_TERMS))
+        replaced.append(_FLOW_LIMITATION if unsupported_phase or unsupported_flow_claim or unavailable_flow else sentence)
+    result = "。".join(dict.fromkeys(replaced)) + ("。" if replaced else "")
+    for item in claim_pack["allowed_numeric_values"]:
+        if item.get("semantic_namespace") != "PRICE_CHANGE":
+            continue
+        exact = str(item.get("exact_display", item["canonical_value"]))
+        pattern = rf"(?:资金)?净(?:流入|流出)\s*{re.escape(exact)}"
+        result = re.sub(pattern, f"价格变化比例 {exact}", result)
+    return result
+
+
 def _dedupe_section_bodies(sections: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Remove repeated prose while deterministic projections retain all facts."""
     from .report_claim_extractor import split_sentences
@@ -226,11 +271,15 @@ def ground_provider_report(report: dict[str, Any], claim_pack: dict[str, Any]) -
     macro_statement = claim_pack.get("macro_unavailable_statement")
     section_ids = {str(item.get("section_id")) for item in report.get("sections", [])}
     empty_scenario_limitation_section = "QUICK_SUMMARY" if "QUICK_SUMMARY" in section_ids else "LIMITATIONS"
-    grounded["headline"] = _macro_limitation_text(_narrative_text(report["headline"]), macro_statement); sections = []
+    grounded["headline"] = _enforce_numeric_namespaces(
+        _macro_limitation_text(_narrative_text(report["headline"]), macro_statement), claim_pack
+    ); sections = []
     for original in report.get("sections", []):
         section = dict(original); categories = _section_categories(str(section.get("section_id")))
         section["title"] = _narrative_text(str(section.get("title") or section.get("section_id") or ""))
-        section["body"] = _macro_limitation_text(_narrative_text(section["body"]), macro_statement)
+        section["body"] = _enforce_numeric_namespaces(
+            _macro_limitation_text(_narrative_text(section["body"]), macro_statement), claim_pack
+        )
         if claim_pack["evidence_status"].get("flow_partial") and section.get("section_id") in {"MOVE_NATURE", "ORDER_FLOW"}:
             section["body"] = section["body"].replace(
                 "\u8ba2\u5355\u6d41\u6570\u636e\u663e\u793a", "\u90e8\u5206\u53ef\u7528\u7684\u8ba2\u5355\u6d41\u8bc1\u636e\u663e\u793a"

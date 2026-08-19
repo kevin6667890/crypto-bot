@@ -428,6 +428,64 @@ export async function fetchPaperStatus(
   return response.json() as Promise<PaperStatus>;
 }
 
+export type AuditedAiBrief = {
+  instrument: string;
+  mode: "QUICK" | "FULL" | "POSITION";
+  report_id: string;
+  display_eligible: boolean;
+  status: "CURRENT_AUDITED_REPORT" | "STALE_AUDITED_REPORT" | "NO_CURRENT_AUDITED_REPORT";
+  generated_at: string | null;
+  market_snapshot_at: string | null;
+  freshness: { status?: string; quality?: string; confirmed_15m_bars_behind?: number; age_seconds?: number | null; threshold_seconds?: number };
+  latest_generated: { report_id?: string; eligibility?: string; queue_status?: string; decision_time?: string };
+  audit: { status?: string; overall_score?: number; promotion_eligible?: boolean };
+  provider: string | null;
+  model: string | null;
+  headline: string | null;
+  executive_summary: string | null;
+  data_warnings: string[];
+};
+
+export type AuditedAiReportDetail = {
+  summary: AuditedAiBrief;
+  report: null | {
+    headline?: string;
+    market_phase?: string;
+    directional_bias?: string;
+    confidence?: string;
+    sections: Array<{ section_id?: string; title?: string; body?: string; uncertainties?: string[] }>;
+  };
+};
+
+function assertAiInstrument(expected: string, actual: string): void {
+  if (expected !== actual) throw new Error("AI report instrument mismatch");
+}
+
+export async function fetchAuditedAiBrief(instrument: string, mode = "QUICK"): Promise<AuditedAiBrief> {
+  const response = await fetch(`${paperApiBase}/api/ai-market-analysis/v1/workspace-brief/latest?instrument=${encodeURIComponent(instrument)}&mode=${encodeURIComponent(mode)}`);
+  if (!response.ok) throw new Error(`AI brief request failed: ${response.status}`);
+  const value = await response.json() as AuditedAiBrief;
+  assertAiInstrument(instrument, value.instrument);
+  return value;
+}
+
+export async function fetchAuditedAiHistory(instrument: string): Promise<AuditedAiBrief[]> {
+  const response = await fetch(`${paperApiBase}/api/ai-market-analysis/v1/research-reports?instrument=${encodeURIComponent(instrument)}`);
+  if (!response.ok) throw new Error(`AI report history request failed: ${response.status}`);
+  const value = await response.json() as { instrument: string; items: AuditedAiBrief[] };
+  assertAiInstrument(instrument, value.instrument);
+  return value.items.filter((item) => item.instrument === instrument);
+}
+
+export async function fetchAuditedAiReport(instrument: string, reportId: string, mode: string): Promise<AuditedAiReportDetail> {
+  const response = await fetch(`${paperApiBase}/api/ai-market-analysis/v1/research-reports/${encodeURIComponent(reportId)}?instrument=${encodeURIComponent(instrument)}&mode=${encodeURIComponent(mode)}`);
+  if (!response.ok) throw new Error(`AI report request failed: ${response.status}`);
+  const value = await response.json() as AuditedAiReportDetail;
+  assertAiInstrument(instrument, value.summary.instrument);
+  if (!value.summary.display_eligible) value.report = null;
+  return value;
+}
+
 export type VpvrProfile = NonNullable<NonNullable<PaperStatus["analysis"]>["vpvr"]>;
 
 export async function fetchVpvrProfile(instrument = "ETH-USDT", interval = "15m", viewport?: { low: number; high: number; bins: number }): Promise<VpvrProfile> {

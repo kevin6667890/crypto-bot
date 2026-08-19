@@ -175,7 +175,8 @@ class ReportWorker:
         budget_reason=self.budget.reason(self.repository,request["instrument"],compiled["token_estimate"],request["max_output_tokens"],request["provider"])
         if budget_reason:self.repository.event(request["request_id"],"BUDGET_BLOCKED",{"code":budget_reason});return
         number=self._attempt_count(request["request_id"])+1
-        if number>3:self.repository.event(request["request_id"],"FAILED_FINAL",{"code":"MAX_ATTEMPTS"});return
+        max_attempts=max(1,min(3,int(os.getenv("AI_REPORT_PROVIDER_ATTEMPT_MAX","3"))))
+        if number>max_attempts:self.repository.event(request["request_id"],"FAILED_FINAL",{"code":"MAX_ATTEMPTS"});return
         self.repository.event(request["request_id"],"RUNNING",{"attempt":number})
         provider=self.provider_factory(request);source_versions=snapshot["source_versions"]
         response_metadata=response_metadata_contract(context_id=request["context_id"],mode=request["mode"],
@@ -192,7 +193,7 @@ class ReportWorker:
         except ProviderError as error:
             charge=error.charge_state if error.charge_state in CHARGE_STATES else "UNKNOWN_CHARGE_STATE"
             self._record_attempt(request,number,failure_code=error.code,error=error.code,lifecycle_state="FAILED",charge_state=charge)
-            if provider_retry_allowed(error) and number<3:self.repository.event(request["request_id"],"RETRY_SCHEDULED",{"delay_seconds":RETRY_DELAYS[number-1],"code":error.code})
+            if provider_retry_allowed(error) and number<max_attempts:self.repository.event(request["request_id"],"RETRY_SCHEDULED",{"delay_seconds":RETRY_DELAYS[number-1],"code":error.code})
             else:self.repository.event(request["request_id"],"FAILED_FINAL",{"code":error.code})
             return
         usage=result.usage or {}
@@ -230,3 +231,15 @@ class ReportWorker:
           parse_diagnostic={"status":"VALID"},validation_diagnostic={"status":"VALID",**reference_diagnostics(report,provider_request,registry)})
         report=resolve_citations(report,provider_request["macro_items"])
         saved=self.repository.save_report(request,report,assemble_generated_text(report));self.repository.event(request["request_id"],"COMPLETED",saved)
+        if os.getenv("AI_REPORT_AUTO_AUDIT_ENABLED","false").lower()=="true":
+            try:
+                from .report_audit_jobs import queue_audit
+                from .report_audit_repository import AuditRepository,freeze_report_bundle
+                audits=AuditRepository(self.repository.path)
+                audits.freeze_input(freeze_report_bundle(self.repository,saved["report_id"]))
+                queue_audit(audits,saved["report_id"])
+            except Exception as error:
+                # The report remains non-displayable. Record only an error class;
+                # the scheduler/worker must stay alive so operators can recover.
+                self.repository.event(request["request_id"],"COMPLETED",{
+                    **saved,"audit_queue_status":"ERROR","audit_queue_error":type(error).__name__})

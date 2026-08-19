@@ -60,6 +60,8 @@ try:
     from strategy_router_v2 import StrategyRouterV2
     from ai_market_analysis.report_api import submit_report, save_position_plan
     from ai_market_analysis.report_health import report_health
+    from ai_market_analysis.report_scheduler import ReportScheduler
+    from ai_market_analysis.presentation_feed import latest_workspace_brief,research_history,research_report
     from ai_market_analysis.report_repository import ReportRepository, DEFAULT_REPORT_DB
     from ai_market_analysis.report_audit_repository import AuditRepository
     from ai_market_analysis.report_audit_api import trigger_audit,latest_audit,eligibility,create_evaluation_run
@@ -99,6 +101,8 @@ except ImportError:
     from .strategy_router_v2 import StrategyRouterV2
     from .ai_market_analysis.report_api import submit_report, save_position_plan
     from .ai_market_analysis.report_health import report_health
+    from .ai_market_analysis.report_scheduler import ReportScheduler
+    from .ai_market_analysis.presentation_feed import latest_workspace_brief,research_history,research_report
     from .ai_market_analysis.report_repository import ReportRepository, DEFAULT_REPORT_DB
     from .ai_market_analysis.report_audit_repository import AuditRepository
     from .ai_market_analysis.report_audit_api import trigger_audit,latest_audit,eligibility,create_evaluation_run
@@ -1121,6 +1125,7 @@ MARKET_STATE_ENGINE_V2 = MarketStateEngineV2()
 STRATEGY_ROUTER_V2 = StrategyRouterV2()
 AI_REPORT_REPOSITORY = ReportRepository(Path(os.getenv("AI_MARKET_REPORT_DB_PATH", ROOT / DEFAULT_REPORT_DB)))
 AI_AUDIT_REPOSITORY = AuditRepository(Path(os.getenv("AI_MARKET_REPORT_DB_PATH", ROOT / DEFAULT_REPORT_DB)))
+AI_REPORT_SCHEDULER = ReportScheduler(AI_REPORT_REPOSITORY, DB_PATH, MICROSTRUCTURE.path)
 CANONICAL_FLOW_HISTORY = CanonicalFlowHistoryStore(Path(os.getenv(
     "CANONICAL_MICROSTRUCTURE_HISTORY_DB_PATH", MICROSTRUCTURE.path,
 )))
@@ -1319,6 +1324,21 @@ class Handler(BaseHTTPRequestHandler):
         parsed, query = urlparse(self.path), parse_qs(urlparse(self.path).query)
         instrument = query.get("instrument", ["ETH-USDT"])[0]
         if parsed.path.startswith("/api/ai-market-analysis/v1/"):
+            if parsed.path in {"/api/ai-market-analysis/v1/workspace-brief/latest", "/api/ai-market-analysis/v1/research-reports"} or parsed.path.startswith("/api/ai-market-analysis/v1/research-reports/"):
+                if not ai_report_flag("AI_MARKET_ANALYSIS_PRESENTATION_ENABLED"):
+                    self._send({"error":{"code":"PRESENTATION_DISABLED","message":"Audited presentation is disabled."}},HTTPStatus.NOT_FOUND);return
+                if AI_REPORT_REPOSITORY.schema_version() is None:
+                    self._send({"error":{"code":"SCHEMA_UNAVAILABLE","message":"Audited presentation storage is unavailable."}},HTTPStatus.SERVICE_UNAVAILABLE);return
+                try:
+                    requested=query.get("instrument",[""])[0]; mode=query.get("mode",["QUICK"])[0]; language=query.get("language",["zh-CN"])[0]
+                    if parsed.path.endswith("/workspace-brief/latest"):
+                        self._send(latest_workspace_brief(AI_REPORT_REPOSITORY,requested,mode,language));return
+                    if parsed.path == "/api/ai-market-analysis/v1/research-reports":
+                        self._send(research_history(AI_REPORT_REPOSITORY,requested,language));return
+                    report_id=parsed.path.rsplit("/",1)[1]
+                    self._send(research_report(AI_REPORT_REPOSITORY,report_id,instrument=requested,mode=mode,language=language));return
+                except PresentationError as error:
+                    self._send({"error":{"code":error.code,"message":"Audited presentation is unavailable."}},error.status);return
             if parsed.path.startswith("/api/ai-market-analysis/v1/presentations"):
                 if not ai_report_flag("AI_MARKET_ANALYSIS_PRESENTATION_ENABLED"):
                     self._send({"error":{"code":"PRESENTATION_DISABLED","message":"Shadow presentation is disabled."}},HTTPStatus.NOT_FOUND);return
@@ -1343,7 +1363,7 @@ class Handler(BaseHTTPRequestHandler):
                 except Exception:
                     self._send({"error":{"code":"PRESENTATION_INTERNAL_ERROR","message":"Shadow presentation is unavailable."}},HTTPStatus.INTERNAL_SERVER_ERROR);return
             if parsed.path == "/api/ai-market-analysis/v1/health":
-                self._send(report_health(AI_REPORT_REPOSITORY));return
+                self._send({**report_health(AI_REPORT_REPOSITORY),"scheduler":AI_REPORT_SCHEDULER.state()});return
             if not ai_report_flag("AI_MARKET_REPORTS_ENABLED"):
                 self._send({"error":"AI market reports are disabled."},HTTPStatus.NOT_FOUND);return
             if AI_REPORT_REPOSITORY.schema_version() is None:
@@ -1914,8 +1934,13 @@ def run() -> None:
     def scheduler() -> None:
         SERVICE.scheduler_running=True
         while True:
-            SERVICE.cycle(); log_event(LOGGER,"INFO","paper_scheduler","cycle_completed",duration_ms=SERVICE.last_cycle_duration_ms); time.sleep(60)
-    SERVICE.start_ai_workers()
+            SERVICE.cycle()
+            try:
+                AI_REPORT_SCHEDULER.tick()
+            except Exception as error:
+                log_event(LOGGER,"ERROR","ai_report_scheduler","tick_failed",error_type=type(error).__name__)
+            log_event(LOGGER,"INFO","paper_scheduler","cycle_completed",duration_ms=SERVICE.last_cycle_duration_ms); time.sleep(60)
+    if os.getenv("LEGACY_AI_BRIEF_ENABLED","true").lower()=="true":SERVICE.start_ai_workers()
     SERVICE.start_flow_collector()
     threading.Thread(target=scheduler, daemon=True).start()
     host = os.getenv("PAPER_API_HOST", "127.0.0.1")

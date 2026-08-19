@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useState } from "react";
 import StrategyResearch from "../StrategyResearch";
 import DiscoveryLab from "../DiscoveryLab";
 import { useLanguage } from "../i18n";
+import { AiReportResearch } from "../AiReportPresentation";
 
 const StrategyRouterResearch = lazy(() => import("../StrategyRouterResearch"));
 
@@ -29,7 +30,7 @@ export default function StrategyResearchRoute({
           <button className={view === "router" ? "active" : ""} onClick={() => selectView("router")}>{t("research.routerTab")}</button>
         </nav>
       </header>
-      <div hidden={view !== "overview"} data-research-view="overview"><StrategyResearch /><DiscoveryLab /></div>
+      <div hidden={view !== "overview"} data-research-view="overview"><AiReportResearch instrument={instrument} /><StrategyResearch /><DiscoveryLab /></div>
       {view === "router" && <Suspense fallback={<div className="route-loading" role="status">{t("common.loading")}</div>}><StrategyRouterResearch instrument={instrument} /></Suspense>}
     </div>
   );

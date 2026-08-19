@@ -44,6 +44,7 @@ import {
   strategyComparison,
   strategyEvolution,
 } from "./data";
+import { WorkspaceAiBrief } from "./AiReportPresentation";
 
 const StrategyResearchRoute = lazy(() => import("./routes/StrategyResearchRoute"));
 const MicrostructureResearch = lazy(() => import("./MicrostructureResearch"));
@@ -1330,29 +1331,7 @@ function Workspace() {
                 </div>
               </section>
             ) : null}
-            <section className="ai-brief">
-              <BrainCircuit size={19} />
-              <div>
-                <span className="eyebrow">
-                  {t("market.aiBrief", {
-                    source: paper?.ai_brief?.source || t("market.waitingPaper"),
-                  })}
-                </span>
-                <strong>
-                  {paper?.ai_brief?.created_at
-                    ? t("market.updatedAt", {
-                        time: new Date(
-                          paper.ai_brief.created_at
-                        ).toLocaleString(),
-                      })
-                    : t("market.aiUnavailable")}
-                </strong>
-                <p>{paper?.ai_brief?.content || t("market.aiDefault")}</p>
-              </div>
-              <button className="secondary-btn" disabled>
-                {t("market.briefSoon")}
-              </button>
-            </section>
+            <WorkspaceAiBrief instrument={perpetualInstrument(instrument)} />
             <section className="copilot-panel">
               <div>
                 <span className="eyebrow">{t("market.copilot")}</span>

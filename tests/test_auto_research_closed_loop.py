@@ -165,7 +165,7 @@ def test_schema_is_additive_and_paper_identity_columns_exist(tmp_path):
     repo=ResearchRepository(tmp_path/"research.db")
     with repo.connect() as connection:
         tables={row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-    assert {"automatic_research_cycles","approved_strategy_registry","strategy_registry_switches"} <= tables
+    assert {"automatic_research_cycles","automatic_research_scheduler_state","approved_strategy_registry","strategy_registry_switches"} <= tables
     from dashboard.paper_api import PaperService
     paper=PaperService(tmp_path/"paper.db")
     with paper._connect() as connection:

@@ -44,8 +44,11 @@ test("Workspace current audited Hero shows audit, freshness, partial coverage an
   await expect(hero).toContainText("AI 审计通过 · 100 / 100");
   await expect(hero).toContainText("当前");
   await expect(hero).toContainText("1W · 历史不足");
-  await expect(hero.getByRole("link", { name: /查看完整 AI 分析/ })).toHaveAttribute("href", /#research\/report\/report_eth/);
+  const researchLink = hero.getByRole("link", { name: /查看完整 AI 分析/ });
+  await expect(researchLink).toHaveAttribute("href", /#research\/report\/report_eth/);
   expect((await new AxeBuilder({ page }).include('[data-testid="workspace-ai6b-brief"]').analyze()).violations).toEqual([]);
+  await researchLink.click();
+  await expect(page.getByTestId("research-ai6b-reports")).toBeVisible();
 });
 
 test("Audit failed state hides report body", async ({ page }) => {

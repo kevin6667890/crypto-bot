@@ -934,6 +934,7 @@ function Workspace() {
           >
             <option>BTC-USDT</option>
             <option>ETH-USDT</option>
+            <option>SOL-USDT</option>
           </select>
           <select
             value={interval}

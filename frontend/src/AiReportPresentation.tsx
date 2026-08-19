@@ -2,7 +2,7 @@ import { BrainCircuit, CheckCircle2, Clock3, ExternalLink, ShieldCheck } from "l
 import { useEffect, useState } from "react";
 import { AuditedAiBrief, AuditedAiReportDetail, fetchAuditedAiBrief, fetchAuditedAiHistory, fetchAuditedAiReport } from "./data";
 import { translateKnownEnum } from "./aiMarketAnalysis/enumTranslations";
-import { isPresent, presentAiLevels, renderIfPresent, workspaceScenarioLabel } from "./aiWorkspaceSemantics";
+import { compactAiSummary, isPresent, presentAiLevels, renderIfPresent, workspaceScenarioLabel } from "./aiWorkspaceSemantics";
 
 const when = (value: string | null | undefined) => value ? new Date(value).toLocaleString() : "—";
 const source = (brief: AuditedAiBrief | null) => [brief?.provider, brief?.model].filter(Boolean).join(" / ") || "DeepSeek";
@@ -52,7 +52,7 @@ export function WorkspaceAiBrief({ instrument }: { instrument: string }) {
       <div className="ai-hero-primary">
         <span className="ai-conclusion-label">结论 · {brief.decision_label || "观察"}</span>
         <h3>{brief.headline}</h3>
-        <p>{brief.executive_summary}</p>
+        <p>{compactAiSummary(brief.executive_summary)}</p>
         <div className="ai-hero-section"><span>关键依据</span><ul>{drivers.map((item, index) => <li key={`${item.label}-${index}`}><b>{item.label}</b>{renderIfPresent(item.value, value => <small>{String(value)}</small>)}</li>)}{!drivers.length && <li><b>市场阶段</b><small>{phaseLabel[brief.market_phase || ""] || translateKnownEnum(brief.market_phase, "zh") || "观察中"}</small></li>}</ul></div>
         <div className="ai-hero-section"><span>关键位置</span>{levels.length ? <ul>{levels.slice(0, 3).map((item) => <li key={item.level_id}><b>{item.asserted_role === "SUPPORT" ? "支撑" : item.asserted_role === "RESISTANCE" ? "压力" : translateKnownEnum(item.asserted_role, "zh") || "关键位"} · {item.primary_timeframe || "多周期"}</b><small>{item.representative_price}{renderIfPresent(item.invalidation, value => ` · 失效：${value}`)}</small></li>)}</ul> : <p className="ai-section-empty">当前无可靠关键压力位</p>}</div>
         {!!scenarios.length && <div className="ai-hero-section"><span>关注场景</span><ul>{scenarios.slice(0, 1).map((item) => <li key={item.scenario_id}><b>{workspaceScenarioLabel(item.scenario_type)}</b><small>{renderIfPresent(item.trigger_text, value => <span>触发：{value}</span>)}{renderIfPresent(item.confirmation_text, value => <span>确认：{value}</span>)}{renderIfPresent(item.invalidation_text, value => <span>失效：{value}</span>)}</small></li>)}</ul></div>}

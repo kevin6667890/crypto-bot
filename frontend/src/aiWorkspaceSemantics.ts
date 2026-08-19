@@ -21,3 +21,17 @@ export function renderIfPresent<T>(value: T, render: (present: T) => ReactNode) 
 
 export const workspaceScenarioLabel = (value: unknown) => scenarioLabel[String(value || "")] || "主要场景";
 export const presentAiLevels = <T extends object>(levels: T[] = []) => levels.filter(item => isPresent((item as { representative_price?: unknown }).representative_price));
+
+export function compactAiSummary(value: unknown, maxLength = 220): string {
+  const text = typeof value === "string" ? value.replace(/\s+/g, " ").trim() : "";
+  if (!text) return "暂无核心摘要。";
+  const sentences = text.match(/[^。！？.!?]+[。！？.!?]?/g) || [text];
+  let summary = "";
+  for (const sentence of sentences.slice(0, 2)) {
+    if (summary && summary.length + sentence.length > maxLength) break;
+    summary += sentence;
+  }
+  if (!summary) summary = text.slice(0, maxLength);
+  if (summary.length > maxLength) summary = summary.slice(0, maxLength);
+  return summary.length < text.length ? `${summary.replace(/[，,;；\s]+$/, "")}…` : summary;
+}

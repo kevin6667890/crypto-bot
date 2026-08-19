@@ -483,7 +483,8 @@ class BoundedMarketDataReaderV2:
                            ORDER BY ts DESC LIMIT ?""",
                         (candidate, timeframe, start, as_of, limit)).fetchall()
                     merged.update({int(row["ts"]): {**dict(row), "_source_store": "historical_candles"}
-                                   for row in selected})
+                                   for row in selected
+                                   if timeframe != "1D" or int(row["ts"]) % 86_400 == 0})
             # Materialized rows always win timestamp collisions and aliases are
             # merged instead of stopping at the first legacy symbol spelling.
             for candidate in candidates:
@@ -496,7 +497,8 @@ class BoundedMarketDataReaderV2:
                         (candidate, timeframe, start, as_of, limit)).fetchall()
                     merged.update({int(row["ts"]): {**dict(row), "confirmed": True,
                                    "source": "persisted_confirmed_market_candles",
-                                   "_source_store": "market_candles"} for row in selected})
+                                   "_source_store": "market_candles"} for row in selected
+                                   if timeframe != "1D" or int(row["ts"]) % 86_400 == 0})
             if merged:
                 rows = [merged[key] for key in sorted(merged)][-limit:]
         for row in rows:

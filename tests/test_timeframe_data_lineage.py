@@ -105,6 +105,26 @@ def test_observation_contract_distinguishes_missing_stale_and_warmup() -> None:
     assert "indicator warmup requires 200 bars" in partial.quality.notes[0]
 
 
+def test_daily_reader_excludes_legacy_non_utc_boundaries(tmp_path) -> None:
+    path = tmp_path / "paper.db"
+    connection = sqlite3.connect(path)
+    connection.execute("""CREATE TABLE market_candles(
+      instrument TEXT,bar TEXT,ts INTEGER,open REAL,high REAL,low REAL,
+      close REAL,volume REAL,PRIMARY KEY(instrument,bar,ts))""")
+    canonical = _rows("1D", 14)
+    mixed = [{**row, "ts": row["ts"] + 16 * 3600} for row in canonical]
+    connection.executemany(
+        "INSERT INTO market_candles VALUES(?,?,?,?,?,?,?,?)",
+        [("BTC-USDT", "1D", r["ts"], r["open"], r["high"], r["low"], r["close"], r["volume"])
+         for r in canonical + mixed],
+    )
+    connection.commit(); connection.close()
+
+    rows = BoundedMarketDataReaderV2(path).candles("BTC-USDT-SWAP", "1D", AS_OF, 100)
+    assert len(rows) == 14
+    assert all(row["ts"] % 86_400 == 0 for row in rows)
+
+
 class _Reader:
     def __init__(self) -> None:
         self.data = {frame: _rows(frame) for frame in ("15m", "1H", "4H", "1D")}

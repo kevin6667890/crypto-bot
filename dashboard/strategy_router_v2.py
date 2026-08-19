@@ -571,7 +571,8 @@ class StrategyRouterV2:
               previous_route: Mapping[str, Any] | None = None,
               family: str | None = None, direction: str | None = None,
               parameter_set_id: str | None = None,
-              parameter_set: Mapping[str, Any] | None = None) -> dict[str, Any]:
+              parameter_set: Mapping[str, Any] | None = None,
+              strategy_definitions: Iterable[Mapping[str, Any]] | None = None) -> dict[str, Any]:
         if context.get("version") != "market-analysis-context-v2":
             raise ValueError("context version must be market-analysis-context-v2")
         if state.get("version") != "market-state-engine-v2":
@@ -585,15 +586,20 @@ class StrategyRouterV2:
         execution = str(context.get("execution_timeframe", "15m"))
         if execution != "15m":
             raise ValueError("strategy-router-v2 currently supports execution_timeframe=15m")
+        if strategy_definitions is not None and any(value is not None for value in (family,direction,parameter_set_id,parameter_set)):
+            raise ValueError("strategy_definitions cannot be combined with the single-definition arguments")
         if (family is None) != (direction is None) or (parameter_set is None) != (parameter_set_id is None):
             raise ValueError("family/direction and parameter_set_id/parameter_set must be supplied together")
-        if family is not None:
-            if family not in TRADE_FAMILIES or direction not in {"LONG", "SHORT"}:
+        supplied = list(strategy_definitions or ([] if family is None else [{"family":family,"direction":direction,"parameter_set_id":parameter_set_id,"parameter_set":parameter_set}]))
+        for definition in supplied:
+            item_family, item_direction = definition.get("family"), definition.get("direction")
+            item_parameters, item_parameter_id = definition.get("parameter_set"), definition.get("parameter_set_id")
+            if item_family not in TRADE_FAMILIES or item_direction not in {"LONG", "SHORT"}:
                 raise ValueError("unsupported family/direction")
-            if parameter_set is None or parameter_set_id is None:
+            if item_parameters is None or item_parameter_id is None:
                 raise ValueError("explicit frozen parameter set is required for bounded routing")
-            allowed = dict(backtest_parameter_ranges_v2()[family])
-            if set(parameter_set) != set(allowed) or any(parameter_set[name] not in allowed[name] for name in allowed):
+            allowed = dict(backtest_parameter_ranges_v2()[item_family])
+            if set(item_parameters) != set(allowed) or any(item_parameters[name] not in allowed[name] for name in allowed):
                 raise ValueError("parameter set is outside the frozen Router V2 specification")
         previous_candidates = {(item["family"], item["direction"]): item for item in (previous_route or {}).get("candidates", [])}
         shared_quality = _quality(context)
@@ -603,13 +609,13 @@ class StrategyRouterV2:
         no_level_identity = stable_hash({"level": "NONE"})
         candidates: list[StrategyCandidateV2] = []
         transitions: list[StrategyTransitionV2] = []
-        requested = ((family, direction),) if family is not None else tuple(
-            (item_family, item_direction) for item_family in TRADE_FAMILIES for item_direction in ("LONG", "SHORT"))
-        for item_family, item_direction in requested:
+        requested = tuple((definition["family"],definition["direction"],definition["parameter_set_id"],definition["parameter_set"]) for definition in supplied) if supplied else tuple(
+            (item_family, item_direction, None, None) for item_family in TRADE_FAMILIES for item_direction in ("LONG", "SHORT"))
+        for item_family, item_direction, item_parameter_set_id, item_parameter_set in requested:
             prior = previous_candidates.get((item_family, item_direction))
             candidate = self._evaluate(item_family, item_direction, context, state,
-                                       parameter_set_id=parameter_set_id,
-                                       parameter_set=parameter_set,
+                                       parameter_set_id=item_parameter_set_id,
+                                       parameter_set=item_parameter_set,
                                        previous_candidate=prior,
                                        shared_quality=shared_quality,
                                        shared_overlays=shared_overlays,
@@ -694,7 +700,10 @@ class StrategyRouterV2:
             "route_snapshot_identity": None,
             "parameter_set_id": None,
         }
-        snapshot["parameter_set_id"] = parameter_set_id
+        snapshot["parameter_set_id"] = parameter_set_id if strategy_definitions is None else stable_hash([
+            {"family": definition["family"], "direction": definition["direction"], "parameter_set_id": definition["parameter_set_id"]}
+            for definition in supplied
+        ])
         snapshot["route_snapshot_identity"] = stable_hash(
             {key: value for key, value in snapshot.items() if key != "route_snapshot_identity"})
         return snapshot

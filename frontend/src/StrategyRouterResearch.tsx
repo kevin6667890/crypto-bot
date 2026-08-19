@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { useLanguage, type TranslationKey } from "./i18n";
+import type { ApprovedStrategy } from "./data";
 
 type Evidence = { code: string; dimension: string; timeframe: string; detail: string; strength: string };
 type Blocker = { code: string; timeframe: string; release_condition: string };
@@ -19,6 +20,8 @@ type Route = {
   no_trade: { active: boolean; strategy_version: string; reasons: Array<{ code: string; timeframe: string; evidence: string[]; temporary: boolean; release_condition: string }> };
   quality: { overall_status?: string; degraded?: boolean }; transitions: Array<{ from_state: string; to_state: string; reason: string }>;
   disclaimer: string;
+  strategy_provenance: { source:"APPROVED_REGISTRY"|"LEGACY_BASELINE"; registry_id?:string; candidate_identity?:string; research_cycle_id?:number; approved_at?:string; dataset_range?:{start:number;end:number} };
+  approved_strategy?: ApprovedStrategy | null;
 };
 const dimensions = ["environment", "structure", "setup", "trigger", "data_quality"];
 
@@ -82,6 +85,7 @@ export default function StrategyRouterResearch({ instrument }: { instrument: str
     {error && <section role="alert" className="degraded-notice"><strong>{t("router.temporarilyUnavailable")}</strong><span>{t("state.retryHint")}</span><code>{error}</code></section>}
     {!route && !error && <section className="degraded-notice" role="status"><strong>{t("router.loadingTitle")}</strong><span>{t("router.loadingHelp")}</span></section>}
     {route && <>
+      <section className="router-no-trade clear" data-route-source={route.strategy_provenance.source}><div><span className="eyebrow">Strategy source</span><h2>{route.strategy_provenance.source === "APPROVED_REGISTRY" ? "AUTO RESEARCH · Approved Strategy" : "LEGACY BASELINE"}</h2><p>{route.strategy_provenance.source === "APPROVED_REGISTRY" ? `${route.approved_strategy?.family} · ${route.strategy_provenance.registry_id} · cycle #${route.strategy_provenance.research_cycle_id}` : "No ACTIVE approved registry candidate; deterministic built-in fallback is explicit."}</p></div><span className="route-status eligible">{route.approved_strategy?.status || "FALLBACK"}</span>{route.strategy_provenance.source === "APPROVED_REGISTRY" && <div className="router-reasons"><p><b>Candidate</b><code>{route.strategy_provenance.candidate_identity?.slice(0,20)}</code><span>{route.approved_strategy?.strategy_version}</span><small>{route.strategy_provenance.dataset_range ? `${new Date(route.strategy_provenance.dataset_range.start*1000).toISOString().slice(0,10)} → ${new Date(route.strategy_provenance.dataset_range.end*1000).toISOString().slice(0,10)}` : "--"}</small></p></div>}</section>
       <section className={`router-no-trade ${route.no_trade.active ? "active" : "clear"}`}><div><span className="eyebrow">{t("router.routeStatus")}</span><h2>{route.no_trade.active ? t("router.noTradeActive") : t("router.routeEligible")}</h2><p>{route.no_trade.active ? t("router.noTradeHelp") : t("router.eligibleHelp")}</p></div><span className={`route-status ${route.no_trade.active ? "blocked" : "eligible"}`}>{route.no_trade.active ? t("router.paused") : t("router.eligible")}</span>{route.no_trade.reasons.length > 0 && <div className="router-reasons">{route.no_trade.reasons.map((item) => <p key={`${item.code}-${item.timeframe}`}><b>{item.timeframe}</b><code>{item.code}</code><span>{explanation(item.release_condition, t)}</span><small>{item.temporary ? t("router.temporary") : t("router.persistent")}</small></p>)}</div>}</section>
       {route.primary_route ? <CandidateCard candidate={route.primary_route} primary /> : <section className="degraded-notice"><strong>{t("router.noSelectedRoute")}</strong><span>{t("router.noSelectedHelp")}</span></section>}
       {route.alternatives.length > 0 && <details className="router-alternatives"><summary>{t("router.alternatives", { count: route.alternatives.length })}</summary><div className="router-list">{route.alternatives.map((item) => <CandidateCard candidate={item} key={item.identity_hash} />)}</div></details>}

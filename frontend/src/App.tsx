@@ -1427,6 +1427,17 @@ function Workspace() {
                 <small>不代表成功率或收益概率</small>
               </div>
             </div>
+            <div className="signal-lineage current-strategy" data-strategy-source={paper?.strategy_provenance?.source || "LEGACY_BASELINE"}>
+              <span><small>当前策略 / Current strategy</small>{" "}<b>{paper?.active_strategy?.family || runtimeAnalysis?.strategy_version || "Legacy baseline"}</b></span>
+              <span><small>来源 / Source</small>{" "}<b>{paper?.active_strategy ? "自动研究验证 · Approved Registry" : "Legacy Baseline"}</b></span>
+              {paper?.active_strategy && <>
+                <span><small>方向</small>{" "}<b>{paper.active_strategy.direction_capability}</b></span>
+                <span><small>Registry</small>{" "}<b title={paper.active_strategy.registry_id}>{paper.active_strategy.registry_id.slice(0,14)}</b></span>
+                <span><small>Cycle</small>{" "}<b>#{paper.active_strategy.research_cycle_id}</b></span>
+                <span><small>Approved</small>{" "}<b>{paper.active_strategy.approved_at ? new Date(paper.active_strategy.approved_at).toLocaleDateString() : "--"}</b></span>
+                {Object.entries(paper.active_strategy.serialized_definition.validation_status || {}).map(([stage,status]) => <span key={stage}><small>{stage}</small>{" "}<b className={status === "PASS" ? "positive" : "negative"}>{status}</b></span>)}
+              </>}
+            </div>
             {runtimeAnalysis?.strategy_version && (
               <div className="signal-lineage">
                 <span>

@@ -1,12 +1,13 @@
 import { BrainCircuit, CheckCircle2, Clock3, ExternalLink, ShieldCheck } from "lucide-react";
 import { useEffect, useState } from "react";
 import { AuditedAiBrief, AuditedAiReportDetail, fetchAuditedAiBrief, fetchAuditedAiHistory, fetchAuditedAiReport } from "./data";
+import { translateKnownEnum } from "./aiMarketAnalysis/enumTranslations";
+import { isPresent, presentAiLevels, renderIfPresent, workspaceScenarioLabel } from "./aiWorkspaceSemantics";
 
 const when = (value: string | null | undefined) => value ? new Date(value).toLocaleString() : "—";
 const source = (brief: AuditedAiBrief | null) => [brief?.provider, brief?.model].filter(Boolean).join(" / ") || "DeepSeek";
 const qualityLabel: Record<string, string> = { AVAILABLE: "可用", PARTIAL: "历史不足", STALE: "数据较旧", MISSING: "数据不足" };
-const phaseLabel: Record<string, string> = { FAILED_BREAKOUT: "失败突破", BREAKOUT_ATTEMPT: "突破尝试", RANGE_BUILDING: "区间构建", COMPRESSION: "波动压缩", RETEST: "回测确认", UNCLASSIFIED: "待分类" };
-
+const phaseLabel: Record<string, string> = { FAILED_BREAKOUT: "失败突破", BREAKOUT_ATTEMPT: "突破尝试", RANGE_BUILDING: "区间构建", COMPRESSION: "波动压缩", RETEST: "回测确认", UNCLASSIFIED: "待分类", RANGE: "区间震荡", WAIT: "混合观察", MIXED: "混合观察" };
 function freshness(brief: AuditedAiBrief) {
   const age = brief.freshness.age_seconds ?? 0;
   const limit = brief.freshness.threshold_seconds ?? 7200;
@@ -39,27 +40,30 @@ export function WorkspaceAiBrief({ instrument }: { instrument: string }) {
   const current = Boolean(brief?.display_eligible && brief.status === "CURRENT_AUDITED_REPORT");
   const stale = Boolean(brief?.display_eligible && brief.status === "STALE_AUDITED_REPORT");
   const fresh = brief ? freshness(brief) : null;
+  const levels = presentAiLevels(brief?.levels);
+  const scenarios = (brief?.scenarios || []).filter(item => isPresent(item.scenario_type));
+  const drivers = (brief?.drivers || []).filter(item => isPresent(item.label)).slice(0, 3);
   return <section className={`ai-insight-hero ${stale ? "stale" : ""}`} data-testid="workspace-ai6b-brief" aria-labelledby="ai-insight-title">
     <header className="ai-hero-header">
       <div className="ai-hero-title"><BrainCircuit size={23} /><div><span className="eyebrow">Audited market intelligence</span><h2 id="ai-insight-title">AI 市场研判</h2></div></div>
       <div className="ai-hero-badges"><span>{source(brief)}</span><span>{brief?.mode || "QUICK"}</span>{brief?.audit.status === "PASSED" && <span className="audit-pass" title="内容已通过：引用、数值、方向、语义、关键位置与场景一致性"><CheckCircle2 size={14} /> AI 审计通过 · {brief.audit.overall_score ?? 100} / 100</span>}{fresh && <span className={`freshness-badge ${fresh.tone}`}><Clock3 size={13} />{fresh.label}</span>}</div>
     </header>
-    {loading ? <div className="ai-hero-empty"><strong>正在读取审计后的 AI 分析…</strong></div> : current && brief ? <div className="ai-hero-layout">
+    <div className="ai-hero-content">{loading ? <div className="ai-hero-empty"><strong>正在读取审计后的 AI 分析…</strong></div> : current && brief ? <div className="ai-hero-layout">
       <div className="ai-hero-primary">
         <span className="ai-conclusion-label">结论 · {brief.decision_label || "观察"}</span>
         <h3>{brief.headline}</h3>
         <p>{brief.executive_summary}</p>
-        <div className="ai-hero-section"><span>关键依据</span><ul>{(brief.drivers || []).slice(0, 3).map((item, index) => <li key={`${item.label}-${index}`}><b>{item.label}</b>{item.value != null && <small>{String(item.value)}</small>}</li>)}{!brief.drivers?.length && <li><b>市场阶段</b><small>{phaseLabel[brief.market_phase || ""] || brief.market_phase || "观察中"}</small></li>}</ul></div>
-        {!!brief.levels?.length && <div className="ai-hero-section"><span>关键位置</span><ul>{brief.levels.slice(0, 3).map((item) => <li key={item.level_id}><b>{item.asserted_role === "SUPPORT" ? "支撑" : item.asserted_role === "RESISTANCE" ? "压力" : item.asserted_role || "关键位"} · {item.primary_timeframe || "多周期"}</b><small>{item.representative_price ?? "—"}{item.invalidation ? ` · 失效：${item.invalidation}` : ""}</small></li>)}</ul></div>}
-        {!!brief.scenarios?.length && <div className="ai-hero-section"><span>关注场景</span><ul>{brief.scenarios.slice(0, 1).map((item) => <li key={item.scenario_id}><b>{item.scenario_type || "主要场景"}</b><small>{item.trigger_text || "等待触发"}<br/>确认：{item.confirmation_text || "等待确认"}<br/>失效：{item.invalidation_text || "以报告条件为准"}</small></li>)}</ul></div>}
+        <div className="ai-hero-section"><span>关键依据</span><ul>{drivers.map((item, index) => <li key={`${item.label}-${index}`}><b>{item.label}</b>{renderIfPresent(item.value, value => <small>{String(value)}</small>)}</li>)}{!drivers.length && <li><b>市场阶段</b><small>{phaseLabel[brief.market_phase || ""] || translateKnownEnum(brief.market_phase, "zh") || "观察中"}</small></li>}</ul></div>
+        <div className="ai-hero-section"><span>关键位置</span>{levels.length ? <ul>{levels.slice(0, 3).map((item) => <li key={item.level_id}><b>{item.asserted_role === "SUPPORT" ? "支撑" : item.asserted_role === "RESISTANCE" ? "压力" : translateKnownEnum(item.asserted_role, "zh") || "关键位"} · {item.primary_timeframe || "多周期"}</b><small>{item.representative_price}{renderIfPresent(item.invalidation, value => ` · 失效：${value}`)}</small></li>)}</ul> : <p className="ai-section-empty">当前无可靠关键压力位</p>}</div>
+        {!!scenarios.length && <div className="ai-hero-section"><span>关注场景</span><ul>{scenarios.slice(0, 1).map((item) => <li key={item.scenario_id}><b>{workspaceScenarioLabel(item.scenario_type)}</b><small>{renderIfPresent(item.trigger_text, value => <span>触发：{value}</span>)}{renderIfPresent(item.confirmation_text, value => <span>确认：{value}</span>)}{renderIfPresent(item.invalidation_text, value => <span>失效：{value}</span>)}</small></li>)}</ul></div>}
       </div>
       <div className="ai-hero-meta">
-        <dl><div><dt>更新时间</dt><dd>{when(brief.generated_at)}</dd></div><div><dt>数据时间</dt><dd>{when(brief.market_snapshot_at)}</dd></div><div><dt>市场阶段</dt><dd>{phaseLabel[brief.market_phase || ""] || brief.market_phase || "—"}</dd></div><div><dt>置信边界</dt><dd>{brief.confidence || "—"}</dd></div></dl>
+        <dl><div><dt>更新时间</dt><dd>{when(brief.generated_at)}</dd></div><div><dt>数据时间</dt><dd>{when(brief.market_snapshot_at)}</dd></div><div><dt>市场阶段</dt><dd>{phaseLabel[brief.market_phase || ""] || translateKnownEnum(brief.market_phase, "zh") || "—"}</dd></div><div><dt>置信边界</dt><dd>{translateKnownEnum(brief.confidence, "zh") || "—"}</dd></div></dl>
         <DataCoverage brief={brief} />
         {!!brief.risks?.length && <div className="ai-risk-list"><span>风险 / 限制</span>{brief.risks.slice(0, 3).map((item) => <p key={item}>{item}</p>)}</div>}
         <a className="secondary-btn ai-research-link" href={`#research/report/${encodeURIComponent(brief.report_id)}`}>查看完整 AI 分析 <ExternalLink size={14} /></a>
       </div>
-    </div> : stale && brief ? <div className="ai-hero-empty stale"><strong>AI 分析已过期</strong><p>最后有效分析：{when(brief.generated_at)}。历史内容不会作为当前市场结论展示，正在等待下一次有效分析。</p>{brief.scheduler?.enabled && <p>下一次预计更新时间：{when(brief.scheduler.next_tick)}</p>}<DataCoverage brief={brief} /><a className="secondary-btn ai-research-link" href={`#research/report/${encodeURIComponent(brief.report_id)}`}>查看历史完整 AI 分析 <ExternalLink size={14} /></a></div> : <div className="ai-hero-empty failed"><ShieldCheck size={20} /><strong>{brief?.latest_generated?.eligibility === "AUDIT_FAILED" ? "最新 AI 分析未通过审计" : "暂无当前有效 AI 分析"}</strong><p>等待下一次有效分析。未通过审计的报告正文不会展示。</p></div>}
+    </div> : stale && brief ? <div className="ai-hero-empty stale"><strong>AI 分析已过期</strong><p>最后有效分析：{when(brief.generated_at)}。历史内容不会作为当前市场结论展示，正在等待下一次有效分析。</p>{brief.scheduler?.enabled && <p>下一次预计更新时间：{when(brief.scheduler.next_tick)}</p>}<DataCoverage brief={brief} /><a className="secondary-btn ai-research-link" href={`#research/report/${encodeURIComponent(brief.report_id)}`}>查看历史完整 AI 分析 <ExternalLink size={14} /></a></div> : <div className="ai-hero-empty failed"><ShieldCheck size={20} /><strong>{brief?.latest_generated?.eligibility === "AUDIT_FAILED" ? "最新 AI 分析未通过审计" : "暂无当前有效 AI 分析"}</strong><p>等待下一次有效分析。未通过审计的报告正文不会展示。</p></div>}</div>
   </section>;
 }
 

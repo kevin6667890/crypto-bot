@@ -62,8 +62,8 @@ test("Research reads the audited AI6B history source", async ({ page }) => {
   await expect(history).toContainText("Audit 100");
 });
 
-test("Workspace current audited Hero shows audit, freshness, partial coverage and Research link", async ({ page }) => {
-  const current = { ...stale, status: "CURRENT_AUDITED_REPORT", freshness: { status: "CURRENT", quality: "PARTIAL", age_seconds: 120, threshold_seconds: 7200 }, headline: "失败突破后的混合阶段", executive_summary: "短期结构偏多但仍需确认。", decision_label: "观察", market_phase: "FAILED_BREAKOUT", confidence: "LOW", drivers: [{ label: "15m 结构", value: "偏多" }], risks: ["订单流确认不足"], timeframe_quality: [{ timeframe: "1W", availability: "PARTIAL", quality: "WARMUP_INCOMPLETE", bar_count: 42, required_bar_count: 200, reason_code: "INDICATOR_WARMUP_INCOMPLETE" }] };
+test("Workspace current audited Hero filters empty levels, localizes scenarios and keeps the desktop Hero balanced", async ({ page }) => {
+  const current = { ...stale, status: "CURRENT_AUDITED_REPORT", freshness: { status: "CURRENT", quality: "PARTIAL", age_seconds: 120, threshold_seconds: 7200 }, headline: "失败突破后的混合阶段", executive_summary: "短期结构偏多但仍需确认。", decision_label: "观察", market_phase: "MIXED", confidence: "LOW", drivers: [{ label: "15m 结构", value: "偏多" }], risks: ["订单流确认不足"], levels: [0, 1, 2].map(index => ({ level_id: `empty_${index}`, asserted_role: "RESISTANCE", primary_timeframe: "MULTI" })), scenarios: [{ scenario_id: "bear", scenario_type: "BEARISH_CONTINUATION", trigger_text: "跌破区间下沿", confirmation_text: "15m 收盘确认", invalidation_text: "重新站回区间" }], timeframe_quality: [{ timeframe: "1W", availability: "PARTIAL", quality: "WARMUP_INCOMPLETE", bar_count: 42, required_bar_count: 200, reason_code: "INDICATOR_WARMUP_INCOMPLETE" }] };
   await page.unroute("**/api/ai-market-analysis/v1/workspace-brief/latest?**");
   await page.route("**/api/ai-market-analysis/v1/workspace-brief/latest?**", (route) => route.fulfill({ contentType: "application/json", body: JSON.stringify(current) }));
   await page.goto("/#workspace");
@@ -72,9 +72,23 @@ test("Workspace current audited Hero shows audit, freshness, partial coverage an
   await expect(hero).toContainText("AI 审计通过 · 100 / 100");
   await expect(hero).toContainText("当前");
   await expect(hero).toContainText("1W · 历史不足");
+  await expect(hero.getByText("当前无可靠关键压力位", { exact: true })).toHaveCount(1);
+  await expect(hero).toContainText("偏空延续");
+  await expect(hero).toContainText("混合观察");
+  await expect(hero).not.toContainText("BEARISH_CONTINUATION");
+  const chart = page.locator(".workspace-primary > .chart-workspace");
+  const [heroBox, chartBox] = await Promise.all([hero.boundingBox(), chart.boundingBox()]);
+  expect(Math.abs((heroBox?.height || 0) - (chartBox?.height || 0))).toBeLessThanOrEqual(2);
+  expect((chartBox?.width || 0) / ((chartBox?.width || 0) + (heroBox?.width || 0))).toBeGreaterThan(.60);
+  expect(await hero.locator(".ai-hero-content").evaluate(element => getComputedStyle(element).overflowY)).toBe("auto");
   const researchLink = hero.getByRole("link", { name: /查看完整 AI 分析/ });
   await expect(researchLink).toHaveAttribute("href", /#research\/report\/report_eth/);
   expect((await new AxeBuilder({ page }).include('[data-testid="workspace-ai6b-brief"]').analyze()).violations).toEqual([]);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect.poll(async () => {
+    const [mobileHero, mobileChart] = await Promise.all([hero.boundingBox(), chart.boundingBox()]);
+    return (mobileHero?.y || 0) < (mobileChart?.y || 0);
+  }).toBe(true);
   await researchLink.click();
   await expect(page.getByTestId("research-ai6b-reports")).toBeVisible();
 });

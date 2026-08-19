@@ -1051,7 +1051,7 @@ function Workspace() {
               </div>
               <div className="workspace-chart">
                 <MarketChart key={`${perpetualInstrument(instrument)}:${interval}`} instrument={perpetualInstrument(instrument)} interval={interval} flow={chartFlow} indicators={visibleIndicators} />
-                {paper?.flow?.professional?.available && <div className="flow-pane-labels"><span className="cvd-pane-label">CVD（日内累计，UTC 00:00 重置）</span><span className="oi-pane-label">OI · 永续未平仓量</span></div>}
+                <div className="flow-pane-labels"><span className="volume-pane-label">Volume · K线实际成交量</span><span className="cvd-pane-label">CVD Delta 柱 · 累计 CVD 线</span><span className="oi-pane-label">OI · 永续未平仓量绝对值</span></div>
               </div>
               <div className={`flow-status ${flowStatus.toLowerCase()}`}>
                 <b>{t(`flow.status.${flowStatus}` as any)}</b>
@@ -1061,7 +1061,7 @@ function Workspace() {
                 {flowStatus === "CONNECTING" && <span>{t("flow.connecting")}</span>}
               </div>
               <div className="chart-legend">
-                <span>Volume</span>
+                <span>Volume · 柱高为实际成交量，颜色跟随 K 线涨跌</span>
                 <span>
                   <i className="ema20" /> EMA20
                 </span>
@@ -1071,7 +1071,7 @@ function Workspace() {
                 <span>
                   <i className="ma200" /> MA200
                 </span>
-                <span className="muted">{t("market.flowProxy")}</span>
+                <span className="muted">CVD 颜色仅由 delta 正负决定 · OI 独立折线</span>
               </div>
             </section>
             <WorkspaceAiBrief instrument={perpetualInstrument(instrument)} />

@@ -473,8 +473,8 @@ class BoundedMarketDataReaderV2:
         with closing(self._readonly(self.paper_db)) as connection:
             has_history = _table_exists(connection, "historical_candles")
             has_market = _table_exists(connection, "market_candles")
+            merged: dict[int, dict[str, Any]] = {}
             for candidate in candidates:
-                merged: dict[int, dict[str, Any]] = {}
                 if has_history:
                     selected = connection.execute(
                         """SELECT ts,open,high,low,close,volume,confirmed,source
@@ -484,6 +484,9 @@ class BoundedMarketDataReaderV2:
                         (candidate, timeframe, start, as_of, limit)).fetchall()
                     merged.update({int(row["ts"]): {**dict(row), "_source_store": "historical_candles"}
                                    for row in selected})
+            # Materialized rows always win timestamp collisions and aliases are
+            # merged instead of stopping at the first legacy symbol spelling.
+            for candidate in candidates:
                 if has_market:
                     selected = connection.execute(
                         """SELECT ts,open,high,low,close,volume
@@ -494,9 +497,8 @@ class BoundedMarketDataReaderV2:
                     merged.update({int(row["ts"]): {**dict(row), "confirmed": True,
                                    "source": "persisted_confirmed_market_candles",
                                    "_source_store": "market_candles"} for row in selected})
-                if merged:
-                    rows = [merged[key] for key in sorted(merged)][-limit:]
-                    break
+            if merged:
+                rows = [merged[key] for key in sorted(merged)][-limit:]
         for row in rows:
             row["candle_close_ts"] = int(row["ts"]) + width
         return rows

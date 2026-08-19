@@ -77,7 +77,7 @@ def test_reader_merges_research_history_with_fresher_live_materialization(tmp_pa
     live = _rows("4H", 20)
     connection.executemany(
         "INSERT INTO historical_candles VALUES(?,?,?,?,?,?,?,?,?,?)",
-        [("ETH-USDT", "4H", r["ts"], r["open"], r["high"], r["low"],
+        [("ETH-USDT-SWAP", "4H", r["ts"], r["open"], r["high"], r["low"],
           r["close"], r["volume"], 1, "research") for r in old],
     )
     connection.executemany(

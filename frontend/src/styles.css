@@ -9,12 +9,12 @@
   --line-strong: #d6dade;
   --text: #0b0e11;
   --muted: #667085;
-  --subtle: #98a2b3;
-  --green: #00b37e;
+  --subtle: #475467;
+  --green: #027a5f;
   --green-soft: #e9fbf4;
-  --red: #f04438;
+  --red: #b42318;
   --red-soft: #fff1f0;
-  --amber: #c78200;
+  --amber: #925b00;
   --amber-soft: #fff7e6;
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
@@ -1128,3 +1128,4 @@ footer span {
 @media(max-width:1180px){.workspace-primary{grid-template-columns:minmax(0,3fr) minmax(320px,2fr)}.workspace-primary .workspace-chart{height:600px}.chart-toolbar{align-items:flex-start;gap:10px}}
 @media(max-width:820px){.workspace-primary{grid-template-columns:1fr}.workspace-primary>.ai-insight-hero{order:1}.workspace-primary>.chart-workspace{order:2}.decision-panel{grid-template-columns:1fr}.decision-panel>*{grid-column:1!important}.workspace-primary .workspace-chart{height:520px}.chart-actions{align-items:flex-start}.indicator-toggles{justify-content:flex-start}}
 @media(max-width:560px){.workspace-grid{padding:8px 8px 30px}.market-summary{padding:11px}.workspace-primary .workspace-chart{height:460px}.chart-toolbar{flex-direction:column}.chart-actions{width:100%}.workspace-primary .ai-hero-primary,.workspace-primary .ai-hero-meta{padding:13px}.price-line strong{font-size:25px}}
+@media(max-width:720px){.workspace-brand{width:100%;max-width:100%;min-width:0;overflow:hidden}.workspace-brand .page-switch{flex:1 1 100%;width:100%;min-width:0;max-width:100%;overflow-x:auto}.workspace-brand .page-switch button{flex:0 0 auto}}

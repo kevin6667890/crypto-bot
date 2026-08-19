@@ -47,7 +47,11 @@ test("Workspace makes the full chart primary and switches instruments, timeframe
     await instrument.selectOption(value);
     await expect(instrument).toHaveValue(value);
   }
+  expect((await new AxeBuilder({ page }).analyze()).violations.filter(item => item.impact === "critical" || item.impact === "serious")).toEqual([]);
+  await page.setViewportSize({ width: 390, height: 844 });
+  await page.waitForTimeout(100);
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+  expect((await new AxeBuilder({ page }).analyze()).violations.filter(item => item.impact === "critical" || item.impact === "serious")).toEqual([]);
 });
 
 test("Research reads the audited AI6B history source", async ({ page }) => {

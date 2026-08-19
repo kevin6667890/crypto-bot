@@ -1208,6 +1208,7 @@ function Workspace() {
                     value={replayDetail?.created_at || ""}
                     onChange={(event) => selectReplay(event.target.value)}
                     disabled={replayLoading || !replayItems.length}
+                    aria-label={t("market.replay")}
                   >
                     <option value="">
                       {replayItems.length

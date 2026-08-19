@@ -22,6 +22,7 @@ AUTO_RESEARCH_POLICY_VERSION = "automatic-research-cycle-v1"
 ROLLING_SPLIT_POLICY_VERSION = "rolling-development-70-holdout-20-oot-10-v1"
 RUNTIME_ADAPTER_VERSION = "approved-strategy-runtime-v2.1-v1"
 DEFAULT_TEMPLATES = ("TREND_PULLBACK_V2_1", "TREND_BREAKOUT_V2_1", "RANGE_MEAN_REVERSION_V2_1")
+AUTO_RESEARCH_SCHEDULER_NAME = "automatic-research"
 
 
 def _loads(value: Any, fallback: Any) -> Any:
@@ -206,12 +207,85 @@ class AutomaticResearchService:
     def history(self, limit: int = 20) -> list[dict[str, Any]]:
         with self.repository.connect() as connection:
             rows = connection.execute("SELECT * FROM automatic_research_cycles ORDER BY id DESC LIMIT ?", (max(1,min(int(limit),100)),)).fetchall()
-        return [self._cycle(dict(row)) for row in rows]
+        return [self._with_research_counts(self._cycle(dict(row))) for row in rows]
+
+    def _with_research_counts(self, cycle: dict[str, Any]) -> dict[str, Any]:
+        run_id = cycle.get("discovery_run_id")
+        counts = {"development_candidates": 0, "eligible_finalists": 0, "rejected_candidates": 0}
+        if run_id:
+            with self.repository.connect() as connection:
+                row = connection.execute(
+                    """SELECT COUNT(*) AS development_candidates,
+                              SUM(CASE WHEN eligibility_status='ELIGIBLE' THEN 1 ELSE 0 END) AS eligible_finalists,
+                              SUM(CASE WHEN eligibility_status='REJECTED' THEN 1 ELSE 0 END) AS rejected_candidates
+                       FROM strategy_discovery_candidates WHERE discovery_run_id=?""",
+                    (int(run_id),),
+                ).fetchone()
+            if row:
+                counts = {key: int(row[key] or 0) for key in counts}
+        cycle["research_counts"] = counts
+        return cycle
+
+    def scheduler_state(self, scheduler_name: str = AUTO_RESEARCH_SCHEDULER_NAME) -> dict[str, Any] | None:
+        with self.repository.connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM automatic_research_scheduler_state WHERE scheduler_name=?",
+                (scheduler_name,),
+            ).fetchone()
+        if not row:
+            return None
+        value = dict(row)
+        value["enabled"] = bool(value["enabled"])
+        return value
+
+    def configure_scheduler(self, enabled: bool, interval_hours: int,
+                            now: datetime | None = None,
+                            scheduler_name: str = AUTO_RESEARCH_SCHEDULER_NAME) -> dict[str, Any]:
+        interval = int(interval_hours)
+        if interval < 1:
+            raise ValueError("interval_hours must be positive")
+        current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc).replace(microsecond=0)
+        current_iso = current.isoformat()
+        initial_due = (current + timedelta(hours=interval)).isoformat()
+        with self.repository.connect() as connection:
+            connection.execute(
+                """INSERT INTO automatic_research_scheduler_state(
+                       scheduler_name,enabled,interval_hours,next_due_at,updated_at)
+                   VALUES(?,?,?,?,?)
+                   ON CONFLICT(scheduler_name) DO UPDATE SET
+                       enabled=excluded.enabled,
+                       interval_hours=excluded.interval_hours,
+                       updated_at=excluded.updated_at""",
+                (scheduler_name, int(bool(enabled)), interval, initial_due, current_iso),
+            )
+        return self.scheduler_state(scheduler_name) or {}
+
+    def record_scheduled_cycle(self, expected_due_at: str, cycle_id: int, interval_hours: int,
+                               now: datetime | None = None,
+                               scheduler_name: str = AUTO_RESEARCH_SCHEDULER_NAME) -> dict[str, Any]:
+        interval = int(interval_hours)
+        current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc).replace(microsecond=0)
+        due = datetime.fromisoformat(expected_due_at).astimezone(timezone.utc)
+        while due <= current:
+            due += timedelta(hours=interval)
+        with self.repository.connect() as connection:
+            connection.execute(
+                """UPDATE automatic_research_scheduler_state
+                   SET next_due_at=?,last_scheduled_at=?,last_started_cycle_id=?,updated_at=?
+                   WHERE scheduler_name=? AND next_due_at=?""",
+                (due.isoformat(), current.isoformat(), int(cycle_id), current.isoformat(),
+                 scheduler_name, expected_due_at),
+            )
+        return self.scheduler_state(scheduler_name) or {}
 
     def summary(self) -> dict[str, Any]:
         history = self.history(10)
+        scheduler = self.scheduler_state()
         return {"latest_cycle": history[0] if history else None, "recent_cycles": history,
-                "active_strategy": self.registry.active(), "approved_strategies": self.registry.approved(10)}
+                "active_strategy": self.registry.active(), "approved_strategies": self.registry.approved(10),
+                "scheduler": scheduler, "scheduler_enabled": bool(scheduler and scheduler["enabled"]),
+                "interval_hours": scheduler.get("interval_hours") if scheduler else None,
+                "next_due_at": scheduler.get("next_due_at") if scheduler else None}
 
     def _save_checkpoint(self, cycle_id: int, stage: str, payload: Any = None, **updates: Any) -> None:
         item = self.detail(cycle_id)

@@ -178,6 +178,16 @@ class ResearchRepository:
                     result TEXT, error TEXT, created_at TEXT NOT NULL, started_at TEXT,
                     updated_at TEXT NOT NULL, completed_at TEXT
                 );
+                CREATE TABLE IF NOT EXISTS automatic_research_scheduler_state (
+                    scheduler_name TEXT PRIMARY KEY,
+                    enabled INTEGER NOT NULL DEFAULT 0,
+                    interval_hours INTEGER NOT NULL,
+                    next_due_at TEXT NOT NULL,
+                    last_scheduled_at TEXT,
+                    last_started_cycle_id INTEGER,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY(last_started_cycle_id) REFERENCES automatic_research_cycles(id)
+                );
                 CREATE TABLE IF NOT EXISTS approved_strategy_registry (
                     registry_id TEXT PRIMARY KEY, candidate_identity TEXT NOT NULL UNIQUE,
                     family TEXT NOT NULL, strategy_type TEXT NOT NULL,
@@ -235,6 +245,7 @@ class ResearchRepository:
             connection.execute("CREATE INDEX IF NOT EXISTS idx_discovery_ablation_scenarios_run ON strategy_discovery_ablation_scenarios(ablation_run_id,scenario_order)")
             connection.execute("CREATE INDEX IF NOT EXISTS idx_auto_research_cycles_created ON automatic_research_cycles(created_at DESC)")
             connection.execute("CREATE INDEX IF NOT EXISTS idx_auto_research_cycles_status ON automatic_research_cycles(status)")
+            connection.execute("CREATE INDEX IF NOT EXISTS idx_auto_research_scheduler_due ON automatic_research_scheduler_state(enabled,next_due_at)")
             connection.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_auto_research_completed_evidence ON automatic_research_cycles(request_fingerprint,dataset_fingerprint) WHERE status='COMPLETED'")
             connection.execute("CREATE INDEX IF NOT EXISTS idx_strategy_registry_status ON approved_strategy_registry(status,approved_at DESC)")
             connection.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_strategy_registry_single_active ON approved_strategy_registry((1)) WHERE status='ACTIVE'")

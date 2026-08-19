@@ -99,7 +99,24 @@ class DiscoveryService:
   if p.get('mode','PRICE_ONLY')!='PRICE_ONLY': raise ValueError('FLOW_OVERLAY is unavailable until verified public coverage is persisted.')
   execution=DiscoveryExecutionConfig(**p['execution_assumptions']).validate()
   return inst,timeframe,budget,templates,execution
+ @staticmethod
+ def _folds(p):
+  raw=p.get('development_folds')
+  if raw is None:return FOLDS
+  if not isinstance(raw,list) or len(raw)!=5:raise ValueError('Rolling Discovery requires exactly five development folds.')
+  folds=[]
+  for value in raw:
+   if not isinstance(value,(list,tuple)) or len(value)!=4:raise ValueError('Each development fold must contain train start/end and validation start/end.')
+   fold=tuple(int(item) for item in value)
+   if not fold[0] < fold[1] <= fold[2] < fold[3]:raise ValueError('Development fold boundaries are invalid.')
+   folds.append(fold)
+  if any(folds[index][2]>=folds[index+1][2] for index in range(4)):raise ValueError('Development folds must advance causally.')
+  return folds
  def start(self,p,client='public'):
+  return self._start(p,client,True)
+ def start_inline(self,p):
+  return self._start(p,'auto-research',False)
+ def _start(self,p,client,enqueue):
   did=int(p['dataset_id']); ds=self.repository.discovery_dataset(did)
   if not ds or ds['status']!='COMPLETE': raise ValueError('A complete fixed dataset is required.')
   if json.loads(ds.get('manifest') or '{}').get('is_smoke_test'): raise ValueError('Smoke-test datasets are not eligible for formal Discovery runs.')
@@ -108,7 +125,8 @@ class DiscoveryService:
   if not part: raise ValueError('Selected dataset partition is missing.')
   if part['status']!='COMPLETE': raise ValueError('Selected dataset partition must be COMPLETE.')
   if not part.get('fingerprint'): raise ValueError('Selected dataset partition fingerprint is required.')
-  if int(part.get('first_ts') or 0)>FOLDS[0][0] or int(part.get('last_ts') or 0)<FOLDS[-1][3]-TIMEFRAME_SECONDS[timeframe]: raise ValueError('Selected partition does not cover development folds.')
+  folds=self._folds(p)
+  if int(part.get('first_ts') or 0)>folds[0][0] or int(part.get('last_ts') or 0)<folds[-1][3]-TIMEFRAME_SECONDS[timeframe]: raise ValueError('Selected partition does not cover development folds.')
   normalized={**p,'instrument':inst,'timeframe':timeframe,'trial_budget':budget,'templates':templates,'execution_assumptions':execution.__dict__,'mode':'PRICE_ONLY'}; now=datetime.now(timezone.utc).isoformat(); seed=int(p.get('seed',20260721))
   with self.repository.connect() as c:
    is_v2=bool(set(templates)&set(V2_TEMPLATES)); is_v21=bool(set(templates)&set(V21_TEMPLATES))
@@ -117,6 +135,7 @@ class DiscoveryService:
    if is_v21: policy.update(registry_version=V21_REGISTRY_VERSION,strategy_rules_version=V21_RULES_VERSION,strategy_version=V21_STRATEGY_VERSION)
    sampler=V21_SAMPLING_POLICY_VERSION if is_v21 else V2_SAMPLING_POLICY_VERSION if is_v2 else DISCOVERY_SAMPLER_VERSION
    cur=c.execute("INSERT INTO strategy_discovery_runs(dataset_id,status,request,search_policy,sampler,seed,maximum_trials,templates,feature_version,engine_version,scoring_version,progress,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",(did,'QUEUED',json.dumps(normalized),json.dumps(policy),sampler,seed,budget,json.dumps(templates),FEATURE_VERSION,ENGINE_VERSION,POLICY_VERSION,'{}',now,now)); rid=cur.lastrowid
+  if not enqueue:return {'id':rid,'status':'QUEUED','request':{**normalized,'discovery_run_id':rid}}
   try: j=self.jobs.enqueue('STRATEGY_DISCOVERY',{**normalized,'discovery_run_id':rid},client,priority=115)
   except Exception:
    with self.repository.connect() as c:c.execute("UPDATE strategy_discovery_runs SET status='FAILED',error=? WHERE id=?",('Queue enqueue failed',rid))
@@ -175,7 +194,7 @@ class DiscoveryService:
   # projects to a terminal Discovery run state.
   with self.repository.connect() as c:c.execute("UPDATE strategy_discovery_runs SET status='RUNNING',error=NULL WHERE id=? AND status!='COMPLETED'",(rid,))
   try:
-   inst,timeframe,budget,templates,execution=self._request(p); step=TIMEFRAME_SECONDS[timeframe]; rng=random.Random(int(p['seed'])); part=self.repository.discovery_partition(int(p['dataset_id']),inst,timeframe)
+   inst,timeframe,budget,templates,execution=self._request(p); folds=self._folds(p); step=TIMEFRAME_SECONDS[timeframe]; rng=random.Random(int(p['seed'])); part=self.repository.discovery_partition(int(p['dataset_id']),inst,timeframe)
    if not part or not part.get('fingerprint'): raise ValueError('DISCOVERY_PARTITION_MISSING')
    dataset=self.repository.discovery_dataset(int(p['dataset_id']))
    fingerprint=(dataset or {}).get('dataset_fingerprint') if set(templates)<=(set(V2_TEMPLATES)|set(V21_TEMPLATES)) else part['fingerprint']
@@ -190,7 +209,7 @@ class DiscoveryService:
    expected_versions={'parameter_identity_version':V21_PARAMETER_IDENTITY_VERSION if is_v21 else V2_PARAMETER_IDENTITY_VERSION if is_v2 else DISCOVERY_PARAMETER_IDENTITY_VERSION,'candidate_identity_version':V21_CANDIDATE_IDENTITY_VERSION if is_v21 else V2_CANDIDATE_IDENTITY_VERSION if is_v2 else DISCOVERY_CANDIDATE_IDENTITY_VERSION,'evaluation_identity_version':V21_EVALUATION_IDENTITY_VERSION if is_v21 else V2_EVALUATION_IDENTITY_VERSION if is_v2 else DISCOVERY_EVALUATION_IDENTITY_VERSION,'aggregation_version':DISCOVERY_AGGREGATION_VERSION,'eligibility_version':DISCOVERY_ELIGIBILITY_VERSION,'scoring_version':DISCOVERY_SCORING_VERSION,'pareto_version':DISCOVERY_PARETO_VERSION}
    if run['sampler'] != expected_sampler or any(policy.get(k)!=v for k,v in expected_versions.items()): raise ValueError('DISCOVERY_IDENTITY_VERSION_MISMATCH')
    checkpoint(jid,5,'discovery.validating_dataset',{}); checkpoint(jid,10,'discovery.loading_folds',{})
-   for no,(a,b,vs,ve) in enumerate(FOLDS,1):
+   for no,(a,b,vs,ve) in enumerate(folds,1):
     rows=self._fold_rows(inst,timeframe,a,ve)
     if not rows or not any(int(x['ts'])==vs for x in rows) or not any(int(x['ts'])==ve-step for x in rows): raise ValueError('VALIDATION_CANDLES_MISSING')
     fold_cache[no]=(rows, build_features(rows,{"ma_periods":[20,60,200],"atr_period":14,"bb_period":20,"rsi_period":14,"volume_period":20}) if set(templates)<=(set(V2_TEMPLATES)|set(V21_TEMPLATES)) else None)
@@ -222,8 +241,8 @@ class DiscoveryService:
      if old: cid=old['id']; c.execute("UPDATE strategy_discovery_candidates SET status='EVALUATING',error=NULL WHERE id=?",(cid,))
      else: cid=c.execute("INSERT INTO strategy_discovery_candidates(discovery_run_id,candidate_number,template,template_version,parameters,parameter_hash,feature_flags,complexity,status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",(rid,n,template,(V21_TEMPLATE_VERSION[template] if template in V21_TEMPLATES else V2_TEMPLATE_VERSION[template] if template in V2_TEMPLATES else TEMPLATE_VERSION[template]),json.dumps(params),ph,'{}',candidate_complexity(template,params),'EVALUATING',now)).lastrowid
     candidate_failed=False
-    for no,(a,b,vs,ve) in enumerate(FOLDS,1):
-     checkpoint(jid,None,'discovery.evaluating_folds',{'current_candidate':n,'total_candidates':budget,'current_fold':no,'total_folds':len(FOLDS),'candidates_completed':completed,'candidates_failed':failed,'folds_completed':fold_done,'folds_failed':fold_failed})
+    for no,(a,b,vs,ve) in enumerate(folds,1):
+     checkpoint(jid,None,'discovery.evaluating_folds',{'current_candidate':n,'total_candidates':budget,'current_fold':no,'total_folds':len(folds),'candidates_completed':completed,'candidates_failed':failed,'folds_completed':fold_done,'folds_failed':fold_failed})
      effective=ve-step; rows,shared_v2_features=fold_cache[no]
      try:
       expected_hash=self._evaluation_hash(template,params,execution,inst,timeframe,vs,effective,fingerprint)
@@ -243,7 +262,7 @@ class DiscoveryService:
      except Exception as error:
       candidate_failed=True; fold_failed+=1
       with self.repository.connect() as c:c.execute("INSERT INTO strategy_discovery_folds(candidate_id,fold_number,train_start_ts,train_end_ts,validation_start_ts,validation_end_ts,metrics,buy_hold_metrics,status,error) VALUES(?,?,?,?,?,?,NULL,NULL,'FAILED',?) ON CONFLICT(candidate_id,fold_number) DO UPDATE SET status='FAILED',error=excluded.error",(cid,no,a,b,vs,ve,type(error).__name__[:80]))
-     checkpoint(jid,None,'discovery.evaluating_folds',{'current_candidate':n,'total_candidates':budget,'current_fold':no,'total_folds':len(FOLDS),'candidates_completed':completed,'candidates_failed':failed,'folds_completed':fold_done,'folds_failed':fold_failed})
+     checkpoint(jid,None,'discovery.evaluating_folds',{'current_candidate':n,'total_candidates':budget,'current_fold':no,'total_folds':len(folds),'candidates_completed':completed,'candidates_failed':failed,'folds_completed':fold_done,'folds_failed':fold_failed})
     checkpoint(jid,None,'discovery.aggregating',{'current_candidate':n,'total_candidates':budget})
     with self.repository.connect() as c: records=[dict(x) for x in c.execute('SELECT * FROM strategy_discovery_folds WHERE candidate_id=? ORDER BY fold_number',(cid,))]
     normalized=[]

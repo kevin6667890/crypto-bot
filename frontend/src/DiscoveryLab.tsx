@@ -1,21 +1,27 @@
 import { useEffect, useState } from "react";
+import type { ApprovedStrategy } from "./data";
 
-type Dataset = { id:number; name:string; status:string; dataset_fingerprint?:string; start_ts:number; end_ts:number };
+type Cycle = { id:number; status:string; research_start:number; research_end:number; created_at:string; started_at?:string; completed_at?:string; dataset_fingerprint?:string; checkpoint?:Record<string,unknown>; result?:{ approved?:number; rejected?:number; active_registry_id?:string } };
+type Summary = { latest_cycle:Cycle|null; recent_cycles:Cycle[]; active_strategy:ApprovedStrategy|null; approved_strategies:ApprovedStrategy[] };
+const date = (ts?:number) => ts ? new Date(ts*1000).toISOString().slice(0,10) : "--";
+
 export default function DiscoveryLab() {
-  const [items,setItems]=useState<Dataset[]>([]); const [message,setMessage]=useState("");
-  const [programSummary,setProgramSummary]=useState({program_candidates:0,unique_programs:0,screened:0,backtested:0,eligible:0,approved:0});
-  const load=()=>{
-    void fetch("/api/discovery/datasets").then(r=>r.json()).then(x=>setItems(x.items||[])).catch(()=>setMessage("Discovery API unavailable."));
-    void fetch("/api/discovery/programs/summary").then(r=>r.ok?r.json():null).then(x=>x&&setProgramSummary(x)).catch(()=>undefined);
-  };
+  const [summary,setSummary]=useState<Summary|null>(null); const [message,setMessage]=useState("");
+  const load=()=>fetch("/api/automatic-research").then(async r=>{if(!r.ok)throw new Error(`HTTP ${r.status}`);return r.json()}).then(setSummary).catch(e=>setMessage(`Automatic Research unavailable: ${String(e)}`));
   useEffect(() => { void load(); },[]);
-  return <section className="panel" id="strategy-discovery-lab">
-    <div className="panel-head"><div><span className="eyebrow">RESEARCH ONLY</span><h2>Strategy Discovery Lab <small>策略探索实验室</small></h2></div></div>
-    <p>Discovery results use historical development data only. They do not authorize live trading or automatic strategy activation.</p>
-    <p>探索结果仅基于历史开发数据，不构成实盘交易或自动启用策略的依据。</p>
-    <button onClick={load}>Refresh datasets</button>{message && <small>{message}</small>}
-    <div className="table-wrap"><table><thead><tr><th>Discovery Mode</th><th>Program candidates</th><th>Unique programs</th><th>Screened</th><th>Backtested</th><th>Eligible</th><th>Approved</th></tr></thead><tbody><tr><td>Program (disabled by default)</td><td>{programSummary.program_candidates}</td><td>{programSummary.unique_programs}</td><td>{programSummary.screened}</td><td>{programSummary.backtested}</td><td>{programSummary.eligible}</td><td>{programSummary.approved}</td></tr></tbody></table></div>
-    <div className="table-wrap"><table><thead><tr><th>Dataset</th><th>Fixed range</th><th>Status</th><th>Fingerprint</th></tr></thead><tbody>{items.map(x=><tr key={x.id}><td>{x.name}</td><td>2024-01-01 – 2026-01-01 (exclusive)</td><td>{x.status}</td><td>{x.dataset_fingerprint?.slice(0,16) || "Pending"}</td></tr>)}</tbody></table></div>
-    <small>PRICE_ONLY is available by default. FLOW_OVERLAY remains disabled until real CVD/OI coverage is verified.</small>
+  const latest=summary?.latest_cycle, active=summary?.active_strategy;
+  const progressKeys=Object.keys(latest?.checkpoint || {}), progressStage=progressKeys[progressKeys.length-1];
+  return <section className="panel" id="strategy-discovery-lab" data-automatic-research>
+    <div className="panel-head"><div><span className="eyebrow">PAPER / RESEARCH ONLY</span><h2>Automatic Research <small>自动策略研究</small></h2></div><button onClick={load}>Refresh</button></div>
+    <p>Server-side durable workflow. Development ranking is frozen before Holdout, OOT and cross-asset evidence; AI does not select or activate strategies.</p>
+    {message && <small role="alert">{message}</small>}
+    <div className="metric-grid">
+      <div><span>Latest cycle</span><b>{latest ? `#${latest.id} · ${latest.status}` : "No cycle yet"}</b><small>{latest ? `${date(latest.research_start)} → ${date(latest.research_end)} UTC` : "Scheduler is disabled by default"}</small></div>
+      <div><span>Progress</span><b>{latest ? progressStage?.replace(/_/g," ") || latest.status : "--"}</b><small>{latest?.started_at || latest?.created_at || "--"}</small></div>
+      <div><span>Latest active strategy</span><b>{active?.family || "Legacy Baseline"}</b><small>{active ? `${active.strategy_version} · ${active.direction_capability} · cycle #${active.research_cycle_id}` : "No approved registry candidate"}</small></div>
+      <div><span>Validation</span><b>{active ? Object.values(active.serialized_definition.validation_status || {}).every(v=>v==="PASS") ? "ALL REQUIRED PASS" : "REVIEW" : "--"}</b><small>{active?.registry_id || "Registry empty"}</small></div>
+    </div>
+    <div className="table-wrap"><table><thead><tr><th>Cycle</th><th>Dataset range</th><th>Status</th><th>Approved / Rejected</th><th>Completed</th></tr></thead><tbody>{(summary?.recent_cycles || []).map(x=><tr key={x.id}><td>#{x.id}</td><td>{date(x.research_start)} → {date(x.research_end)}</td><td>{x.status}</td><td>{x.result ? `${x.result.approved || 0} / ${x.result.rejected || 0}` : "--"}</td><td>{x.completed_at || "--"}</td></tr>)}</tbody></table></div>
+    <small>Scores are research ranking values, not win rates or profit probabilities. LIVE TRADING DISABLED.</small>
   </section>;
 }

@@ -58,6 +58,9 @@ try:
     from market_context_v2 import BoundedMarketDataReaderV2, MarketContextServiceV2
     from market_state_v2 import MarketStateEngineV2
     from strategy_router_v2 import StrategyRouterV2
+    from strategy_registry import StrategyRegistryAdapter
+    from discovery_features import build_features
+    from strategy_v2_1 import StrategyV21Evaluator
     from ai_market_analysis.report_api import submit_report, save_position_plan
     from ai_market_analysis.report_health import report_health
     from ai_market_analysis.report_scheduler import ReportScheduler
@@ -99,6 +102,9 @@ except ImportError:
     from .market_context_v2 import BoundedMarketDataReaderV2, MarketContextServiceV2
     from .market_state_v2 import MarketStateEngineV2
     from .strategy_router_v2 import StrategyRouterV2
+    from .strategy_registry import StrategyRegistryAdapter
+    from .discovery_features import build_features
+    from .strategy_v2_1 import StrategyV21Evaluator
     from .ai_market_analysis.report_api import submit_report, save_position_plan
     from .ai_market_analysis.report_health import report_health
     from .ai_market_analysis.report_scheduler import ReportScheduler
@@ -395,7 +401,7 @@ class PaperService:
             self._ensure_column(conn, "flow_snapshots", "instrument", "TEXT")
             for column, declaration in (("trade_count", "INTEGER"), ("window_seconds", "INTEGER"), ("last_trade_ts", "INTEGER")):
                 self._ensure_column(conn, "flow_snapshots", column, declaration)
-            for column,declaration in (("signal_id","TEXT"),("strategy_version","TEXT"),("config_hash","TEXT"),("expected_entry_price","REAL"),("observed_entry_price","REAL"),("execution_delay_ms","INTEGER"),("observed_slippage_pct","REAL"),("candle_close_ts","INTEGER"),("signal_score","REAL")):
+            for column,declaration in (("signal_id","TEXT"),("strategy_version","TEXT"),("config_hash","TEXT"),("expected_entry_price","REAL"),("observed_entry_price","REAL"),("execution_delay_ms","INTEGER"),("observed_slippage_pct","REAL"),("candle_close_ts","INTEGER"),("signal_score","REAL"),("strategy_registry_id","TEXT"),("candidate_identity","TEXT"),("strategy_configuration_hash","TEXT")):
                 self._ensure_column(conn,"paper_trades",column,declaration)
             for column, declaration in (("position_size", "REAL"), ("entry_notional", "REAL"), ("risk_amount", "REAL"), ("mark_price", "REAL"), ("pnl_usdt", "REAL")):
                 self._ensure_column(conn, "paper_trades", column, declaration)
@@ -408,6 +414,9 @@ class PaperService:
                 strategy_version TEXT NOT NULL, decision_engine_version TEXT NOT NULL, action TEXT NOT NULL,
                 decision_payload TEXT NOT NULL, gate_payload TEXT NOT NULL, flow_payload TEXT NOT NULL,
                 evaluation_timestamp TEXT NOT NULL, market_snapshot_ts INTEGER, created_at TEXT NOT NULL)""")
+            for table in ("decision_signals","decision_evaluations"):
+                self._ensure_column(conn,table,"strategy_registry_id","TEXT")
+                self._ensure_column(conn,table,"candidate_identity","TEXT")
             conn.execute("""CREATE TABLE IF NOT EXISTS event_logs (
                 id INTEGER PRIMARY KEY AUTOINCREMENT, created_at TEXT NOT NULL, instrument TEXT NOT NULL,
                 event_type TEXT NOT NULL, message TEXT NOT NULL, payload TEXT NOT NULL DEFAULT '{}')""")
@@ -710,7 +719,7 @@ class PaperService:
             self._store_candles(instrument, timeframe, rows)
         return datasets
 
-    def analyze(self, instrument: str, flow: dict[str, Any]) -> dict[str, Any]:
+    def analyze(self, instrument: str, flow: dict[str, Any], live_price: float | None = None) -> dict[str, Any]:
         """Build causal live MTF context and call the canonical decision engine."""
         datasets = self._materialize_market_timeframes(instrument)
         c15=datasets["15m"]
@@ -736,13 +745,15 @@ class PaperService:
             frames[frame]={"candle_close_ts":int(row["candle_close_ts"]),"close":row["close"],"fast_ma":values["fast_ma"],"slow_ma":values["slow_ma"],"trend":"Bullish" if values["fast_ma"] and values["slow_ma"] and row["close"]>values["fast_ma"]>values["slow_ma"] else "Bearish" if values["fast_ma"] and values["slow_ma"] and row["close"]<values["fast_ma"]<values["slow_ma"] else "Mixed","ema20_slope_pct":0.0,"ma60":values["fast_ma"],"ma200":values["slow_ma"]}
         risk=self.risk_state(instrument)
         quality = (flow.get("decision_quality") or {})
-        decision=evaluate_decision(params,MarketContext(instrument,"15m",close_ts,float(execution["close"]),ind15,"OKX","public-confirmed-live-v1"),TimeframeContext(frames,("1H","4H"),False,"multi-timeframe"),FlowContext(True,float(flow.get("decision_cvd_delta",0)),flow.get("decision_oi_change_pct"),flow.get("source"),quality.get("cvd_timestamp"),quality.get("oi_timestamp"),quality.get("snapshot_timestamp")),RiskContext(bool(risk["allowed"]),tuple(risk["blockers"]),int(risk.get("open_positions",0)),0,bool(risk.get("cooldown_clear",True)),bool(risk.get("existing_position_clear",True))),active_version).to_dict()
+        active_registry=self._active_registry_strategy()
+        decision=self._registry_decision(active_registry,instrument,c15,flow,risk,ind15) if active_registry else evaluate_decision(params,MarketContext(instrument,"15m",close_ts,float(execution["close"]),ind15,"OKX","public-confirmed-live-v1"),TimeframeContext(frames,("1H","4H"),False,"multi-timeframe"),FlowContext(True,float(flow.get("decision_cvd_delta",0)),flow.get("decision_oi_change_pct"),flow.get("source"),quality.get("cvd_timestamp"),quality.get("oi_timestamp"),quality.get("snapshot_timestamp")),RiskContext(bool(risk["allowed"]),tuple(risk["blockers"]),int(risk.get("open_positions",0)),0,bool(risk.get("cooldown_clear",True)),bool(risk.get("existing_position_clear",True))),active_version).to_dict()
         for item in decision["contributions"]:
             item["detail"]={"trend":"1H + 4H confirmed trend alignment","structure":"MA60 / MA200 structure","pullback":f"{decision.get('decision_input_summary',{}).get('close',0):.2f} close vs EMA20","momentum":f"Volume {ind15.get('volume_ratio') or 0:.2f}x · RSI {ind15.get('rsi') or 0:.1f}","flow":f"CVD {flow.get('cvd_delta',0):+.0f} · OI {flow.get('oi_change_pct',0):+.3f}%"}.get(item["key"],item["label"])
             item["detail_code"]=f"decision.contribution_detail.{item['key']}"
             item["detail_params"]={"close":f"{decision.get('decision_input_summary',{}).get('close',0):.2f}","volume":f"{ind15.get('volume_ratio') or 0:.2f}","rsi":f"{ind15.get('rsi') or 0:.1f}","cvd":f"{flow.get('cvd_delta',0):+.0f}","oi":f"{flow.get('oi_change_pct',0):+.3f}"}
         distance_pct=(float(execution["close"])-float(ind15["ema"]))/float(ind15["ema"])*100 if ind15.get("ema") else None
-        analysis={**decision,"price":round(float(execution["close"]),4),"ema20":ind15["ema"],"rsi14":ind15["rsi"],"atr14":ind15["atr"],"volume_ratio":ind15["volume_ratio"],"distance_ema20_pct":distance_pct,"timeframes":{"15m":{"trend":decision["bias"],"ma60":ind15["fast_ma"],"ma200":ind15["slow_ma"],"ema20_slope_pct":0},**frames},"flow":flow,"vpvr":vpvr,"conditions":[{"label":x["label"],"value":x["detail"],"pass":x["status"]=="pass"} for x in decision["contributions"]],"updated_at":now_iso()}
+        paper_entry_price=float(live_price) if active_registry and live_price is not None else float(execution["close"])
+        analysis={**decision,"price":round(paper_entry_price,4),"ema20":ind15["ema"],"rsi14":ind15["rsi"],"atr14":ind15["atr"],"volume_ratio":ind15["volume_ratio"],"distance_ema20_pct":distance_pct,"timeframes":{"15m":{"trend":decision["bias"],"ma60":ind15["fast_ma"],"ma200":ind15["slow_ma"],"ema20_slope_pct":0},**frames},"flow":flow,"vpvr":vpvr,"conditions":[{"label":x["label"],"value":x["detail"],"pass":x["status"]=="pass"} for x in decision["contributions"]],"updated_at":now_iso(),"paper_entry_timing":"first observed public price after confirmed signal candle" if active_registry else "legacy paper timing"}
         with self._connect() as conn:
             write_compact_snapshot(
                 conn,
@@ -754,18 +765,43 @@ class PaperService:
             # Setup records remain compatible with older consumers; every live
             # evaluation is durably stored below and is never hidden by a setup
             # identity collision.
-            conn.execute("""INSERT OR IGNORE INTO decision_signals(signal_id,source,instrument,execution_timeframe,candle_close_ts,strategy_version,config_hash,action,bias,score,decision_payload,created_at,regime,regime_version,gate_payload) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",(decision["signal_setup_id"],"PAPER",instrument,"15m",close_ts,decision["strategy_version"],decision["config_hash"],decision["action"],decision["bias"],decision["score"],canonical_json(decision),analysis["updated_at"],decision["regime"],decision["regime_version"],canonical_json(decision["gate_results"])))
-            conn.execute("""INSERT INTO decision_evaluations(evaluation_id,signal_setup_id,source,instrument,execution_timeframe,candle_close_ts,strategy_version,decision_engine_version,action,decision_payload,gate_payload,flow_payload,evaluation_timestamp,market_snapshot_ts,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", (decision["evaluation_id"],decision["signal_setup_id"],"PAPER",instrument,"15m",close_ts,decision["strategy_version"],decision["decision_engine_version"],decision["action"],canonical_json(decision),canonical_json(decision["gate_results"]),canonical_json(decision["flow_context"]),analysis["updated_at"],quality.get("snapshot_timestamp"),analysis["updated_at"]))
+            conn.execute("""INSERT OR IGNORE INTO decision_signals(signal_id,source,instrument,execution_timeframe,candle_close_ts,strategy_version,config_hash,action,bias,score,decision_payload,created_at,regime,regime_version,gate_payload,strategy_registry_id,candidate_identity) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",(decision["signal_setup_id"],"PAPER",instrument,"15m",close_ts,decision["strategy_version"],decision["config_hash"],decision["action"],decision["bias"],decision["score"],canonical_json(decision),analysis["updated_at"],decision["regime"],decision["regime_version"],canonical_json(decision["gate_results"]),decision.get("strategy_registry_id"),decision.get("candidate_identity")))
+            conn.execute("""INSERT INTO decision_evaluations(evaluation_id,signal_setup_id,source,instrument,execution_timeframe,candle_close_ts,strategy_version,decision_engine_version,action,decision_payload,gate_payload,flow_payload,evaluation_timestamp,market_snapshot_ts,created_at,strategy_registry_id,candidate_identity) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", (decision["evaluation_id"],decision["signal_setup_id"],"PAPER",instrument,"15m",close_ts,decision["strategy_version"],decision["decision_engine_version"],decision["action"],canonical_json(decision),canonical_json(decision["gate_results"]),canonical_json(decision["flow_context"]),analysis["updated_at"],quality.get("snapshot_timestamp"),analysis["updated_at"],decision.get("strategy_registry_id"),decision.get("candidate_identity")))
         shadow=globals().get("SHADOW")
         if shadow:shadow.process_market(instrument,datasets,flow)
         self.last_analysis[instrument]=analysis
         return analysis
 
     def _active_strategy(self) -> tuple[StrategyParameters, str]:
+        registry=self._active_registry_strategy()
+        if registry:
+            definition=registry["serialized_definition"]; p=definition["parameters"]
+            return StrategyParameters(risk_per_trade=float(p.get("risk_per_trade",.01)),trading_fee=float(p.get("trading_fee",.0005)),slippage=float(p.get("slippage",.0003)),max_notional_fraction=float(p.get("max_notional_fraction",1.0)),stop_loss_atr_multiplier=float(p.get("stop_atr_multiple",1.0)),risk_reward_ratio=float(p.get("target_r",2.0))),str(registry["strategy_version"])
         with self._connect() as conn:
             if not conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='strategy_lifecycle'").fetchone():return StrategyParameters(),LIVE_STRATEGY_VERSION
             row=conn.execute("SELECT sc.parameters,sl.strategy_version FROM strategy_lifecycle sl JOIN strategy_configs sc ON sc.id=sl.strategy_config_id WHERE sl.status='Active' LIMIT 1").fetchone()
         return (validate_parameters(json.loads(row["parameters"])),str(row["strategy_version"])) if row else (StrategyParameters(),LIVE_STRATEGY_VERSION)
+
+    @staticmethod
+    def _active_registry_strategy() -> dict[str,Any] | None:
+        research=globals().get("RESEARCH")
+        return research.automatic_research.registry.active() if research else None
+
+    def _registry_decision(self, registry: dict[str,Any], instrument: str, candles: list[dict[str,Any]], flow: dict[str,Any], risk: dict[str,Any], indicators: dict[str,Any]) -> dict[str,Any]:
+        """Replay the approved v2.1 evaluator over confirmed candles only."""
+        definition=registry["serialized_definition"]; template=definition["template"]; parameters=definition["parameters"]
+        fingerprint=registry["source_dataset_fingerprint"]
+        features=build_features(candles,{"ma_periods":[20,60,200],"atr_period":14,"bb_period":20,"rsi_period":14,"volume_period":20})
+        evaluator=StrategyV21Evaluator(template,parameters,instrument,"15m",fingerprint,{"runtime":"paper-confirmed-replay-v1"})
+        result={"action":"WAIT","warmed":False,"evidence":{}}
+        for index in range(len(candles)): result=evaluator.evaluate(candles,features,index)
+        close_ts=int(candles[-1]["candle_close_ts"]); raw_action=str(result.get("action","WAIT")); allowed=raw_action in {"LONG","SHORT"} and bool(risk["allowed"])
+        action=raw_action if allowed else "WAIT"; evidence=result.get("evidence") or {}; setup_id=str(evidence.get("setup_id") or hashlib.sha256(f"{registry['registry_id']}|{instrument}|{close_ts}".encode()).hexdigest())
+        evaluation_id=hashlib.sha256(canonical_json({"setup":setup_id,"at":close_ts,"registry":registry["registry_id"],"result":result}).encode()).hexdigest()
+        professional=flow.get("decision_quality") or {}; flow_payload={"available":True,"cvd_delta":float(flow.get("decision_cvd_delta",0)),"oi_change_pct":flow.get("decision_oi_change_pct"),"source":flow.get("source"),"cvd_timestamp":professional.get("cvd_timestamp"),"oi_timestamp":professional.get("oi_timestamp"),"snapshot_timestamp":professional.get("snapshot_timestamp"),"score_mode":"diagnostic_only_not_a_strategy_gate"}
+        gate_results=[{"key":"approved_registry","label":"Approved Registry","label_code":"gate.approved_registry","passed":True,"applicable":True,"blocking":True},{"key":"candidate_trigger","label":"Candidate Trigger","label_code":"gate.candidate_trigger","passed":raw_action in {"LONG","SHORT"},"applicable":True,"blocking":True},{"key":"cvd_alignment","label":"CVD diagnostic","label_code":"gate.cvd_alignment","passed":True,"applicable":False,"blocking":False},{"key":"oi_context","label":"OI diagnostic","label_code":"gate.oi_context","passed":True,"applicable":False,"blocking":False},{"key":"final_entry_allowed","label":"Final Entry Allowed","label_code":"gate.final_entry_allowed","passed":allowed,"applicable":True,"blocking":True}]
+        regime=str((evidence.get("regime_stability") or {}).get("confirmed_regime") or evidence.get("raw_regime",{}).get("code") or "TRANSITION")
+        return {"signal_id":setup_id,"signal_setup_id":setup_id,"evaluation_id":evaluation_id,"decision_engine_version":"paper-approved-registry-adapter-v1","instrument":instrument,"execution_timeframe":"15m","candle_close_ts":close_ts,"strategy_version":registry["strategy_version"],"config_hash":registry["configuration_hash"],"action":action,"bias":raw_action if raw_action in {"LONG","SHORT"} else "WAIT","score":100.0 if raw_action in {"LONG","SHORT"} else 0.0,"warmed":bool(result.get("warmed")),"contributions":[{"key":"registry_rule","label":"Approved deterministic rule","label_code":"decision.contribution.registry_rule","points":100 if raw_action in {"LONG","SHORT"} else 0,"max":100,"status":"pass" if raw_action in {"LONG","SHORT"} else "watch"}],"failed_gates":[] if allowed else (["candidate_trigger"] if raw_action=="WAIT" else list(risk["blockers"])),"indicator_values":indicators,"timeframe_context":{"mode":"approved-registry-v2.1","required_frames":[],"daily_enabled":False,"frames":{}},"flow_context":flow_payload,"risk_context":risk,"entry_allowed":allowed,"rejection_reason":None if allowed else "candidate trigger or paper risk gate not satisfied","data_source":"OKX","data_version":"public-confirmed-live-v1","decision_input_summary":{"close":candles[-1]["close"],"indicator_keys":sorted(indicators),"frame_close_timestamps":{},"parameters":parameters},"gate_results":gate_results,"regime":regime,"regime_version":"strategy-rules-v2.1","strategy_registry_id":registry["registry_id"],"candidate_identity":registry["candidate_identity"],"strategy_configuration_hash":registry["configuration_hash"],"stop_price":result.get("evidence",{}).get("stop_price"),"target_price":result.get("evidence",{}).get("target_price"),"registry_source":"APPROVED_REGISTRY"}
 
     def risk_state(self, instrument: str) -> dict[str, Any]:
         params, _ = self._active_strategy()
@@ -859,8 +895,9 @@ class PaperService:
         slip, fee = float(params.slippage), float(params.trading_fee)
         entry_fill = theoretical * (1 + slip if side == "LONG" else 1 - slip)
         atr = float(analysis["atr14"]); distance = atr * float(params.stop_loss_atr_multiplier)
-        stop = entry_fill - distance if side == "LONG" else entry_fill + distance
-        target = entry_fill + distance * float(params.risk_reward_ratio) if side == "LONG" else entry_fill - distance * float(params.risk_reward_ratio)
+        stop = float(analysis["stop_price"]) if analysis.get("stop_price") is not None else (entry_fill - distance if side == "LONG" else entry_fill + distance)
+        target = float(analysis["target_price"]) if analysis.get("target_price") is not None else (entry_fill + distance * float(params.risk_reward_ratio) if side == "LONG" else entry_fill - distance * float(params.risk_reward_ratio))
+        distance=abs(entry_fill-stop)
         risk_budget = account["equity"] * float(params.risk_per_trade)
         exit_fee_unit, exit_slip_unit = abs(stop) * fee, abs(stop) * slip
         stop_cost = abs(entry_fill - stop) + exit_fee_unit + exit_slip_unit
@@ -876,15 +913,15 @@ class PaperService:
         gross_stop = abs(entry_fill - stop) * final
         expected_net = gross_stop + entry_fee + expected_exit_fee + expected_exit_slippage
         return {"rationale_version": RATIONALE_VERSION, "accounting_version": ACCOUNTING_VERSION,
-            "strategy_code": "live-mtf-flow", "strategy_version": analysis["strategy_version"], "decision_engine_version": analysis["decision_engine_version"],
-            "signal_setup_id": analysis["signal_setup_id"], "evaluation_id": analysis["evaluation_id"], "candidate_identity": None,
+            "strategy_code": "approved-registry" if analysis.get("strategy_registry_id") else "live-mtf-flow", "strategy_version": analysis["strategy_version"], "decision_engine_version": analysis["decision_engine_version"],
+            "signal_setup_id": analysis["signal_setup_id"], "evaluation_id": analysis["evaluation_id"], "candidate_identity": analysis.get("candidate_identity"), "strategy_registry_id": analysis.get("strategy_registry_id"), "strategy_configuration_hash": analysis.get("strategy_configuration_hash") or analysis.get("config_hash"),
             "instrument": analysis["instrument"], "timeframe": "15m", "signal_candle_timestamp": analysis["candle_close_ts"], "decision_timestamp": analysis["updated_at"], "entry_request_timestamp": now_iso(),
             "market_data_snapshot_timestamps": {"market": analysis["candle_close_ts"], "cvd": analysis["flow_context"].get("cvd_timestamp"), "oi": analysis["flow_context"].get("oi_timestamp"), "evaluation": analysis["flow_context"].get("snapshot_timestamp")},
             "normalized_parameters": json.loads(canonical_json(params)), "parameter_hash": config_hash(params), "regime_classification": analysis["regime"], "gate_results": analysis["gate_results"],
             "close": theoretical, "ema20": analysis.get("ema20"), "ma60": analysis.get("indicator_values", {}).get("fast_ma"), "ma200": analysis.get("indicator_values", {}).get("slow_ma"), "atr": atr, "bollinger": analysis.get("bollinger"), "rsi": analysis.get("rsi14"), "volume_ratio": analysis.get("volume_ratio"),
             "cvd_value": analysis["flow_context"].get("cvd_delta"), "cvd_timestamp": analysis["flow_context"].get("cvd_timestamp"), "cvd_alignment": next((g["passed"] for g in analysis["gate_results"] if g["key"] == "cvd_alignment"), None),
             "oi_value": analysis["flow_context"].get("oi_change_pct"), "oi_timestamp": analysis["flow_context"].get("oi_timestamp"), "oi_alignment": next((g["passed"] for g in analysis["gate_results"] if g["key"] == "oi_context"), None),
-            "side": side, "stop_basis": "ATR", "stop_anchor": entry_fill, "stop_distance": distance, "stop_price": stop, "target_basis": "2R", "target_price": target, "expected_reward_risk": float(params.risk_reward_ratio),
+            "side": side, "stop_basis": "APPROVED_DEFINITION" if analysis.get("strategy_registry_id") else "ATR", "stop_anchor": entry_fill, "stop_distance": distance, "stop_price": stop, "target_basis": "APPROVED_DEFINITION" if analysis.get("strategy_registry_id") else "2R", "target_price": target, "expected_reward_risk": abs(target-entry_fill)/distance,
             "account_equity": account["equity"], "requested_risk_fraction": float(params.risk_per_trade), "requested_risk_amount": risk_budget, "raw_risk_derived_quantity": raw, "funds_cap_quantity": funds, "explicit_maximum_notional": max_notional, "notional_cap_quantity": notional_cap, "final_quantity": final, "final_notional": entry_fill * final, "binding_cap": binding,
             "expected_gross_loss_at_stop": gross_stop, "estimated_entry_fee": entry_fee, "estimated_exit_fee": expected_exit_fee, "estimated_entry_slippage": abs(entry_fill-theoretical)*final, "estimated_exit_slippage": expected_exit_slippage, "expected_net_loss_at_stop": expected_net, "actual_account_risk_fraction": expected_net / account["equity"] if account["equity"] else float("nan"),
             "theoretical_entry_price": theoretical, "simulated_entry_fill": entry_fill, "configured_fee_rate": fee, "configured_slippage_rate": slip}
@@ -926,8 +963,8 @@ class PaperService:
                 if conn.execute("SELECT 1 FROM paper_trades WHERE instrument=? AND status='OPEN'", (instrument,)).fetchone(): raise ValueError("existing_position")
                 if rationale["final_notional"] + rationale["estimated_entry_fee"] > account["cash"] + 1e-9: raise ValueError("insufficient_funds")
                 created = now_iso(); delay=max(0,int((datetime.now(timezone.utc).timestamp()-int(analysis["candle_close_ts"]))*1000))
-                cursor = conn.execute("""INSERT INTO paper_trades(instrument,side,entry,stop_loss,take_profit,created_at,signal_id,signal_setup_id,evaluation_id,strategy_version,config_hash,expected_entry_price,observed_entry_price,theoretical_entry_price,simulated_entry_fill,execution_delay_ms,observed_slippage_pct,candle_close_ts,signal_score,position_size,entry_notional,risk_amount,actual_risk_amount,actual_risk_fraction,requested_risk_amount,raw_risk_quantity,funds_cap_quantity,notional_cap_quantity,binding_cap,mark_price,trade_rationale,rationale_hash,rationale_version,accounting_version,entry_fee,fee_rate,slippage_rate,gross_pnl,net_pnl)
-                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", (instrument,rationale["side"],rationale["simulated_entry_fill"],rationale["stop_price"],rationale["target_price"],created,analysis["signal_setup_id"],rationale["signal_setup_id"],rationale["evaluation_id"],rationale["strategy_version"],rationale["parameter_hash"],rationale["theoretical_entry_price"],rationale["simulated_entry_fill"],rationale["theoretical_entry_price"],rationale["simulated_entry_fill"],delay,float(params.slippage),analysis["candle_close_ts"],analysis["score"],rationale["final_quantity"],rationale["final_notional"],rationale["expected_gross_loss_at_stop"],rationale["expected_net_loss_at_stop"],rationale["actual_account_risk_fraction"],rationale["requested_risk_amount"],rationale["raw_risk_derived_quantity"],rationale["funds_cap_quantity"],rationale["notional_cap_quantity"],rationale["binding_cap"],rationale["simulated_entry_fill"],canonical_json(rationale),rationale["rationale_hash"],RATIONALE_VERSION,ACCOUNTING_VERSION,rationale["estimated_entry_fee"],params.trading_fee,params.slippage,0.0,0.0))
+                cursor = conn.execute("""INSERT INTO paper_trades(instrument,side,entry,stop_loss,take_profit,created_at,signal_id,signal_setup_id,evaluation_id,strategy_version,config_hash,expected_entry_price,observed_entry_price,theoretical_entry_price,simulated_entry_fill,execution_delay_ms,observed_slippage_pct,candle_close_ts,signal_score,position_size,entry_notional,risk_amount,actual_risk_amount,actual_risk_fraction,requested_risk_amount,raw_risk_quantity,funds_cap_quantity,notional_cap_quantity,binding_cap,mark_price,trade_rationale,rationale_hash,rationale_version,accounting_version,entry_fee,fee_rate,slippage_rate,gross_pnl,net_pnl,strategy_registry_id,candidate_identity,strategy_configuration_hash)
+                    VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""", (instrument,rationale["side"],rationale["simulated_entry_fill"],rationale["stop_price"],rationale["target_price"],created,analysis["signal_setup_id"],rationale["signal_setup_id"],rationale["evaluation_id"],rationale["strategy_version"],rationale.get("strategy_configuration_hash") or rationale["parameter_hash"],rationale["theoretical_entry_price"],rationale["simulated_entry_fill"],rationale["theoretical_entry_price"],rationale["simulated_entry_fill"],delay,float(params.slippage),analysis["candle_close_ts"],analysis["score"],rationale["final_quantity"],rationale["final_notional"],rationale["expected_gross_loss_at_stop"],rationale["expected_net_loss_at_stop"],rationale["actual_account_risk_fraction"],rationale["requested_risk_amount"],rationale["raw_risk_derived_quantity"],rationale["funds_cap_quantity"],rationale["notional_cap_quantity"],rationale["binding_cap"],rationale["simulated_entry_fill"],canonical_json(rationale),rationale["rationale_hash"],RATIONALE_VERSION,ACCOUNTING_VERSION,rationale["estimated_entry_fee"],params.trading_fee,params.slippage,0.0,0.0,rationale.get("strategy_registry_id"),rationale.get("candidate_identity"),rationale.get("strategy_configuration_hash")))
                 conn.execute("UPDATE paper_account SET cash=cash-?,updated_at=? WHERE account_id=1", (rationale["final_notional"] + rationale["estimated_entry_fee"], created))
                 trade_id = cursor.lastrowid
             self._event(instrument, "TRADE_OPENED", "Paper trade opened", {"trade_id": trade_id, "evaluation_id": rationale["evaluation_id"], "binding_cap": rationale["binding_cap"]})
@@ -1096,7 +1133,7 @@ class PaperService:
             price = self._price(instrument)
             self.monitor_positions(instrument, price)
             flow = self._flow_metrics(instrument)
-            analysis = self.analyze(instrument, flow)
+            analysis = self.analyze(instrument, flow, price)
             self._open_trade(analysis)
             self.maybe_create_ai_brief(analysis)
             self.last_okx_success=now_iso(); self.last_okx_error=None
@@ -1160,7 +1197,9 @@ class PaperService:
         total_r = round(sum(float(row["pnl_r"] or 0) for row in closed), 2)
         analysis = self.last_analysis[instrument]
         effective = {"initial_capital": account["initial_capital"], "risk_per_trade": params.risk_per_trade, "trading_fee": params.trading_fee, "slippage": params.slippage, "cooldown_bars": params.cooldown_bars, "max_open_positions": params.max_open_positions, "max_notional_fraction": params.max_notional_fraction, "maximum_notional": account["equity"] * params.max_notional_fraction, "strategy_version": strategy_version}
-        return {"instrument": instrument, "analysis": analysis, "flow": analysis.get("flow"), "risk": self.risk_state(instrument), "effective_configuration": effective, "events": events, "open_trades": open_trades, "closed_trades": closed, "ai_brief": dict(brief) if brief else None, "summary": {"open": account_open, "closed": len(closed), "wins": wins, "win_rate": round(wins / len(closed) * 100, 1) if closed else 0, "total_r": total_r, "initial_capital_usdt": account["initial_capital"], "risk_per_trade": params.risk_per_trade, "total_pnl_usdt": round(account["realized_pnl"], 2), "equity_usdt": round(account["equity"], 2), "available_cash_usdt": round(account["cash"], 2), "open_position_value_usdt": round(account["open_value"], 2), "account_mode": "shared_portfolio"}}
+        active_registry = RESEARCH.automatic_research.registry.active() if globals().get("RESEARCH") else None
+        provenance = STRATEGY_REGISTRY_ADAPTER.provenance(active_registry) if globals().get("STRATEGY_REGISTRY_ADAPTER") else {"source":"LEGACY_BASELINE"}
+        return {"instrument": instrument, "analysis": analysis, "active_strategy": active_registry, "strategy_provenance": provenance, "flow": analysis.get("flow"), "risk": self.risk_state(instrument), "effective_configuration": effective, "events": events, "open_trades": open_trades, "closed_trades": closed, "ai_brief": dict(brief) if brief else None, "summary": {"open": account_open, "closed": len(closed), "wins": wins, "win_rate": round(wins / len(closed) * 100, 1) if closed else 0, "total_r": total_r, "initial_capital_usdt": account["initial_capital"], "risk_per_trade": params.risk_per_trade, "total_pnl_usdt": round(account["realized_pnl"], 2), "equity_usdt": round(account["equity"], 2), "available_cash_usdt": round(account["cash"], 2), "open_position_value_usdt": round(account["open_value"], 2), "account_mode": "shared_portfolio"}}
 
     def replay(self, instrument: str, at: str | None = None) -> dict[str, Any]:
         if instrument not in INSTRUMENTS: instrument = "ETH-USDT"
@@ -1207,6 +1246,7 @@ MARKET_CONTEXT_V2 = MarketContextServiceV2(
 )
 MARKET_STATE_ENGINE_V2 = MarketStateEngineV2()
 STRATEGY_ROUTER_V2 = StrategyRouterV2()
+STRATEGY_REGISTRY_ADAPTER = StrategyRegistryAdapter(RESEARCH.automatic_research.registry)
 AI_REPORT_REPOSITORY = ReportRepository(Path(os.getenv("AI_MARKET_REPORT_DB_PATH", ROOT / DEFAULT_REPORT_DB)))
 AI_AUDIT_REPOSITORY = AuditRepository(Path(os.getenv("AI_MARKET_REPORT_DB_PATH", ROOT / DEFAULT_REPORT_DB)))
 AI_REPORT_SCHEDULER = ReportScheduler(AI_REPORT_REPOSITORY, DB_PATH, MICROSTRUCTURE.path)
@@ -1546,13 +1586,13 @@ class Handler(BaseHTTPRequestHandler):
                         execution_timeframe=execution_timeframe,
                     )
                     previous_state = MARKET_STATE_ENGINE_V2.evaluate(previous_context)
-                    previous_route = STRATEGY_ROUTER_V2.route(previous_context, previous_state)
+                    previous_route = STRATEGY_REGISTRY_ADAPTER.route(STRATEGY_ROUTER_V2, previous_context, previous_state)
                     current_state = MARKET_STATE_ENGINE_V2.compare(
                         previous_context, current_context)["current"]
                 else:
                     current_state = MARKET_STATE_ENGINE_V2.evaluate(current_context)
-                self._send(STRATEGY_ROUTER_V2.route(
-                    current_context, current_state, previous_route=previous_route))
+                self._send(STRATEGY_REGISTRY_ADAPTER.route(
+                    STRATEGY_ROUTER_V2, current_context, current_state, previous_route=previous_route))
             except (TypeError, ValueError) as error:
                 self._send({"error": str(error)}, HTTPStatus.BAD_REQUEST)
         elif parsed.path == "/api/paper/flow/health": self._send(SERVICE.flow_health())
@@ -1678,6 +1718,12 @@ class Handler(BaseHTTPRequestHandler):
             except ValueError:self._send({"error":"Invalid job id"},HTTPStatus.BAD_REQUEST)
         elif parsed.path == "/api/alerts": self._send({"items":ALERTS.list()})
         elif parsed.path == "/api/data-coverage": self._send({"items":RESEARCH.repository.data_coverage()})
+        elif parsed.path == "/api/automatic-research": self._send(RESEARCH.automatic_research.summary())
+        elif parsed.path.startswith("/api/automatic-research/cycles/"):
+            try:
+                cycle=RESEARCH.automatic_research.detail(int(parsed.path.rsplit('/',1)[1]));self._send(cycle or {'error':'Research cycle not found'},HTTPStatus.OK if cycle else HTTPStatus.NOT_FOUND)
+            except ValueError:self._send({'error':'Invalid research cycle id'},HTTPStatus.BAD_REQUEST)
+        elif parsed.path == "/api/strategy-registry": self._send({"active":RESEARCH.automatic_research.registry.active(),"approved":RESEARCH.automatic_research.registry.approved(50),"switches":RESEARCH.automatic_research.registry.switches(50)})
         elif parsed.path == "/api/discovery/datasets": self._send({"items":RESEARCH.repository.discovery_datasets()})
         elif parsed.path == "/api/discovery/programs/summary":
             # Program discovery is opt-in and no production worker is started here.
@@ -1861,6 +1907,18 @@ class Handler(BaseHTTPRequestHandler):
         payload=self._body()
         if payload is None:return
         if parsed.path == "/api/cycle": self._send(SERVICE.cycle())
+        elif parsed.path == "/api/automatic-research/run":
+            if not self._admin():return
+            try:self._send(RESEARCH.automatic_research.start(payload,self._client()),HTTPStatus.ACCEPTED)
+            except (ValueError,OverflowError) as error:self._send({'error':str(error)},HTTPStatus.BAD_REQUEST if isinstance(error,ValueError) else HTTPStatus.TOO_MANY_REQUESTS)
+        elif parsed.path.startswith('/api/automatic-research/cycles/') and parsed.path.endswith('/resume'):
+            if not self._admin():return
+            try:self._send(RESEARCH.automatic_research.resume(int(parsed.path.split('/')[4]),self._client()),HTTPStatus.ACCEPTED)
+            except ValueError as error:self._send({'error':str(error)},HTTPStatus.BAD_REQUEST)
+        elif parsed.path.startswith('/api/automatic-research/cycles/') and parsed.path.endswith('/cancel'):
+            if not self._admin():return
+            try:self._send(RESEARCH.automatic_research.cancel(int(parsed.path.split('/')[4])))
+            except ValueError as error:self._send({'error':str(error)},HTTPStatus.BAD_REQUEST)
         elif parsed.path == "/api/discovery/datasets/prepare":
             if not self._admin(): return
             try:self._send(RESEARCH.discovery.prepare_dataset(payload,self._client()),HTTPStatus.ACCEPTED)

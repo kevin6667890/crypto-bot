@@ -13,10 +13,13 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any, Mapping
 
+from .approved_strategy_runtime import RUNTIME_VERSION, canonical_instrument, evaluate_frozen_candidate
+
 
 APPROVAL_POLICY_VERSION = "strategy-approval-policy-v1"
 PROMOTION_POLICY_VERSION = "strategy-promotion-policy-v1"
 REGISTRY_SCHEMA_VERSION = "approved-strategy-registry-v1"
+ACTIVE_SCOPE_POLICY_VERSION = "global-cross-asset-active-v1"
 ROUTER_TEMPLATE_MAP = {
     "TREND_PULLBACK_V2_1": "TREND_PULLBACK",
     "TREND_BREAKOUT_V2_1": "BREAKOUT_CONTINUATION",
@@ -89,6 +92,17 @@ class StrategyApprovalPolicy:
         identity = evidence.get("identity") or {}
         if not identity.get("candidate_identity") or not identity.get("configuration_hash"):
             reasons.append("INCOMPLETE_IDENTITY")
+        definition = evidence.get("definition") or {}
+        candidate = evidence.get("candidate") or {}
+        if definition.get("parameters") != candidate.get("parameters"):
+            reasons.append("PARAMETER_SNAPSHOT_MISMATCH")
+        if definition and identity.get("configuration_hash") != canonical_hash(definition):
+            reasons.append("FROZEN_DEFINITION_HASH_MISMATCH")
+        scope = definition.get("activation_scope") or {}
+        if scope.get("mode") != "GLOBAL_CROSS_ASSET" or scope.get("policy_version") != ACTIVE_SCOPE_POLICY_VERSION:
+            reasons.append("ACTIVE_SCOPE_POLICY_INCOMPATIBLE")
+        if set(scope.get("instruments") or ()) != {"BTC-USDT", "ETH-USDT", "SOL-USDT"}:
+            reasons.append("ACTIVE_SCOPE_INCOMPLETE")
         runtime = evidence.get("runtime") or {}
         if not runtime.get("deterministic"):
             reasons.append("RUNTIME_NOT_DETERMINISTIC")
@@ -232,6 +246,33 @@ class StrategyRegistryAdapter:
     def __init__(self, registry: ApprovedStrategyRegistry):
         self.registry = registry
 
+    def _confirmed_candles(self, instrument: str, as_of: int, limit: int = 300) -> list[dict[str, Any]]:
+        canonical = canonical_instrument(instrument)
+        with self.registry.repository.connect() as connection:
+            has_live = connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='market_candles'"
+            ).fetchone()
+            if has_live:
+                rows = connection.execute(
+                    "SELECT ts,open,high,low,close,volume FROM market_candles "
+                    "WHERE instrument=? AND bar='15m' AND ts+900<=? ORDER BY ts DESC LIMIT ?",
+                    (canonical, int(as_of), int(limit)),
+                ).fetchall()
+                if rows:
+                    return [
+                        {**dict(row), "candle_close_ts": int(row["ts"]) + 900, "confirmed": True}
+                        for row in reversed(rows)
+                    ]
+            rows = connection.execute(
+                "SELECT ts,open,high,low,close,volume,confirmed FROM historical_candles "
+                "WHERE instrument=? AND timeframe='15m' AND confirmed=1 AND ts+900<=? "
+                "ORDER BY ts DESC LIMIT ?", (canonical, int(as_of), int(limit)),
+            ).fetchall()
+        return [
+            {**dict(row), "candle_close_ts": int(row["ts"]) + 900}
+            for row in reversed(rows)
+        ]
+
     @staticmethod
     def provenance(item: Mapping[str, Any] | None) -> dict[str, Any]:
         if not item:
@@ -243,11 +284,13 @@ class StrategyRegistryAdapter:
             "research_cycle_id": item["research_cycle_id"], "approved_at": item["approved_at"],
             "strategy_version": item["strategy_version"],
             "configuration_hash": item["configuration_hash"],
+            "active_scope_policy": ACTIVE_SCOPE_POLICY_VERSION,
             "dataset_range": definition.get("dataset_range"),
             "validation_status": definition.get("validation_status"),
         }
 
-    def route(self, router: Any, context: Mapping[str, Any], state: Mapping[str, Any], **kwargs: Any) -> dict[str, Any]:
+    def route(self, router: Any, context: Mapping[str, Any], state: Mapping[str, Any], *,
+              candles: list[dict[str, Any]] | None = None, **kwargs: Any) -> dict[str, Any]:
         active = self.registry.active()
         if not active:
             result = router.route(context, state, **kwargs)
@@ -261,6 +304,49 @@ class StrategyRegistryAdapter:
                     "parameter_set": definition["router_parameters"],
                 } for direction in directions], **kwargs,
             )
+            runtime_error = None
+            try:
+                runtime = evaluate_frozen_candidate(
+                    active, str(context["instrument"]),
+                    candles if candles is not None else self._confirmed_candles(str(context["instrument"]), int(context["as_of"])),
+                    as_of=int(context["as_of"]),
+                )
+            except ValueError as error:
+                runtime = {
+                    "runtime_version": RUNTIME_VERSION, "action": "WAIT",
+                    "strategy_registry_id": active["registry_id"],
+                    "candidate_identity": active["candidate_identity"],
+                    "strategy_version": active["strategy_version"],
+                    "configuration_hash": active["configuration_hash"],
+                }
+                runtime_error = str(error)
+            action = runtime["action"]
+            candidates = []
+            selected = None
+            for candidate in result.get("candidates", ()):
+                presented = dict(candidate)
+                presented["presentation_only"] = True
+                presented["execution_runtime_version"] = runtime["runtime_version"]
+                if action in {"LONG", "SHORT"} and candidate.get("direction") == action and selected is None:
+                    presented["state"] = "TRIGGER_READY"
+                    presented["selection_status"] = "PRIMARY"
+                    presented["selection_reason"] = "exact frozen approved candidate trigger"
+                    selected = presented
+                else:
+                    presented["selection_status"] = "ALTERNATIVE"
+                candidates.append(presented)
+            result["candidates"] = tuple(candidates)
+            result["primary_route"] = selected
+            result["alternatives"] = tuple(item for item in candidates if item is not selected and item.get("state") != "INELIGIBLE")
+            result["no_trade"] = {
+                **result["no_trade"], "active": selected is None,
+                "reasons": () if selected is not None else ({
+                    "code": "APPROVED_CANDIDATE_DATA_UNAVAILABLE" if runtime_error else "APPROVED_CANDIDATE_WAIT",
+                    "timeframe": "15m", "evidence": [runtime_error] if runtime_error else ["frozen candidate emitted WAIT"],
+                    "temporary": True, "release_condition": "next confirmed candle completes the frozen candidate trigger",
+                },),
+            }
+            result["execution_decision"] = {**runtime, "error": runtime_error, "authoritative": True}
         provenance=self.provenance(active)
         result["strategy_provenance"] = provenance
         for candidate in result.get("candidates",[]): candidate["strategy_provenance"]=dict(provenance)

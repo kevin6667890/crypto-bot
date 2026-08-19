@@ -13,14 +13,14 @@ from .discovery_scoring import evaluate_eligibility
 from .discovery_service import ENGINE_VERSION, POLICY_VERSION, aggregate, buy_and_hold
 from .okx_history import TIMEFRAME_SECONDS
 from .strategy_registry import (
-    APPROVAL_POLICY_VERSION, ApprovedStrategyRegistry, ROUTER_TEMPLATE_MAP,
+    ACTIVE_SCOPE_POLICY_VERSION, APPROVAL_POLICY_VERSION, ApprovedStrategyRegistry, ROUTER_TEMPLATE_MAP,
     StrategyApprovalPolicy, canonical_hash, utc_now,
 )
 
 
 AUTO_RESEARCH_POLICY_VERSION = "automatic-research-cycle-v1"
 ROLLING_SPLIT_POLICY_VERSION = "rolling-development-70-holdout-20-oot-10-v1"
-RUNTIME_ADAPTER_VERSION = "discovery-v2.1-router-paper-adapter-v1"
+RUNTIME_ADAPTER_VERSION = "approved-strategy-runtime-v2.1-v1"
 DEFAULT_TEMPLATES = ("TREND_PULLBACK_V2_1", "TREND_BREAKOUT_V2_1", "RANGE_MEAN_REVERSION_V2_1")
 
 
@@ -313,7 +313,12 @@ class AutomaticResearchService:
             robust_folds=[]
             for _,_,start,end in splits["development_folds"]:
                 robust_folds.append(self._evaluate_range(robust_item,"BTC-USDT",start,end,robust_execution,fingerprint))
-            robust_status = "PASS" if sum(value["status"]=="PASS" for value in robust_folds)>=3 else "FAIL"
+            robust_aggregate = aggregate([{
+                "status": "COMPLETED", "metrics": value["metrics"],
+                "buy_hold_metrics": value["buy_hold_metrics"],
+            } for value in robust_folds])
+            robust_eligibility = evaluate_eligibility(robust_aggregate, timeframe, "DEVELOPMENT_CANDIDATE")
+            robust_status = "PASS" if robust_eligibility["eligible"] else "FAIL"
             router_parameters = _router_parameters(item["template"],item["parameters"])
             candidate_identity = build_candidate_identity(item["template"],item["parameters"],execution.execution_hash())
             definition = {
@@ -325,13 +330,17 @@ class AutomaticResearchService:
                 "validation_status":{"development":"PASS","walk_forward":"PASS","holdout":holdout["status"],
                     "oot":oot["status"],"cross_asset":cross_status,"robustness":robust_status},
                 "execution_assumptions":request["execution_assumptions"],
+                "activation_scope":{"mode":"GLOBAL_CROSS_ASSET","policy_version":ACTIVE_SCOPE_POLICY_VERSION,
+                    "instruments":["BTC-USDT","ETH-USDT","SOL-USDT"]},
             }
             evidence = {
                 "candidate": item, "candidate_identity": candidate_identity, "definition": definition,
                 "configuration_hash": canonical_hash(definition), "development":{"eligible":True,"reasons":[],"score":item["development_score"]},
                 "walk_forward":{"status":"PASS","metrics":item["aggregate_metrics"]}, "holdout":holdout,
                 "final_oot":oot, "cross_asset":{"status":cross_status,"assets":transfers},
-                "robustness":{"status":robust_status,"scenario":"COMBINED_2X","folds":robust_folds},
+                "robustness":{"status":robust_status,"scenario":"COMBINED_2X","folds":robust_folds,
+                    "aggregate_metrics":robust_aggregate,"eligibility":robust_eligibility,
+                    "policy":"existing development eligibility applied to all five 2x-cost folds"},
                 "contamination":{"state":"CLEAR","candidate_frozen_before_holdout":True,"post_holdout_adjustment":False},
                 "identity":{"candidate_identity":candidate_identity,"configuration_hash":canonical_hash(definition)},
                 "runtime":{"deterministic":True,"execution_compatible":router_parameters is not None,"router_family":ROUTER_TEMPLATE_MAP.get(item["template"])},

@@ -1,10 +1,16 @@
 import type { ReactNode } from "react";
+import { translateKnownEnum, type UiLanguage } from "./aiMarketAnalysis/enumTranslations";
 
-const scenarioLabel: Record<string, string> = {
-  BEARISH_CONTINUATION: "偏空延续", BULLISH_CONTINUATION: "偏多延续",
-  NORMAL_RETEST: "正常回踩", FAILED_BREAKOUT: "突破失败",
-  NORMAL_BEARISH_RETEST: "正常反抽", FAILED_BREAKDOWN: "跌破失败",
-  RANGE: "区间震荡", WAIT: "混合观察", MIXED: "混合观察",
+const scenarioLabel: Record<string, Record<UiLanguage, string>> = {
+  BEARISH_CONTINUATION: { zh: "偏空延续", en: "Bearish continuation" },
+  BULLISH_CONTINUATION: { zh: "偏多延续", en: "Bullish continuation" },
+  NORMAL_RETEST: { zh: "正常回踩", en: "Normal retest" },
+  FAILED_BREAKOUT: { zh: "突破失败", en: "Failed breakout" },
+  NORMAL_BEARISH_RETEST: { zh: "正常反抽", en: "Normal bearish retest" },
+  FAILED_BREAKDOWN: { zh: "跌破失败", en: "Failed breakdown" },
+  RANGE: { zh: "区间震荡", en: "Range" },
+  WAIT: { zh: "混合观察", en: "Mixed watch" },
+  MIXED: { zh: "混合观察", en: "Mixed watch" },
 };
 const absentText = new Set(["", "-", "—", "unknown", "unavailable", "not available", "not applicable", "n/a", "null", "none"]);
 
@@ -19,12 +25,23 @@ export function renderIfPresent<T>(value: T, render: (present: T) => ReactNode) 
   return isPresent(value) ? render(value) : null;
 }
 
-export const workspaceScenarioLabel = (value: unknown) => scenarioLabel[String(value || "")] || "主要场景";
+export const workspaceScenarioLabel = (value: unknown, language: UiLanguage = "zh") =>
+  scenarioLabel[String(value || "")]?.[language]
+  || (language === "zh" ? "主要场景" : "Primary scenario");
 export const presentAiLevels = <T extends object>(levels: T[] = []) => levels.filter(item => isPresent((item as { representative_price?: unknown }).representative_price));
 
-export function compactAiSummary(value: unknown, maxLength = 220): string {
-  const text = typeof value === "string" ? value.replace(/\s+/g, " ").trim() : "";
-  if (!text) return "暂无核心摘要。";
+export function localizeWorkspaceNarrative(value: unknown, language: UiLanguage): string {
+  const text = typeof value === "string" ? value : "";
+  return text.replace(/\b[A-Z]+(?:_[A-Z]+)+\b/g, enumValue => {
+    const translated = translateKnownEnum(enumValue, language);
+    if (translated !== enumValue) return translated;
+    return enumValue.toLowerCase().split("_").map((word, index) => index ? word : word[0].toUpperCase() + word.slice(1)).join(" ");
+  });
+}
+
+export function compactAiSummary(value: unknown, maxLength = 220, language: UiLanguage = "zh"): string {
+  const text = localizeWorkspaceNarrative(value, language).replace(/\s+/g, " ").trim();
+  if (!text) return language === "zh" ? "暂无核心摘要。" : "No concise summary is available.";
   const sentences = text.match(/[^。！？.!?]+[。！？.!?]?/g) || [text];
   let summary = "";
   for (const sentence of sentences.slice(0, 2)) {

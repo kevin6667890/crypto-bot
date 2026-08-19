@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { compactAiSummary, isPresent, presentAiLevels, workspaceScenarioLabel } from "./aiWorkspaceSemantics";
+import { compactAiSummary, isPresent, localizeWorkspaceNarrative, presentAiLevels, workspaceScenarioLabel } from "./aiWorkspaceSemantics";
 
 describe("Workspace AI presentation", () => {
   it.each([null, undefined, "", "—", "unknown", "not applicable", "N/A"])("filters absent value %s", value => {
@@ -22,6 +22,15 @@ describe("Workspace AI presentation", () => {
     expect(workspaceScenarioLabel("RANGE")).toBe("区间震荡");
     expect(workspaceScenarioLabel("WAIT")).toBe("混合观察");
     expect(workspaceScenarioLabel("MIXED")).toBe("混合观察");
+    expect(workspaceScenarioLabel("BEARISH_CONTINUATION", "en")).toBe("Bearish continuation");
+    expect(workspaceScenarioLabel("RANGE", "en")).toBe("Range");
+    expect(workspaceScenarioLabel("WAIT", "en")).toBe("Mixed watch");
+  });
+
+  it("removes raw internal enums from Workspace narrative text", () => {
+    expect(localizeWorkspaceNarrative("阶段 BEARISH_CONTINUATION", "zh")).toBe("阶段 偏空延续");
+    expect(localizeWorkspaceNarrative("State BEARISH_CONTINUATION", "en")).toBe("State Bearish continuation");
+    expect(localizeWorkspaceNarrative("CUSTOM_INTERNAL_STATE", "en")).not.toMatch(/[A-Z]+_[A-Z_]+/);
   });
 
   it("keeps only a compact two-sentence homepage summary", () => {

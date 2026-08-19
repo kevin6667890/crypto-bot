@@ -240,7 +240,7 @@ type MarketSeries = {
 export type VisibleMarketIndicator = "ema20" | "ma60" | "ma200";
 
 export function MarketChart({ instrument = "ETH-USDT", interval = "15m", flow, indicators = ["ema20", "ma60", "ma200"] }: { instrument?: string; interval?: string; flow?: FlowPaneData; indicators?: VisibleMarketIndicator[] }) {
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
   const candleSelection = `${instrument}:${interval}`;
   const [followState, setFollowState] = useState(() => chartFollowRegistry.follow(candleSelection));
   const followStateRef = useRef(followState);
@@ -569,12 +569,12 @@ export function MarketChart({ instrument = "ETH-USDT", interval = "15m", flow, i
     </div>}
     <div className="market-chart-caption"><b>{instrument}</b><span>{interval}</span></div>
     <div className="market-chart-info">
-      <button type="button" aria-label="查看 CVD 与 OI 数据覆盖">i</button>
+      <button type="button" aria-label={language === "zh" ? "查看 CVD 与 OI 数据覆盖" : "View CVD and OI data coverage"}>i</button>
       <div role="tooltip">
         {latestCvdPartial && <span>CVD · {t("flow.partial")}</span>}
-        <span>CVD Delta（主动买入名义额 − 主动卖出名义额）</span>
-        <span>累计 CVD（UTC 00:00 重置） · {formatFlowCoverage(cvdHistory.coverage)}</span>
-        <span>OI 绝对值 · {formatFlowCoverage(oiHistory.coverage)}</span>
+        <span>{language === "zh" ? "CVD Δ（主动买入名义额 − 主动卖出名义额）" : "CVD Δ (aggressive buy notional − aggressive sell notional)"}</span>
+        <span>{language === "zh" ? "CVD 累计（UTC 00:00 重置）" : "Cumulative CVD (resets at UTC 00:00)"} · {formatFlowCoverage(cvdHistory.coverage)}</span>
+        <span>{language === "zh" ? "OI 绝对值" : "Absolute OI"} · {formatFlowCoverage(oiHistory.coverage)}</span>
       </div>
     </div>
     {crosshairFlow && <div className="market-flow-crosshair" role="status">

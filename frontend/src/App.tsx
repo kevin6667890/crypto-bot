@@ -100,11 +100,14 @@ function formatSigned(value: number, suffix = "") {
   return `${value >= 0 ? "+" : ""}${value.toFixed(2)}${suffix}`;
 }
 
+const containsCjk = (value: unknown) => /[\u3400-\u9fff]/.test(String(value || ""));
+
 function VpvrHistogram({ profile, poc, vah, val, professional, viewport }: { profile: Array<{ price_low: number; price_high: number; volume: number; delta: number; trades: number }>; poc?: number; vah?: number; val?: number; professional?: boolean; viewport?: { top: number; bottom: number } }) {
+  const { language } = useLanguage();
   const rows = [...profile].sort((a, b) => b.price_low - a.price_low);
   const maxVolume = Math.max(...rows.map((row) => row.volume), 1);
   return <div className="vpvr-histogram" style={viewport ? { top: viewport.top, bottom: `calc(100% - ${viewport.bottom}px)` } : undefined}>
-    <div className="vpvr-histogram-head"><span>成交价档位分布</span><small>{professional ? "绿色：主动买盘 Delta；红色：主动卖盘 Delta" : "逐笔流就绪前显示 K 线成交量近似"}</small></div>
+    <div className="vpvr-histogram-head"><span>{language === "zh" ? "成交价档位分布" : "Traded-price distribution"}</span><small>{professional ? (language === "zh" ? "绿色：主动买盘 Delta；红色：主动卖盘 Delta" : "Green: aggressive-buy delta; red: aggressive-sell delta") : (language === "zh" ? "逐笔流就绪前显示 K 线成交量近似" : "Candle-volume approximation until trade flow is ready")}</small></div>
     <div className="vpvr-rows">{rows.map((row) => {
       const midpoint = (row.price_low + row.price_high) / 2;
       const inValueArea = midpoint >= (val ?? -Infinity) && midpoint <= (vah ?? Infinity);
@@ -1044,15 +1047,16 @@ function Workspace() {
                     </button>
                   ))}
                 </div>
-                <div className="indicator-toggles overlay-toggles" aria-label="均线叠加">
+                <div className="indicator-toggles overlay-toggles" aria-label={language === "zh" ? "均线叠加" : "Moving-average overlays"}>
                   {(["ema20", "ma60", "ma200"] as VisibleMarketIndicator[]).map((item) => <button key={item} className={visibleIndicators.includes(item) ? "active" : ""} onClick={() => setVisibleIndicators(current => current.includes(item) ? current.filter(value => value !== item) : [...current, item])}>{item.toUpperCase()}</button>)}
                 </div>
                 </div>
               </div>
               <div className="workspace-chart">
                 <MarketChart key={`${perpetualInstrument(instrument)}:${interval}`} instrument={perpetualInstrument(instrument)} interval={interval} flow={chartFlow} indicators={visibleIndicators} />
-                <div className="flow-pane-labels"><span className="volume-pane-label">Volume · K线实际成交量</span><span className="cvd-pane-label">CVD Delta 柱 · 累计 CVD 线</span><span className="oi-pane-label">OI · 永续未平仓量绝对值</span></div>
+                <div className="flow-pane-labels" aria-label={language === "zh" ? "图表分区" : "Chart panes"}><span className="volume-pane-label" data-testid="volume-pane-label">{language === "zh" ? "成交量 · 实际成交量" : "Volume · actual traded volume"}</span><span className="cvd-pane-label" data-testid="cvd-pane-label" data-delta-series="histogram" data-cumulative-series="line" data-zero-axis="true">{language === "zh" ? "CVD Δ 柱 · CVD 累计线 · 零轴" : "CVD Δ histogram · cumulative CVD line · zero axis"}</span><span className="oi-pane-label" data-testid="oi-pane-label">{language === "zh" ? "OI · 永续未平仓量绝对值" : "OI · absolute perpetual open interest"}</span></div>
               </div>
+              <div className="chart-footer">
               <div className={`flow-status ${flowStatus.toLowerCase()}`}>
                 <b>{t(`flow.status.${flowStatus}` as any)}</b>
                 {flowStatus === "PARTIAL" && <span>{t("flow.coverage", {coverage: flowCoverage})}</span>}
@@ -1061,7 +1065,7 @@ function Workspace() {
                 {flowStatus === "CONNECTING" && <span>{t("flow.connecting")}</span>}
               </div>
               <div className="chart-legend">
-                <span>Volume · 柱高为实际成交量，颜色跟随 K 线涨跌</span>
+                <span>{language === "zh" ? "成交量 · 柱高为实际成交量，颜色跟随 K 线涨跌" : "Volume · actual traded volume; color follows candle direction"}</span>
                 <span>
                   <i className="ema20" /> EMA20
                 </span>
@@ -1071,7 +1075,8 @@ function Workspace() {
                 <span>
                   <i className="ma200" /> MA200
                 </span>
-                <span className="muted">CVD 颜色仅由 delta 正负决定 · OI 独立折线</span>
+                <span className="muted">{language === "zh" ? "CVD Δ 颜色仅由自身正负决定 · CVD 累计与 OI 为独立折线" : "CVD Δ color uses delta sign only · cumulative CVD and OI are independent lines"}</span>
+              </div>
               </div>
             </section>
             <WorkspaceAiBrief instrument={perpetualInstrument(instrument)} />
@@ -1106,7 +1111,7 @@ function Workspace() {
                 <div className="flow-grid">
                   <article>
                     <div className="flow-head">
-                      <span>{paper.flow.professional?.available ? "专业 CVD · 最近 6 小时" : t("market.cvdRecent")}</span>
+                      <span>{paper.flow.professional?.available ? (language === "zh" ? "专业 CVD · 最近 6 小时" : "Professional CVD · last 6 hours") : t("market.cvdRecent")}</span>
                       <b
                         className={
                           paper.flow.cvd_delta >= 0 ? "positive" : "negative"
@@ -1117,7 +1122,7 @@ function Workspace() {
                       </b>
                     </div>
                     <FlowChart points={paper.flow.professional?.available ? paper.flow.professional.cvd_series : paper.flow.cvd_series} zeroLine instrument={instrument} interval={interval} seriesType="cvd" />
-                    <small>{paper.flow.professional?.available ? `WebSocket 逐笔成交聚合 · 已覆盖 ${Math.round(paper.flow.professional.coverage_seconds / 60)} 分钟 · 当前不参与评分` : t("market.cvdHelp")}</small>
+                    <small>{paper.flow.professional?.available ? (language === "zh" ? `WebSocket 逐笔成交聚合 · 已覆盖 ${Math.round(paper.flow.professional.coverage_seconds / 60)} 分钟 · 当前不参与评分` : `WebSocket trade aggregation · ${Math.round(paper.flow.professional.coverage_seconds / 60)} minutes covered · excluded from scoring`) : t("market.cvdHelp")}</small>
                   </article>
                   <article>
                     <div className="flow-head">
@@ -1407,7 +1412,7 @@ function Workspace() {
             </span>
             {paper?.risk && !paper.risk.allowed && <div className="risk-block-banner" role="status">
               <ShieldCheck size={18} />
-              <div><span>当前状态：等待</span><strong>风险阻断：{paper.risk.blockers.map(localValue).join("、")}</strong></div>
+              <div><span>{language === "zh" ? "当前状态：等待" : "Current status: wait"}</span><strong>{language === "zh" ? "风险阻断" : "Risk blockers"}: {paper.risk.blockers.map(localValue).join(language === "zh" ? "、" : ", ")}</strong></div>
             </div>}
             <div className="decision-head">
               <div>
@@ -1422,9 +1427,9 @@ function Workspace() {
                 </p>
               </div>
               <div className="score-summary">
-                <span>规则条件匹配度</span>
+                <span>{language === "zh" ? "规则条件匹配度" : "Rule-condition match"}</span>
                 <div className="score-box"><strong>{decisionScore}</strong><small>/100</small></div>
-                <small>不代表成功率或收益概率</small>
+                <small>{language === "zh" ? "不代表成功率或收益概率" : "Not a success or return probability"}</small>
               </div>
             </div>
             {runtimeAnalysis?.strategy_version && (
@@ -1509,21 +1514,21 @@ function Workspace() {
             </div>
             {vpvr?.available && (
               <div className="vpvr-summary">
-                <span className="eyebrow">VPVR · {vpvr.interval || interval} · {vpvr.professional ? "逐笔成交价" : "已确认K线"}</span>
-                <div><span>成交量控制点 POC</span><b>${vpvr.poc?.toFixed(2)}</b></div>
-                <div><span>价值区下沿 · 支撑</span><b>${vpvr.val?.toFixed(2)}</b></div>
-                <div><span>价值区上沿 · 压力</span><b>${vpvr.vah?.toFixed(2)}</b></div>
-                <div><span>筹码密集区</span><b>${vpvr.val?.toFixed(2)} – ${vpvr.vah?.toFixed(2)}</b></div>
-                <small>{snapshot.price > (vpvr.vah || Infinity) ? "现价位于价值区上方" : snapshot.price < (vpvr.val || -Infinity) ? "现价位于价值区下方" : "现价位于筹码密集区"}</small>
+                <span className="eyebrow">VPVR · {vpvr.interval || interval} · {vpvr.professional ? (language === "zh" ? "逐笔成交价" : "trade prices") : (language === "zh" ? "已确认K线" : "confirmed candles")}</span>
+                <div><span>{language === "zh" ? "成交量控制点 POC" : "Point of control (POC)"}</span><b>${vpvr.poc?.toFixed(2)}</b></div>
+                <div><span>{language === "zh" ? "价值区下沿 · 支撑" : "Value-area low · support"}</span><b>${vpvr.val?.toFixed(2)}</b></div>
+                <div><span>{language === "zh" ? "价值区上沿 · 压力" : "Value-area high · resistance"}</span><b>${vpvr.vah?.toFixed(2)}</b></div>
+                <div><span>{language === "zh" ? "筹码密集区" : "High-volume area"}</span><b>${vpvr.val?.toFixed(2)} – ${vpvr.vah?.toFixed(2)}</b></div>
+                <small>{snapshot.price > (vpvr.vah || Infinity) ? (language === "zh" ? "现价位于价值区上方" : "Price is above the value area") : snapshot.price < (vpvr.val || -Infinity) ? (language === "zh" ? "现价位于价值区下方" : "Price is below the value area") : (language === "zh" ? "现价位于筹码密集区" : "Price is inside the value area")}</small>
               </div>
             )}
             {paper?.flow?.professional?.available && (
               <div className="flow-quality-summary">
-                <span className="eyebrow">CVD / OI 数据质量</span>
-                <div><span>价格 - OI 状态</span><b>{paper.flow.professional.price_oi_state?.label || "采集中"}</b></div>
-                <div><span>逐笔覆盖</span><b>{Math.round(paper.flow.professional.coverage_seconds / 60)} 分钟</b></div>
-                <div><span>数据缺口</span><b>{paper.flow.professional.quality?.gap_count ?? 0}</b></div>
-                <div><span>OI 采样数</span><b>{paper.flow.professional.quality?.oi_samples ?? 0}</b></div>
+                <span className="eyebrow">{language === "zh" ? "CVD / OI 数据质量" : "CVD / OI data quality"}</span>
+                <div><span>{language === "zh" ? "价格 - OI 状态" : "Price–OI state"}</span><b>{language === "en" && containsCjk(paper.flow.professional.price_oi_state?.label) ? "Collecting" : paper.flow.professional.price_oi_state?.label || (language === "zh" ? "采集中" : "Collecting")}</b></div>
+                <div><span>{language === "zh" ? "逐笔覆盖" : "Trade coverage"}</span><b>{Math.round(paper.flow.professional.coverage_seconds / 60)} {language === "zh" ? "分钟" : "min"}</b></div>
+                <div><span>{language === "zh" ? "数据缺口" : "Data gaps"}</span><b>{paper.flow.professional.quality?.gap_count ?? 0}</b></div>
+                <div><span>{language === "zh" ? "OI 采样数" : "OI samples"}</span><b>{paper.flow.professional.quality?.oi_samples ?? 0}</b></div>
               </div>
             )}
             <div className="rule-list">

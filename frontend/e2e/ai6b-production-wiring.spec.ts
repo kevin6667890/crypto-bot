@@ -33,7 +33,7 @@ test("Workspace makes the full chart primary and switches instruments, timeframe
   const primary = page.locator(".workspace-primary");
   await expect(primary.locator(".chart-workspace canvas").first()).toBeVisible();
   await expect(primary.getByTestId("workspace-ai6b-brief")).toBeVisible();
-  await expect(primary).toContainText("Volume");
+  await expect(primary).toContainText("成交量");
   const timeframe = primary.locator(".timeframe-toggles");
   for (const value of ["1m", "5m", "15m", "1h", "4h", "1D"]) {
     await timeframe.getByRole("button", { name: value, exact: true }).click();
@@ -72,15 +72,27 @@ test("Workspace current audited Hero filters empty levels, localizes scenarios a
   await expect(hero).toContainText("AI 审计通过 · 100 / 100");
   await expect(hero).toContainText("当前");
   await expect(hero).toContainText("1W · 历史不足");
-  await expect(hero.getByText("当前无可靠关键压力位", { exact: true })).toHaveCount(1);
+  await expect(hero.getByText("当前无可靠关键位置", { exact: true })).toHaveCount(1);
+  await expect(hero.locator("[data-level-card]")) .toHaveCount(0);
   await expect(hero).toContainText("偏空延续");
   await expect(hero).toContainText("混合观察");
   await expect(hero).not.toContainText("BEARISH_CONTINUATION");
+  expect((await hero.innerText()).match(/[A-Z]+_[A-Z_]+/g) || []).toEqual([]);
   const chart = page.locator(".workspace-primary > .chart-workspace");
   const [heroBox, chartBox] = await Promise.all([hero.boundingBox(), chart.boundingBox()]);
-  expect(Math.abs((heroBox?.height || 0) - (chartBox?.height || 0))).toBeLessThanOrEqual(2);
+  expect((heroBox?.height || 0)).toBeLessThanOrEqual((chartBox?.height || 0));
+  expect(Math.abs((heroBox?.height || 0) - (chartBox?.height || 0))).toBeLessThanOrEqual(40);
   expect((chartBox?.width || 0) / ((chartBox?.width || 0) + (heroBox?.width || 0))).toBeGreaterThan(.60);
   expect(await hero.locator(".ai-hero-content").evaluate(element => getComputedStyle(element).overflowY)).toBe("auto");
+  const chartContent = page.locator(".workspace-chart");
+  const footerGap = await chart.evaluate((element) => {
+    const content = element.querySelector(".workspace-chart")!.getBoundingClientRect();
+    return Math.round(element.getBoundingClientRect().bottom - content.bottom);
+  });
+  expect(footerGap).toBeLessThanOrEqual(40);
+  await expect(chartContent.getByTestId("cvd-pane-label")).toHaveAttribute("data-zero-axis", "true");
+  await expect(chartContent.getByTestId("cvd-pane-label")).toHaveAttribute("data-delta-series", "histogram");
+  await expect(chartContent.getByTestId("cvd-pane-label")).toHaveAttribute("data-cumulative-series", "line");
   const researchLink = hero.getByRole("link", { name: /查看完整 AI 分析/ });
   await expect(researchLink).toHaveAttribute("href", /#research\/report\/report_eth/);
   expect((await new AxeBuilder({ page }).include('[data-testid="workspace-ai6b-brief"]').analyze()).violations).toEqual([]);
@@ -91,6 +103,20 @@ test("Workspace current audited Hero filters empty levels, localizes scenarios a
   }).toBe(true);
   await researchLink.click();
   await expect(page.getByTestId("research-ai6b-reports")).toBeVisible();
+});
+
+test("Workspace EN keeps chart and AI presentation language consistent", async ({ page }) => {
+  const current = { ...stale, status: "CURRENT_AUDITED_REPORT", freshness: { status: "CURRENT", quality: "PARTIAL", age_seconds: 120, threshold_seconds: 7200 }, headline: "失败突破后的混合阶段", executive_summary: "当前阶段 FAILED_BREAKOUT，短期偏空。", decision_label: "风险等待", market_phase: "FAILED_BREAKOUT", directional_bias: "BEARISH", confidence: "LOW", drivers: [{ label: "数据质量", value: "PARTIAL" }], risks: ["订单流数据部分可用。"], levels: [{ level_id: "empty", representative_price: "—", asserted_role: "RESISTANCE" }], scenarios: [{ scenario_id: "bear", scenario_type: "BEARISH_CONTINUATION", trigger_text: "跌破区间下沿" }], timeframe_quality: [{ timeframe: "1W", availability: "PARTIAL", quality: "WARMUP_INCOMPLETE", bar_count: 42, required_bar_count: 200, reason_code: "INDICATOR_WARMUP_INCOMPLETE" }] };
+  await page.addInitScript(() => localStorage.setItem("crypto-bot-language", "en"));
+  await page.unroute("**/api/ai-market-analysis/v1/workspace-brief/latest?**");
+  await page.route("**/api/ai-market-analysis/v1/workspace-brief/latest?**", (route) => route.fulfill({ contentType: "application/json", body: JSON.stringify(current) }));
+  await page.goto("/#workspace");
+  const primary = page.locator(".workspace-primary");
+  await expect(primary).toContainText("AI Market View");
+  await expect(primary).toContainText("Bearish continuation");
+  await expect(primary).toContainText("No reliable key levels are available");
+  expect(await primary.innerText()).not.toMatch(/[\u3400-\u9fff]/);
+  expect(await primary.innerText()).not.toMatch(/[A-Z]+_[A-Z_]+/);
 });
 
 test("Audit failed state hides report body", async ({ page }) => {

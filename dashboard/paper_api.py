@@ -59,8 +59,7 @@ try:
     from market_state_v2 import MarketStateEngineV2
     from strategy_router_v2 import StrategyRouterV2
     from strategy_registry import StrategyRegistryAdapter
-    from discovery_features import build_features
-    from strategy_v2_1 import StrategyV21Evaluator
+    from approved_strategy_runtime import evaluate_frozen_candidate
     from ai_market_analysis.report_api import submit_report, save_position_plan
     from ai_market_analysis.report_health import report_health
     from ai_market_analysis.report_scheduler import ReportScheduler
@@ -103,8 +102,7 @@ except ImportError:
     from .market_state_v2 import MarketStateEngineV2
     from .strategy_router_v2 import StrategyRouterV2
     from .strategy_registry import StrategyRegistryAdapter
-    from .discovery_features import build_features
-    from .strategy_v2_1 import StrategyV21Evaluator
+    from .approved_strategy_runtime import evaluate_frozen_candidate
     from .ai_market_analysis.report_api import submit_report, save_position_plan
     from .ai_market_analysis.report_health import report_health
     from .ai_market_analysis.report_scheduler import ReportScheduler
@@ -788,20 +786,16 @@ class PaperService:
         return research.automatic_research.registry.active() if research else None
 
     def _registry_decision(self, registry: dict[str,Any], instrument: str, candles: list[dict[str,Any]], flow: dict[str,Any], risk: dict[str,Any], indicators: dict[str,Any]) -> dict[str,Any]:
-        """Replay the approved v2.1 evaluator over confirmed candles only."""
-        definition=registry["serialized_definition"]; template=definition["template"]; parameters=definition["parameters"]
-        fingerprint=registry["source_dataset_fingerprint"]
-        features=build_features(candles,{"ma_periods":[20,60,200],"atr_period":14,"bb_period":20,"rsi_period":14,"volume_period":20})
-        evaluator=StrategyV21Evaluator(template,parameters,instrument,"15m",fingerprint,{"runtime":"paper-confirmed-replay-v1"})
-        result={"action":"WAIT","warmed":False,"evidence":{}}
-        for index in range(len(candles)): result=evaluator.evaluate(candles,features,index)
-        close_ts=int(candles[-1]["candle_close_ts"]); raw_action=str(result.get("action","WAIT")); allowed=raw_action in {"LONG","SHORT"} and bool(risk["allowed"])
-        action=raw_action if allowed else "WAIT"; evidence=result.get("evidence") or {}; setup_id=str(evidence.get("setup_id") or hashlib.sha256(f"{registry['registry_id']}|{instrument}|{close_ts}".encode()).hexdigest())
-        evaluation_id=hashlib.sha256(canonical_json({"setup":setup_id,"at":close_ts,"registry":registry["registry_id"],"result":result}).encode()).hexdigest()
+        """Use the same exact frozen evaluator as Registry -> Router."""
+        runtime=evaluate_frozen_candidate(registry,instrument,candles)
+        parameters=runtime["parameters"]; close_ts=runtime["candle_close_ts"]
+        raw_action=runtime["action"]; allowed=raw_action in {"LONG","SHORT"} and bool(risk["allowed"])
+        action=raw_action if allowed else "WAIT"; evidence=runtime["evidence"]; setup_id=str(evidence.get("setup_id") or hashlib.sha256(f"{registry['registry_id']}|{instrument}|{close_ts}".encode()).hexdigest())
+        evaluation_id=hashlib.sha256(canonical_json({"setup":setup_id,"at":close_ts,"registry":registry["registry_id"],"runtime":runtime}).encode()).hexdigest()
         professional=flow.get("decision_quality") or {}; flow_payload={"available":True,"cvd_delta":float(flow.get("decision_cvd_delta",0)),"oi_change_pct":flow.get("decision_oi_change_pct"),"source":flow.get("source"),"cvd_timestamp":professional.get("cvd_timestamp"),"oi_timestamp":professional.get("oi_timestamp"),"snapshot_timestamp":professional.get("snapshot_timestamp"),"score_mode":"diagnostic_only_not_a_strategy_gate"}
         gate_results=[{"key":"approved_registry","label":"Approved Registry","label_code":"gate.approved_registry","passed":True,"applicable":True,"blocking":True},{"key":"candidate_trigger","label":"Candidate Trigger","label_code":"gate.candidate_trigger","passed":raw_action in {"LONG","SHORT"},"applicable":True,"blocking":True},{"key":"cvd_alignment","label":"CVD diagnostic","label_code":"gate.cvd_alignment","passed":True,"applicable":False,"blocking":False},{"key":"oi_context","label":"OI diagnostic","label_code":"gate.oi_context","passed":True,"applicable":False,"blocking":False},{"key":"final_entry_allowed","label":"Final Entry Allowed","label_code":"gate.final_entry_allowed","passed":allowed,"applicable":True,"blocking":True}]
         regime=str((evidence.get("regime_stability") or {}).get("confirmed_regime") or evidence.get("raw_regime",{}).get("code") or "TRANSITION")
-        return {"signal_id":setup_id,"signal_setup_id":setup_id,"evaluation_id":evaluation_id,"decision_engine_version":"paper-approved-registry-adapter-v1","instrument":instrument,"execution_timeframe":"15m","candle_close_ts":close_ts,"strategy_version":registry["strategy_version"],"config_hash":registry["configuration_hash"],"action":action,"bias":raw_action if raw_action in {"LONG","SHORT"} else "WAIT","score":100.0 if raw_action in {"LONG","SHORT"} else 0.0,"warmed":bool(result.get("warmed")),"contributions":[{"key":"registry_rule","label":"Approved deterministic rule","label_code":"decision.contribution.registry_rule","points":100 if raw_action in {"LONG","SHORT"} else 0,"max":100,"status":"pass" if raw_action in {"LONG","SHORT"} else "watch"}],"failed_gates":[] if allowed else (["candidate_trigger"] if raw_action=="WAIT" else list(risk["blockers"])),"indicator_values":indicators,"timeframe_context":{"mode":"approved-registry-v2.1","required_frames":[],"daily_enabled":False,"frames":{}},"flow_context":flow_payload,"risk_context":risk,"entry_allowed":allowed,"rejection_reason":None if allowed else "candidate trigger or paper risk gate not satisfied","data_source":"OKX","data_version":"public-confirmed-live-v1","decision_input_summary":{"close":candles[-1]["close"],"indicator_keys":sorted(indicators),"frame_close_timestamps":{},"parameters":parameters},"gate_results":gate_results,"regime":regime,"regime_version":"strategy-rules-v2.1","strategy_registry_id":registry["registry_id"],"candidate_identity":registry["candidate_identity"],"strategy_configuration_hash":registry["configuration_hash"],"stop_price":result.get("evidence",{}).get("stop_price"),"target_price":result.get("evidence",{}).get("target_price"),"registry_source":"APPROVED_REGISTRY"}
+        return {"signal_id":setup_id,"signal_setup_id":setup_id,"evaluation_id":evaluation_id,"decision_engine_version":runtime["runtime_version"],"instrument":instrument,"execution_timeframe":"15m","candle_close_ts":close_ts,"strategy_version":registry["strategy_version"],"config_hash":registry["configuration_hash"],"action":action,"bias":raw_action if raw_action in {"LONG","SHORT"} else "WAIT","score":100.0 if raw_action in {"LONG","SHORT"} else 0.0,"warmed":bool(runtime.get("warmed")),"contributions":[{"key":"registry_rule","label":"Approved deterministic rule","label_code":"decision.contribution.registry_rule","points":100 if raw_action in {"LONG","SHORT"} else 0,"max":100,"status":"pass" if raw_action in {"LONG","SHORT"} else "watch"}],"failed_gates":[] if allowed else (["candidate_trigger"] if raw_action=="WAIT" else list(risk["blockers"])),"indicator_values":indicators,"timeframe_context":{"mode":"approved-registry-v2.1","required_frames":[],"daily_enabled":False,"frames":{}},"flow_context":flow_payload,"risk_context":risk,"entry_allowed":allowed,"rejection_reason":None if allowed else "candidate trigger or paper risk gate not satisfied","data_source":"OKX","data_version":"public-confirmed-live-v1","decision_input_summary":{"close":runtime["last_close"],"indicator_keys":sorted(indicators),"frame_close_timestamps":{},"parameters":parameters},"gate_results":gate_results,"regime":regime,"regime_version":"strategy-rules-v2.1","strategy_registry_id":registry["registry_id"],"candidate_identity":registry["candidate_identity"],"strategy_configuration_hash":registry["configuration_hash"],"stop_price":runtime.get("stop_price"),"target_price":runtime.get("target_price"),"registry_source":"APPROVED_REGISTRY"}
 
     def risk_state(self, instrument: str) -> dict[str, Any]:
         params, _ = self._active_strategy()

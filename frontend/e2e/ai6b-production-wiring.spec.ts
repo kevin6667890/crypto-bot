@@ -26,6 +26,30 @@ test("Workspace marks stale audited analysis and never renders its old conclusio
   expect((await new AxeBuilder({ page }).include('[data-testid="workspace-ai6b-brief"]').analyze()).violations).toEqual([]);
 });
 
+test("Workspace makes the full chart primary and switches instruments, timeframes and overlays", async ({ page }) => {
+  await page.goto("/#workspace");
+  await expect(page.getByText("当前可执行视图", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("集中查看实时市场背景、当前模拟决策、规则证据与风险控制。", { exact: true })).toHaveCount(0);
+  const primary = page.locator(".workspace-primary");
+  await expect(primary.locator(".chart-workspace canvas").first()).toBeVisible();
+  await expect(primary.getByTestId("workspace-ai6b-brief")).toBeVisible();
+  await expect(primary).toContainText("Volume");
+  const timeframe = primary.locator(".timeframe-toggles");
+  for (const value of ["1m", "5m", "15m", "1h", "4h", "1D"]) {
+    await timeframe.getByRole("button", { name: value, exact: true }).click();
+    await expect(timeframe.getByRole("button", { name: value, exact: true })).toHaveClass(/active/);
+  }
+  const overlays = primary.locator(".overlay-toggles");
+  await overlays.getByRole("button", { name: "EMA20" }).click();
+  await expect(overlays.getByRole("button", { name: "EMA20" })).not.toHaveClass(/active/);
+  const instrument = page.locator("header select").first();
+  for (const value of ["BTC-USDT", "ETH-USDT", "SOL-USDT"]) {
+    await instrument.selectOption(value);
+    await expect(instrument).toHaveValue(value);
+  }
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+});
+
 test("Research reads the audited AI6B history source", async ({ page }) => {
   await page.goto("/#research");
   const history = page.getByTestId("research-ai6b-reports");

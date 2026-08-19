@@ -29,9 +29,12 @@ export function WorkspaceAiBrief({ instrument }: { instrument: string }) {
   const [loading, setLoading] = useState(true);
   useEffect(() => {
     let active = true;
-    setLoading(true); setBrief(null);
-    fetchAuditedAiBrief(instrument).then((value) => { if (active) setBrief(value); }).catch(() => { if (active) setBrief(null); }).finally(() => { if (active) setLoading(false); });
-    return () => { active = false; };
+    const load = () => fetchAuditedAiBrief(instrument).then((value) => { if (active) setBrief(value); }).catch(() => { if (active) setBrief(null); }).finally(() => { if (active) setLoading(false); });
+    setLoading(true); setBrief(null); void load();
+    const timer = window.setInterval(load, 60_000);
+    const visible = () => { if (!document.hidden) void load(); };
+    document.addEventListener("visibilitychange", visible);
+    return () => { active = false; window.clearInterval(timer); document.removeEventListener("visibilitychange", visible); };
   }, [instrument]);
   const current = Boolean(brief?.display_eligible && brief.status === "CURRENT_AUDITED_REPORT");
   const stale = Boolean(brief?.display_eligible && brief.status === "STALE_AUDITED_REPORT");
@@ -47,7 +50,8 @@ export function WorkspaceAiBrief({ instrument }: { instrument: string }) {
         <h3>{brief.headline}</h3>
         <p>{brief.executive_summary}</p>
         <div className="ai-hero-section"><span>关键依据</span><ul>{(brief.drivers || []).slice(0, 3).map((item, index) => <li key={`${item.label}-${index}`}><b>{item.label}</b>{item.value != null && <small>{String(item.value)}</small>}</li>)}{!brief.drivers?.length && <li><b>市场阶段</b><small>{phaseLabel[brief.market_phase || ""] || brief.market_phase || "观察中"}</small></li>}</ul></div>
-        {(brief.levels?.length || brief.scenarios?.length) ? <div className="ai-hero-section"><span>关注条件</span><ul>{brief.levels?.slice(0, 2).map((item) => <li key={item.level_id}><b>{item.primary_timeframe || "关键位"} · {item.asserted_role || "LEVEL"}</b><small>{item.representative_price ?? "—"}</small></li>)}{brief.scenarios?.slice(0, 1).map((item) => <li key={item.scenario_id}><b>{item.scenario_type || "情景确认"}</b><small>{item.trigger_text || item.confirmation_text || "等待确认"}</small></li>)}</ul></div> : null}
+        {!!brief.levels?.length && <div className="ai-hero-section"><span>关键位置</span><ul>{brief.levels.slice(0, 3).map((item) => <li key={item.level_id}><b>{item.asserted_role === "SUPPORT" ? "支撑" : item.asserted_role === "RESISTANCE" ? "压力" : item.asserted_role || "关键位"} · {item.primary_timeframe || "多周期"}</b><small>{item.representative_price ?? "—"}{item.invalidation ? ` · 失效：${item.invalidation}` : ""}</small></li>)}</ul></div>}
+        {!!brief.scenarios?.length && <div className="ai-hero-section"><span>关注场景</span><ul>{brief.scenarios.slice(0, 1).map((item) => <li key={item.scenario_id}><b>{item.scenario_type || "主要场景"}</b><small>{item.trigger_text || "等待触发"}<br/>确认：{item.confirmation_text || "等待确认"}<br/>失效：{item.invalidation_text || "以报告条件为准"}</small></li>)}</ul></div>}
       </div>
       <div className="ai-hero-meta">
         <dl><div><dt>更新时间</dt><dd>{when(brief.generated_at)}</dd></div><div><dt>数据时间</dt><dd>{when(brief.market_snapshot_at)}</dd></div><div><dt>市场阶段</dt><dd>{phaseLabel[brief.market_phase || ""] || brief.market_phase || "—"}</dd></div><div><dt>置信边界</dt><dd>{brief.confidence || "—"}</dd></div></dl>
@@ -55,7 +59,7 @@ export function WorkspaceAiBrief({ instrument }: { instrument: string }) {
         {!!brief.risks?.length && <div className="ai-risk-list"><span>风险 / 限制</span>{brief.risks.slice(0, 3).map((item) => <p key={item}>{item}</p>)}</div>}
         <a className="secondary-btn ai-research-link" href={`#research/report/${encodeURIComponent(brief.report_id)}`}>查看完整 AI 分析 <ExternalLink size={14} /></a>
       </div>
-    </div> : stale && brief ? <div className="ai-hero-empty stale"><strong>AI 分析已过期</strong><p>最后有效分析：{when(brief.generated_at)}。历史内容不会作为当前市场结论展示，正在等待下一次有效分析。</p><DataCoverage brief={brief} /><a className="secondary-btn ai-research-link" href={`#research/report/${encodeURIComponent(brief.report_id)}`}>查看历史完整 AI 分析 <ExternalLink size={14} /></a></div> : <div className="ai-hero-empty failed"><ShieldCheck size={20} /><strong>{brief?.latest_generated?.eligibility === "AUDIT_FAILED" ? "最新 AI 分析未通过审计" : "暂无当前有效 AI 分析"}</strong><p>等待下一次有效分析。未通过审计的报告正文不会展示。</p></div>}
+    </div> : stale && brief ? <div className="ai-hero-empty stale"><strong>AI 分析已过期</strong><p>最后有效分析：{when(brief.generated_at)}。历史内容不会作为当前市场结论展示，正在等待下一次有效分析。</p>{brief.scheduler?.enabled && <p>下一次预计更新时间：{when(brief.scheduler.next_tick)}</p>}<DataCoverage brief={brief} /><a className="secondary-btn ai-research-link" href={`#research/report/${encodeURIComponent(brief.report_id)}`}>查看历史完整 AI 分析 <ExternalLink size={14} /></a></div> : <div className="ai-hero-empty failed"><ShieldCheck size={20} /><strong>{brief?.latest_generated?.eligibility === "AUDIT_FAILED" ? "最新 AI 分析未通过审计" : "暂无当前有效 AI 分析"}</strong><p>等待下一次有效分析。未通过审计的报告正文不会展示。</p></div>}
   </section>;
 }
 
@@ -65,17 +69,18 @@ export function AiReportResearch({ instrument }: { instrument: string }) {
   const open = (item: AuditedAiBrief) => fetchAuditedAiReport(instrument, item.report_id, item.mode).then(setDetail).catch(() => setDetail(null));
   useEffect(() => {
     let active = true; setItems([]); setDetail(null);
-    fetchAuditedAiHistory(instrument).then((value) => {
+    const load = () => fetchAuditedAiHistory(instrument).then((value) => {
       if (!active) return; setItems(value);
       const requested = decodeURIComponent(window.location.hash.split("/report/")[1] || "");
       const target = value.find((item) => item.report_id === requested) || value.find((item) => item.display_eligible);
       if (target) open(target);
     }).catch(() => undefined);
-    return () => { active = false; };
+    void load(); const timer = window.setInterval(load, 60_000);
+    return () => { active = false; window.clearInterval(timer); };
   }, [instrument]);
   return <section className="ai-report-research" data-testid="research-ai6b-reports">
     <div className="section-title"><div><span className="eyebrow">AI 深度中心 · 审计报告</span><h2>Latest Analysis</h2></div><span className="muted">QUICK · FULL · POSITION（可用时）</span></div>
-    {detail?.report && <article className="ai-report-detail"><div className="ai-report-detail-head"><div><span className="status-pill healthy">Audit {detail.summary.audit.overall_score ?? "PASS"}</span><span className={`freshness-badge ${freshness(detail.summary).tone}`}>{freshness(detail.summary).label}</span></div><small>{when(detail.summary.market_snapshot_at)}</small></div><h3>{detail.report.headline}</h3><DataCoverage brief={detail.summary} />{detail.report.sections.map((section) => <section key={section.section_id}><h4>{section.title || section.section_id}</h4><p>{section.body}</p>{section.uncertainties?.map((item) => <small key={item}>· {item}</small>)}</section>)}</article>}
+    {detail?.report && <article className="ai-report-detail"><div className="ai-report-detail-head"><div><span className="status-pill healthy">审计状态：通过 · {detail.summary.audit.overall_score ?? 100}/100</span><span className={`freshness-badge ${freshness(detail.summary).tone}`}>时效状态：{freshness(detail.summary).label}</span></div><small>{detail.summary.status === "STALE_AUDITED_REPORT" ? "历史有效报告 · 已过期" : "当前有效报告"} · {when(detail.summary.market_snapshot_at)}</small></div><h3>{detail.report.headline}</h3><DataCoverage brief={detail.summary} />{detail.report.sections.map((section) => <section key={section.section_id}><h4>{section.title || section.section_id}</h4><p>{section.body}</p>{section.uncertainties?.map((item) => <small key={item}>· {item}</small>)}</section>)}</article>}
     <div className="ai-history-title"><h3>History</h3><span>历史报告不会替代当前状态</span></div>
     {!items.length ? <p className="muted">暂无报告记录。</p> : <div className="ai-report-history">{items.map((item) => <button key={item.report_id} onClick={() => open(item)} aria-label={`打开 ${item.mode} AI 报告`}><b>{item.mode}</b><span>{when(item.generated_at)}</span><span className={`status-pill ${item.display_eligible ? "healthy" : "unhealthy"}`}>{item.display_eligible ? `Audit ${item.audit.overall_score ?? "PASS"}` : "不可展示"}</span></button>)}</div>}
   </section>;

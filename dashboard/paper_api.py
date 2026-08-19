@@ -773,7 +773,17 @@ class PaperService:
         with self._connect() as conn:
             open_total = conn.execute("SELECT COUNT(*) FROM paper_trades WHERE status='OPEN'").fetchone()[0]
             today_r = float(conn.execute("SELECT COALESCE(SUM(pnl_r),0) FROM paper_trades WHERE closed_at>=?", (day_start,)).fetchone()[0])
-            recent = conn.execute("SELECT status,closed_at FROM paper_trades WHERE instrument=? AND status!='OPEN' ORDER BY closed_at DESC LIMIT 10", (instrument,)).fetchall()
+            reset = conn.execute(
+                "SELECT created_at,payload FROM event_logs WHERE instrument=? "
+                "AND event_type='PAPER_RISK_LOSS_STREAK_RESET' ORDER BY id DESC LIMIT 1",
+                (instrument,),
+            ).fetchone()
+            reset_at = reset["created_at"] if reset else None
+            recent = conn.execute(
+                "SELECT status,closed_at FROM paper_trades WHERE instrument=? AND status!='OPEN' "
+                "AND (? IS NULL OR closed_at>?) ORDER BY closed_at DESC LIMIT 10",
+                (instrument, reset_at, reset_at),
+            ).fetchall()
         consecutive = 0
         for row in recent:
             if row["status"] != "LOSS":
@@ -794,7 +804,46 @@ class PaperService:
             for condition,kind,key,message in ((today_r<=MAX_DAILY_LOSS_R,"Daily Loss Limit",f"daily-loss|{instrument}",f"{instrument} daily paper result reached {today_r:.2f}R"),(consecutive>=MAX_CONSECUTIVE_LOSSES,"Consecutive Loss Limit",f"consecutive-loss|{instrument}",f"{instrument} reached {consecutive} consecutive paper losses")):
                 if condition:alerts.raise_alert(kind,"critical","paper_risk",message,instrument,key=key)
                 else:alerts.resolve(key)
-        return {"allowed": not blockers, "blockers": blockers, "open_positions": open_total, "max_open_positions": params.max_open_positions, "cooldown_bars": params.cooldown_bars, "daily_pnl_r": round(today_r, 2), "daily_loss_limit_r": MAX_DAILY_LOSS_R, "consecutive_losses": consecutive, "max_consecutive_losses": MAX_CONSECUTIVE_LOSSES, "cooldown_until": cooldown_until.isoformat() if cooldown_until else None, "cooldown_clear": not (cooldown_until and cooldown_until > datetime.now(timezone.utc)), "existing_position_clear": not instrument_open}
+        return {"allowed": not blockers, "blockers": blockers, "open_positions": open_total, "max_open_positions": params.max_open_positions, "cooldown_bars": params.cooldown_bars, "daily_pnl_r": round(today_r, 2), "daily_loss_limit_r": MAX_DAILY_LOSS_R, "consecutive_losses": consecutive, "max_consecutive_losses": MAX_CONSECUTIVE_LOSSES, "cooldown_until": cooldown_until.isoformat() if cooldown_until else None, "cooldown_clear": not (cooldown_until and cooldown_until > datetime.now(timezone.utc)), "existing_position_clear": not instrument_open, "loss_streak_reset_at": reset_at}
+
+    def reset_loss_streak(self, instrument: str, *, reason: str, approval_id: str) -> dict[str, Any]:
+        """Reset only the current instrument streak/cooldown through the append-only event ledger."""
+        if instrument not in INSTRUMENTS:
+            raise ValueError("PAPER_RISK_INSTRUMENT_NOT_SUPPORTED")
+        if instrument != "ETH-USDT":
+            raise ValueError("PAPER_RISK_RESET_NOT_AUTHORIZED_FOR_INSTRUMENT")
+        if reason != "OWNER_APPROVED_PAPER_ETH_LOSS_STREAK_RESET":
+            raise ValueError("PAPER_RISK_RESET_REASON_NOT_APPROVED")
+        if not approval_id or len(approval_id) > 128:
+            raise ValueError("PAPER_RISK_RESET_APPROVAL_REQUIRED")
+        old = self.risk_state(instrument)
+        stamp = now_iso()
+        evidence = {
+            "schema_version": "paper-risk-loss-streak-reset-v1",
+            "risk_scope": "INSTRUMENT",
+            "instrument": instrument,
+            "timestamp": stamp,
+            "old_state": {"consecutive_losses": old["consecutive_losses"], "cooldown_until": old["cooldown_until"]},
+            "new_state": {"consecutive_losses": 0, "cooldown_until": None},
+            "reason": reason,
+            "owner_approval": approval_id,
+            "risk_rule": {"enabled": True, "limit": MAX_CONSECUTIVE_LOSSES},
+        }
+        evidence_hash = hashlib.sha256(canonical_json(evidence).encode()).hexdigest()
+        payload = {**evidence, "evidence_hash": evidence_hash}
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO event_logs(created_at,instrument,event_type,message,payload) VALUES(?,?,?,?,?)",
+                (stamp, instrument, "PAPER_RISK_LOSS_STREAK_RESET", reason,
+                 json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"))),
+            )
+        new = self.risk_state(instrument)
+        return {"event_type": "PAPER_RISK_LOSS_STREAK_RESET", "timestamp": stamp,
+                "risk_scope": "INSTRUMENT", "instrument": instrument,
+                "old_state": evidence["old_state"],
+                "new_state": {"consecutive_losses": new["consecutive_losses"], "cooldown_until": new["cooldown_until"]},
+                "reason": reason, "owner_approval": approval_id, "evidence_hash": evidence_hash,
+                "risk_rule_still_enabled": True, "max_consecutive_losses": MAX_CONSECUTIVE_LOSSES}
 
     @staticmethod
     def _account_state(conn: sqlite3.Connection) -> dict[str, float]:
@@ -1367,7 +1416,11 @@ class Handler(BaseHTTPRequestHandler):
                 try:
                     requested=query.get("instrument",[""])[0]; mode=query.get("mode",["QUICK"])[0]; language=query.get("language",["zh-CN"])[0]
                     if parsed.path.endswith("/workspace-brief/latest"):
-                        self._send(latest_workspace_brief(AI_REPORT_REPOSITORY,requested,mode,language));return
+                        brief=latest_workspace_brief(AI_REPORT_REPOSITORY,requested,mode,language)
+                        state=AI_REPORT_SCHEDULER.state()
+                        brief["scheduler"]={key:state.get(key) for key in (
+                            "enabled","cadence_seconds","next_tick","last_tick","last_queued","last_error")}
+                        self._send(brief);return
                     if parsed.path == "/api/ai-market-analysis/v1/research-reports":
                         self._send(research_history(AI_REPORT_REPOSITORY,requested,language));return
                     report_id=parsed.path.rsplit("/",1)[1]
@@ -1728,6 +1781,18 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
+        if parsed.path == "/api/paper/risk/loss-streak/reset":
+            if not self._admin():return
+            if self._limited("paper-risk-reset-hour", 3, 3600, True):return
+            payload=self._body()
+            if payload is None:return
+            try:
+                self._send(SERVICE.reset_loss_streak(
+                    str(payload.get("instrument", "")), reason=str(payload.get("reason", "")),
+                    approval_id=str(payload.get("owner_approval", ""))), HTTPStatus.OK)
+            except ValueError as error:
+                self._send({"error":str(error)},HTTPStatus.BAD_REQUEST)
+            return
         if parsed.path == "/api/ai-market-analysis/v1/kill-switch":
             if not self._admin():return
             payload=self._body()

@@ -1103,3 +1103,28 @@ footer span {
 @media(max-width:900px){.ai-hero-layout{grid-template-columns:1fr}.ai-hero-meta{border-top:1px solid rgba(124,58,237,.12);border-left:0}.ai-hero-section ul{grid-template-columns:1fr}.state-summary-grid.primary-three{grid-template-columns:1fr}}
 @media(max-width:640px){.ai-hero-header{align-items:flex-start;flex-direction:column}.ai-hero-badges{justify-content:flex-start}.ai-hero-primary,.ai-hero-meta{padding:15px}.score-summary{justify-items:start}.score-summary>small{text-align:left}}
 .ai-insight-hero{--green:#027a5f}
+
+/* Production homepage: market, chart and audited AI are the first viewport. */
+.workspace-grid{grid-template-columns:minmax(0,1fr);max-width:1720px;padding:12px 16px 42px}
+.workspace-main{width:100%}
+.market-summary{padding:12px 16px}
+.workspace-primary{display:grid;grid-template-columns:minmax(0,2fr) minmax(330px,1fr);gap:12px;align-items:stretch;min-width:0}
+.workspace-primary>.chart-workspace,.workspace-primary>.ai-insight-hero{min-width:0;height:100%}
+.workspace-primary .workspace-chart{height:640px}
+.workspace-primary .ai-insight-hero{background:#fffbeb;border-color:#ead9a4;box-shadow:none}
+.workspace-primary .ai-hero-header{align-items:flex-start;flex-direction:column;padding:14px}
+.workspace-primary .ai-hero-badges{justify-content:flex-start}
+.workspace-primary .ai-hero-layout{grid-template-columns:1fr}
+.workspace-primary .ai-hero-primary,.workspace-primary .ai-hero-meta{padding:15px}
+.workspace-primary .ai-hero-meta{border-top:1px solid rgba(124,58,237,.12);border-left:0}
+.workspace-primary .ai-hero-section ul{grid-template-columns:1fr}
+.chart-actions{display:flex;flex-direction:column;align-items:flex-end;gap:6px}
+.indicator-toggles{display:flex;flex-wrap:wrap;justify-content:flex-end}
+.overlay-toggles button{font-size:9px;padding:4px 7px}
+.market-ohlc-tooltip{position:absolute;z-index:8;top:8px;left:9px;display:flex;flex-wrap:wrap;gap:8px;padding:5px 7px;border:1px solid var(--line);border-radius:4px;background:rgba(255,255,255,.9);color:#475467;font:10px "JetBrains Mono",monospace;pointer-events:none}
+.decision-panel{position:static;top:auto;display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:0 24px}
+.decision-panel>.eyebrow,.decision-panel>.risk-block-banner,.decision-panel>.decision-head,.decision-panel>.signal-lineage,.decision-panel>.decision-summary,.decision-panel>.paper-mode{grid-column:1/-1}
+.decision-panel .rule-list,.decision-panel .risk-console{align-self:start}
+@media(max-width:1180px){.workspace-primary{grid-template-columns:minmax(0,3fr) minmax(320px,2fr)}.workspace-primary .workspace-chart{height:600px}.chart-toolbar{align-items:flex-start;gap:10px}}
+@media(max-width:820px){.workspace-primary{grid-template-columns:1fr}.workspace-primary>.ai-insight-hero{order:1}.workspace-primary>.chart-workspace{order:2}.decision-panel{grid-template-columns:1fr}.decision-panel>*{grid-column:1!important}.workspace-primary .workspace-chart{height:520px}.chart-actions{align-items:flex-start}.indicator-toggles{justify-content:flex-start}}
+@media(max-width:560px){.workspace-grid{padding:8px 8px 30px}.market-summary{padding:11px}.workspace-primary .workspace-chart{height:460px}.chart-toolbar{flex-direction:column}.chart-actions{width:100%}.workspace-primary .ai-hero-primary,.workspace-primary .ai-hero-meta{padding:13px}.price-line strong{font-size:25px}}

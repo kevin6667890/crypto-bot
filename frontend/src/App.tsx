@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 import { motion } from "framer-motion";
 import { Component, CSSProperties, lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
-import { EquityChart, FlowChart, MarketChart, ReplayChart } from "./charts";
+import { EquityChart, FlowChart, MarketChart, ReplayChart, VisibleMarketIndicator } from "./charts";
 import { formatMillions } from "./chartState";
 import { useLanguage } from "./i18n";
 import { shadowText } from "./aiMarketAnalysis/i18n";
@@ -30,8 +30,6 @@ import {
   headlineMetrics,
   MarketSnapshot,
   SignalAnalysis,
-  WatchlistItem,
-  fetchOkxWatchlist,
   askMarketCopilot,
   PaperStatus,
   fetchPaperStatus,
@@ -701,9 +699,9 @@ function Workspace() {
     demoSnapshot()
   );
   const [signal, setSignal] = useState<SignalAnalysis>(demoSignal);
-  const [watchlist, setWatchlist] = useState<WatchlistItem[]>([]);
   const [instrument, setInstrument] = useState("ETH-USDT");
   const [interval, setInterval] = useState("15m");
+  const [visibleIndicators, setVisibleIndicators] = useState<VisibleMarketIndicator[]>(["ema20", "ma60", "ma200"]);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [loading, setLoading] = useState(false);
   const [paper, setPaper] = useState<PaperStatus | null>(null);
@@ -756,11 +754,6 @@ function Workspace() {
       setSnapshot(demoSnapshot());
     } finally {
       setLoading(false);
-    }
-    try {
-      setWatchlist(await fetchOkxWatchlist());
-    } catch {
-      setWatchlist((current) => current);
     }
     if (engineInstruments.includes(instrument)) {
       try {
@@ -991,60 +984,7 @@ function Workspace() {
       </header>
 
       <div hidden={activePage !== "workspace"} data-route="workspace">
-        <section className="page-intent" aria-labelledby="workspace-title">
-          <div><span className="eyebrow">{t("workspace.eyebrow")}</span><h1 id="workspace-title">{t("workspace.title")}</h1></div>
-          <p>{t("workspace.description")}</p>
-        </section>
         <div className="workspace-grid">
-          <aside className="watchlist-panel">
-            <div className="section-title">
-              <div>
-                <span className="eyebrow">{t("market.publicDerivatives")}</span>
-                <h2>{t("market.scanner")}</h2>
-              </div>
-              <span className="count-badge">{watchlist.length || 2}</span>
-            </div>
-            <p className="scanner-note">{t("market.scannerNote")}</p>
-            <div className="scanner-head">
-              <span>{t("common.instrument")}</span>
-              <span>24h</span>
-            </div>
-            {watchlist.length ? (
-              watchlist.map((item) => (
-                <button
-                  className={
-                    item.instrument === instrument
-                      ? "scan-row selected"
-                      : "scan-row"
-                  }
-                  onClick={() => setInstrument(item.instrument)}
-                  key={item.instrument}
-                >
-                  <span>
-                    <strong>{item.instrument.replace("-USDT", "")}</strong>
-                    <small>
-                      $
-                      {item.price.toLocaleString(undefined, {
-                        maximumFractionDigits: 2,
-                      })}
-                    </small>
-                  </span>
-                  <b className={item.changePct >= 0 ? "positive" : "negative"}>
-                    {formatSigned(item.changePct, "%")}
-                  </b>
-                </button>
-              ))
-            ) : (
-              <div className="scanner-loading">
-                {t("market.loadingWatchlist")}
-              </div>
-            )}
-            <div className="scanner-foot">
-              <span className="pulse" />
-              {t("market.scannerRefresh")}
-            </div>
-          </aside>
-
           <main className="workspace-main">
             <section className="market-summary">
               <div>
@@ -1085,14 +1025,15 @@ function Workspace() {
                 </span>
               </div>
             </section>
-            <WorkspaceAiBrief instrument={perpetualInstrument(instrument)} />
+            <div className="workspace-primary">
             <section className="chart-workspace">
               <div className="chart-toolbar">
                 <div>
                   <span className="eyebrow">{t("market.liveChart")}</span>
                   <h2>{t("market.priceStructure")}</h2>
                 </div>
-                <div className="indicator-toggles">
+                <div className="chart-actions">
+                <div className="indicator-toggles timeframe-toggles">
                   {["1m", "5m", "15m", "1h", "4h", "1D"].map((item) => (
                     <button
                       key={item}
@@ -1103,9 +1044,13 @@ function Workspace() {
                     </button>
                   ))}
                 </div>
+                <div className="indicator-toggles overlay-toggles" aria-label="均线叠加">
+                  {(["ema20", "ma60", "ma200"] as VisibleMarketIndicator[]).map((item) => <button key={item} className={visibleIndicators.includes(item) ? "active" : ""} onClick={() => setVisibleIndicators(current => current.includes(item) ? current.filter(value => value !== item) : [...current, item])}>{item.toUpperCase()}</button>)}
+                </div>
+                </div>
               </div>
               <div className="workspace-chart">
-                <MarketChart key={`${perpetualInstrument(instrument)}:${interval}`} instrument={perpetualInstrument(instrument)} interval={interval} flow={chartFlow} />
+                <MarketChart key={`${perpetualInstrument(instrument)}:${interval}`} instrument={perpetualInstrument(instrument)} interval={interval} flow={chartFlow} indicators={visibleIndicators} />
                 {paper?.flow?.professional?.available && <div className="flow-pane-labels"><span className="cvd-pane-label">CVD（日内累计，UTC 00:00 重置）</span><span className="oi-pane-label">OI · 永续未平仓量</span></div>}
               </div>
               <div className={`flow-status ${flowStatus.toLowerCase()}`}>
@@ -1116,6 +1061,7 @@ function Workspace() {
                 {flowStatus === "CONNECTING" && <span>{t("flow.connecting")}</span>}
               </div>
               <div className="chart-legend">
+                <span>Volume</span>
                 <span>
                   <i className="ema20" /> EMA20
                 </span>
@@ -1128,6 +1074,8 @@ function Workspace() {
                 <span className="muted">{t("market.flowProxy")}</span>
               </div>
             </section>
+            <WorkspaceAiBrief instrument={perpetualInstrument(instrument)} />
+            </div>
             {legacyVpvr?.available && (
               <section className="flow-panel legacy-vpvr">
                 <div className="section-title">

@@ -116,6 +116,9 @@ services:
     pids_limit: 64
     mem_limit: 384m
     cpus: 0.30
+    # Let an in-flight provider request reach its exactly-once terminal state
+    # before a rolling deployment replaces the worker.
+    stop_grace_period: 360s
     healthcheck:
       test: [CMD, python, -c, "from dashboard.ai_market_analysis.report_repository import ReportRepository; assert ReportRepository('/var/lib/ai-report/ai_market_reports.db').schema_version()"]
       interval: 30s

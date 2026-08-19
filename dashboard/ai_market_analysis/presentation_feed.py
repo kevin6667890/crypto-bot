@@ -15,18 +15,23 @@ TIMEFRAMES = ("15m", "1H", "4H", "1D", "1W")
 def _timeframe_quality(repository: ReportRepository, presentation: dict[str, Any]) -> list[dict[str, Any]]:
     context = repository.load_context(presentation.get("context_id")) or {}
     base = context.get("base_context") or context
-    facts = base.get("timeframe_facts") or {}
+    # New contexts freeze compact coverage explicitly. Do not infer coverage
+    # for immutable historical contexts that predate this field.
+    facts = base.get("timeframe_coverage") or {}
     output = []
     for timeframe in TIMEFRAMES:
         fact = facts.get(timeframe) or {}
         quality = fact.get("quality") or {}
+        if isinstance(quality, str):
+            quality = {"status": quality, "actual_bars": fact.get("actual_bars"),
+                       "latest": fact.get("latest")}
         status = str(quality.get("status") or "MISSING")
         availability = ("AVAILABLE" if status == "COMPLETE" else "STALE" if status == "STALE"
                         else "MISSING" if status in {"MISSING", "INVALID"} else "PARTIAL")
         output.append({
             "timeframe": timeframe, "availability": availability,
-            "quality": status, "bar_count": int(quality.get("actual_bars") or 0),
-            "required_bar_count": 200, "latest_at": _timestamp(quality.get("latest")),
+            "quality": status, "bar_count": int(quality.get("actual_bars") or fact.get("actual_bars") or 0),
+            "required_bar_count": int(fact.get("required_bars") or 200), "latest_at": _timestamp(quality.get("latest") or fact.get("latest")),
             "reason_code": ("INDICATOR_WARMUP_INCOMPLETE" if status == "WARMUP_INCOMPLETE"
                             else "FRESHNESS_LIMIT_EXCEEDED" if status == "STALE"
                             else "NO_CONFIRMED_CANDLES" if status == "MISSING"

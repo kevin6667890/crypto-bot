@@ -59,14 +59,42 @@ class ReportScheduler:
         return _parse(row[0] if row else None)
 
     def state(self) -> dict[str, Any]:
+        telemetry = {
+            "last_queue_attempt": None, "last_successful_queue": None,
+            "last_provider_request": None, "last_report_created": None,
+            "last_audit_completed": None,
+        }
+        try:
+            with self.repository.connect() as conn:
+                telemetry["last_queue_attempt"] = conn.execute(
+                    "SELECT MAX(created_at) FROM ai_report_requests"
+                ).fetchone()[0]
+                telemetry["last_successful_queue"] = conn.execute(
+                    "SELECT MAX(created_at) FROM ai_report_request_events WHERE event_type='QUEUED'"
+                ).fetchone()[0]
+                telemetry["last_provider_request"] = conn.execute(
+                    "SELECT MAX(started_at) FROM ai_report_attempts"
+                ).fetchone()[0]
+                telemetry["last_report_created"] = conn.execute(
+                    "SELECT MAX(created_at) FROM ai_market_reports"
+                ).fetchone()[0]
+                telemetry["last_audit_completed"] = conn.execute(
+                    "SELECT MAX(created_at) FROM ai_report_audits"
+                ).fetchone()[0]
+        except Exception:
+            # Scheduler liveness must not depend on optional diagnostics.
+            pass
         return {
             "enabled": _enabled("AI_REPORT_SCHEDULER_ENABLED"),
             "cadence_seconds": self._cadence(),
             "instruments": list(self._instruments()),
             "last_tick": self.last_tick,
             "next_tick": self.next_tick,
-            "last_queued": self.last_queued,
+            "last_queued": self.last_queued or telemetry["last_successful_queue"],
             "last_error": self.last_error,
+            "last_scheduler_error": self.last_error,
+            "lease_required": False,
+            **telemetry,
         }
 
     def tick(self) -> dict[str, Any]:

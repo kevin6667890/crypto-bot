@@ -270,6 +270,17 @@ def build_market_analysis_context(datasets: dict[str, list[dict[str, Any]]], ins
             "watermark_mismatches": ([p["phase_id"] for p in ai3["order_flow_phases"]
                                       if p["metrics"]["quality"]["watermark_mismatch"]] if ai3_requested else []),
         },
+        # Compact, immutable coverage metadata for Presentation. Historical
+        # contexts without this field retain their original projection.
+        "timeframe_coverage": {
+            tf: {
+                "quality": facts[tf]["quality"]["status"],
+                "actual_bars": facts[tf]["quality"]["actual_bars"],
+                "required_bars": 200,
+                "latest": facts[tf]["quality"]["latest"],
+                "warmup_complete": facts[tf]["quality"]["warmup_complete"],
+            } for tf in SUPPORTED_TIMEFRAMES
+        },
         "timeframe_structures": structures, "structure_events": events,
         "multi_timeframe_summary": summary,
         "market_timeline": {

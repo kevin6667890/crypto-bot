@@ -453,6 +453,7 @@ export type AuditedAiBrief = {
   scenarios?: Array<{ scenario_id: string; scenario_type?: string; direction?: string; status?: string; trigger_text?: string; confirmation_text?: string; invalidation_text?: string }>;
   timeframe_quality?: Array<{ timeframe: string; availability: "AVAILABLE" | "PARTIAL" | "STALE" | "MISSING"; quality: string; bar_count: number; required_bar_count: number; latest_at?: string | null; reason_code?: string | null }>;
   data_warnings: string[];
+  scheduler?: { enabled?: boolean; cadence_seconds?: number; next_tick?: string | null; last_tick?: string | null; last_queued?: string | null; last_error?: string | null };
 };
 
 export type AuditedAiReportDetail = {

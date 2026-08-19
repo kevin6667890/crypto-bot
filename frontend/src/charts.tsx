@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AreaData, AreaSeries, CandlestickSeries, ColorType, createChart, IChartApi, ISeriesApi, LineSeries, UTCTimestamp, WhitespaceData } from "lightweight-charts";
+import { AreaData, AreaSeries, CandlestickSeries, ColorType, createChart, HistogramSeries, IChartApi, ISeriesApi, LineSeries, UTCTimestamp, WhitespaceData } from "lightweight-charts";
 import { Candle, fetchEthCandles, fetchOlderCandles, generateEquityCurve } from "./data";
 import { useLanguage } from "./i18n";
 import { formatMillions, normalizePoints } from "./chartState";
@@ -229,6 +229,7 @@ type PriceSeriesId = typeof PRICE_SERIES_CONFIG[number]["id"];
 type AxisSeriesId = PriceSeriesId | typeof FLOW_SERIES_CONFIG[number]["id"];
 type MarketSeries = {
   candles: ISeriesApi<"Candlestick">;
+  volume: ISeriesApi<"Histogram">;
   ema20: ISeriesApi<"Line">;
   ma60: ISeriesApi<"Line">;
   ma200: ISeriesApi<"Line">;
@@ -236,7 +237,9 @@ type MarketSeries = {
   oi: ISeriesApi<"Area">;
 };
 
-export function MarketChart({ instrument = "ETH-USDT", interval = "15m", flow }: { instrument?: string; interval?: string; flow?: FlowPaneData }) {
+export type VisibleMarketIndicator = "ema20" | "ma60" | "ma200";
+
+export function MarketChart({ instrument = "ETH-USDT", interval = "15m", flow, indicators = ["ema20", "ma60", "ma200"] }: { instrument?: string; interval?: string; flow?: FlowPaneData; indicators?: VisibleMarketIndicator[] }) {
   const { t } = useLanguage();
   const candleSelection = `${instrument}:${interval}`;
   const [followState, setFollowState] = useState(() => chartFollowRegistry.follow(candleSelection));
@@ -269,6 +272,7 @@ export function MarketChart({ instrument = "ETH-USDT", interval = "15m", flow }:
     cvd: ReturnType<typeof flowStatusAtCandle>;
     oi: ReturnType<typeof flowStatusAtCandle>;
   } | null>(null);
+  const [crosshairCandle, setCrosshairCandle] = useState<Candle | null>(null);
   const rangeChangeSource = useRef(new RangeChangeSource());
   const priceSourcesRef = useRef<PriceLabelSource[]>([]);
   const axisLabelsRef = useRef<Record<AxisSeriesId, NativePriceAxisLabel> | null>(null);
@@ -315,7 +319,7 @@ export function MarketChart({ instrument = "ETH-USDT", interval = "15m", flow }:
     for (const extra of cvdSegmentSeriesRef.current) marketChartRef.current?.removeSeries(extra);
     cvdSegmentSeriesRef.current = [];
     if (!data.candles.length) {
-      series.candles.setData([]); series.ema20.setData([]); series.ma60.setData([]);
+      series.candles.setData([]); series.volume.setData([]); series.ema20.setData([]); series.ma60.setData([]);
       series.ma200.setData([]); series.cvd.setData([]); series.oi.setData([]);
       return;
     }
@@ -330,6 +334,10 @@ export function MarketChart({ instrument = "ETH-USDT", interval = "15m", flow }:
       setFollowState(ingested);
     }
     series.candles.setData(data.candles);
+    series.volume.setData(data.candles.map(candle => ({
+      time: candle.time, value: candle.volume || 0,
+      color: candle.close >= candle.open ? "rgba(0,179,126,.42)" : "rgba(246,70,93,.42)",
+    })));
     const ema20 = exponentialMovingAverageSeries(data.candles, 20);
     const ma60 = movingAverageSeries(data.candles, 60), ma200 = movingAverageSeries(data.candles, 200);
     series.ema20.setData(ema20);
@@ -344,7 +352,7 @@ export function MarketChart({ instrument = "ETH-USDT", interval = "15m", flow }:
     const latestCvdSegment = projectedCvdSegments[projectedCvdSegments.length - 1] || [];
     series.cvd.setData(latestCvdSegment);
     for (const priorSegment of projectedCvdSegments.slice(0, -1)) {
-      const extra = marketChartRef.current?.addSeries(AreaSeries, CVD_AREA_OPTIONS, 1);
+      const extra = marketChartRef.current?.addSeries(AreaSeries, CVD_AREA_OPTIONS, 2);
       if (extra) {
         extra.setData(priorSegment);
         cvdSegmentSeriesRef.current.push(extra);
@@ -382,11 +390,12 @@ export function MarketChart({ instrument = "ETH-USDT", interval = "15m", flow }:
     marketChartRef.current = chart;
     seriesRef.current = {
       candles: chart.addSeries(CandlestickSeries, { upColor: "#00b37e", downColor: "#f6465d", borderUpColor: "#00b37e", borderDownColor: "#f6465d", wickUpColor: "#00b37e", wickDownColor: "#f6465d", lastValueVisible: false, priceLineVisible: false, priceFormat: PRICE_FORMAT }),
+      volume: chart.addSeries(HistogramSeries, { priceFormat: { type: "volume" }, priceLineVisible: false, lastValueVisible: false }, 1),
       ema20: chart.addSeries(LineSeries, { color: PRICE_SERIES_CONFIG[1].color, lineWidth: 2, priceLineVisible: false, lastValueVisible: false, priceFormat: PRICE_FORMAT }),
       ma60: chart.addSeries(LineSeries, { color: PRICE_SERIES_CONFIG[2].color, lineWidth: 2, priceLineVisible: false, lastValueVisible: false, priceFormat: PRICE_FORMAT }),
       ma200: chart.addSeries(LineSeries, { color: PRICE_SERIES_CONFIG[3].color, lineWidth: 2, priceLineVisible: false, lastValueVisible: false, priceFormat: PRICE_FORMAT }),
-      cvd: chart.addSeries(AreaSeries, CVD_AREA_OPTIONS, 1),
-      oi: chart.addSeries(AreaSeries, { lineColor: FLOW_SERIES_CONFIG[1].color, topColor: "rgba(14,165,233,.20)", bottomColor: "rgba(14,165,233,.02)", lineWidth: 2, priceLineVisible: false, lastValueVisible: false, priceFormat: { type: "custom", formatter: formatMillions } }, 2),
+      cvd: chart.addSeries(AreaSeries, CVD_AREA_OPTIONS, 2),
+      oi: chart.addSeries(AreaSeries, { lineColor: FLOW_SERIES_CONFIG[1].color, topColor: "rgba(14,165,233,.20)", bottomColor: "rgba(14,165,233,.02)", lineWidth: 2, priceLineVisible: false, lastValueVisible: false, priceFormat: { type: "custom", formatter: formatMillions } }, 3),
     };
     const axisLabels = {} as Record<AxisSeriesId, NativePriceAxisLabel>;
     [...PRICE_SERIES_CONFIG, ...FLOW_SERIES_CONFIG].forEach(config => {
@@ -416,6 +425,8 @@ export function MarketChart({ instrument = "ETH-USDT", interval = "15m", flow }:
     });
     chart.subscribeCrosshairMove(param => {
       crosshairTimestamp.current = typeof param.time === "number" ? Number(param.time) : null;
+      setCrosshairCandle(crosshairTimestamp.current === null ? null :
+        dataRef.current.candles.find(item => Number(item.time) === crosshairTimestamp.current) || null);
       setCrosshairFlow(crosshairTimestamp.current === null ? null : {
         cvd: flowStatusAtCandle(
           crosshairTimestamp.current,
@@ -448,7 +459,7 @@ export function MarketChart({ instrument = "ETH-USDT", interval = "15m", flow }:
         }
       }, 120);
     });
-    chart.panes()[0]?.setStretchFactor(3); chart.panes()[1]?.setStretchFactor(1); chart.panes()[2]?.setStretchFactor(1);
+    chart.panes()[0]?.setStretchFactor(7); chart.panes()[1]?.setStretchFactor(1); chart.panes()[2]?.setStretchFactor(1); chart.panes()[3]?.setStretchFactor(1);
     return chart;
   }, () => {
     applyData();
@@ -456,6 +467,13 @@ export function MarketChart({ instrument = "ETH-USDT", interval = "15m", flow }:
     if (followStateRef.current.mode === "FOLLOWING_LATEST") requestAnimationFrame(scrollToLatest);
   });
   useEffect(() => { applyData(); }, [candles, cvd, oi, interval, cvdHistory.coverage, oiHistory.coverage]);
+  useEffect(() => {
+    const series = seriesRef.current;
+    if (!series) return;
+    for (const id of ["ema20", "ma60", "ma200"] as const) {
+      series[id].applyOptions({ visible: indicators.includes(id) });
+    }
+  }, [indicators]);
   useEffect(() => {
     const range = visibleRangeFromCandles(candles);
     if (!range) return;
@@ -541,10 +559,15 @@ export function MarketChart({ instrument = "ETH-USDT", interval = "15m", flow }:
     onMouseLeave={() => {
       crosshairTimestamp.current = null;
       setCrosshairFlow(null);
+      setCrosshairCandle(null);
       endUserInteraction();
       updateAxisLabels();
     }}
   >
+    {crosshairCandle && <div className="market-ohlc-tooltip" role="status">
+      <span>O {crosshairCandle.open.toFixed(2)}</span><span>H {crosshairCandle.high.toFixed(2)}</span>
+      <span>L {crosshairCandle.low.toFixed(2)}</span><span>C {crosshairCandle.close.toFixed(2)}</span>
+    </div>}
     <div className="market-flow-coverage" aria-label={t("flow.historyCoverage")}>
       {latestCvdPartial && <span>CVD · {t("flow.partial")}</span>}
       <span>CVD（日内累计，UTC 00:00 重置） · {formatFlowCoverage(cvdHistory.coverage)}</span>

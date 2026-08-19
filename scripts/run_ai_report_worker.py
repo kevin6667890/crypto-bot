@@ -1,5 +1,5 @@
 from __future__ import annotations
-import argparse,os,sys,time
+import argparse,os,signal,sys,time
 from pathlib import Path
 ROOT=Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:sys.path.insert(0,str(ROOT))
@@ -26,8 +26,14 @@ def main()->int:
   assert_live_provider_allowed()
   return DeepSeekAIReportProvider(request["model"],api_key_file=secret_file)
  repo=ReportRepository(a.database);worker=ReportWorker(repo,factory);worker.recover()
- while True:
+ stopping=False
+ def stop(_signum,_frame):
+  nonlocal stopping
+  stopping=True
+ signal.signal(signal.SIGTERM,stop);signal.signal(signal.SIGINT,stop)
+ while not stopping:
   did=worker.run_once()
   if a.once:return 0
   if not did:time.sleep(1)
+ return 0
 if __name__=="__main__":raise SystemExit(main())

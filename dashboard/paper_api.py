@@ -120,6 +120,13 @@ except ImportError:
 ROOT = Path(__file__).resolve().parents[1]
 DB_PATH = Path(os.getenv("PAPER_DB_PATH", str(ROOT / "data_cache" / "paper_trades.db")))
 INSTRUMENTS = ("BTC-USDT", "ETH-USDT")
+# Public market coverage is broader than the Paper execution allowlist.  SOL is
+# materialized for Market/Research consumers, but remains outside the existing
+# Paper decision and order loop.
+MARKET_DATA_INSTRUMENTS = (*INSTRUMENTS, "SOL-USDT")
+MARKET_TIMEFRAME_RAW_INTERVALS = {
+    "15m": "15m", "1H": "1H", "4H": "4H", "1D": "1Dutc",
+}
 MAX_OPEN_POSITIONS = 3
 MAX_DAILY_LOSS_R = -2.0
 MAX_CONSECUTIVE_LOSSES = 3
@@ -448,7 +455,7 @@ class PaperService:
 
     def _candles(self, instrument: str, bar: str, limit: int = 300) -> list[dict[str, float]]:
         payload = self._json(f"https://www.okx.com/api/v5/market/candles?instId={instrument}&bar={bar}&limit={limit}")
-        seconds={"1m":60,"5m":300,"15m":900,"1H":3600,"4H":14400,"1D":86400}.get(bar,0)
+        seconds={"1m":60,"5m":300,"15m":900,"1H":3600,"4H":14400,"1D":86400,"1Dutc":86400}.get(bar,0)
         candles = [{"ts": int(row[0]) // 1000, "candle_close_ts": int(row[0]) // 1000 + seconds, "open": float(row[1]), "high": float(row[2]), "low": float(row[3]), "close": float(row[4]), "volume": float(row[5]), "confirmed": bool(int(row[8])) if len(row)>8 else True} for row in payload.get("data", [])]
         return list(reversed(candles))
 
@@ -680,13 +687,32 @@ class PaperService:
         result["instruments"] = {instrument: self._professional_flow(instrument) for instrument in INSTRUMENTS}
         return result
 
-    def _store_candles(self, instrument: str, candles: list[dict[str, float]]) -> None:
+    def _store_candles(self, instrument: str, timeframe: str,
+                       candles: list[dict[str, float]]) -> None:
         with self._connect() as conn:
-            conn.executemany("INSERT OR REPLACE INTO market_candles(instrument,bar,ts,open,high,low,close,volume) VALUES(?,?,?,?,?,?,?,?)", [(instrument, "15m", row["ts"], row["open"], row["high"], row["low"], row["close"], row["volume"]) for row in candles])
+            conn.executemany(
+                "INSERT OR REPLACE INTO market_candles(instrument,bar,ts,open,high,low,close,volume) VALUES(?,?,?,?,?,?,?,?)",
+                [(instrument, timeframe, row["ts"], row["open"], row["high"],
+                  row["low"], row["close"], row["volume"]) for row in candles],
+            )
+
+    def _materialize_market_timeframes(self, instrument: str) -> dict[str, list[dict[str, float]]]:
+        """Persist the same bounded, confirmed OKX frames consumed by rules.
+
+        The operation is timestamp-keyed and idempotent.  Daily candles use the
+        explicit UTC interval required by the canonical weekly aggregator.
+        """
+        datasets: dict[str, list[dict[str, float]]] = {}
+        for timeframe, raw_interval in MARKET_TIMEFRAME_RAW_INTERVALS.items():
+            rows = [row for row in self._candles(instrument, raw_interval, 300)
+                    if row.get("confirmed", True)]
+            datasets[timeframe] = rows
+            self._store_candles(instrument, timeframe, rows)
+        return datasets
 
     def analyze(self, instrument: str, flow: dict[str, Any]) -> dict[str, Any]:
         """Build causal live MTF context and call the canonical decision engine."""
-        datasets={bar:[row for row in self._candles(instrument,bar,300) if row.get("confirmed",True)] for bar in ("15m","1H","4H","1D")}
+        datasets = self._materialize_market_timeframes(instrument)
         c15=datasets["15m"]
         if not c15: raise RuntimeError("No confirmed 15m candle is available")
         professional_flow = flow.get("professional") or {}
@@ -696,7 +722,6 @@ class PaperService:
             oi_change = (float(oi_series[-1]["value"]) / float(oi_series[0]["value"]) - 1) * 100 if oi_series[0].get("value") else 0.0
             state = "多头增仓" if price_change >= 0 and oi_change >= 0 else "空头回补" if price_change >= 0 else "多头平仓" if oi_change <= 0 else "空头增仓"
             professional_flow["price_oi_state"] = {"label": state, "price_change_pct": round(price_change, 3), "oi_change_pct": round(oi_change, 3)}
-        self._store_candles(instrument,c15)
         streamed_vpvr = self._professional_vpvr(instrument)
         if streamed_vpvr.get("ready"):
             vpvr = {**streamed_vpvr, "professional": True}
@@ -1044,6 +1069,16 @@ class PaperService:
         with self._lock:
             start=time.monotonic(); self.last_cycle_started_at=now_iso()
             result={instrument: self.cycle_instrument(instrument) for instrument in INSTRUMENTS}
+            # Data-only instruments never enter monitor_positions, decision,
+            # risk, legacy AI brief, or Paper order paths.
+            for instrument in MARKET_DATA_INSTRUMENTS:
+                if instrument not in INSTRUMENTS:
+                    try:
+                        self._materialize_market_timeframes(instrument)
+                    except Exception as error:
+                        result[instrument] = {"instrument": instrument,
+                                              "status": "Data unavailable",
+                                              "error": type(error).__name__}
             self.last_cycle_completed_at=now_iso(); self.last_cycle_duration_ms=int((time.monotonic()-start)*1000); self.next_cycle_at=(datetime.now(timezone.utc)+timedelta(seconds=60)).replace(microsecond=0).isoformat()
             alerts=globals().get("ALERTS")
             if alerts:

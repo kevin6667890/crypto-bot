@@ -9,6 +9,47 @@ from .presentation import PresentationError, build_latest_presentation, build_re
 from .report_repository import ReportRepository
 
 
+TIMEFRAMES = ("15m", "1H", "4H", "1D", "1W")
+
+
+def _timeframe_quality(repository: ReportRepository, presentation: dict[str, Any]) -> list[dict[str, Any]]:
+    context = repository.load_context(presentation.get("context_id")) or {}
+    base = context.get("base_context") or context
+    facts = base.get("timeframe_facts") or {}
+    output = []
+    for timeframe in TIMEFRAMES:
+        fact = facts.get(timeframe) or {}
+        quality = fact.get("quality") or {}
+        status = str(quality.get("status") or "MISSING")
+        availability = ("AVAILABLE" if status == "COMPLETE" else "STALE" if status == "STALE"
+                        else "MISSING" if status in {"MISSING", "INVALID"} else "PARTIAL")
+        output.append({
+            "timeframe": timeframe, "availability": availability,
+            "quality": status, "bar_count": int(quality.get("actual_bars") or 0),
+            "required_bar_count": 200, "latest_at": _timestamp(quality.get("latest")),
+            "reason_code": ("INDICATOR_WARMUP_INCOMPLETE" if status == "WARMUP_INCOMPLETE"
+                            else "FRESHNESS_LIMIT_EXCEEDED" if status == "STALE"
+                            else "NO_CONFIRMED_CANDLES" if status == "MISSING"
+                            else "SOURCE_PARTIAL_OR_GAPPED" if status == "GAP_AFFECTED" else None),
+        })
+    return output
+
+
+def _driver(fact: dict[str, Any]) -> dict[str, Any]:
+    value = fact.get("display_value", fact.get("value"))
+    if isinstance(value, dict):
+        value = value.get("value") or value.get("state") or value.get("trend")
+    return {"label": fact.get("label") or fact.get("category") or "市场依据",
+            "value": value, "quality": fact.get("quality")}
+
+
+def _decision_label(report: dict[str, Any]) -> str:
+    if report.get("confidence") in {"LOW", "INSUFFICIENT"}:
+        return "风险等待"
+    return {"BULLISH": "偏多观察", "BEARISH": "偏空观察"}.get(
+        str(report.get("directional_bias")), "观察")
+
+
 def _timestamp(value: int | float | None) -> str | None:
     if not isinstance(value, (int, float)):
         return None
@@ -30,6 +71,8 @@ def _summary(presentation: dict[str, Any], repository: ReportRepository) -> dict
     report = presentation.get("report")
     eligible = presentation.get("eligibility") == "AUDIT_PASSED_SHADOW_ONLY" and isinstance(report, dict)
     latest = presentation.get("latest_generated") or {}
+    if latest.get("eligibility") == "AUDIT_FAILED":
+        eligible = False
     freshness = presentation.get("freshness") or {"status": "UNKNOWN"}
     market_snapshot_at = _timestamp(presentation.get("latest_confirmed_market_time"))
     age_seconds, threshold_seconds = _wall_clock_freshness(market_snapshot_at)
@@ -38,8 +81,17 @@ def _summary(presentation: dict[str, Any], repository: ReportRepository) -> dict
     if eligible:
         status = "STALE_AUDITED_REPORT" if wall_clock_stale or freshness.get("status") in {"STALE", "UNKNOWN", "SUPERSEDED"} else "CURRENT_AUDITED_REPORT"
     section = next((item for item in (report or {}).get("sections", []) if item.get("section_id") == "CONCLUSION"), None)
+    section = section or next((item for item in (report or {}).get("sections", [])
+                               if item.get("section_id") in {"QUICK_SUMMARY", "EXECUTIVE_SUMMARY"}), None)
     body = str((section or {}).get("body") or (report or {}).get("headline") or "")[:900]
     stored = repository.get_report(report_id=presentation.get("report_id")) or {}
+    uncertainties = [str(item) for item in (section or {}).get("uncertainties", [])][:3]
+    levels = [{key: item.get(key) for key in ("level_id", "representative_price", "asserted_role",
+                                               "asserted_state", "primary_timeframe", "invalidation")}
+              for item in presentation.get("referenced_levels", [])[:3]]
+    scenarios = [{key: item.get(key) for key in ("scenario_id", "scenario_type", "direction", "status",
+                                                  "trigger_text", "confirmation_text", "invalidation_text")}
+                 for item in presentation.get("referenced_scenarios", [])[:2]]
     return {
         "instrument": presentation["instrument"], "mode": presentation["mode"],
         "report_id": presentation["report_id"], "display_eligible": eligible, "status": status,
@@ -52,7 +104,16 @@ def _summary(presentation: dict[str, Any], repository: ReportRepository) -> dict
         "provider": stored.get("provider"), "model": stored.get("model"),
         "headline": (report or {}).get("headline") if eligible else None,
         "executive_summary": body if eligible else None,
-        "data_warnings": list((report or {}).get("data_warnings") or presentation.get("data_warnings") or [])[:12],
+        "decision_label": _decision_label(report or {}) if eligible else None,
+        "market_phase": (report or {}).get("market_phase") if eligible else None,
+        "directional_bias": (report or {}).get("directional_bias") if eligible else None,
+        "confidence": (report or {}).get("confidence") if eligible else None,
+        "drivers": [_driver(item) for item in presentation.get("referenced_facts", [])[:3]] if eligible else [],
+        "risks": uncertainties if eligible else [], "levels": levels if eligible else [],
+        "scenarios": scenarios if eligible else [],
+        "timeframe_quality": _timeframe_quality(repository, presentation),
+        "data_warnings": list((report or {}).get("data_warnings") or presentation.get("data_warnings") or [])[:12]
+                         if eligible else [],
     }
 
 

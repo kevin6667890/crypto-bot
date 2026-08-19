@@ -21,7 +21,7 @@ describe("AI6B production presentation wiring", () => {
     expect(component).toContain("detail?.report");
   });
   it("marks stale reports and hides their market conclusion", () => {
-    expect(component).toContain("AI 简报已过期");
+    expect(component).toContain("AI 分析已过期");
     expect(component).toContain("历史内容不会作为当前市场结论展示");
   });
   it("shows no-current state instead of a legacy fallback", () => {
@@ -29,15 +29,15 @@ describe("AI6B production presentation wiring", () => {
     expect(component).not.toContain("ai_brief");
   });
   it("renders generated and market snapshot timestamps separately", () => {
-    expect(component).toContain("更新时间：{when(brief.generated_at)}");
-    expect(component).toContain("数据时间：{when(brief.market_snapshot_at)}");
+    expect(component).toContain("<dt>更新时间</dt><dd>{when(brief.generated_at)}</dd>");
+    expect(component).toContain("<dt>数据时间</dt><dd>{when(brief.market_snapshot_at)}</dd>");
   });
   it("adds audited AI6B history to Research", () => {
     expect(research).toContain("AiReportResearch instrument={instrument}");
-    expect(component).toContain("QUICK / FULL / POSITION 历史");
+    expect(component).toContain("QUICK · FULL · POSITION（可用时）");
   });
   it("keeps historical reports visibly historical", () => {
-    expect(component).toContain("AI6B · 审计报告");
+    expect(component).toContain("AI 深度中心 · 审计报告");
     expect(component).toContain("不可展示");
   });
 });

@@ -281,6 +281,11 @@ class MarketStateEngineV2:
             tuple(transitions), tuple(evidence), tuple(sorted(set(limitations))),
         )
         payload = snapshot.to_dict()
+        for timeframe, state in payload["timeframes"].items():
+            observation = dict((frames.get(timeframe) or {}).get("observation") or {})
+            if observation:
+                observation["structure_state"] = state["primary_state"]
+                state["observation"] = observation
         payload["state_snapshot_identity"] = hashlib.sha256(json.dumps(
             {key: value for key, value in payload.items() if key != "state_snapshot_identity"},
             sort_keys=True, separators=(",", ":"), ensure_ascii=False,

@@ -41,6 +41,9 @@ DEFAULT_LOOKBACK = {"15m": 512, "1H": 512, "4H": 512, "1D": 1_500}
 FLOW_WINDOW_SECONDS = 4 * 900
 FLOW_STALE_SECONDS = 180
 CACHE_TTL_SECONDS = 5.0
+TIMEFRAME_REQUIRED_BARS = {timeframe: 200 for timeframe in TIMEFRAME_SECONDS}
+TIMEFRAME_CONSUMERS = ("Workspace rule trend signal", "Market structure engine",
+                       "AI deterministic claim pack")
 
 INDICATOR_GROUP_KEYS = {
     "trend": ("ema20", "ma60", "ma200", "ema20_slope", "ma60_slope", "ma200_slope",
@@ -127,6 +130,34 @@ class MarketAnalysisContextV2:
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
+
+
+@dataclass(frozen=True)
+class TimeframeObservation:
+    instrument: str
+    timeframe: str
+    observed_at: int
+    source_at: int | None
+    oldest_at: int | None
+    bar_count: int
+    required_bar_count: int
+    freshness_seconds: int | None
+    freshness_limit_seconds: int
+    availability: str
+    quality: str
+    structure_state: str | None
+    reason_codes: tuple[str, ...]
+    source_exchange: str = "OKX"
+    source_store: str = "unknown"
+    symbol: str = ""
+    raw_interval: str = ""
+    aggregation_mechanism: str = "native confirmed candle"
+    latest_raw_candle_timestamp: int | None = None
+    latest_aggregated_candle_timestamp: int | None = None
+    indicator_warmup_requirement: int = 200
+    coverage_state: str = "MISSING"
+    registry_state: str = "WARMUP_INCOMPLETE"
+    consumers: tuple[str, ...] = TIMEFRAME_CONSUMERS
 
 
 def _null(timestamp: int | None = None, *, warmup: bool = False,
@@ -259,8 +290,55 @@ def _quality(candles: list[dict[str, Any]], timeframe: str, as_of: int,
                  if int(b["ts"]) - int(a["ts"]) > width)
     latest = int(candles[-1]["candle_close_ts"])
     stale = as_of - latest > width * 2
-    status = "STALE" if stale else "PARTIAL" if partial or gaps else "AVAILABLE"
-    return DataQualityV2(status, latest, stale, partial or bool(gaps), False, gaps)
+    warmup_incomplete = len(candles) < TIMEFRAME_REQUIRED_BARS[timeframe]
+    status = "STALE" if stale else "PARTIAL" if partial or gaps or warmup_incomplete else "AVAILABLE"
+    notes = ((f"indicator warmup requires {TIMEFRAME_REQUIRED_BARS[timeframe]} bars; "
+              f"{len(candles)} available",) if warmup_incomplete else ())
+    return DataQualityV2(status, latest, stale, partial or bool(gaps) or warmup_incomplete,
+                         False, gaps, notes)
+
+
+def timeframe_observation(instrument: str, timeframe: str,
+                          candles: list[dict[str, Any]], as_of: int,
+                          quality: DataQualityV2, *,
+                          source_rows: list[dict[str, Any]] | None = None) -> TimeframeObservation:
+    rows = confirmed_candles_as_of(candles, timeframe, as_of)
+    required = TIMEFRAME_REQUIRED_BARS[timeframe]
+    source_at = int(rows[-1]["candle_close_ts"]) if rows else None
+    oldest_at = int(rows[0]["ts"]) if rows else None
+    freshness = max(0, int(as_of)-source_at) if source_at is not None else None
+    reasons: list[str] = []
+    if not rows:
+        availability = "MISSING"; reasons.append("NO_CONFIRMED_CANDLES")
+    elif quality.stale:
+        availability = "STALE"; reasons.append("FRESHNESS_LIMIT_EXCEEDED")
+    elif len(rows) < required:
+        availability = "PARTIAL"; reasons.append("INDICATOR_WARMUP_INCOMPLETE")
+    elif quality.partial or quality.gaps:
+        availability = "PARTIAL"; reasons.append("SOURCE_PARTIAL_OR_GAPPED")
+    else:
+        availability = "AVAILABLE"
+    source_store = str(rows[-1].get("_source_store") or "derived") if rows else "unknown"
+    raw = source_rows if source_rows is not None else rows
+    latest_raw = int(raw[-1].get("candle_close_ts") or _close_ts(raw[-1], "1D")) if raw else None
+    weekly = timeframe == "1W"
+    return TimeframeObservation(
+        instrument=instrument, timeframe=timeframe, observed_at=int(as_of),
+        source_at=source_at, oldest_at=oldest_at, bar_count=len(rows),
+        required_bar_count=required, freshness_seconds=freshness,
+        freshness_limit_seconds=TIMEFRAME_SECONDS[timeframe]*2,
+        availability=availability, quality=quality.status, structure_state=None,
+        reason_codes=tuple(reasons), source_store=source_store,
+        symbol=instrument, raw_interval="1Dutc" if weekly or timeframe == "1D" else timeframe,
+        aggregation_mechanism=(WEEKLY_AGGREGATION_VERSION if weekly else "native confirmed OKX candle"),
+        latest_raw_candle_timestamp=latest_raw,
+        # Native OKX frames are already materialized observations; weekly is
+        # the only frame resampled locally.  In both cases ``source_at`` is the
+        # close timestamp consumed by the indicator registry.
+        latest_aggregated_candle_timestamp=source_at,
+        coverage_state=availability,
+        registry_state="READY" if len(rows) >= required else "WARMUP_INCOMPLETE",
+    )
 
 
 class MarketIndicatorRegistryV2:
@@ -393,29 +471,32 @@ class BoundedMarketDataReaderV2:
         candidates = (instrument, instrument.removesuffix("-SWAP"))
         rows: list[dict[str, Any]] = []
         with closing(self._readonly(self.paper_db)) as connection:
-            if _table_exists(connection, "historical_candles"):
-                for candidate in candidates:
+            has_history = _table_exists(connection, "historical_candles")
+            has_market = _table_exists(connection, "market_candles")
+            for candidate in candidates:
+                merged: dict[int, dict[str, Any]] = {}
+                if has_history:
                     selected = connection.execute(
                         """SELECT ts,open,high,low,close,volume,confirmed,source
                            FROM historical_candles
                            WHERE instrument=? AND timeframe=? AND ts>=? AND ts<=? AND confirmed=1
                            ORDER BY ts DESC LIMIT ?""",
                         (candidate, timeframe, start, as_of, limit)).fetchall()
-                    if selected:
-                        rows = [dict(row) for row in reversed(selected)]
-                        break
-            if not rows and _table_exists(connection, "market_candles"):
-                for candidate in candidates:
+                    merged.update({int(row["ts"]): {**dict(row), "_source_store": "historical_candles"}
+                                   for row in selected})
+                if has_market:
                     selected = connection.execute(
                         """SELECT ts,open,high,low,close,volume
                            FROM market_candles
                            WHERE instrument=? AND bar=? AND ts>=? AND ts<=?
                            ORDER BY ts DESC LIMIT ?""",
                         (candidate, timeframe, start, as_of, limit)).fetchall()
-                    if selected:
-                        rows = [{**dict(row), "confirmed": True, "source": "persisted_confirmed_market_candles"}
-                                for row in reversed(selected)]
-                        break
+                    merged.update({int(row["ts"]): {**dict(row), "confirmed": True,
+                                   "source": "persisted_confirmed_market_candles",
+                                   "_source_store": "market_candles"} for row in selected})
+                if merged:
+                    rows = [merged[key] for key in sorted(merged)][-limit:]
+                    break
         for row in rows:
             row["candle_close_ts"] = int(row["ts"]) + width
         return rows
@@ -699,6 +780,12 @@ class MarketContextServiceV2:
                                            "partial_sources": sorted(set(partial_sources)),
                                            "missing_sources": sorted(set(missing_sources)),
                                            "gaps": gaps}).to_dict()
+        for frame in SUPPORTED_TIMEFRAMES:
+            source_rows = datasets["1D"] if frame == "1W" else None
+            context["timeframes"][frame]["observation"] = asdict(timeframe_observation(
+                normalized, frame, datasets[frame], resolved, contexts[frame].quality,
+                source_rows=source_rows,
+            ))
         context["context_identity"] = hashlib.sha256(json.dumps(
             {key: value for key, value in context.items() if key != "context_identity"},
             sort_keys=True, separators=(",", ":"), ensure_ascii=False,

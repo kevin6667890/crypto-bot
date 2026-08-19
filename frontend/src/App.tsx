@@ -1080,6 +1080,7 @@ function Workspace() {
                 </span>
               </div>
             </section>
+            <WorkspaceAiBrief instrument={perpetualInstrument(instrument)} />
             <section className="chart-workspace">
               <div className="chart-toolbar">
                 <div>
@@ -1331,7 +1332,6 @@ function Workspace() {
                 </div>
               </section>
             ) : null}
-            <WorkspaceAiBrief instrument={perpetualInstrument(instrument)} />
             <section className="copilot-panel">
               <div>
                 <span className="eyebrow">{t("market.copilot")}</span>
@@ -1451,6 +1451,10 @@ function Workspace() {
                   : signal.source,
               })}
             </span>
+            {paper?.risk && !paper.risk.allowed && <div className="risk-block-banner" role="status">
+              <ShieldCheck size={18} />
+              <div><span>当前状态：等待</span><strong>风险阻断：{paper.risk.blockers.map(localValue).join("、")}</strong></div>
+            </div>}
             <div className="decision-head">
               <div>
                 <h2>{localValue(action)}</h2>
@@ -1463,9 +1467,10 @@ function Workspace() {
                     : signal.title}
                 </p>
               </div>
-              <div className="score-box">
-                <strong>{decisionScore}</strong>
-                <small>/100</small>
+              <div className="score-summary">
+                <span>规则条件匹配度</span>
+                <div className="score-box"><strong>{decisionScore}</strong><small>/100</small></div>
+                <small>不代表成功率或收益概率</small>
               </div>
             </div>
             {runtimeAnalysis?.strategy_version && (

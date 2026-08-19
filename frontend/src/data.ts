@@ -443,6 +443,15 @@ export type AuditedAiBrief = {
   model: string | null;
   headline: string | null;
   executive_summary: string | null;
+  decision_label?: string | null;
+  market_phase?: string | null;
+  directional_bias?: string | null;
+  confidence?: string | null;
+  drivers?: Array<{ label: string; value?: unknown; quality?: string }>;
+  risks?: string[];
+  levels?: Array<{ level_id: string; representative_price?: number; asserted_role?: string; asserted_state?: string; primary_timeframe?: string; invalidation?: string }>;
+  scenarios?: Array<{ scenario_id: string; scenario_type?: string; direction?: string; status?: string; trigger_text?: string; confirmation_text?: string; invalidation_text?: string }>;
+  timeframe_quality?: Array<{ timeframe: string; availability: "AVAILABLE" | "PARTIAL" | "STALE" | "MISSING"; quality: string; bar_count: number; required_bar_count: number; latest_at?: string | null; reason_code?: string | null }>;
   data_warnings: string[];
 };
 

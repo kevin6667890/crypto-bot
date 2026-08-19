@@ -178,7 +178,15 @@ class ReportWorker:
         max_attempts=max(1,min(3,int(os.getenv("AI_REPORT_PROVIDER_ATTEMPT_MAX","3"))))
         if number>max_attempts:self.repository.event(request["request_id"],"FAILED_FINAL",{"code":"MAX_ATTEMPTS"});return
         self.repository.event(request["request_id"],"RUNNING",{"attempt":number})
-        provider=self.provider_factory(request);source_versions=snapshot["source_versions"]
+        try:
+            provider=self.provider_factory(request)
+        except ProviderError as error:
+            # Provider construction includes the live kill-switch guard. A
+            # failure here is strictly pre-send: terminate the request without
+            # inventing a paid attempt or an unknown-charge state.
+            self.repository.event(request["request_id"],"FAILED_FINAL",{"code":error.code,"provider_request_sent":False})
+            return
+        source_versions=snapshot["source_versions"]
         response_metadata=response_metadata_contract(context_id=request["context_id"],mode=request["mode"],
           language=request["language"],model=request["model"],prompt_version=request["prompt_version"],source_versions=source_versions)
         prompt=compile_prompt(compiled,request["mode"],response_metadata)

@@ -145,6 +145,23 @@ def test_provider_response_interrupted_persists_attempt_and_fails_final(repo):
     assert row[0] == "FAILED" and row[1] == "UNKNOWN_CHARGE_STATE" and row[2] == "PROVIDER_RESPONSE_INTERRUPTED"
 
 
+def test_pre_send_kill_switch_is_terminal_without_attempt_or_unknown_charge(repo):
+    item = ReportService(repo).submit(base_context(), mode="FULL", provider="fake", model="fake")
+
+    def blocked_before_send(_request):
+        raise ProviderError("LIVE_PROVIDER_KILL_SWITCHED", retryable=False)
+
+    assert ReportWorker(repo, blocked_before_send).run_once() is True
+    status = repo.status(item["request_id"])
+    assert status["status"] == "FAILED_FINAL"
+    assert "LIVE_PROVIDER_KILL_SWITCHED" in status["events"][-1]["payload_json"]
+    assert '"provider_request_sent":false' in status["events"][-1]["payload_json"]
+    with repo.connect() as connection:
+        assert connection.execute(
+            "SELECT COUNT(*) FROM ai_report_attempts WHERE request_id=?", (item["request_id"],)
+        ).fetchone()[0] == 0
+
+
 def test_success_updates_submitted_row_without_duplicate(repo):
     item = ReportService(repo).submit(base_context(), mode="FULL")
     worker = ReportWorker(repo, lambda request: FakeAIReportProvider(request["model"]))

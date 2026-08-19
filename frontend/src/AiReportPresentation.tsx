@@ -55,7 +55,7 @@ export function WorkspaceAiBrief({ instrument }: { instrument: string }) {
         {!!brief.risks?.length && <div className="ai-risk-list"><span>风险 / 限制</span>{brief.risks.slice(0, 3).map((item) => <p key={item}>{item}</p>)}</div>}
         <a className="secondary-btn ai-research-link" href={`#research/report/${encodeURIComponent(brief.report_id)}`}>查看完整 AI 分析 <ExternalLink size={14} /></a>
       </div>
-    </div> : stale && brief ? <div className="ai-hero-empty stale"><strong>AI 分析已过期</strong><p>最后有效分析：{when(brief.generated_at)}。历史内容不会作为当前市场结论展示，正在等待下一次有效分析。</p><DataCoverage brief={brief} /></div> : <div className="ai-hero-empty failed"><ShieldCheck size={20} /><strong>{brief?.latest_generated?.eligibility === "AUDIT_FAILED" ? "最新 AI 分析未通过审计" : "暂无当前有效 AI 分析"}</strong><p>等待下一次有效分析。未通过审计的报告正文不会展示。</p></div>}
+    </div> : stale && brief ? <div className="ai-hero-empty stale"><strong>AI 分析已过期</strong><p>最后有效分析：{when(brief.generated_at)}。历史内容不会作为当前市场结论展示，正在等待下一次有效分析。</p><DataCoverage brief={brief} /><a className="secondary-btn ai-research-link" href={`#research/report/${encodeURIComponent(brief.report_id)}`}>查看历史完整 AI 分析 <ExternalLink size={14} /></a></div> : <div className="ai-hero-empty failed"><ShieldCheck size={20} /><strong>{brief?.latest_generated?.eligibility === "AUDIT_FAILED" ? "最新 AI 分析未通过审计" : "暂无当前有效 AI 分析"}</strong><p>等待下一次有效分析。未通过审计的报告正文不会展示。</p></div>}
   </section>;
 }
 

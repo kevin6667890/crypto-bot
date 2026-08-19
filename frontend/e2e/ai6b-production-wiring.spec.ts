@@ -22,6 +22,8 @@ test("Workspace marks stale audited analysis and never renders its old conclusio
   await expect(card).toContainText("AI 分析已过期");
   await expect(card).toContainText("最后有效分析");
   await expect(card).not.toContainText("ETH-USDT 当前报 1877");
+  await expect(card.getByRole("link", { name: /查看历史完整 AI 分析/ })).toHaveAttribute("href", /#research\/report\/report_eth/);
+  expect((await new AxeBuilder({ page }).include('[data-testid="workspace-ai6b-brief"]').analyze()).violations).toEqual([]);
 });
 
 test("Research reads the audited AI6B history source", async ({ page }) => {

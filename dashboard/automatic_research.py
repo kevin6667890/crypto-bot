@@ -11,7 +11,9 @@ from .discovery_identity import build_candidate_identity
 from .discovery_robustness import generate_cost_scenarios
 from .discovery_scoring import evaluate_eligibility
 from .discovery_service import ENGINE_VERSION, POLICY_VERSION, aggregate, buy_and_hold
-from .factor_program_discovery import canonical_backtest
+from .factor_program_discovery import canonical_backtest, persist_candidates
+from .factor_strategy_program import generate as generate_factor_programs, validate as validate_factor_program
+from .discovery_scoring import calculate_score, DISCOVERY_SCORING_VERSION
 from .approved_strategy_runtime import deserialize_program
 from .okx_history import TIMEFRAME_SECONDS
 from .strategy_registry import (
@@ -358,6 +360,27 @@ class AutomaticResearchService:
             self._save_checkpoint(cycle_id, "discovery_created", {"run_id":discovery_id}, discovery_run_id=discovery_id)
         self.discovery._run_job(cycle["job_id"], discovery_request,
             lambda _, pct, msg, args=None: checkpoint(cycle["job_id"], 12+int((pct or 0)*.38), msg, args or {}))
+        # Program search is opt-in per run.  It shares the durable discovery run
+        # and exact development-only folds; recurring template scheduling is unchanged.
+        if os.getenv("PROGRAM_DISCOVERY_ENABLED", "false").lower() == "true":
+            budget = min(200, max(1, int(os.getenv("PROGRAM_DISCOVERY_SEARCH_BUDGET", "200"))))
+            programs = [p for p in generate_factor_programs(request["seed"], budget) if not validate_factor_program(p)]
+            program_candidate_ids=persist_candidates(self.repository, int(discovery_id), programs, seed=request["seed"])
+            dev_rows = self.repository.candles("BTC-USDT", timeframe, request["splits"]["development_start"] - 240 * TIMEFRAME_SECONDS[timeframe], request["splits"]["development_end"] - 1)
+            dev_rows = [row for row in dev_rows if bool(row.get("confirmed", 1))]
+            ranked=[]
+            with self.repository.connect() as connection:
+                for candidate_id, program in zip(program_candidate_ids, programs):
+                    folds=[]
+                    for _, _, start, end in splits["development_folds"]:
+                        outcome=canonical_backtest(program, dev_rows, "BTC-USDT", timeframe, start, end-TIMEFRAME_SECONDS[timeframe])
+                        folds.append({"status":"COMPLETED", "metrics":outcome["metrics"], "buy_hold_metrics":buy_and_hold(dev_rows,start,end-TIMEFRAME_SECONDS[timeframe],DiscoveryExecutionConfig(**request["execution_assumptions"]).validate())})
+                    metrics=aggregate(folds); verdict=evaluate_eligibility(metrics,timeframe,"DEVELOPMENT_CANDIDATE")
+                    score,components=calculate_score(metrics,program.complexity,timeframe)
+                    status="ELIGIBLE" if verdict["eligible"] else "REJECTED"
+                    connection.execute("UPDATE strategy_discovery_candidates SET status='DEVELOPMENT_CANDIDATE',aggregate_metrics=?,eligibility_status=?,development_score=?,score_components=?,elimination_reasons=?,scoring_policy_version=?,completed_at=? WHERE id=?",(_json(metrics),status,score,_json(components),_json([] if verdict["eligible"] else verdict["reasons"]),DISCOVERY_SCORING_VERSION,utc_now(),candidate_id))
+                    if verdict["eligible"]: ranked.append((float(score),candidate_id))
+                for rank,(_, candidate_id) in enumerate(sorted(ranked,reverse=True),1): connection.execute("UPDATE strategy_discovery_candidates SET eligible_rank=? WHERE id=?",(rank,candidate_id))
         self._save_checkpoint(cycle_id, "development_complete", {"run_id":discovery_id})
         with self.repository.connect() as connection:
             rows = connection.execute(

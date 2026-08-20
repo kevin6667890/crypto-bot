@@ -2035,14 +2035,21 @@ def run() -> None:
         SERVICE.scheduler_running=True
         while True:
             SERVICE.cycle()
+            log_event(LOGGER,"INFO","paper_scheduler","cycle_completed",duration_ms=SERVICE.last_cycle_duration_ms); time.sleep(60)
+
+    def ai_report_scheduler() -> None:
+        """Keep report due checks independent from a slow Paper service cycle."""
+        while True:
             try:
                 AI_REPORT_SCHEDULER.tick()
             except Exception as error:
                 log_event(LOGGER,"ERROR","ai_report_scheduler","tick_failed",error_type=type(error).__name__)
-            log_event(LOGGER,"INFO","paper_scheduler","cycle_completed",duration_ms=SERVICE.last_cycle_duration_ms); time.sleep(60)
+            time.sleep(60)
+
     if os.getenv("LEGACY_AI_BRIEF_ENABLED","true").lower()=="true":SERVICE.start_ai_workers()
     SERVICE.start_flow_collector()
     threading.Thread(target=scheduler, daemon=True).start()
+    threading.Thread(target=ai_report_scheduler, daemon=True, name="ai-report-scheduler").start()
     host = os.getenv("PAPER_API_HOST", "127.0.0.1")
     server = ThreadingHTTPServer((host, int(os.getenv("PAPER_API_PORT", "8765"))), Handler)
     if startup_integrity_check_enabled():

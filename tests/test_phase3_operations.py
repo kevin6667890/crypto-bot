@@ -1,4 +1,4 @@
-import sqlite3, threading, time
+import ast, inspect, sqlite3, threading, time
 from pathlib import Path
 from dashboard.alert_service import AlertService
 from dashboard.job_queue import JobQueue
@@ -88,3 +88,28 @@ def test_startup_integrity_check_is_opt_in(monkeypatch):
     assert startup_integrity_check_enabled() is False
     monkeypatch.setenv("PAPER_API_STARTUP_INTEGRITY_CHECK", "true")
     assert startup_integrity_check_enabled() is True
+
+
+def test_ai_report_scheduler_is_not_serialized_behind_paper_cycle():
+    from dashboard.paper_api import run
+
+    tree = ast.parse(inspect.getsource(run))
+    nested = {
+        node.name: node for node in tree.body[0].body
+        if isinstance(node, ast.FunctionDef)
+    }
+    assert {"scheduler", "ai_report_scheduler"} <= set(nested)
+    paper_calls = [
+        node for node in ast.walk(nested["scheduler"])
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "tick"
+    ]
+    report_calls = [
+        node for node in ast.walk(nested["ai_report_scheduler"])
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "tick"
+    ]
+    assert not paper_calls
+    assert len(report_calls) == 1

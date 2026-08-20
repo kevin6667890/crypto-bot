@@ -94,3 +94,30 @@ def evaluate_frozen_candidate(
         "instrument": requested,
         "timeframe": timeframe,
     }
+
+
+# Factor-program adapter.  It is intentionally side-by-side with the existing
+# V2.1 adapter so approved legacy candidates retain byte-for-byte behaviour.
+def deserialize_program(ast: Mapping[str, Any]):
+    from .factor_strategy_program import Condition, FactorStrategyProgram, validate
+    make = lambda x: Condition(str(x["factor"]), str(x["operator"]), x["threshold"], int(x.get("bars", 1)))
+    program = FactorStrategyProgram(str(ast["direction"]), tuple(make(x) for x in ast["environment"]), tuple(make(x) for x in ast["setup"]), tuple(make(x) for x in ast["trigger"]), str(ast.get("timeframe", "15m")), str(ast.get("schema_version")), str(ast.get("grammar_version")))
+    if validate(program): raise ValueError("frozen program is not runtime executable")
+    return program
+
+class FrozenProgramEvaluator:
+    def __init__(self, program, *, registry_id=None, configuration_hash=None):
+        from .factor_strategy_program import validate
+        if validate(program): raise ValueError("program is not runtime executable")
+        self.program,self.registry_id,self.configuration_hash=program,registry_id,configuration_hash or program.identity; self.features=[]
+    def evaluate(self,candles,index):
+        from .discovery_features import build_features
+        from .factor_registry import value
+        if not self.features:self.features=build_features([dict(x) for x in candles])
+        def check(c,i):
+            now=value(c.factor,candles[i],self.features[i]); prior=value(c.factor,candles[i-1],self.features[i]) if i else None; rhs=value(str(c.threshold),candles[i],self.features[i]) if isinstance(c.threshold,str) else float(c.threshold); old=value(str(c.threshold),candles[i-1],self.features[i-1]) if i and isinstance(c.threshold,str) else rhs
+            if now is None or rhs is None:return False
+            basic={">":now>rhs,"<":now<rhs,"cross_above":prior is not None and old is not None and prior<=old and now>rhs,"cross_below":prior is not None and old is not None and prior>=old and now<rhs,"rising":prior is not None and now>prior,"falling":prior is not None and now<prior}.get(c.operator,False)
+            return basic and all(check(type(c)(c.factor,c.operator,c.threshold),j) for j in range(max(1,i-c.bars+1),i))
+        feature=self.features[index]; triggered=bool(feature.get("warm")) and all(check(c,index) for stage in (self.program.environment,self.program.setup,self.program.trigger) for c in stage); atr=feature.get("atr"); ts=int(candles[index]["ts"]); action=self.program.direction if triggered and atr else "WAIT"
+        return {"action":action,"atr":atr,"stop_distance":float(atr) if atr else None,"target_r":1.5,"warmed":bool(feature.get("warm")),"score":100-self.program.complexity*5,"signal_ts":ts,"signal_id":f"program:{self.program.identity[:16]}:{ts}","strategy_version":self.program.schema_version,"config_hash":self.configuration_hash,"registry_id":self.registry_id,"candidate_identity":self.program.identity,"program_version":self.program.grammar_version}

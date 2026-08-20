@@ -3,7 +3,6 @@ from __future__ import annotations
 from dashboard.approved_strategy_runtime import FrozenProgramEvaluator
 from dashboard.factor_program_discovery import canonical_backtest, screen
 from dashboard.factor_strategy_program import Condition, FactorStrategyProgram, generate, validate
-from dashboard.strategy_registry import ApprovedStrategyRegistry
 from dashboard.strategy_router_v2 import StrategyRouterV2
 
 def rows(count=90):
@@ -26,8 +25,7 @@ def test_canonical_duplicate_and_garbage_screening():
     assert not passed and "INSUFFICIENT_SAMPLES" in reasons
 
 def test_frozen_registry_router_identity_is_identical(tmp_path):
-    p = program(); registry = ApprovedStrategyRegistry(tmp_path / "registry.sqlite")
-    registry_id = registry.approve(p); evaluator = registry.evaluators()[0]
+    p = program(); registry_id = 7; evaluator = FrozenProgramEvaluator(p, registry_id=registry_id)
     signal = StrategyRouterV2().approved_program_signals(rows(), [evaluator])[0]
     assert signal["registry_id"] == registry_id
     assert signal["candidate_identity"] == p.identity == signal["config_hash"]

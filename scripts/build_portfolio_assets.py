@@ -22,6 +22,8 @@ ASSETS = ROOT / "docs" / "assets" / "portfolio"
 DEMO_DIR = ROOT / "artifacts" / "portfolio-demo"
 API_URL = "http://127.0.0.1:8765/api/health"
 UI_URL = "http://127.0.0.1:4173/"
+CAPTURE_URL = os.environ.get("PORTFOLIO_BASE_URL", UI_URL)
+PRODUCTION_CAPTURE = CAPTURE_URL.rstrip("/") == "https://bitcoinbot.uk"
 
 
 def ensure_runtime_path() -> None:
@@ -126,7 +128,7 @@ def convert_screenshots() -> list[Path]:
     from PIL import Image
 
     outputs: list[Path] = []
-    for name in ("workspace", "market", "research", "decision-trace"):
+    for name in ("workspace", "market", "research", "ai-report"):
         source = RUNTIME / f"{name}.png"
         target = ASSETS / f"{name}.webp"
         with Image.open(source) as image:
@@ -181,7 +183,7 @@ def verify_images(paths: list[Path]) -> list[dict[str, object]]:
 
 
 def main() -> int:
-    if not (ROOT / "data_cache" / "paper_trades.db").exists():
+    if not PRODUCTION_CAPTURE and not (ROOT / "data_cache" / "paper_trades.db").exists():
         raise RuntimeError("A real persisted data_cache/paper_trades.db is required; no demo returns are synthesized.")
     ensure_runtime_path()
     ensure_pillow()
@@ -189,44 +191,51 @@ def main() -> int:
     ffmpeg = ffmpeg_executable()
     started: list[subprocess.Popen[bytes]] = []
     try:
-        api = None
-        if not http_ready(API_URL):
-            api = hidden_process([sys.executable, "-m", "dashboard.paper_api"], ROOT)
-            started.append(api)
-        wait_ready(API_URL, api)
+        if not PRODUCTION_CAPTURE:
+            api = None
+            if not http_ready(API_URL):
+                api = hidden_process([sys.executable, "-m", "dashboard.paper_api"], ROOT)
+                started.append(api)
+            wait_ready(API_URL, api)
 
-        frontend = None
-        if not http_ready(UI_URL):
-            npm = shutil.which("npm.cmd") or shutil.which("npm")
-            if not npm:
-                raise RuntimeError("npm is required to start the portfolio capture frontend")
-            frontend = hidden_process([npm, "run", "dev", "--", "--port", "4173"], FRONTEND)
-            started.append(frontend)
-        wait_ready(UI_URL, frontend)
+            frontend = None
+            if not http_ready(UI_URL):
+                npm = shutil.which("npm.cmd") or shutil.which("npm")
+                if not npm:
+                    raise RuntimeError("npm is required to start the portfolio capture frontend")
+                frontend = hidden_process([npm, "run", "dev", "--", "--port", "4173"], FRONTEND)
+                started.append(frontend)
+            wait_ready(UI_URL, frontend)
 
         subprocess.run(["node", "scripts/capture-portfolio.mjs"], cwd=FRONTEND, check=True)
         screenshots = convert_screenshots()
 
         demo = DEMO_DIR / "crypto-bot-demo.mp4"
+        capture_metadata = json.loads((RUNTIME / "demo.webm.json").read_text(encoding="utf-8"))
+        story_start = max(0.0, float(capture_metadata["storyStartSeconds"]) - 0.15)
         run_ffmpeg(ffmpeg, [
-            "-ss", "2.7", "-i", str(RUNTIME / "demo.webm"), "-t", "41.5",
-            "-vf", "scale=1280:720:flags=lanczos,fps=30",
-            "-c:v", "libx264", "-preset", "medium", "-crf", "23", "-pix_fmt", "yuv420p",
+            "-ss", f"{story_start:.3f}", "-i", str(RUNTIME / "demo.webm"), "-t", "41",
+            "-vf", "scale=1920:1080:flags=lanczos,fps=30",
+            "-c:v", "libx264", "-preset", "medium", "-crf", "20", "-pix_fmt", "yuv420p",
             "-movflags", "+faststart", "-an", str(demo),
         ])
 
         gif = ASSETS / "crypto-bot-overview.gif"
         gif_story = (
-            "[0:v]trim=start=4:end=7,setpts=PTS-STARTPTS[w];"
-            "[0:v]trim=start=10:end=13,setpts=PTS-STARTPTS[m];"
-            "[0:v]trim=start=17:end=20,setpts=PTS-STARTPTS[r];"
-            "[0:v]trim=start=26:end=29,setpts=PTS-STARTPTS[d];"
-            "[w][m][r][d]concat=n=4:v=1:a=0,fps=9,scale=1120:-1:flags=lanczos,split[s0][s1];"
+            "[0:v]fps=9,scale=1120:630:flags=lanczos,setpts=PTS-STARTPTS[w];"
+            "[1:v]fps=9,scale=1120:630:flags=lanczos,setpts=PTS-STARTPTS[m];"
+            "[2:v]fps=9,scale=1120:630:flags=lanczos,setpts=PTS-STARTPTS[r];"
+            "[3:v]fps=9,scale=1120:630:flags=lanczos,setpts=PTS-STARTPTS[a];"
+            "[w][m][r][a]concat=n=4:v=1:a=0,split[s0][s1];"
             "[s0]palettegen=max_colors=128:stats_mode=diff[p];"
             "[s1][p]paletteuse=dither=bayer:bayer_scale=3"
         )
         run_ffmpeg(ffmpeg, [
-            "-i", str(demo), "-filter_complex", gif_story, "-loop", "0", str(gif),
+            "-loop", "1", "-t", "3", "-i", str(RUNTIME / "workspace.png"),
+            "-loop", "1", "-t", "3", "-i", str(RUNTIME / "market.png"),
+            "-loop", "1", "-t", "3", "-i", str(RUNTIME / "research.png"),
+            "-loop", "1", "-t", "3", "-i", str(RUNTIME / "ai-report.png"),
+            "-filter_complex", gif_story, "-loop", "0", str(gif),
         ])
 
         manifest = {

@@ -18,6 +18,7 @@ from .strategy_rules import StrategyParameters
 
 PROGRAM_DISCOVERY_ENABLED = os.getenv("PROGRAM_DISCOVERY_ENABLED", "false").lower() == "true"
 PROGRAM_DISCOVERY_SEARCH_BUDGET = int(os.getenv("PROGRAM_DISCOVERY_SEARCH_BUDGET", "200"))
+MAX_PROGRAM_DISCOVERY_SEARCH_BUDGET = 500
 PROGRAM_DISCOVERY_POLICY_VERSION = "factor-program-discovery-v1"
 
 def trigger_vector(program: FactorStrategyProgram, candles: list[Mapping[str, Any]], start: int, end: int) -> tuple[int, ...]:
@@ -57,7 +58,7 @@ def run(candles: list[dict[str, Any]], instrument: str, timeframe: str, folds: l
     ``folds`` must be development-only.  The caller owns all downstream
     walk-forward/holdout/OOT/cross-asset approval policy.
     """
-    if not 1 <= budget <= 200: raise ValueError("program search budget must be 1..200")
+    if not 1 <= budget <= MAX_PROGRAM_DISCOVERY_SEARCH_BUDGET: raise ValueError(f"program search budget must be 1..{MAX_PROGRAM_DISCOVERY_SEARCH_BUDGET}")
     programs = generate(seed, budget)
     structurally_valid = [p for p in programs if not validate(p)]
     unique = {p.identity: p for p in structurally_valid}

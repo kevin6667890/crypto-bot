@@ -5,6 +5,7 @@ from math import sqrt
 from typing import Any
 
 from .canonical import stable_hash
+from .flow_coverage import classify_flow_coverage
 from .versions import AI_ORDERFLOW_METRICS_VERSION
 
 METRIC_THRESHOLDS = {"price_flat_pct": .001, "price_flat_atr": .15, "oi_flat_pct": .002,
@@ -80,6 +81,11 @@ def compute_phase_metrics(window: dict[str, Any], price_rows: list[dict[str, Any
     watermarks = [_ts(rows[-1]) for rows in (cvd, oi) if rows]
     watermark_mismatch = len(watermarks) == 2 and abs(watermarks[0]-watermarks[1]) > METRIC_THRESHOLDS["watermark_tolerance_seconds"]
     continuity = "PARTIAL" if cvd_gap or oi_gap or basis_gap else "VALID" if cvd and oi else "UNAVAILABLE"
+    flow_coverage = classify_flow_coverage(
+        snapshot_start=start, snapshot_end=end, bucket_seconds=bucket_seconds,
+        timestamps=[_ts(r) for r in cvd if r.get("status") not in {"GAP", "MISSING"}],
+        explicit_gap_timestamps=[_ts(r) for r in cvd if r.get("gap") or r.get("gap_flag") or r.get("status") in {"GAP", "MISSING", "PARTIAL_AFTER_GAP"}],
+    )
     volume_ratio = (sum(volumes)/len(volumes))/(sum(float(r.get("volume", 0)) for r in price_rows[-20:])/max(1, len(price_rows[-20:]))) if volumes and price_rows else None
     return {"version": AI_ORDERFLOW_METRICS_VERSION, "price_start": p0, "price_end": p1,
             "price_change": price_change, "price_change_pct": price_pct, "atr": atr,
@@ -113,7 +119,7 @@ def compute_phase_metrics(window: dict[str, Any], price_rows: list[dict[str, Any
                             "feed_complete": bool(sources.get("liquidation_complete", False)),
                             "warning": None if sources.get("liquidation_complete", False) else "forward-only feed; absence is not proof of no liquidations"},
             "quadrant": price_oi_quadrant(price_change, price_pct, oi_pct, atr, p0),
-            "quality": {"overall": continuity, "cvd_gap": cvd_gap, "oi_gap": oi_gap, "basis_gap": basis_gap,
+            "quality": {"overall": continuity, "flow_coverage": flow_coverage, "cvd_gap": cvd_gap, "oi_gap": oi_gap, "basis_gap": basis_gap,
                         "watermark_mismatch": watermark_mismatch, "trade_count": trade_count,
                         "largest_gap_seconds": max(cvd_largest, oi_largest)}}
 

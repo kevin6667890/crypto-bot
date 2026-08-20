@@ -99,6 +99,8 @@ def build_fact_registry(enriched: dict[str, Any]) -> dict[str, Any]:
         value = {"phase": phase.get("phase"), "attribution": {k:attribution.get(k) for k in ("primary","confidence")}, "price_change": metrics.get("price_change"),
                  "price_change_pct": metrics.get("price_change_pct"), "volume": metrics.get("volume"), "volume_regime": metrics.get("volume_regime"),
                  "cvd_delta": cvd.get("signed_delta"), "cvd_status": cvd.get("status"), "oi_change": oi.get("change"), "oi_change_pct": oi.get("change_pct"), "oi_status": oi.get("status"), "quality": phase.get("quality")}
+        value["flow_coverage"] = metrics.get("quality", {}).get("flow_coverage", {})
+        value["flow_quality"] = value["flow_coverage"].get("state", "FLOW_UNAVAILABLE")
         facts.append(_fact(f"FLOW_PHASE_{index+1:02d}", "ORDER_FLOW", f"{phase.get('phase')}订单流", value,
                            f"/order_flow_phases/{len(phases)-min(4,len(phases))+index}", timestamp=phase.get("end"), quality=phase.get("quality", "UNKNOWN"), priority=95-index))
     for index, transition in enumerate(base.get("phase_transitions", [])[-1:]):

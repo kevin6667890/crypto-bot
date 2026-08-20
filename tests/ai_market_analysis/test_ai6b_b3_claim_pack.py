@@ -78,6 +78,32 @@ def test_claim_pack_multi_context_evidence_status(remove, status_key, expected):
         assert pack["macro_unavailable_statement"]
 
 
+def test_partial_usable_flow_keeps_report_evidence_but_never_marks_it_complete():
+    request, _registry = setup("FULL")
+    compiled = copy.deepcopy(request["compiled_context"])
+    flow = next(item for item in compiled["facts"] if item["category"] == "ORDER_FLOW")
+    flow["value"]["flow_quality"] = "FLOW_PARTIAL_USABLE"
+    flow["value"]["cvd_delta"] = None
+    flow["value"]["cvd_status"] = "PARTIAL"
+    flow["quality"] = "PARTIAL"
+    pack = build_provider_claim_pack(compiled, "FULL")
+    assert pack["evidence_status"]["flow_coverage_state"] == "FLOW_PARTIAL_USABLE"
+    assert flow["fact_id"] in pack["fact_ids_by_category"]["ORDER_FLOW"]
+    assert pack["evidence_status"]["flow_available"] is False
+
+
+def test_unavailable_flow_is_not_promoted_to_deterministic_claim_pack_fact():
+    request, _registry = setup("FULL")
+    compiled = copy.deepcopy(request["compiled_context"])
+    for fact in compiled["facts"]:
+        if fact["category"] == "ORDER_FLOW":
+            fact["quality"] = "UNAVAILABLE"
+            fact["value"]["flow_quality"] = "FLOW_UNAVAILABLE"
+    pack = build_provider_claim_pack(compiled, "FULL")
+    assert pack["evidence_status"]["flow_coverage_state"] == "FLOW_UNAVAILABLE"
+    assert pack["fact_ids_by_category"]["ORDER_FLOW"] == []
+
+
 def test_claim_pack_preserves_exact_numeric_and_multiple_level_timeframe_facts():
     request, _registry = setup("FULL")
     pack = build_provider_claim_pack(request["compiled_context"], "FULL")
@@ -335,7 +361,9 @@ def test_partial_flow_and_missing_macro_are_rendered_as_grounded_limitations():
     for fact in compiled["facts"]:
         if fact["category"]=="ORDER_FLOW":
             fact["quality"]="PARTIAL"
-            if isinstance(fact.get("value"),dict):fact["value"]["quality"]="PARTIAL"
+            if isinstance(fact.get("value"),dict):
+                fact["value"]["quality"]="PARTIAL"
+                fact["value"]["flow_quality"]="FLOW_UNAVAILABLE"
     report["sections"][0]["body"]="\u5b8f\u89c2\u8bc1\u636e\u7f3a\u5931\uff0c\u6574\u4f53\u5224\u65ad\u57fa\u4e8e\u6709\u9650\u7684\u6280\u672f\u7ed3\u6784"
     flow=next(item for item in report["sections"] if item["section_id"]=="ORDER_FLOW")
     flow["body"]="\u8ba2\u5355\u6d41\u8f6c\u53d8\u663e\u793a\u89e3\u91ca\u4e3a\u6df7\u5408\u6301\u4ed3"
@@ -368,7 +396,7 @@ def test_frozen_btc_partial_price_change_is_not_rendered_as_order_flow_fact():
     grounded=ground_provider_report(report,pack)
 
     assert pack["evidence_status"] == {
-        "flow_available":False,"flow_partial":True,"flow_coverage_state":"PARTIAL",
+        "flow_available":False,"flow_partial":True,"flow_coverage_state":"FLOW_PARTIAL_USABLE",
         "macro_available":False,"levels_available":False,"scenarios_available":False,
     }
     assert all(item["source_fact_id"]!="FLOW_PHASE_03" for item in pack["allowed_numeric_values"])

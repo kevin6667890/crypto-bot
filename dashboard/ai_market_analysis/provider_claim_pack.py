@@ -56,8 +56,8 @@ def build_provider_claim_pack(compiled_context: dict[str, Any], mode: str) -> di
 
     def confirmed_flow_direction(item: dict[str, Any]) -> bool:
         value = item.get("value") if isinstance(item.get("value"), dict) else {}
-        qualities = {str(item.get("quality") or "").upper(), str(value.get("quality") or "").upper()}
-        if qualities & {"PARTIAL", "GAP_AFFECTED", "PARTIAL_AFTER_GAP", "MISSING", "UNAVAILABLE", "UNKNOWN"}:
+        qualities = {str(item.get("quality") or "").upper(), str(value.get("quality") or "").upper(), str(value.get("flow_quality") or "").upper()}
+        if qualities & {"PARTIAL", "FLOW_PARTIAL_USABLE", "GAP_AFFECTED", "PARTIAL_AFTER_GAP", "MISSING", "FLOW_UNAVAILABLE", "UNAVAILABLE", "UNKNOWN"}:
             return False
         cvd_status = str(value.get("cvd_status") or "").upper()
         flow_status = str(value.get("net_flow_status") or value.get("flow_status") or "").upper()
@@ -70,13 +70,15 @@ def build_provider_claim_pack(compiled_context: dict[str, Any], mode: str) -> di
     usable_flow = [
         item for item in all_flow if confirmed_flow_direction(item)
     ]
-    partial_flow_present = any(
+    flow_states = {str((item.get("value") or {}).get("flow_quality") or "") for item in all_flow if isinstance(item.get("value"), dict)}
+    partial_flow_present = "FLOW_PARTIAL_USABLE" in flow_states or any(
         str(item.get("quality") or "").upper() in {"PARTIAL", "GAP_AFFECTED", "PARTIAL_AFTER_GAP", "MISSING", "UNKNOWN"}
         or (isinstance(item.get("value"), dict)
             and str(item["value"].get("quality") or "").upper() in {"PARTIAL", "GAP_AFFECTED", "PARTIAL_AFTER_GAP", "MISSING", "UNKNOWN"})
         for item in all_flow
     )
-    by_category["ORDER_FLOW"] = usable_flow
+    partial_observations = [item for item in all_flow if isinstance(item.get("value"), dict) and item["value"].get("flow_quality") == "FLOW_PARTIAL_USABLE"]
+    by_category["ORDER_FLOW"] = usable_flow + [item for item in partial_observations if item not in usable_flow]
     levels = [_level_projection(item) for item in by_category.get("LEVEL", [])
               if isinstance(item.get("value"), dict) and all(key in item["value"] for key in ("level_id", "role", "state", "strength"))]
     scenarios = [_scenario_projection(item) for item in by_category.get("SCENARIO", [])
@@ -107,9 +109,11 @@ def build_provider_claim_pack(compiled_context: dict[str, Any], mode: str) -> di
         "suppressed_flow_numeric_values": sorted(set(suppressed_flow_numeric_values)),
         "levels": levels, "scenarios": scenarios, "macro_evidence_ids": macro_ids,
         "macro_unavailable_statement": None if macro_ids else unavailable_macro,
-        "evidence_status": {"flow_available": bool(usable_flow),
+        "evidence_status": {"flow_available": bool(usable_flow) and not partial_flow_present,
                             "flow_partial": partial_flow_present,
-                            "flow_coverage_state": "CONFIRMED" if usable_flow else ("PARTIAL" if partial_flow_present else "UNAVAILABLE"),
+                            "flow_coverage_state": ("FLOW_UNAVAILABLE" if "FLOW_UNAVAILABLE" in flow_states
+                                                    else "FLOW_PARTIAL_USABLE" if partial_flow_present
+                                                    else "FLOW_COMPLETE" if usable_flow else "FLOW_UNAVAILABLE"),
                             "macro_available": bool(macro_ids),
                             "levels_available": bool(levels), "scenarios_available": bool(scenarios)},
         "fact_ids_by_category": {category: [item["fact_id"] for item in items] for category, items in sorted(by_category.items())},
@@ -249,7 +253,7 @@ def _enforce_numeric_namespaces(value: str, claim_pack: dict[str, Any]) -> str:
         price_change_wording=any(term in sentence for term in ("价格变化", "价格变动", "净正价格", "净负价格"))
         unsupported_phase=bool(phase_ids-allowed_flow_ids)
         unsupported_flow_claim=net_flow and not any(exact in sentence for exact in cvd_values)
-        unavailable_flow=(not claim_pack["evidence_status"]["flow_available"]
+        unavailable_flow=(claim_pack["evidence_status"].get("flow_coverage_state") == "FLOW_UNAVAILABLE"
                           and any(term in sentence for term in _FLOW_ASSERTION_TERMS))
         suppressed_flow_number=any(
             re.search(rf"(?<![\d.]){re.escape(exact)}(?![\d.])",sentence)
@@ -319,7 +323,7 @@ def ground_provider_report(report: dict[str, Any], claim_pack: dict[str, Any]) -
             )
         if section.get("section_id") == "SCENARIOS":
             section["body"] = _scenario_narrative_text(section["body"])
-        if (not claim_pack["evidence_status"]["flow_available"]
+        if (claim_pack["evidence_status"].get("flow_coverage_state") == "FLOW_UNAVAILABLE"
                 and section.get("section_id") in {"MOVE_NATURE", "ORDER_FLOW"}):
             section["body"] = f"{_FLOW_LIMITATION}。"
         if (not scenario_ids and section.get("section_id") == empty_scenario_limitation_section

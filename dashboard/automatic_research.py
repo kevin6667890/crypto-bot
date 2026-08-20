@@ -363,7 +363,7 @@ class AutomaticResearchService:
         # Program search is opt-in per run.  It shares the durable discovery run
         # and exact development-only folds; recurring template scheduling is unchanged.
         if os.getenv("PROGRAM_DISCOVERY_ENABLED", "false").lower() == "true":
-            budget = min(200, max(1, int(os.getenv("PROGRAM_DISCOVERY_SEARCH_BUDGET", "200"))))
+            budget = min(500, max(1, int(os.getenv("PROGRAM_DISCOVERY_SEARCH_BUDGET", "200"))))
             programs = [p for p in generate_factor_programs(request["seed"], budget) if not validate_factor_program(p)]
             program_candidate_ids=persist_candidates(self.repository, int(discovery_id), programs, seed=request["seed"])
             dev_rows = self.repository.candles("BTC-USDT", timeframe, request["splits"]["development_start"] - 240 * TIMEFRAME_SECONDS[timeframe], request["splits"]["development_end"] - 1)

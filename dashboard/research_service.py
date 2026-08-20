@@ -22,6 +22,7 @@ try:
     from discovery_service import DiscoveryService
     from discovery_robustness_service import DiscoveryRobustnessService
     from discovery_ablation_service import DiscoveryAblationService
+    from automatic_research import AutomaticResearchService
 except ImportError:
     from .backtest_engine import run_backtest
     from .okx_history import INSTRUMENTS, TIMEFRAME_SECONDS, OkxHistoryClient
@@ -34,6 +35,7 @@ except ImportError:
     from .discovery_service import DiscoveryService
     from .discovery_robustness_service import DiscoveryRobustnessService
     from .discovery_ablation_service import DiscoveryAblationService
+    from .automatic_research import AutomaticResearchService
 
 
 def _date_ts(value: str, end: bool = False) -> int:
@@ -45,10 +47,11 @@ def _date_ts(value: str, end: bool = False) -> int:
 
 class ResearchService:
     def __init__(self, db_path: Path) -> None:
-        self.repository = ResearchRepository(db_path)
+        worker_enabled=__import__('os').getenv('RESEARCH_JOB_WORKER_ENABLED','true').lower() in {'1','true','yes','on'}
+        self.repository = ResearchRepository(db_path,reconcile_interrupted=worker_enabled)
         self.history = OkxHistoryClient(self.repository)
         self.alerts = AlertService(db_path)
-        self.jobs = JobQueue(db_path, max_queue=int(__import__('os').getenv('RESEARCH_MAX_QUEUE','10')))
+        self.jobs = JobQueue(db_path, max_queue=int(__import__('os').getenv('RESEARCH_MAX_QUEUE','10')),autostart=worker_enabled,recover_interrupted=worker_enabled)
         self.jobs.register("BACKTEST", self._job_backtest)
         self.jobs.register("WALK_FORWARD", self._job_walk_forward)
         self.jobs.register("PORTFOLIO_BACKTEST", self._job_portfolio)
@@ -60,6 +63,7 @@ class ResearchService:
         self.discovery = DiscoveryService(self.repository, self.jobs)
         self.discovery_robustness = DiscoveryRobustnessService(self.repository, self.jobs)
         self.discovery_ablation = DiscoveryAblationService(self.repository, self.jobs)
+        self.automatic_research = AutomaticResearchService(self.repository, self.jobs, self.discovery)
 
     OPTIMIZATION_ENGINE_VERSION = "optimization-lab-v1/canonical-v4"
     OPTIMIZATION_POLICY = {

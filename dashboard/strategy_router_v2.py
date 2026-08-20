@@ -567,6 +567,17 @@ class StrategyRouterV2:
     version = ROUTER_VERSION
     definitions_version = DEFINITIONS_VERSION
 
+    def approved_program_signals(self, candles: list[Mapping[str, Any]], evaluators: Iterable[Any]) -> list[dict[str, Any]]:
+        """Pure adapter for injected frozen programs; it deliberately reads no DB.
+
+        Paper and any caller receive the exact evaluator-produced identity.
+        Existing V2 context routing remains unchanged.
+        """
+        if not candles:
+            return []
+        index = len(candles) - 1
+        return [evaluator.evaluate(candles, index) for evaluator in evaluators]
+
     def route(self, context: Mapping[str, Any], state: Mapping[str, Any], *,
               previous_route: Mapping[str, Any] | None = None,
               family: str | None = None, direction: str | None = None,

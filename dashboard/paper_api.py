@@ -1679,6 +1679,9 @@ class Handler(BaseHTTPRequestHandler):
         elif parsed.path == "/api/alerts": self._send({"items":ALERTS.list()})
         elif parsed.path == "/api/data-coverage": self._send({"items":RESEARCH.repository.data_coverage()})
         elif parsed.path == "/api/discovery/datasets": self._send({"items":RESEARCH.repository.discovery_datasets()})
+        elif parsed.path == "/api/discovery/programs/summary":
+            # Program discovery is opt-in and no production worker is started here.
+            self._send({"discovery_mode":"PROGRAM","enabled":False,"program_candidates":0,"unique_programs":0,"screened":0,"backtested":0,"eligible":0,"approved":0})
         elif parsed.path.startswith("/api/discovery/datasets/"):
             try:
                 dataset=RESEARCH.repository.discovery_dataset(int(parsed.path.rsplit('/',1)[1])); self._send(dataset or {'error':'Dataset not found'}, HTTPStatus.OK if dataset else HTTPStatus.NOT_FOUND)

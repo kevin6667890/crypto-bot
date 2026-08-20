@@ -4,6 +4,7 @@ from dashboard.approved_strategy_runtime import FrozenProgramEvaluator
 from dashboard.factor_program_discovery import canonical_backtest, screen
 from dashboard.factor_strategy_program import Condition, FactorStrategyProgram, generate, validate
 from dashboard.strategy_router_v2 import StrategyRouterV2
+from dashboard.approved_strategy_runtime import evaluate_frozen_candidate
 
 def rows(count=90):
     return [{"ts": i * 900, "open": 100 + i * .1, "high": 101 + i * .1, "low": 99 + i * .1,
@@ -34,3 +35,9 @@ def test_frozen_registry_router_identity_is_identical(tmp_path):
 def test_canonical_backtest_accepts_frozen_program():
     p = program(); result = canonical_backtest(p, rows(100), "BTC-USDT", "15m", 0, 90 * 900)
     assert result["program_evidence"]["candidate_identity"] == p.identity
+
+def test_canonical_registry_runtime_executes_frozen_program_ast():
+    p=program(); definition={"program_ast":p.canonical_ast(),"factor_versions":p.factor_versions,"program_version":p.grammar_version,"parameters":{},"timeframe":"15m"}
+    registry={"registry_id":"asr_program","candidate_identity":p.identity,"configuration_hash":__import__("dashboard.approved_strategy_runtime",fromlist=["canonical_hash"]).canonical_hash(definition),"serialized_definition":definition,"parameters":{},"strategy_version":p.schema_version,"instrument_scope":["BTC-USDT"]}
+    value=evaluate_frozen_candidate(registry,"BTC-USDT",rows())
+    assert value["candidate_identity"]==p.identity and value["configuration_hash"]==registry["configuration_hash"]

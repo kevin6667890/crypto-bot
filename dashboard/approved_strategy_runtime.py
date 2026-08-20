@@ -37,12 +37,21 @@ def evaluate_frozen_candidate(
     over confirmed candles, so Router and Paper cannot drift through adapters.
     """
     definition = dict(registry["serialized_definition"])
+    requested = canonical_instrument(instrument)
+    # Program ASTs use this same public canonical entrypoint.  Router and Paper
+    # therefore cannot select a different evaluator for an ACTIVE program.
+    if definition.get("program_ast"):
+        program = deserialize_program(definition["program_ast"])
+        evaluator = FrozenProgramEvaluator(program, registry_id=registry.get("registry_id"), configuration_hash=registry.get("configuration_hash"))
+        visible = [row for row in candles if as_of is None or int(row.get("ts", row.get("candle_close_ts", 0))) <= int(as_of)]
+        if not visible: raise ValueError("no confirmed candles for frozen program")
+        result = evaluator.evaluate(visible, len(visible) - 1)
+        return {"runtime_version": RUNTIME_VERSION, "action": result["action"], "warmed": result["warmed"], "state": "TRIGGERED" if result["action"] != "WAIT" else "WATCH", "evidence": {"program_ast": definition["program_ast"], "factor_versions": definition.get("factor_versions", {}), "program_version": definition.get("program_version")}, "stop_price": None, "target_price": None, "candle_close_ts": int(visible[-1].get("candle_close_ts", visible[-1]["ts"])), "last_close": float(visible[-1]["close"]), "strategy_registry_id": registry["registry_id"], "candidate_identity": registry["candidate_identity"], "strategy_version": registry["strategy_version"], "configuration_hash": registry["configuration_hash"], "parameters": definition["parameters"], "instrument": requested, "timeframe": definition.get("timeframe", "15m")}
     parameters = dict(registry["parameters"])
     if definition.get("parameters") != parameters:
         raise ValueError("approved strategy parameter snapshots disagree")
     if canonical_hash(definition) != registry.get("configuration_hash"):
         raise ValueError("approved strategy configuration hash mismatch")
-    requested = canonical_instrument(instrument)
     scope = {canonical_instrument(str(value)) for value in registry.get("instrument_scope", [])}
     definition_scope = {
         canonical_instrument(str(value))

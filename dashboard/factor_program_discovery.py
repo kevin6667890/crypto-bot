@@ -87,6 +87,6 @@ def persist_candidates(repository, discovery_run_id: int, programs: list[FactorS
         for number, program in enumerate(programs, 1):
             ast=program.canonical_ast(); identity=program.identity
             c.execute("""INSERT OR IGNORE INTO strategy_discovery_candidates(discovery_run_id,candidate_number,template,template_version,parameters,parameter_hash,feature_flags,complexity,status,created_at,program_ast,factor_versions,program_version,candidate_identity,configuration_hash,direction,program_timeframe)
-                         VALUES(?,?,?,?,?,?,?,?,?,datetime('now'),?,?,?,?,?,?,?,?)""",(discovery_run_id,number,"FACTOR_PROGRAM",program.grammar_version,"{}",identity,"{}",program.complexity,"GENERATED",json.dumps(ast,sort_keys=True),json.dumps(program.factor_versions,sort_keys=True),program.grammar_version,identity,identity,program.direction,program.timeframe))
+                         VALUES(?,?,?,?,?,?,?,?,?,datetime('now'),?,?,?,?,?,?,?)""",(discovery_run_id,number,"FACTOR_PROGRAM",program.grammar_version,"{}",identity,"{}",program.complexity,"GENERATED",json.dumps(ast,sort_keys=True),json.dumps(program.factor_versions,sort_keys=True),program.grammar_version,identity,identity,program.direction,program.timeframe))
             row=c.execute("SELECT id FROM strategy_discovery_candidates WHERE discovery_run_id=? AND candidate_number=?",(discovery_run_id,number)).fetchone(); ids.append(int(row[0]))
     return ids

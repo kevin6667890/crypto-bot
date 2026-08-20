@@ -1,9 +1,10 @@
 import { BrainCircuit, CheckCircle2, Clock3, ExternalLink, ShieldCheck } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { AuditedAiBrief, AuditedAiReportDetail, fetchAuditedAiBrief, fetchAuditedAiHistory, fetchAuditedAiReport } from "./data";
 import { translateKnownEnum } from "./aiMarketAnalysis/enumTranslations";
 import { compactAiSummary, isPresent, localizeWorkspaceNarrative, presentAiLevels, renderIfPresent, workspaceScenarioLabel } from "./aiWorkspaceSemantics";
 import { useLanguage, type Language } from "./i18n";
+import { researchPresentationCopy, selectResearchReport } from "./aiResearchPresentation";
 
 const when = (value: string | null | undefined) => value ? new Date(value).toLocaleString() : "—";
 const source = (brief: AuditedAiBrief | null) => [brief?.provider, brief?.model].filter(Boolean).join(" / ") || "DeepSeek";
@@ -89,7 +90,7 @@ export function WorkspaceAiBrief({ instrument }: { instrument: string }) {
   </section>;
 }
 
-export function AiReportResearch({ instrument }: { instrument: string }) {
+function LegacyAiReportResearch({ instrument }: { instrument: string }) {
   const [items, setItems] = useState<AuditedAiBrief[]>([]);
   const [detail, setDetail] = useState<AuditedAiReportDetail | null>(null);
   const open = (item: AuditedAiBrief) => fetchAuditedAiReport(instrument, item.report_id, item.mode).then(setDetail).catch(() => setDetail(null));
@@ -109,5 +110,66 @@ export function AiReportResearch({ instrument }: { instrument: string }) {
     {detail?.report && <article className="ai-report-detail"><div className="ai-report-detail-head"><div><span className="status-pill healthy">审计状态：通过 · {detail.summary.audit.overall_score ?? 100}/100</span><span className={`freshness-badge ${freshness(detail.summary).tone}`}>时效状态：{freshness(detail.summary).label}</span></div><small>{detail.summary.status === "STALE_AUDITED_REPORT" ? "历史有效报告 · 已过期" : "当前有效报告"} · {when(detail.summary.market_snapshot_at)}</small></div><h3>{detail.report.headline}</h3><DataCoverage brief={detail.summary} />{detail.report.sections.map((section) => <section key={section.section_id}><h4>{section.title || section.section_id}</h4><p>{section.body}</p>{section.uncertainties?.map((item) => <small key={item}>· {item}</small>)}</section>)}</article>}
     <div className="ai-history-title"><h3>History</h3><span>历史报告不会替代当前状态</span></div>
     {!items.length ? <p className="muted">暂无报告记录。</p> : <div className="ai-report-history">{items.map((item) => <button key={item.report_id} onClick={() => open(item)} aria-label={`打开 ${item.mode} AI 报告`}><b>{item.mode}</b><span>{when(item.generated_at)}</span><span className={`status-pill ${item.display_eligible ? "healthy" : "unhealthy"}`}>{item.display_eligible ? `Audit ${item.audit.overall_score ?? "PASS"}` : "不可展示"}</span></button>)}</div>}
+  </section>;
+}
+
+function routeReportId() {
+  const match = window.location.hash.match(/^#research\/report\/([^/?#]+)/);
+  return match ? decodeURIComponent(match[1]) : "";
+}
+
+export function AiReportResearch({ instrument }: { instrument: string }) {
+  const { language } = useLanguage();
+  const copy = researchPresentationCopy[language];
+  const reportLanguage = language === "zh" ? "zh-CN" : "en";
+  const [items, setItems] = useState<AuditedAiBrief[]>([]);
+  const [detail, setDetail] = useState<AuditedAiReportDetail | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [failed, setFailed] = useState(false);
+  const [requestedReportId, setRequestedReportId] = useState(routeReportId);
+  const generation = useRef(0);
+
+  useEffect(() => {
+    const sync = () => setRequestedReportId(routeReportId());
+    window.addEventListener("hashchange", sync);
+    return () => window.removeEventListener("hashchange", sync);
+  }, []);
+
+  useEffect(() => {
+    const request = ++generation.current;
+    setLoading(true); setFailed(false); setItems([]); setDetail(null);
+    void (async () => {
+      try {
+        const history = await fetchAuditedAiHistory(instrument, reportLanguage);
+        if (request !== generation.current) return;
+        setItems(history);
+        const selected = selectResearchReport(history, instrument, requestedReportId);
+        if (!selected) return;
+        const report = await fetchAuditedAiReport(instrument, selected.report_id, selected.mode, reportLanguage);
+        if (request !== generation.current) return;
+        if (report.summary.display_eligible && report.summary.audit.status === "PASSED") setDetail(report);
+      } catch {
+        if (request === generation.current) { setFailed(true); setItems([]); setDetail(null); }
+      } finally {
+        if (request === generation.current) setLoading(false);
+      }
+    })();
+    return () => { generation.current += 1; };
+  }, [instrument, requestedReportId, reportLanguage]);
+
+  const select = (item: AuditedAiBrief) => {
+    if (item.instrument !== instrument) return;
+    window.location.hash = `research/report/${encodeURIComponent(item.report_id)}`;
+  };
+  const fresh = detail ? freshness(detail.summary, language) : null;
+  return <section className="ai-report-research" data-testid="research-ai6b-reports">
+    <div className="section-title"><div><span className="eyebrow">{copy.eyebrow}</span><h2>{copy.latest}</h2></div><span className="muted">{copy.modes}</span></div>
+    {loading ? <p className="muted">{copy.loading}</p> : failed ? <p className="muted">{copy.requestFailed}</p> : detail?.report ? <article className="ai-report-detail">
+      <div className="ai-report-detail-head"><div><span className="status-pill healthy">{copy.auditPassed} · {detail.summary.audit.overall_score ?? 100}/100</span><span className={`freshness-badge ${fresh?.tone}`}>{fresh?.label}</span></div><small>{detail.summary.status === "STALE_AUDITED_REPORT" ? copy.stale : copy.current} · {when(detail.summary.market_snapshot_at)}</small></div>
+      <h3>{detail.report.headline}</h3><DataCoverage brief={detail.summary} language={language} />
+      {detail.report.sections.map((section) => <section key={section.section_id}><h4>{section.title || section.section_id}</h4><p>{section.body}</p>{section.uncertainties?.map((item) => <small key={item}>· {item}</small>)}</section>)}
+    </article> : requestedReportId ? <p className="muted">{copy.unavailable}</p> : null}
+    <div className="ai-history-title"><h3>{copy.history}</h3><span>{copy.historyHint}</span></div>
+    {!loading && !items.length ? <p className="muted">{copy.empty}</p> : <div className="ai-report-history">{items.map((item) => <button key={item.report_id} onClick={() => select(item)} aria-label={`${copy.openReport}: ${item.mode}`}><b>{item.mode}</b><span>{when(item.generated_at)}</span><span className={`status-pill ${item.display_eligible ? "healthy" : "unhealthy"}`}>{item.display_eligible ? `${copy.auditPassed} ${item.audit.overall_score ?? ""}` : copy.auditHidden}</span></button>)}</div>}
   </section>;
 }

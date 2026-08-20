@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { compactAiSummary, isPresent, localizeWorkspaceNarrative, presentAiLevels, workspaceScenarioLabel } from "./aiWorkspaceSemantics";
+import { researchPresentationCopy, selectResearchReport } from "./aiResearchPresentation";
 
 describe("Workspace AI presentation", () => {
   it.each([null, undefined, "", "—", "unknown", "not applicable", "N/A"])("filters absent value %s", value => {
@@ -37,5 +38,28 @@ describe("Workspace AI presentation", () => {
     const value = "第一句是核心结论。第二句说明最重要的确认条件。第三句属于完整报告，不应进入 Workspace。";
     expect(compactAiSummary(value)).toBe("第一句是核心结论。第二句说明最重要的确认条件。…");
     expect(compactAiSummary(value)).not.toContain("第三句");
+  });
+});
+
+describe("Research report selection and localization", () => {
+  const current = { report_id: "eth-current", instrument: "ETH-USDT-SWAP", display_eligible: true, status: "CURRENT_AUDITED_REPORT" } as any;
+  const stale = { report_id: "eth-stale", instrument: "ETH-USDT-SWAP", display_eligible: true, status: "STALE_AUDITED_REPORT" } as any;
+  const failed = { report_id: "eth-failed", instrument: "ETH-USDT-SWAP", display_eligible: false, status: "AUDIT_FAILED" } as any;
+  const btc = { report_id: "btc-current", instrument: "BTC-USDT-SWAP", display_eligible: true, status: "CURRENT_AUDITED_REPORT" } as any;
+  it("gives an eligible direct report priority over latest selection", () => {
+    expect(selectResearchReport([current, stale], "ETH-USDT-SWAP", "eth-stale")?.report_id).toBe("eth-stale");
+  });
+  it("uses the current eligible report and isolates instruments", () => {
+    expect(selectResearchReport([stale, btc, current], "ETH-USDT-SWAP", "")?.report_id).toBe("eth-current");
+    expect(selectResearchReport([current, btc], "BTC-USDT-SWAP", "")?.report_id).toBe("btc-current");
+  });
+  it("does not select an audit-failed report body", () => {
+    expect(selectResearchReport([failed], "ETH-USDT-SWAP", "eth-failed")).toBeNull();
+  });
+  it("provides complete Chinese and English Research chrome", () => {
+    expect(researchPresentationCopy.zh.latest).toBe("\u6700\u65b0\u5206\u6790");
+    expect(researchPresentationCopy.zh.history).toBe("\u5386\u53f2\u62a5\u544a");
+    expect(researchPresentationCopy.en.latest).toBe("Latest Analysis");
+    expect(researchPresentationCopy.en.history).toBe("History");
   });
 });

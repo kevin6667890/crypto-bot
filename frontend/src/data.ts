@@ -479,16 +479,16 @@ export async function fetchAuditedAiBrief(instrument: string, mode = "QUICK"): P
   return value;
 }
 
-export async function fetchAuditedAiHistory(instrument: string): Promise<AuditedAiBrief[]> {
-  const response = await fetch(`${paperApiBase}/api/ai-market-analysis/v1/research-reports?instrument=${encodeURIComponent(instrument)}`);
+export async function fetchAuditedAiHistory(instrument: string, language = "zh-CN"): Promise<AuditedAiBrief[]> {
+  const response = await fetch(`${paperApiBase}/api/ai-market-analysis/v1/research-reports?instrument=${encodeURIComponent(instrument)}&language=${encodeURIComponent(language)}`);
   if (!response.ok) throw new Error(`AI report history request failed: ${response.status}`);
   const value = await response.json() as { instrument: string; items: AuditedAiBrief[] };
   assertAiInstrument(instrument, value.instrument);
   return value.items.filter((item) => item.instrument === instrument);
 }
 
-export async function fetchAuditedAiReport(instrument: string, reportId: string, mode: string): Promise<AuditedAiReportDetail> {
-  const response = await fetch(`${paperApiBase}/api/ai-market-analysis/v1/research-reports/${encodeURIComponent(reportId)}?instrument=${encodeURIComponent(instrument)}&mode=${encodeURIComponent(mode)}`);
+export async function fetchAuditedAiReport(instrument: string, reportId: string, mode: string, language = "zh-CN"): Promise<AuditedAiReportDetail> {
+  const response = await fetch(`${paperApiBase}/api/ai-market-analysis/v1/research-reports/${encodeURIComponent(reportId)}?instrument=${encodeURIComponent(instrument)}&mode=${encodeURIComponent(mode)}&language=${encodeURIComponent(language)}`);
   if (!response.ok) throw new Error(`AI report request failed: ${response.status}`);
   const value = await response.json() as AuditedAiReportDetail;
   assertAiInstrument(instrument, value.summary.instrument);

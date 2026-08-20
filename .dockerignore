@@ -11,3 +11,7 @@ data_cache/
 node_modules/
 frontend/node_modules/
 artifacts/
+# Durable production backups and report data are runtime state, not image inputs.
+ai_report_backups/
+ai_report_data/
+backups/

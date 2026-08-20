@@ -11,6 +11,8 @@ from .discovery_identity import build_candidate_identity
 from .discovery_robustness import generate_cost_scenarios
 from .discovery_scoring import evaluate_eligibility
 from .discovery_service import ENGINE_VERSION, POLICY_VERSION, aggregate, buy_and_hold
+from .factor_program_discovery import canonical_backtest
+from .approved_strategy_runtime import deserialize_program
 from .okx_history import TIMEFRAME_SECONDS
 from .strategy_registry import (
     ACTIVE_SCOPE_POLICY_VERSION, APPROVAL_POLICY_VERSION, ApprovedStrategyRegistry, ROUTER_TEMPLATE_MAP,
@@ -316,10 +318,11 @@ class AutomaticResearchService:
         timeframe = str(candidate["timeframe"]); step = TIMEFRAME_SECONDS[timeframe]
         rows = self.repository.candles(instrument, timeframe, start - 240 * step, end - 1)
         rows = [row for row in rows if bool(row.get("confirmed", 1))]
-        outcome = run_discovery_candidate_backtest(
-            rows, instrument, timeframe, candidate["template"], candidate["parameters"],
-            start, end-step, execution, fingerprint,
-        )
+        if candidate["template"] == "FACTOR_PROGRAM":
+            program=deserialize_program(candidate["program_ast"])
+            outcome=canonical_backtest(program,rows,instrument,timeframe,start,end-step)
+        else:
+            outcome = run_discovery_candidate_backtest(rows, instrument, timeframe, candidate["template"], candidate["parameters"], start, end-step, execution, fingerprint)
         benchmark = buy_and_hold(rows, start, end-step, execution)
         status, reasons = self._stage_pass(outcome["metrics"], benchmark)
         return {"status": status, "reason_codes": reasons, "instrument": instrument,
@@ -365,6 +368,8 @@ class AutomaticResearchService:
         for row in rows:
             item = dict(row)
             item["parameters"] = _loads(item["parameters"], {})
+            item["program_ast"] = _loads(item.get("program_ast"), {})
+            item["factor_versions"] = _loads(item.get("factor_versions"), {})
             item["aggregate_metrics"] = _loads(item["aggregate_metrics"], {})
             item["elimination_reasons"] = _loads(item["elimination_reasons"], [])
             if item.get("eligibility_status") == "ELIGIBLE": candidates.append(item)
@@ -393,12 +398,13 @@ class AutomaticResearchService:
             } for value in robust_folds])
             robust_eligibility = evaluate_eligibility(robust_aggregate, timeframe, "DEVELOPMENT_CANDIDATE")
             robust_status = "PASS" if robust_eligibility["eligible"] else "FAIL"
+            is_program=item["template"] == "FACTOR_PROGRAM"
             router_parameters = _router_parameters(item["template"],item["parameters"])
-            candidate_identity = build_candidate_identity(item["template"],item["parameters"],execution.execution_hash())
+            candidate_identity = item.get("candidate_identity") if is_program else build_candidate_identity(item["template"],item["parameters"],execution.execution_hash())
             definition = {
                 "schema_version":"approved-deterministic-definition-v1", "template":item["template"],
                 "template_version":item["template_version"], "parameters":item["parameters"],
-                "direction":"BOTH", "router_family":ROUTER_TEMPLATE_MAP.get(item["template"]),
+                "direction":item.get("direction") or "BOTH", "router_family":ROUTER_TEMPLATE_MAP.get(item["template"]),
                 "router_parameters":router_parameters, "runtime_adapter_version":RUNTIME_ADAPTER_VERSION,
                 "dataset_range":{"start":request["research_start"],"end":request["research_end"]},
                 "validation_status":{"development":"PASS","walk_forward":"PASS","holdout":holdout["status"],
@@ -407,6 +413,8 @@ class AutomaticResearchService:
                 "activation_scope":{"mode":"GLOBAL_CROSS_ASSET","policy_version":ACTIVE_SCOPE_POLICY_VERSION,
                     "instruments":["BTC-USDT","ETH-USDT","SOL-USDT"]},
             }
+            if is_program:
+                definition.update(program_ast=_loads(item.get("program_ast"),{}),factor_versions=_loads(item.get("factor_versions"),{}),program_version=item.get("program_version"))
             evidence = {
                 "candidate": item, "candidate_identity": candidate_identity, "definition": definition,
                 "configuration_hash": canonical_hash(definition), "development":{"eligible":True,"reasons":[],"score":item["development_score"]},
@@ -417,7 +425,7 @@ class AutomaticResearchService:
                     "policy":"existing development eligibility applied to all five 2x-cost folds"},
                 "contamination":{"state":"CLEAR","candidate_frozen_before_holdout":True,"post_holdout_adjustment":False},
                 "identity":{"candidate_identity":candidate_identity,"configuration_hash":canonical_hash(definition)},
-                "runtime":{"deterministic":True,"execution_compatible":router_parameters is not None,"router_family":ROUTER_TEMPLATE_MAP.get(item["template"])},
+                "runtime":{"deterministic":True,"execution_compatible":router_parameters is not None or is_program,"router_family":ROUTER_TEMPLATE_MAP.get(item["template"]),"program_runtime":is_program},
                 "dataset_id":dataset["id"],"dataset_fingerprint":fingerprint,"discovery_run_id":discovery_id,
             }
             self._save_checkpoint(cycle_id,validation_key,evidence)

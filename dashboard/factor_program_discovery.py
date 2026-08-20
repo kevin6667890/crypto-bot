@@ -6,6 +6,7 @@ features, execution model and folds, but never changes template sampling.
 from __future__ import annotations
 from collections import Counter
 from dataclasses import asdict
+import json
 import os
 from typing import Any, Mapping
 
@@ -78,3 +79,14 @@ def run(candles: list[dict[str, Any]], instrument: str, timeframe: str, folds: l
             "program_candidates": len(programs), "unique_programs": len(unique), "screened": len(screened),
             "backtested": len(backtested), "eligible": 0, "approved": 0,
             "items": [{k: v for k, v in item.items() if k != "program"} for item in screened]}
+
+def persist_candidates(repository, discovery_run_id: int, programs: list[FactorStrategyProgram], *, seed: int) -> list[int]:
+    """Persist immutable program provenance in the existing candidate table."""
+    ids=[]
+    with repository.connect() as c:
+        for number, program in enumerate(programs, 1):
+            ast=program.canonical_ast(); identity=program.identity
+            c.execute("""INSERT OR IGNORE INTO strategy_discovery_candidates(discovery_run_id,candidate_number,template,template_version,parameters,parameter_hash,feature_flags,complexity,status,created_at,program_ast,factor_versions,program_version,candidate_identity,configuration_hash,direction,program_timeframe)
+                         VALUES(?,?,?,?,?,?,?,?,?,datetime('now'),?,?,?,?,?,?,?,?)""",(discovery_run_id,number,"FACTOR_PROGRAM",program.grammar_version,"{}",identity,"{}",program.complexity,"GENERATED",json.dumps(ast,sort_keys=True),json.dumps(program.factor_versions,sort_keys=True),program.grammar_version,identity,identity,program.direction,program.timeframe))
+            row=c.execute("SELECT id FROM strategy_discovery_candidates WHERE discovery_run_id=? AND candidate_number=?",(discovery_run_id,number)).fetchone(); ids.append(int(row[0]))
+    return ids

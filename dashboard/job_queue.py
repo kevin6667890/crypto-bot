@@ -6,6 +6,7 @@ import hashlib
 import json
 import threading
 import time
+import uuid
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
@@ -30,13 +31,18 @@ class JobQueue:
                  recover_interrupted: bool = True) -> None:
         import sqlite3
         self.sqlite3, self.db_path, self.max_queue, self.autostart = sqlite3, Path(db_path), max_queue, autostart
+        self.worker_id = f"research-worker-{uuid.uuid4().hex}"
         self.recover_interrupted = bool(recover_interrupted)
         self.handlers: dict[str, Callable[..., Any]] = {}
         self.terminal_handlers: dict[str, Callable[[dict[str, Any]], None]] = {}
         self._stop = threading.Event()
         self._init_db()
         self.worker = threading.Thread(target=self._loop, daemon=True, name="research-job-worker")
-        if autostart: self.worker.start()
+        self.lease = threading.Thread(target=self._lease_loop, daemon=True, name="research-job-lease")
+        if autostart:
+            self._touch_lease()
+            self.lease.start()
+            self.worker.start()
 
     @contextmanager
     def connect(self):
@@ -66,12 +72,40 @@ class JobQueue:
                 conn.execute("ALTER TABLE research_jobs ADD COLUMN message_code TEXT")
             if "message_params" not in columns:
                 conn.execute("ALTER TABLE research_jobs ADD COLUMN message_params TEXT")
+            if "worker_owner_id" not in columns:
+                conn.execute("ALTER TABLE research_jobs ADD COLUMN worker_owner_id TEXT")
+            conn.execute("""CREATE TABLE IF NOT EXISTS research_worker_leases (
+                worker_id TEXT PRIMARY KEY, heartbeat_unix INTEGER NOT NULL)""")
+            conn.execute("""CREATE TRIGGER IF NOT EXISTS protect_active_worker_from_stale_reconciliation
+                BEFORE UPDATE OF status ON research_jobs
+                WHEN NEW.status='INTERRUPTED' AND OLD.worker_owner_id IS NOT NULL
+                 AND EXISTS (SELECT 1 FROM research_worker_leases lease
+                             WHERE lease.worker_id=OLD.worker_owner_id
+                               AND lease.heartbeat_unix >= CAST(strftime('%s','now') AS INTEGER)-45)
+                BEGIN SELECT RAISE(IGNORE); END""")
             if self.recover_interrupted:
                 conn.execute("""UPDATE research_jobs
                     SET status='INTERRUPTED', error='Service restarted while job was running',
                         progress_message='Service restarted while job was running',
                         message_code='job.interrupted.restart', message_params='{}', completed_at=?
                     WHERE status IN ('RUNNING','CANCEL_REQUESTED')""", (utc_now(),))
+
+    def _touch_lease(self) -> None:
+        def write() -> None:
+            with self.connect() as conn:
+                conn.execute("""INSERT INTO research_worker_leases(worker_id,heartbeat_unix) VALUES(?,?)
+                             ON CONFLICT(worker_id) DO UPDATE SET heartbeat_unix=excluded.heartbeat_unix""",
+                             (self.worker_id, int(time.time())))
+        retry_locked(write)
+
+    def _lease_loop(self) -> None:
+        while not self._stop.wait(5.0):
+            try:
+                self._touch_lease()
+            except Exception:
+                # The job loop owns terminal state; a later heartbeat retry will
+                # restore the lease without terminating a running evaluation.
+                pass
 
     def register(self, job_type: str, handler: Callable[..., Any]) -> None: self.handlers[job_type] = handler
 
@@ -164,7 +198,7 @@ class JobQueue:
             claimed=False
             with self.connect() as conn:
                 row = conn.execute("SELECT * FROM research_jobs WHERE status='QUEUED' ORDER BY priority,id LIMIT 1").fetchone()
-                if row: claimed=conn.execute("UPDATE research_jobs SET status='RUNNING',started_at=?,progress=2,progress_message='Starting',message_code='job.initializing',message_params='{}' WHERE id=? AND status='QUEUED'", (utc_now(),row["id"])).rowcount==1
+                if row: claimed=conn.execute("UPDATE research_jobs SET status='RUNNING',worker_owner_id=?,started_at=?,progress=2,progress_message='Starting',message_code='job.initializing',message_params='{}' WHERE id=? AND status='QUEUED'", (self.worker_id,utc_now(),row["id"])).rowcount==1
             if not row or not claimed: self._stop.wait(0.25); continue
             job = self._row(row); handler = self.handlers.get(job["job_type"])
             try:

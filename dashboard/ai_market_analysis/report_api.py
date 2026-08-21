@@ -49,7 +49,8 @@ def build_base_context_from_stores(payload:dict[str,Any],paper_db:str|Path,micro
         start=max(raw_start,decision-MAX_ORDERFLOW_QUERY_SECONDS)
         # The 4H phase contract is deterministically resampled from the same
         # canonical 1m evidence used by Workspace, never a legacy 4H table.
-        orderflow=ReadOnlyOrderflowAdapter(canonical_path).read(instrument,start,decision,"4H")
+        orderflow=ReadOnlyOrderflowAdapter(canonical_path, supplemental_path=micro_db).read(
+            instrument,start,decision,"4H")
     elif micro_db:
         # Preserve graceful degradation when canonical history has not been
         # materialised.  A legacy aggregate DB is intentionally not a fallback.

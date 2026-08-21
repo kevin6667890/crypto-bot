@@ -33,8 +33,9 @@ class ReadOnlyOrderflowAdapter:
     ``PARTIAL_AFTER_GAP`` retains observed CVD delta but is never complete.
     """
 
-    def __init__(self, path: Path | str):
+    def __init__(self, path: Path | str, supplemental_path: Path | str | None = None):
         self.path = Path(path)
+        self.supplemental_path = Path(supplemental_path) if supplemental_path else None
         self.query_plans: list[tuple[Any, ...]] = []
 
     def read(
@@ -48,22 +49,61 @@ class ReadOnlyOrderflowAdapter:
             raise ValueError("query range must be positive and bounded to 366 days")
 
         with self._connect() as connection:
-            self._require_canonical_schema(connection)
-            cvd = self._read_cvd(connection, instrument, start, end, resolution)
-            oi = self._read_oi(connection, instrument, start, end, resolution)
-            metadata = self._metadata(connection, instrument, start, end, resolution)
-        return {
-            "cvd": cvd, "oi": oi, "basis": [], "funding": [],
-            "liquidation": [], "liquidation_complete": False,
-            "canonical_metadata": metadata,
-        }
+            has_canonical = all(_exists(connection, table) for table in ("cvd_1m", "oi_1m"))
+            has_supplemental = any(_exists(connection, table) for table in (
+                "funding_settled", "funding_predicted", "liquidation_observations"))
+            if not has_canonical and not has_supplemental:
+                self._require_canonical_schema(connection)
+            cvd = self._read_cvd(connection, instrument, start, end, resolution) if has_canonical else []
+            oi = self._read_oi(connection, instrument, start, end, resolution) if has_canonical else []
+            metadata = (self._metadata(connection, instrument, start, end, resolution)
+                        if has_canonical else {"source_contract": "UNAVAILABLE", "synthetic_data": False,
+                                               "interpolation": False})
+            same_path_extras = self._read_supplemental(connection, instrument, start, end)
+        extras = same_path_extras
+        if self.supplemental_path and self.supplemental_path.resolve() != self.path.resolve():
+            with self._connect_path(self.supplemental_path) as connection:
+                extras = self._read_supplemental(connection, instrument, start, end)
+        return {"cvd": cvd, "oi": oi, "basis": extras["basis"],
+                "funding": extras["funding"], "liquidation": extras["liquidation"],
+                "liquidation_complete": extras["liquidation_complete"],
+                "canonical_metadata": metadata}
 
     def _connect(self) -> sqlite3.Connection:
-        uri = f"file:{self.path.resolve().as_posix()}?mode=ro"
+        return self._connect_path(self.path)
+
+    @staticmethod
+    def _connect_path(path: Path) -> sqlite3.Connection:
+        uri = f"file:{path.resolve().as_posix()}?mode=ro"
         connection = sqlite3.connect(uri, uri=True, timeout=10)
         connection.row_factory = sqlite3.Row
         connection.execute("PRAGMA query_only=ON")
         return connection
+
+    def _read_supplemental(
+        self, connection: sqlite3.Connection, instrument: str, start: int, end: int,
+    ) -> dict[str, Any]:
+        output: dict[str, Any] = {"basis": [], "funding": [], "liquidation": [],
+                                  "liquidation_complete": False}
+        for table, state in (("funding_settled", "SETTLED"), ("funding_predicted", "PREDICTED")):
+            if not _exists(connection, table):
+                continue
+            sql = (f"SELECT source_ts_ms,funding_rate,state FROM {table} WHERE instrument=? "
+                   "AND source_ts_ms>=? AND source_ts_ms<? ORDER BY source_ts_ms")
+            rows = self._query(connection, sql, (instrument, start * 1000, end * 1000), table)
+            output["funding"].extend({"timestamp": int(row["source_ts_ms"]) // 1000,
+                                      "rate": float(row["funding_rate"]), "state": state,
+                                      "source_type": state, "source_state": row["state"]} for row in rows)
+        if _exists(connection, "liquidation_observations"):
+            sql = ("SELECT source_ts_ms,side,size,price,reliability_note FROM liquidation_observations "
+                   "WHERE instrument=? AND source_ts_ms>=? AND source_ts_ms<? ORDER BY source_ts_ms")
+            rows = self._query(connection, sql, (instrument, start * 1000, end * 1000),
+                               "liquidation_observations")
+            output["liquidation"] = [{"timestamp": int(row["source_ts_ms"]) // 1000,
+                                      "side": str(row["side"]).upper(), "size": float(row["size"]),
+                                      "notional": float(row["size"]) * float(row["price"] or 0),
+                                      "reliability_note": row["reliability_note"]} for row in rows]
+        return output
 
     @classmethod
     def available(cls, path: Path | str) -> bool:

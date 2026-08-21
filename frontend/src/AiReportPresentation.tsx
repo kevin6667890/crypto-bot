@@ -31,7 +31,7 @@ export function DataCoverage({ brief, language = "zh" }: { brief: AuditedAiBrief
   const rows = coverageMatrixRows(quality, language);
   return <div className="ai-coverage" data-testid="ai-coverage-matrix"><span className="ai-meta-label">{copy.coverage}</span>
     <div className="coverage-matrix">{rows.map((item) => <span className={`coverage-row ${item.state}`} key={item.key}><b>{item.label}</b><small>{item.state === "complete" ? "✓" : item.state === "partial" || item.state === "warning" ? "△" : "○"} {item.text}</small></span>)}</div>
-    {items.length > 0 && <div className="coverage-timeframes" aria-label="timeframe coverage">{items.map((item) => <span key={item.timeframe} className={item.availability === "AVAILABLE" ? "complete" : "partial"}>{item.timeframe} {item.availability === "AVAILABLE" ? "✓" : "△"}</span>)}</div>}
+    {items.length > 0 && <div className="coverage-timeframes" aria-label={language === "zh" ? "周期覆盖" : "Timeframe coverage"}>{items.map((item) => <span key={item.timeframe} className={item.availability === "AVAILABLE" ? "complete" : "partial"}>{item.timeframe} {item.availability === "AVAILABLE" ? "✓" : "△"}</span>)}</div>}
   </div>;
 }
 

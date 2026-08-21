@@ -74,6 +74,64 @@ def _wall_clock_freshness(market_time: str | None) -> tuple[int | None, int]:
     return max(0, int((datetime.now(timezone.utc) - stamp).total_seconds())), threshold
 
 
+def _intelligence_projection(
+    base: dict[str, Any], evidence_quality: dict[str, Any],
+    levels: list[dict[str, Any]], long_term_levels: list[dict[str, Any]],
+    scenarios: list[dict[str, Any]],
+) -> dict[str, Any]:
+    """Bounded UI projection of facts already frozen in the report context."""
+    frames = {}
+    for frame in base.get("timeframe_structures", []):
+        timeframe = str(frame.get("timeframe") or "")
+        if timeframe not in TIMEFRAMES:
+            continue
+        intelligence = frame.get("deterministic_intelligence") or {}
+        frames[timeframe] = {
+            "role": intelligence.get("role") or frame.get("role"),
+            "state": intelligence.get("state"),
+            "extension_state": intelligence.get("extension_state"),
+            "momentum": intelligence.get("momentum"),
+            "tactical": intelligence.get("tactical"),
+            "volume": intelligence.get("volume"),
+            "local_high": intelligence.get("local_high"),
+            "local_low": intelligence.get("local_low"),
+        }
+    summary = base.get("multi_timeframe_summary") or {}
+    tactical = ((frames.get("15m") or {}).get("tactical") or {}).copy()
+    if scenarios:
+        tactical["trigger"] = scenarios[0].get("trigger_text")
+        tactical["invalidation"] = scenarios[0].get("invalidation_text")
+    phases = base.get("order_flow_phases") or []
+    current = next((item for item in reversed(phases) if item.get("phase") == "CURRENT"),
+                   phases[-1] if phases else {})
+    metrics = current.get("metrics") or {}
+    coverage = (metrics.get("quality") or {}).get("flow_coverage") or {}
+    oi = metrics.get("oi") or {}
+    return {
+        "version": summary.get("intelligence_version"),
+        "timeframes": frames,
+        "alignment": summary.get("alignment"),
+        "conflicts": list(summary.get("conflicts") or []),
+        "dominant_context": summary.get("dominant_context"),
+        "tactical": tactical,
+        "momentum": (frames.get("1H") or {}).get("momentum"),
+        "extension": summary.get("extension_states"),
+        "volume": (frames.get("15m") or {}).get("volume"),
+        "flow_oi": {
+            "flow_state": coverage.get("state") or evidence_quality.get("flow_quality"),
+            "coverage_ratio": coverage.get("coverage_ratio"),
+            "oi_state": metrics.get("quadrant"),
+            "price_oi_state": metrics.get("quadrant"),
+            "oi_change": oi.get("change"),
+            "oi_change_pct": oi.get("change_pct"),
+            "oi_quality": oi.get("status"),
+        },
+        "price_map": levels,
+        "long_term_levels": long_term_levels,
+        "scenarios": scenarios[:3],
+    }
+
+
 def _summary(presentation: dict[str, Any], repository: ReportRepository) -> dict[str, Any]:
     report = presentation.get("report")
     eligible = presentation.get("eligibility") == "AUDIT_PASSED_SHADOW_ONLY" and isinstance(report, dict)
@@ -137,7 +195,10 @@ def _summary(presentation: dict[str, Any], repository: ReportRepository) -> dict
     long_term_levels.sort(key=lambda item: (float(item.get("distance_pct") or 0), str(item.get("level_id") or "")))
     scenarios = [{key: item.get(key) for key in ("scenario_id", "scenario_type", "direction", "status",
                                                   "trigger_text", "confirmation_text", "invalidation_text")}
-                 for item in presentation.get("referenced_scenarios", [])[:2]]
+                 for item in presentation.get("referenced_scenarios", [])[:3]]
+    intelligence = _intelligence_projection(
+        base, evidence_quality, levels, long_term_levels, scenarios,
+    ) if eligible else None
     return {
         "instrument": presentation["instrument"], "mode": presentation["mode"],
         "report_id": presentation["report_id"], "display_eligible": eligible, "status": status,
@@ -164,6 +225,7 @@ def _summary(presentation: dict[str, Any], repository: ReportRepository) -> dict
         "risks": uncertainties if eligible else [], "levels": levels if eligible else [],
         "long_term_levels": long_term_levels if eligible else [],
         "scenarios": scenarios if eligible else [],
+        "intelligence": intelligence,
         "timeframe_quality": _timeframe_quality(repository, presentation),
         "evidence_quality": evidence_quality,
         "data_warnings": list((report or {}).get("data_warnings") or presentation.get("data_warnings") or [])[:12]
@@ -210,5 +272,6 @@ def research_report(repository: ReportRepository, report_id: str, *, instrument:
             "directional_bias": report.get("directional_bias"), "confidence": report.get("confidence"),
             "sections": [{key: section.get(key) for key in ("section_id", "title", "body", "uncertainties")}
                          for section in report.get("sections", [])],
+            "intelligence": summary.get("intelligence"),
         },
     }

@@ -451,6 +451,7 @@ export type AuditedAiBrief = {
   freshness: { status?: string; quality?: string; confirmed_15m_bars_behind?: number; age_seconds?: number | null; threshold_seconds?: number };
   latest_generated: { report_id?: string; eligibility?: string; queue_status?: string; decision_time?: string };
   audit: { status?: string; overall_score?: number; promotion_eligible?: boolean };
+  last_display_eligible_report?: { report_id?: string; generated_at?: string; freshness_status?: string } | null;
   provider: string | null;
   model: string | null;
   headline: string | null;

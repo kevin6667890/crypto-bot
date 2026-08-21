@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 
 import pytest
 
-from dashboard.ai_market_analysis.presentation_feed import latest_workspace_brief, research_history
+from dashboard.ai_market_analysis.presentation_feed import _intelligence_projection, latest_workspace_brief, research_history
 from dashboard.ai_market_analysis.report_audit_repository import AuditRepository, migrate_audit_database
 from dashboard.ai_market_analysis.report_jobs import ReportWorker
 from dashboard.ai_market_analysis.report_provider import FakeAIReportProvider
@@ -127,3 +127,29 @@ def test_provider_attempt_cap_disables_retry(tmp_path, monkeypatch):
     monkeypatch.setenv("AI_REPORT_PROVIDER_ATTEMPT_MAX", "1")
     ReportWorker(reports, lambda request: FakeAIReportProvider(request["model"], "429")).run_once()
     assert reports.status(item["request_id"])["status"] == "FAILED_FINAL"
+
+
+def test_intelligence_projection_keeps_five_frames_when_flow_is_unavailable():
+    frames = []
+    for timeframe in ("15m", "1H", "4H", "1D", "1W"):
+        frames.append({
+            "timeframe": timeframe,
+            "deterministic_intelligence": {
+                "role": "TACTICAL", "state": "HIGH_LEVEL_COMPRESSION",
+                "extension_state": "EXTENDED", "momentum": {"state": "MOMENTUM_COOLING"},
+                "tactical": {"state": "HIGH_LEVEL_COMPRESSION"},
+                "volume": {"state": "VOLUME_NORMAL"},
+            },
+        })
+    base = {
+        "timeframe_structures": frames,
+        "multi_timeframe_summary": {"alignment": "CONFLICTED", "conflicts": ["SETUP_COOLING"],
+                                    "dominant_context": "HIGHER_TIMEFRAME_EXTENSION"},
+        "order_flow_phases": [],
+    }
+    scenarios = [{"trigger_text": "confirmed close above local high",
+                  "invalidation_text": "confirmed close below tactical support"}]
+    value = _intelligence_projection(base, {"flow_quality": "FLOW_UNAVAILABLE"}, [], [], scenarios)
+    assert set(value["timeframes"]) == {"15m", "1H", "4H", "1D", "1W"}
+    assert value["flow_oi"]["flow_state"] == "FLOW_UNAVAILABLE"
+    assert value["tactical"]["trigger"] == scenarios[0]["trigger_text"]

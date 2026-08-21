@@ -1,6 +1,7 @@
 """Framework-neutral validation/facade used by the versioned Shadow HTTP endpoints."""
 from __future__ import annotations
 from datetime import datetime,timezone
+import os
 from pathlib import Path
 from typing import Any
 from .context_adapter import build_market_analysis_context
@@ -42,10 +43,21 @@ def build_base_context_from_stores(payload:dict[str,Any],paper_db:str|Path,micro
     decision=int(datetime.fromisoformat(payload["decision_time"].replace("Z","+00:00")).timestamp());instrument=payload["instrument"]
     reader=BoundedMarketDataReaderV2(paper_db,micro_db);datasets={tf:reader.candles(instrument,tf,decision,1500 if tf=="1D" else 512) for tf in SUPPORTED_TIMEFRAMES}
     orderflow=None
-    if micro_db and Path(micro_db).exists():
+    canonical_path=Path(os.getenv("CANONICAL_MICROSTRUCTURE_HISTORY_DB_PATH",str(micro_db or "")))
+    if ReadOnlyOrderflowAdapter.available(canonical_path):
         raw_start=min((int(row["ts"]) for rows in datasets.values() for row in rows),default=decision-30*86400)
         start=max(raw_start,decision-MAX_ORDERFLOW_QUERY_SECONDS)
-        orderflow=ReadOnlyOrderflowAdapter(micro_db).read(instrument,start,decision,"4H")
+        # The 4H phase contract is deterministically resampled from the same
+        # canonical 1m evidence used by Workspace, never a legacy 4H table.
+        orderflow=ReadOnlyOrderflowAdapter(canonical_path).read(instrument,start,decision,"4H")
+    elif micro_db:
+        # Preserve graceful degradation when canonical history has not been
+        # materialised.  A legacy aggregate DB is intentionally not a fallback.
+        orderflow={"cvd":[],"oi":[],"basis":[],"funding":[],
+                   "liquidation":[],"liquidation_complete":False,
+                   "canonical_metadata":{"source_contract":"UNAVAILABLE",
+                                         "synthetic_data":False,
+                                         "interpolation":False}}
     return build_market_analysis_context(datasets,instrument,decision,payload.get("mode","FULL"),orderflow=orderflow)
 
 def submit_report(payload:dict[str,Any],repository:ReportRepository,paper_db:str|Path,micro_db:str|Path|None)->dict[str,Any]:

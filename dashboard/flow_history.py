@@ -24,6 +24,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Iterable
 
+try:  # Supports the standalone paper_api entrypoint as well as package imports.
+    from .canonical_flow_contract import aggregate_flow_status, flow_status
+except ImportError:  # pragma: no cover - exercised by deployment entrypoint
+    from canonical_flow_contract import aggregate_flow_status, flow_status
+
 
 LOGGER = logging.getLogger(__name__)
 HISTORY_API_VERSION = "flow-history-v1"
@@ -220,6 +225,7 @@ class CanonicalFlowHistoryStore:
                     points.append({
                         "time": bucket, "status": "WHITESPACE",
                         "quality_status": quality,
+                        "flow_status": flow_status(quality, False),
                         "gap_reason": (row["gap_reason"] if row is not None
                                        else "NO_CANONICAL_BUCKET"),
                         "source_complete": False,
@@ -237,6 +243,7 @@ class CanonicalFlowHistoryStore:
                     "partial_after_gap": quality == "PARTIAL_AFTER_GAP",
                     "source_fingerprint": row["source_fingerprint"],
                 }
+                point["flow_status"] = flow_status(quality, True)
                 if series == "cvd":
                     point["delta"] = float(row["delta"])
                     point["segment_start"] = (
@@ -306,6 +313,9 @@ class CanonicalFlowHistoryStore:
             "next_expected_bucket": last_completed_bucket + resolution,
             "stale_after_seconds": stale_after, "stale": stale,
             "status": overall_status,
+            "flow_status": aggregate_flow_status([
+                str(point["flow_status"]) for point in points
+            ]),
             "gap_reason": gaps[0]["gap_reason"] if gaps else None,
             "source_coverage": {"start": available_start, "end": available_end,
                                 "confirmed_end": confirmed_end},

@@ -9,20 +9,24 @@ import sys
 import pytest
 
 from dashboard.ai_market_analysis.readonly_adapter import MAX_ORDERFLOW_QUERY_SECONDS,ReadOnlyOrderflowAdapter
+from dashboard.canonical_microstructure_history import BuildIdentity,CanonicalHistoryStore
 
 
 def database(path:Path,indexed=True):
+    if indexed:
+        CanonicalHistoryStore(path).initialise(BuildIdentity("a"*64,"test",0,1))
+        return
     with sqlite3.connect(path) as c:
-        key="PRIMARY KEY(instrument,resolution,bucket_ms)" if indexed else ""
-        for table in ("cvd_aggregates","oi_aggregates","basis_aggregates"):
-            c.execute(f"CREATE TABLE {table}(instrument TEXT,resolution TEXT,bucket_ms INTEGER,payload_json TEXT {','+key if key else ''})")
-            c.execute(f"INSERT INTO {table} VALUES(?,?,?,?)",("ETH-USDT-SWAP","15m",0,json.dumps({"value":1})))
+        c.execute("CREATE TABLE cvd_1m(instrument TEXT,bucket_ms INTEGER,buy_volume REAL,sell_volume REAL,signed_delta REAL,trade_count INTEGER,source_min_ts_ms INTEGER,source_max_ts_ms INTEGER,source_row_count INTEGER,source_fingerprint TEXT,status TEXT,gap_reason TEXT,daily_cumulative REAL)")
+        c.execute("CREATE TABLE oi_1m(instrument TEXT,bucket_ms INTEGER,confirmed_oi REAL,observation_ts_ms INTEGER,observation_count INTEGER,source_fingerprint TEXT,status TEXT,gap_reason TEXT)")
+        c.execute("INSERT INTO cvd_1m VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",("ETH-USDT-SWAP",0,1,0,1,1,0,0,1,"x","VALID",None,1))
+        c.execute("INSERT INTO oi_1m VALUES(?,?,?,?,?,?,?,?)",("ETH-USDT-SWAP",0,1,0,1,"x","VALID",None))
 
 
 def test_query_only_bounded_indexed_reads(tmp_path):
     path=tmp_path/"flow.db"; database(path)
     adapter=ReadOnlyOrderflowAdapter(path); out=adapter.read("ETH-USDT-SWAP",0,900,"15m")
-    assert set(out)=={"cvd","oi","basis","funding","liquidation","liquidation_complete"} and adapter.query_plans
+    assert set(out)=={"cvd","oi","basis","funding","liquidation","liquidation_complete","canonical_metadata"} and adapter.query_plans
     assert all("SEARCH" in str(row[-1]).upper() for row in adapter.query_plans)
 
 
@@ -34,7 +38,8 @@ def test_full_scan_is_rejected(tmp_path):
 
 def test_adapter_never_creates_tables(tmp_path):
     path=tmp_path/"flow.db"; sqlite3.connect(path).close()
-    ReadOnlyOrderflowAdapter(path).read("ETH-USDT-SWAP",0,900,"15m")
+    with pytest.raises(RuntimeError,match="canonical microstructure"):
+        ReadOnlyOrderflowAdapter(path).read("ETH-USDT-SWAP",0,900,"15m")
     with sqlite3.connect(path) as c: assert c.execute("SELECT count(*) FROM sqlite_master WHERE type='table'").fetchone()[0]==0
 
 

@@ -5,6 +5,7 @@ import { translateKnownEnum } from "./aiMarketAnalysis/enumTranslations";
 import { compactAiSummary, coverageMatrixRows, isPresent, localizeWorkspaceNarrative, presentAiLevels, renderIfPresent, workspaceScenarioLabel } from "./aiWorkspaceSemantics";
 import { useLanguage, type Language } from "./i18n";
 import { researchPresentationCopy, selectResearchReport } from "./aiResearchPresentation";
+import { workspaceAiPrimaryState } from "./aiWorkspaceState";
 
 const when = (value: string | null | undefined) => value ? new Date(value).toLocaleString() : "—";
 const source = (brief: AuditedAiBrief | null) => [brief?.provider, brief?.model].filter(Boolean).join(" / ") || "DeepSeek";
@@ -49,6 +50,8 @@ export function WorkspaceAiBrief({ instrument }: { instrument: string }) {
   }, [instrument]);
   const current = Boolean(brief?.display_eligible && brief.status === "CURRENT_AUDITED_REPORT");
   const stale = Boolean(brief?.display_eligible && brief.status === "STALE_AUDITED_REPORT");
+  const primaryState = workspaceAiPrimaryState(brief);
+  const latestFailed = primaryState === "LATEST_FAILED";
   const fresh = brief ? freshness(brief, language) : null;
   const levels = presentAiLevels(brief?.levels);
   const scenarios = (brief?.scenarios || []).filter(item => isPresent(item.scenario_type));
@@ -64,7 +67,7 @@ export function WorkspaceAiBrief({ instrument }: { instrument: string }) {
   return <section className={`ai-insight-hero ${stale ? "stale" : ""}`} data-testid="workspace-ai6b-brief" aria-labelledby="ai-insight-title">
     <header className="ai-hero-header">
       <div className="ai-hero-title"><BrainCircuit size={23} /><div><span className="eyebrow">{copy.eyebrow}</span><h2 id="ai-insight-title">{copy.title}</h2></div></div>
-      <div className="ai-hero-badges"><span>{source(brief)}</span><span>{brief?.mode || "QUICK"}</span>{brief?.audit.status === "PASSED" && <span className="audit-pass" title={copy.auditTitle}><CheckCircle2 size={14} /> {copy.audit} · {brief.audit.overall_score ?? 100} / 100</span>}{fresh && <span className={`freshness-badge ${fresh.tone}`}><Clock3 size={13} />{fresh.label}</span>}</div>
+      <div className="ai-hero-badges"><span>{source(brief)}</span><span>{brief?.mode || "QUICK"}</span>{current && brief?.audit.status === "PASSED" && <span className="audit-pass" title={copy.auditTitle}><CheckCircle2 size={14} /> {copy.audit} · {brief.audit.overall_score ?? 100} / 100</span>}{!latestFailed && fresh && <span className={`freshness-badge ${fresh.tone}`}><Clock3 size={13} />{fresh.label}</span>}</div>
     </header>
     <div className="ai-hero-content">{loading ? <div className="ai-hero-empty"><strong>{copy.loading}</strong></div> : current && brief ? <div className="ai-hero-layout">
       <div className="ai-hero-primary">
@@ -80,7 +83,7 @@ export function WorkspaceAiBrief({ instrument }: { instrument: string }) {
         <DataCoverage brief={brief} language={language} />
         <a className="secondary-btn ai-research-link" href={`#research/report/${encodeURIComponent(brief.report_id)}`}>{copy.report} <ExternalLink size={14} /></a>
       </div>
-    </div> : stale && brief ? <div className="ai-hero-empty stale"><strong>{copy.staleTitle}</strong><p>{copy.lastValid}: {when(brief.generated_at)}. {copy.staleBody}</p>{brief.scheduler?.enabled && <p>{copy.next}: {when(brief.scheduler.next_tick)}</p>}<DataCoverage brief={brief} language={language} /><a className="secondary-btn ai-research-link" href={`#research/report/${encodeURIComponent(brief.report_id)}`}>{copy.history} <ExternalLink size={14} /></a></div> : <div className="ai-hero-empty failed"><ShieldCheck size={20} /><strong>{brief?.latest_generated?.eligibility === "AUDIT_FAILED" ? copy.auditFailed : copy.unavailable}</strong><p>{copy.unavailableBody}</p></div>}</div>
+    </div> : latestFailed && brief ? <div className="ai-hero-empty failed"><ShieldCheck size={20} /><strong>{copy.auditFailed}</strong><p>{copy.unavailableBody}</p>{brief.last_display_eligible_report && <p>{copy.lastValid}: {when(brief.last_display_eligible_report.generated_at)} · {copy.stale}</p>}<a className="secondary-btn ai-research-link" href={`#research/report/${encodeURIComponent(brief.last_display_eligible_report?.report_id || brief.report_id)}`}>{copy.history} <ExternalLink size={14} /></a></div> : stale && brief ? <div className="ai-hero-empty stale"><strong>{copy.staleTitle}</strong><p>{copy.lastValid}: {when(brief.generated_at)}. {copy.staleBody}</p>{brief.scheduler?.enabled && <p>{copy.next}: {when(brief.scheduler.next_tick)}</p>}<DataCoverage brief={brief} language={language} /><a className="secondary-btn ai-research-link" href={`#research/report/${encodeURIComponent(brief.report_id)}`}>{copy.history} <ExternalLink size={14} /></a></div> : <div className="ai-hero-empty failed"><ShieldCheck size={20} /><strong>{brief?.latest_generated?.eligibility === "AUDIT_FAILED" ? copy.auditFailed : copy.unavailable}</strong><p>{copy.unavailableBody}</p></div>}</div>
   </section>;
 }
 

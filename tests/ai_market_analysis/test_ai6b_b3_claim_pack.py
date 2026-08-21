@@ -5,7 +5,7 @@ import json
 
 import pytest
 
-from dashboard.ai_market_analysis.provider_claim_pack import _narrative_text, _scenario_narrative_text, build_provider_claim_pack, ground_provider_report, provider_claim_pack_contract
+from dashboard.ai_market_analysis.provider_claim_pack import _narrative_text, _scenario_narrative_text, bind_level_fact_refs, build_provider_claim_pack, ground_provider_report, provider_claim_pack_contract
 from dashboard.ai_market_analysis.report_context_compiler import compile_report_context
 from dashboard.ai_market_analysis.report_prompt_templates import compile_prompt
 from dashboard.ai_market_analysis.report_response_contract import provider_reference_allowlists
@@ -114,6 +114,36 @@ def test_claim_pack_preserves_exact_numeric_and_multiple_level_timeframe_facts()
     }
     assert len(pack["levels"]) >= 2
     assert all(item["asserted_timeframe"] for item in pack["levels"])
+
+
+def test_numeric_key_level_claim_binds_the_exact_level_fact_only():
+    request, _registry = setup("QUICK")
+    pack = build_provider_claim_pack(request["compiled_context"], "QUICK")
+    slot = pack["levels"][0]
+    fact_ids, suppressed = bind_level_fact_refs(f"支撑 {slot['representative_price']}", pack)
+    assert suppressed is False
+    assert fact_ids == slot["fact_refs"]
+
+
+def test_unregistered_numeric_key_level_is_suppressed_not_backfilled_with_generic_facts():
+    request, _registry = setup("QUICK")
+    pack = build_provider_claim_pack(request["compiled_context"], "QUICK")
+    fact_ids, suppressed = bind_level_fact_refs("压力 987654.321", pack)
+    assert fact_ids == []
+    assert suppressed is True
+
+
+def test_grounded_key_level_sentence_keeps_exact_fact_or_is_suppressed():
+    request, _registry, report = _real_style_report("FULL")
+    pack = build_provider_claim_pack(request["compiled_context"], "FULL")
+    first, second = pack["levels"][:2]
+    report["sections"][0]["body"] = f"支撑 {first['representative_price']}，压力 {second['representative_price']}。"
+    grounded = ground_provider_report(report, pack)
+    section = grounded["sections"][0]
+    assert set(section["fact_refs"]) >= {first["fact_refs"][0], second["fact_refs"][0]}
+    assert set(section["level_refs"]) >= {first["level_id"], second["level_id"]}
+    report["sections"][0]["body"] = "支撑 987654.321。"
+    assert "987654.321" not in ground_provider_report(report, pack)["sections"][0]["body"]
 
 
 def test_quick_claim_pack_uses_complete_frozen_registry_after_narrative_pruning():

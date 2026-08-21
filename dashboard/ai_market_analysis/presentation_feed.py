@@ -87,6 +87,14 @@ def _summary(presentation: dict[str, Any], repository: ReportRepository) -> dict
     status = "NO_CURRENT_AUDITED_REPORT"
     if eligible:
         status = "STALE_AUDITED_REPORT" if wall_clock_stale or freshness.get("status") in {"STALE", "UNKNOWN", "SUPERSEDED"} else "CURRENT_AUDITED_REPORT"
+    latest_eligibility = str(latest.get("eligibility") or "")
+    primary_state = (
+        "LATEST_FAILED" if latest_eligibility == "AUDIT_FAILED"
+        else "LATEST_PENDING" if latest_eligibility in {"AUDIT_PENDING", "AUDIT_NOT_FOUND"}
+        else "CURRENT_VALID" if status == "CURRENT_AUDITED_REPORT"
+        else "STALE_VALID" if status == "STALE_AUDITED_REPORT"
+        else "NO_VALID_REPORT"
+    )
     section = next((item for item in (report or {}).get("sections", []) if item.get("section_id") == "CONCLUSION"), None)
     section = section or next((item for item in (report or {}).get("sections", [])
                                if item.get("section_id") in {"QUICK_SUMMARY", "EXECUTIVE_SUMMARY"}), None)
@@ -139,6 +147,11 @@ def _summary(presentation: dict[str, Any], repository: ReportRepository) -> dict
                       "age_seconds": age_seconds, "threshold_seconds": threshold_seconds},
         "latest_generated": {key: latest.get(key) for key in ("report_id", "eligibility", "queue_status", "decision_time")},
         "audit": {key: (presentation.get("audit_summary") or {}).get(key) for key in ("status", "overall_score", "promotion_eligible")},
+        "primary_state": primary_state,
+        "last_display_eligible_report": ({
+            "report_id": presentation.get("report_id"), "generated_at": presentation.get("generated_at"),
+            "freshness_status": freshness.get("status"),
+        } if presentation.get("eligibility") == "AUDIT_PASSED_SHADOW_ONLY" else None),
         "provider": stored.get("provider"), "model": stored.get("model"),
         "headline": (report or {}).get("headline") if eligible else None,
         "executive_summary": body if eligible else None,

@@ -32,6 +32,21 @@ def test_audit_failed_report_body_is_never_public(tmp_path):
     assert value["headline"] is None and value["executive_summary"] is None
 
 
+def test_latest_failed_is_primary_even_when_an_old_valid_report_exists(tmp_path, monkeypatch):
+    reports, _, report = seeded(tmp_path)
+    from dashboard.ai_market_analysis import presentation_feed as feed
+    original = feed.build_latest_presentation
+    def latest_failed(*args, **kwargs):
+        value = original(*args, **kwargs)
+        value["latest_generated"] = {"report_id": "report_latest_failed", "eligibility": "AUDIT_FAILED"}
+        return value
+    monkeypatch.setattr(feed, "build_latest_presentation", latest_failed)
+    value = latest_workspace_brief(reports, "ETH-USDT-SWAP", "FULL")
+    assert value["primary_state"] == "LATEST_FAILED"
+    assert value["last_display_eligible_report"]["report_id"] == report["report_id"]
+    assert value["audit"]["status"] == "PASSED"  # retained only as historical metadata
+
+
 def test_wrong_instrument_never_appears_in_history(tmp_path):
     reports, _, _ = seeded(tmp_path)
     assert research_history(reports, "SOL-USDT-SWAP")["items"] == []

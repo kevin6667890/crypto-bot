@@ -1,8 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { compactAiSummary, coverageMatrixRows, isPresent, localizeWorkspaceNarrative, presentAiLevels, workspaceScenarioLabel } from "./aiWorkspaceSemantics";
 import { researchPresentationCopy, selectResearchReport } from "./aiResearchPresentation";
+import { workspaceAiPrimaryState } from "./aiWorkspaceState";
 
 describe("Workspace AI presentation", () => {
+  it("makes a latest audit failure primary over an old valid report", () => {
+    expect(workspaceAiPrimaryState({ display_eligible: true, status: "STALE_AUDITED_REPORT", latest_generated: { eligibility: "AUDIT_FAILED" } })).toBe("LATEST_FAILED");
+    expect(workspaceAiPrimaryState({ display_eligible: true, status: "CURRENT_AUDITED_REPORT" })).toBe("CURRENT_VALID");
+    expect(workspaceAiPrimaryState({ display_eligible: true, status: "STALE_AUDITED_REPORT" })).toBe("STALE_VALID");
+  });
   it.each([null, undefined, "", "—", "unknown", "not applicable", "N/A"])("filters absent value %s", value => {
     expect(isPresent(value)).toBe(false);
   });

@@ -247,6 +247,38 @@ _FLOW_ASSERTION_TERMS = (
 )
 _FLOW_LIMITATION = "订单流不可用，本轮不作为方向确认依据"
 _FLOW_PARTIAL_LIMITATION = "订单流覆盖部分，确认度受限"
+_UNSUPPORTED_LEVEL_LIMITATION = "本轮不展示未经注册表支持的数值位置"
+_LEVEL_CLAIM_TERMS = ("支撑", "压力", "阻力", "关键位", "关键位置")
+
+
+def bind_level_fact_refs(text: str, claim_pack: dict[str, Any]) -> tuple[list[str], bool]:
+    """Return exact LEVEL facts for numeric level prose, or fail closed.
+
+    A provider may only retain a numeric support/resistance statement when every
+    number in that statement resolves to a projected deterministic level.  The
+    returned boolean means the statement must be suppressed, never papered over
+    with unrelated timeframe or warning facts.
+    """
+    value = str(text or "")
+    if not any(term in value for term in _LEVEL_CLAIM_TERMS):
+        return [], False
+    slots = list(claim_pack.get("levels") or [])
+    numbers = [float(item) for item in re.findall(r"(?<![\d.])(\d+(?:\.\d+)?)(?![\d.])", value)]
+    if not numbers:
+        return [str(item["fact_refs"][0]) for item in slots if item.get("fact_refs")], False
+    matched: list[str] = []
+    for number in numbers:
+        candidates = []
+        for slot in slots:
+            for key in ("representative_price", "zone_low", "zone_high"):
+                candidate = slot.get(key)
+                if isinstance(candidate, (int, float)) and abs(float(candidate) - number) <= 0.0001:
+                    candidates.append(str(slot["fact_refs"][0]))
+                    break
+        if not candidates:
+            return [], True
+        matched.extend(candidates)
+    return list(dict.fromkeys(matched)), False
 
 
 def _enforce_numeric_namespaces(value: str, claim_pack: dict[str, Any]) -> str:
@@ -342,8 +374,19 @@ def ground_provider_report(report: dict[str, Any], claim_pack: dict[str, Any]) -
         if (not scenario_ids and section.get("section_id") == empty_scenario_limitation_section
                 and "失效" not in section["body"] and "限制" not in section["body"]):
             section["body"] = section["body"].rstrip("。") + "。证据不足，当前没有可审计的情景失效路径。"
-        section["fact_refs"] = [fact_id for category in sorted(categories) for fact_id in by_category.get(category, [])]
-        section["level_refs"] = level_ids if "LEVEL" in categories else []
+        level_fact_ids, suppress_unsupported_level = bind_level_fact_refs(section["body"], claim_pack)
+        if suppress_unsupported_level:
+            section["body"] = _UNSUPPORTED_LEVEL_LIMITATION + "。"
+            level_fact_ids = []
+        category_fact_ids = []
+        for category in sorted(categories):
+            if category == "LEVEL":
+                category_fact_ids.extend(level_fact_ids)
+            else:
+                category_fact_ids.extend(by_category.get(category, []))
+        section["fact_refs"] = list(dict.fromkeys(category_fact_ids))
+        fact_to_level = {str(item["fact_refs"][0]): str(item["level_id"]) for item in claim_pack["levels"] if item.get("fact_refs")}
+        section["level_refs"] = [fact_to_level[fact_id] for fact_id in level_fact_ids if fact_id in fact_to_level]
         section["scenario_refs"] = scenario_ids if "SCENARIO" in categories else []
         section["macro_refs"] = macro_ids if "MACRO" in categories else []
         section["position_refs"] = position_ids if "POSITION" in categories else []

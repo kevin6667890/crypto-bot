@@ -23,8 +23,9 @@ def utc_now() -> str:
 
 
 class ResearchRepository:
-    def __init__(self, db_path: Path) -> None:
+    def __init__(self, db_path: Path, reconcile_interrupted: bool = True) -> None:
         self.db_path = Path(db_path)
+        self.reconcile_interrupted = bool(reconcile_interrupted)
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.initialize()
 
@@ -168,6 +169,49 @@ class ResearchRepository:
                 CREATE TABLE IF NOT EXISTS strategy_discovery_robustness_runs (id INTEGER PRIMARY KEY AUTOINCREMENT,discovery_run_id INTEGER NOT NULL,status TEXT NOT NULL,request TEXT NOT NULL,robustness_version TEXT NOT NULL,neighbor_version TEXT NOT NULL,cost_stress_version TEXT NOT NULL,selected_candidates TEXT NOT NULL DEFAULT '[]',progress TEXT NOT NULL DEFAULT '{}',result TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,completed_at TEXT,error TEXT);
                 CREATE TABLE IF NOT EXISTS strategy_discovery_ablation_runs (id INTEGER PRIMARY KEY AUTOINCREMENT,discovery_run_id INTEGER NOT NULL,status TEXT NOT NULL,request TEXT NOT NULL,policy TEXT NOT NULL,selected_candidates TEXT NOT NULL DEFAULT '[]',progress TEXT NOT NULL DEFAULT '{}',result TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,completed_at TEXT,error TEXT,job_id INTEGER,retry_of_run_id INTEGER);
                 CREATE TABLE IF NOT EXISTS strategy_discovery_ablation_scenarios (id INTEGER PRIMARY KEY AUTOINCREMENT,ablation_run_id INTEGER NOT NULL,candidate_id INTEGER NOT NULL,scenario_order INTEGER NOT NULL,removed_component TEXT NOT NULL,ablation_identity TEXT NOT NULL,ablation_version TEXT NOT NULL,ablation_identity_version TEXT NOT NULL,status TEXT NOT NULL,normalized_ablation_flags TEXT NOT NULL,source_parameter_hash TEXT NOT NULL,source_execution_hash TEXT NOT NULL,source_candidate_config_hash TEXT NOT NULL,ablated_candidate_config_hash TEXT NOT NULL,dataset_fingerprint TEXT NOT NULL,completed_fold_count INTEGER NOT NULL DEFAULT 0,failed_fold_count INTEGER NOT NULL DEFAULT 0,aggregate_metrics TEXT,comparison_to_base TEXT,scenario_eligibility_status TEXT,scenario_elimination_reasons TEXT,created_at TEXT NOT NULL,completed_at TEXT,error TEXT,UNIQUE(ablation_run_id,candidate_id,ablation_identity),UNIQUE(ablation_run_id,scenario_order));
+                CREATE TABLE IF NOT EXISTS automatic_research_cycles (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, job_id INTEGER, status TEXT NOT NULL,
+                    request TEXT NOT NULL, request_fingerprint TEXT NOT NULL,
+                    research_start INTEGER NOT NULL, research_end INTEGER NOT NULL,
+                    dataset_id INTEGER, dataset_fingerprint TEXT, discovery_run_id INTEGER,
+                    checkpoint TEXT NOT NULL DEFAULT '{}', versions TEXT NOT NULL,
+                    result TEXT, error TEXT, created_at TEXT NOT NULL, started_at TEXT,
+                    updated_at TEXT NOT NULL, completed_at TEXT
+                );
+                CREATE TABLE IF NOT EXISTS automatic_research_scheduler_state (
+                    scheduler_name TEXT PRIMARY KEY,
+                    enabled INTEGER NOT NULL DEFAULT 0,
+                    interval_hours INTEGER NOT NULL,
+                    next_due_at TEXT NOT NULL,
+                    last_scheduled_at TEXT,
+                    last_started_cycle_id INTEGER,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY(last_started_cycle_id) REFERENCES automatic_research_cycles(id)
+                );
+                CREATE TABLE IF NOT EXISTS approved_strategy_registry (
+                    registry_id TEXT PRIMARY KEY, candidate_identity TEXT NOT NULL UNIQUE,
+                    family TEXT NOT NULL, strategy_type TEXT NOT NULL,
+                    serialized_definition TEXT NOT NULL, parameters TEXT NOT NULL,
+                    instrument_scope TEXT NOT NULL, timeframe TEXT NOT NULL,
+                    direction_capability TEXT NOT NULL, discovery_run_id INTEGER,
+                    research_cycle_id INTEGER NOT NULL, source_dataset_fingerprint TEXT NOT NULL,
+                    development_metrics TEXT NOT NULL, walk_forward_metrics TEXT NOT NULL,
+                    holdout_result TEXT NOT NULL, final_oot_result TEXT NOT NULL,
+                    cross_asset_result TEXT NOT NULL, robustness_result TEXT NOT NULL,
+                    eligibility_status TEXT NOT NULL, rejection_reasons TEXT NOT NULL,
+                    contamination_state TEXT NOT NULL, strategy_version TEXT NOT NULL,
+                    engine_version TEXT NOT NULL, policy_version TEXT NOT NULL,
+                    configuration_hash TEXT NOT NULL, development_score REAL,
+                    pareto_rank INTEGER, status TEXT NOT NULL, created_at TEXT NOT NULL,
+                    approved_at TEXT, active_at TEXT, retired_at TEXT,
+                    FOREIGN KEY(research_cycle_id) REFERENCES automatic_research_cycles(id)
+                );
+                CREATE TABLE IF NOT EXISTS strategy_registry_switches (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, previous_registry_id TEXT,
+                    new_registry_id TEXT NOT NULL, reason_code TEXT NOT NULL,
+                    comparison TEXT NOT NULL, research_cycle_id INTEGER NOT NULL,
+                    created_at TEXT NOT NULL
+                );
             """)
             # Fold identity is durable: retries update the same candidate/fold evidence.
             connection.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_discovery_fold_identity ON strategy_discovery_folds(candidate_id,fold_number)")
@@ -182,6 +226,14 @@ class ResearchRepository:
             self._ensure_column(connection, "strategy_discovery_stress_tests", "scenario_name", "TEXT")
             self._ensure_column(connection, "strategy_discovery_stress_tests", "scenario_hash", "TEXT")
             self._ensure_column(connection, "strategy_discovery_stress_tests", "robustness_version", "TEXT")
+            # Additive metadata for deterministic Factor Program candidates.
+            self._ensure_column(connection, "strategy_discovery_candidates", "program_ast", "TEXT")
+            self._ensure_column(connection, "strategy_discovery_candidates", "factor_versions", "TEXT")
+            self._ensure_column(connection, "strategy_discovery_candidates", "program_version", "TEXT")
+            self._ensure_column(connection, "strategy_discovery_candidates", "candidate_identity", "TEXT")
+            self._ensure_column(connection, "strategy_discovery_candidates", "configuration_hash", "TEXT")
+            self._ensure_column(connection, "strategy_discovery_candidates", "direction", "TEXT")
+            self._ensure_column(connection, "strategy_discovery_candidates", "program_timeframe", "TEXT")
             self._ensure_column(connection, "strategy_discovery_stress_tests", "scenario_policy_version", "TEXT")
             self._ensure_column(connection, "strategy_discovery_stress_tests", "source_parameter_hash", "TEXT")
             self._ensure_column(connection, "strategy_discovery_stress_tests", "scenario_parameter_hash", "TEXT")
@@ -199,6 +251,12 @@ class ResearchRepository:
             self._ensure_column(connection, "strategy_discovery_stress_tests", "completed_at", "TEXT")
             connection.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_discovery_robustness_scenario ON strategy_discovery_stress_tests(robustness_run_id,candidate_id,scenario_hash)")
             connection.execute("CREATE INDEX IF NOT EXISTS idx_discovery_ablation_scenarios_run ON strategy_discovery_ablation_scenarios(ablation_run_id,scenario_order)")
+            connection.execute("CREATE INDEX IF NOT EXISTS idx_auto_research_cycles_created ON automatic_research_cycles(created_at DESC)")
+            connection.execute("CREATE INDEX IF NOT EXISTS idx_auto_research_cycles_status ON automatic_research_cycles(status)")
+            connection.execute("CREATE INDEX IF NOT EXISTS idx_auto_research_scheduler_due ON automatic_research_scheduler_state(enabled,next_due_at)")
+            connection.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_auto_research_completed_evidence ON automatic_research_cycles(request_fingerprint,dataset_fingerprint) WHERE status='COMPLETED'")
+            connection.execute("CREATE INDEX IF NOT EXISTS idx_strategy_registry_status ON approved_strategy_registry(status,approved_at DESC)")
+            connection.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_strategy_registry_single_active ON approved_strategy_registry((1)) WHERE status='ACTIVE'")
             self._ensure_column(connection, "optimization_runs", "experiment_family_id", "INTEGER")
             self._ensure_column(connection, "optimization_runs", "parent_run_id", "INTEGER")
             self._ensure_column(connection, "optimization_runs", "post_holdout_adjustment", "INTEGER NOT NULL DEFAULT 0")
@@ -214,6 +272,13 @@ class ResearchRepository:
             self._ensure_column(connection, "paper_trades", "observed_entry_price", "REAL")
             self._ensure_column(connection, "paper_trades", "execution_delay_ms", "INTEGER")
             self._ensure_column(connection, "paper_trades", "observed_slippage_pct", "REAL")
+            self._ensure_column(connection, "paper_trades", "strategy_registry_id", "TEXT")
+            self._ensure_column(connection, "paper_trades", "candidate_identity", "TEXT")
+            self._ensure_column(connection, "paper_trades", "strategy_configuration_hash", "TEXT")
+            self._ensure_column(connection, "decision_signals", "strategy_registry_id", "TEXT")
+            self._ensure_column(connection, "decision_signals", "candidate_identity", "TEXT")
+            self._ensure_column(connection, "decision_evaluations", "strategy_registry_id", "TEXT")
+            self._ensure_column(connection, "decision_evaluations", "candidate_identity", "TEXT")
             self._ensure_column(connection, "backtest_trades", "signal_id", "TEXT")
             self._ensure_column(connection, "backtest_trades", "strategy_version", "TEXT")
             self._ensure_column(connection, "backtest_trades", "config_hash", "TEXT")
@@ -259,11 +324,12 @@ class ResearchRepository:
                     "INSERT INTO repository_migrations VALUES(?,?)",
                     (migration_key, utc_now()),
                 )
-            connection.execute("UPDATE backtest_runs SET status='FAILED',progress=100,progress_message='Interrupted by service restart',message_code='job.interrupted.restart',message_params='{}',error='Backtest worker was interrupted by a service restart',updated_at=? WHERE status IN ('QUEUED','RUNNING')", (utc_now(),))
-            now = utc_now()
-            connection.execute("UPDATE optimization_runs SET status='INTERRUPTED',error='Service restarted while optimization was running',updated_at=?,completed_at=? WHERE status='RUNNING'", (now, now))
-            connection.execute("UPDATE optimization_trials SET status='INTERRUPTED',error='Service restarted while trial was running',completed_at=? WHERE status='RUNNING' AND optimization_run_id IN (SELECT id FROM optimization_runs WHERE status='INTERRUPTED' AND error='Service restarted while optimization was running')", (now,))
-            connection.execute("UPDATE validation_suites SET status='INTERRUPTED',error='Service restarted while validation was running',completed_at=? WHERE status='RUNNING'", (now,))
+            if self.reconcile_interrupted:
+                connection.execute("UPDATE backtest_runs SET status='FAILED',progress=100,progress_message='Interrupted by service restart',message_code='job.interrupted.restart',message_params='{}',error='Backtest worker was interrupted by a service restart',updated_at=? WHERE status IN ('QUEUED','RUNNING')", (utc_now(),))
+                now = utc_now()
+                connection.execute("UPDATE optimization_runs SET status='INTERRUPTED',error='Service restarted while optimization was running',updated_at=?,completed_at=? WHERE status='RUNNING'", (now, now))
+                connection.execute("UPDATE optimization_trials SET status='INTERRUPTED',error='Service restarted while trial was running',completed_at=? WHERE status='RUNNING' AND optimization_run_id IN (SELECT id FROM optimization_runs WHERE status='INTERRUPTED' AND error='Service restarted while optimization was running')", (now,))
+                connection.execute("UPDATE validation_suites SET status='INTERRUPTED',error='Service restarted while validation was running',completed_at=? WHERE status='RUNNING'", (now,))
             count = connection.execute("SELECT COUNT(*) FROM strategy_configs").fetchone()[0]
             if not count:
                 now = utc_now()

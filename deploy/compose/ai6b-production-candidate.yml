@@ -59,6 +59,7 @@ services:
     environment:
       <<: [*ai-disabled, *ai-budget]
       PAPER_API_HOST: 0.0.0.0
+      GIT_COMMIT: ${FACTOR_PROGRAM_GIT_COMMIT:?Factor Program source commit is required}
       PAPER_DB_PATH: /var/lib/paper/paper_trades.db
       MICROSTRUCTURE_DB_PATH: /var/lib/microstructure/market_microstructure.db
       CANONICAL_MICROSTRUCTURE_HISTORY_DB_PATH: /var/lib/microstructure/canonical_microstructure_history_v1.db
@@ -80,6 +81,27 @@ services:
       timeout: 5s
       retries: 3
       start_period: 15s
+
+  # The only queue owner.  The API is deliberately passive so an API restart
+  # cannot reconcile or interrupt an in-flight durable research job.
+  research-worker:
+    <<: *app-security
+    profiles: [ai6b-candidate]
+    command: [python, -m, scripts.run_auto_research_scheduler]
+    environment:
+      PAPER_DB_PATH: /var/lib/paper/paper_trades.db
+      GIT_COMMIT: ${FACTOR_PROGRAM_GIT_COMMIT:?Factor Program source commit is required}
+      RESEARCH_JOB_WORKER_ENABLED: "true"
+      AUTO_RESEARCH_ENABLED: "false"
+      AUTO_RESEARCH_INTERVAL_HOURS: "168"
+      AUTO_RESEARCH_LOOKBACK_DAYS: "730"
+      PROGRAM_DISCOVERY_ENABLED: "true"
+      PROGRAM_DISCOVERY_SEARCH_BUDGET: "500"
+    volumes:
+      - paper-data:/var/lib/paper:rw
+    pids_limit: 96
+    mem_limit: 1g
+    cpus: 0.25
 
   microstructure-collector:
     <<: *app-security

@@ -1,4 +1,4 @@
-"""Fixed, auditable discovery dataset preparation (public OKX candles only)."""
+"""Auditable fixed or explicitly rolling Discovery datasets (public OKX only)."""
 from __future__ import annotations
 import hashlib, json, math
 from datetime import datetime, timezone
@@ -43,7 +43,11 @@ class DiscoveryDatasetService:
         if smoke_test:
             if not start < end or end-start > SMOKE_MAX_SECONDS: raise ValueError('Smoke datasets must be greater than zero and no longer than 31 days.')
             label="-".join(instruments); name=f"discovery-smoke-{label}-{datetime.fromtimestamp(start,timezone.utc):%Y%m%d}-{datetime.fromtimestamp(end,timezone.utc):%Y%m%d}"
-        elif start!=START_TS or end!=END_TS: raise ValueError('Official discovery dataset is fixed at [2024-01-01, 2026-01-01); use --smoke-test for a bounded cache check.')
+        elif bool(request.get('rolling',False)):
+            if not start < end or end-start > 2*366*86400: raise ValueError('Rolling discovery datasets must be positive and at most two years.')
+            if end > int(datetime.now(timezone.utc).timestamp()): raise ValueError('Rolling discovery end must be a completed UTC boundary.')
+            name=f"discovery-rolling-{datetime.fromtimestamp(start,timezone.utc):%Y%m%d}-{datetime.fromtimestamp(end,timezone.utc):%Y%m%d}-{'-'.join(instruments)}-{'-'.join(timeframes)}"
+        elif start!=START_TS or end!=END_TS: raise ValueError('Official discovery dataset is fixed at [2024-01-01, 2026-01-01); rolling ranges require rolling=true.')
         else: name=DATASET_NAME
         if not set(instruments)<=INSTRUMENTS or not set(timeframes)<=set(TIMEFRAME_SECONDS): raise ValueError('Unsupported discovery partition.')
         dataset=self.repository.create_or_get_discovery_dataset(name,start,end,instruments,timeframes,smoke_test=smoke_test); total=len(instruments)*len(timeframes)

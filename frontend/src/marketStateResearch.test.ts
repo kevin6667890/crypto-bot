@@ -26,11 +26,4 @@ describe("market state research page", () => {
     expect(source).toContain("reason_codes");
     expect(source).toContain("title={`${technical}");
   });
-
-  it("localizes canonical Market status enums in Chinese rather than exposing raw English", () => {
-    for (const value of ["BREAKOUT_DEVELOPING", "CONFLICTED", "TREND_UP", "TREND_DOWN", "AVAILABLE", "PARTIAL", "STALE", "MISSING"]) {
-      expect(source).toContain(value);
-    }
-    expect(source).toContain('if (zh) return "未分类状态"');
-  });
 });

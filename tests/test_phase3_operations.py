@@ -34,6 +34,21 @@ def test_job_queue_dedupe_limit_cancel_retry_and_restart_recovery(tmp_path:Path)
     restarted=JobQueue(db,max_queue=2,autostart=False)
     assert restarted.get(first["id"])["status"]=="INTERRUPTED"
 
+
+def test_active_worker_lease_blocks_stale_api_restart_reconciliation(tmp_path:Path):
+    db=tmp_path/"jobs.db"; queue=JobQueue(db,autostart=False)
+    job=queue.enqueue("TEST",{"x":1},"ip")
+    with queue.connect() as c:
+        c.execute("UPDATE research_jobs SET status='RUNNING',worker_owner_id=? WHERE id=?",("live-worker",job["id"]))
+        c.execute("INSERT INTO research_worker_leases(worker_id,heartbeat_unix) VALUES(?,strftime('%s','now'))",("live-worker",))
+    # This models an old/API process that still runs the historical blanket
+    # recovery SQL.  The DB-level guard keeps the live worker's job intact.
+    restarted=JobQueue(db,autostart=False)
+    assert restarted.get(job["id"])["status"]=="RUNNING"
+    with restarted.connect() as c:c.execute("DELETE FROM research_worker_leases WHERE worker_id='live-worker'")
+    expired=JobQueue(db,autostart=False)
+    assert expired.get(job["id"])["status"]=="INTERRUPTED"
+
 def test_single_worker_failure_does_not_block_next_job(tmp_path:Path):
     queue=JobQueue(tmp_path/"worker.db",max_queue=5,autostart=False); active=0; maximum=0; lock=threading.Lock()
     def handler(job_id,payload,checkpoint):

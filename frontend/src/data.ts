@@ -314,6 +314,16 @@ export type RuntimeAnalysis = {
     collection?: { coverage_seconds?: number; trade_count?: number; reason?: string };
   };
   updated_at?: string;
+  strategy_registry_id?: string;
+  candidate_identity?: string;
+  registry_source?: "APPROVED_REGISTRY";
+};
+export type ApprovedStrategy = {
+  registry_id: string; candidate_identity: string; family: string; strategy_type: string;
+  strategy_version: string; status: "APPROVED" | "ACTIVE" | "RETIRED" | "REJECTED";
+  approved_at?: string; research_cycle_id: number; direction_capability: "LONG" | "SHORT" | "BOTH";
+  source_dataset_fingerprint: string; development_score?: number; timeframe: string;
+  serialized_definition: { validation_status?: Record<string,string>; dataset_range?: { start:number; end:number }; router_family?: string };
 };
 export type FlowStatus = {
   cvd: number;
@@ -381,6 +391,8 @@ export type ReplayDetail = {
 export type PaperStatus = {
   instrument: string;
   analysis: RuntimeAnalysis;
+  active_strategy?: ApprovedStrategy | null;
+  strategy_provenance?: { source: "APPROVED_REGISTRY" | "LEGACY_BASELINE"; registry_id?: string; candidate_identity?: string; research_cycle_id?: number; approved_at?: string };
   flow?: FlowStatus | null;
   risk: RiskStatus;
   events: EventLog[];
@@ -439,8 +451,6 @@ export type AuditedAiBrief = {
   freshness: { status?: string; quality?: string; confirmed_15m_bars_behind?: number; age_seconds?: number | null; threshold_seconds?: number };
   latest_generated: { report_id?: string; eligibility?: string; queue_status?: string; decision_time?: string };
   audit: { status?: string; overall_score?: number; promotion_eligible?: boolean };
-  primary_state?: "CURRENT_VALID" | "LATEST_FAILED" | "LATEST_PENDING" | "STALE_VALID" | "NO_VALID_REPORT";
-  last_display_eligible_report?: { report_id?: string; generated_at?: string | null; freshness_status?: string } | null;
   provider: string | null;
   model: string | null;
   headline: string | null;
@@ -452,7 +462,6 @@ export type AuditedAiBrief = {
   drivers?: Array<{ label: string; value?: unknown; quality?: string }>;
   risks?: string[];
   levels?: Array<{ level_id: string; representative_price?: number; asserted_role?: string; asserted_state?: string; primary_timeframe?: string; invalidation?: string }>;
-  long_term_levels?: Array<{ level_id: string; representative_price?: number; asserted_role?: string; asserted_state?: string; primary_timeframe?: string; distance_pct?: number; reference_tier?: "LONG_TERM_REFERENCE" }>;
   scenarios?: Array<{ scenario_id: string; scenario_type?: string; direction?: string; status?: string; trigger_text?: string; confirmation_text?: string; invalidation_text?: string }>;
   timeframe_quality?: Array<{ timeframe: string; availability: "AVAILABLE" | "PARTIAL" | "STALE" | "MISSING"; quality: string; bar_count: number; required_bar_count: number; latest_at?: string | null; reason_code?: string | null }>;
   evidence_quality?: {

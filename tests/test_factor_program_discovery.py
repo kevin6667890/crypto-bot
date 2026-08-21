@@ -83,3 +83,11 @@ def test_development_batch_transient_release_is_safe_for_each_completed_candidat
     # Linux workers trim large canonical-backtest allocator arenas; other
     # supported environments retain the same safe no-op fallback.
     release_factor_program_transients()
+
+
+def test_240_bar_causal_fold_window_matches_full_development_backtest_metrics():
+    all_rows = rows(600)
+    start, end = 400 * 900, 550 * 900
+    full = canonical_backtest(program(), all_rows, "BTC-USDT", "15m", start, end)
+    bounded = canonical_backtest(program(), all_rows[160:550], "BTC-USDT", "15m", start, end)
+    assert bounded["metrics"] == full["metrics"]

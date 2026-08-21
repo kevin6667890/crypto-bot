@@ -432,8 +432,6 @@ class AutomaticResearchService:
                     request["splits"]["development_end"] - 1,
                 )
                 dev_rows = [row for row in dev_rows if bool(row.get("confirmed", 1))]
-                benchmarks = [buy_and_hold(dev_rows, start, end - TIMEFRAME_SECONDS[timeframe], execution)
-                              for _, _, start, end in splits["development_folds"]]
                 for item in batch:
                     candidate_id = int(item["id"])
                     with self.repository.connect() as connection:
@@ -444,10 +442,17 @@ class AutomaticResearchService:
                     program = deserialize_program(_loads(candidate["program_ast"], {}))
                     folds = []
                     for _, _, start, end in splits["development_folds"]:
-                        outcome = canonical_backtest(program, dev_rows, "BTC-USDT", timeframe, start, end - TIMEFRAME_SECONDS[timeframe])
+                        # Factor metadata caps warmup at 240 bars.  Passing only
+                        # that causal prefix plus this validation fold is metric-
+                        # equivalent to the full Development window, but avoids
+                        # rebuilding execution evidence for unrelated prior bars.
+                        fold_rows = [row for row in dev_rows
+                                     if int(row["ts"]) >= start - 240 * TIMEFRAME_SECONDS[timeframe]
+                                     and int(row["ts"]) < end]
+                        outcome = canonical_backtest(program, fold_rows, "BTC-USDT", timeframe, start, end - TIMEFRAME_SECONDS[timeframe])
                         folds.append({"status": "COMPLETED", "metrics": outcome["metrics"],
-                                      "buy_hold_metrics": benchmarks[len(folds)]})
-                        del outcome
+                                      "buy_hold_metrics": buy_and_hold(fold_rows, start, end - TIMEFRAME_SECONDS[timeframe], execution)})
+                        del fold_rows, outcome
                     metrics = aggregate(folds); verdict = evaluate_eligibility(metrics, timeframe, "DEVELOPMENT_CANDIDATE")
                     # Existing discovery scoring accepts its structural-complexity
                     # band (5..8); preserve program complexity separately while
@@ -477,7 +482,7 @@ class AutomaticResearchService:
                            "auto_research.factor_program_development_batch",
                            {"batch": batch_index, "total_batches": total_batches,
                             "last_completed_candidate_id": last_id})
-                del dev_rows, benchmarks
+                del dev_rows
                 release_factor_program_transients()
             # Eligible rank remains derived from the durable candidate records,
             # so a resumed run never needs to keep all candidate results in RAM.

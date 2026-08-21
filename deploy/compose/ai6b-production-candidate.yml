@@ -61,7 +61,6 @@ services:
       PAPER_API_HOST: 0.0.0.0
       GIT_COMMIT: ${FACTOR_PROGRAM_GIT_COMMIT:?Factor Program source commit is required}
       PAPER_DB_PATH: /var/lib/paper/paper_trades.db
-      GIT_COMMIT: ${FACTOR_PROGRAM_GIT_COMMIT:?Factor Program source commit is required}
       MICROSTRUCTURE_DB_PATH: /var/lib/microstructure/market_microstructure.db
       CANONICAL_MICROSTRUCTURE_HISTORY_DB_PATH: /var/lib/microstructure/canonical_microstructure_history_v1.db
       AI_MARKET_REPORT_DB_PATH: /var/lib/ai-report/ai_market_reports.db
@@ -91,6 +90,7 @@ services:
     command: [python, -m, scripts.run_auto_research_scheduler]
     environment:
       PAPER_DB_PATH: /var/lib/paper/paper_trades.db
+      GIT_COMMIT: ${FACTOR_PROGRAM_GIT_COMMIT:?Factor Program source commit is required}
       RESEARCH_JOB_WORKER_ENABLED: "true"
       AUTO_RESEARCH_ENABLED: "false"
       AUTO_RESEARCH_INTERVAL_HOURS: "168"

@@ -358,14 +358,29 @@ class AutomaticResearchService:
             })
             discovery_id, discovery_request = inline["id"], inline["request"]
             self._save_checkpoint(cycle_id, "discovery_created", {"run_id":discovery_id}, discovery_run_id=discovery_id)
-        self.discovery._run_job(cycle["job_id"], discovery_request,
-            lambda _, pct, msg, args=None: checkpoint(cycle["job_id"], 12+int((pct or 0)*.38), msg, args or {}))
+        with self.repository.connect() as connection:
+            template_development_complete = connection.execute(
+                "SELECT COUNT(*) FROM strategy_discovery_candidates WHERE discovery_run_id=? AND template!='FACTOR_PROGRAM' AND status='DEVELOPMENT_CANDIDATE'",
+                (int(discovery_id),),
+            ).fetchone()[0] > 0
+        if not template_development_complete:
+            self.discovery._run_job(cycle["job_id"], discovery_request,
+                lambda _, pct, msg, args=None: checkpoint(cycle["job_id"], 12+int((pct or 0)*.38), msg, args or {}))
         # Program search is opt-in per run.  It shares the durable discovery run
         # and exact development-only folds; recurring template scheduling is unchanged.
         if os.getenv("PROGRAM_DISCOVERY_ENABLED", "false").lower() == "true":
             budget = min(500, max(1, int(os.getenv("PROGRAM_DISCOVERY_SEARCH_BUDGET", "200"))))
-            programs = [p for p in generate_factor_programs(request["seed"], budget) if not validate_factor_program(p)]
-            program_candidate_ids=persist_candidates(self.repository, int(discovery_id), programs, seed=request["seed"])
+            with self.repository.connect() as connection:
+                existing_programs = connection.execute(
+                    "SELECT id,program_ast FROM strategy_discovery_candidates WHERE discovery_run_id=? AND template='FACTOR_PROGRAM' ORDER BY id",
+                    (int(discovery_id),),
+                ).fetchall()
+            if existing_programs:
+                programs=[deserialize_program(_loads(row["program_ast"], {})) for row in existing_programs]
+                program_candidate_ids=[int(row["id"]) for row in existing_programs]
+            else:
+                programs = [p for p in generate_factor_programs(request["seed"], budget) if not validate_factor_program(p)]
+                program_candidate_ids=persist_candidates(self.repository, int(discovery_id), programs, seed=request["seed"])
             dev_rows = self.repository.candles("BTC-USDT", timeframe, request["splits"]["development_start"] - 240 * TIMEFRAME_SECONDS[timeframe], request["splits"]["development_end"] - 1)
             dev_rows = [row for row in dev_rows if bool(row.get("confirmed", 1))]
             ranked=[]

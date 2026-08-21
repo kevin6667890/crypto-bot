@@ -7,6 +7,10 @@ from dashboard.strategy_router_v2 import StrategyRouterV2
 from dashboard.approved_strategy_runtime import evaluate_frozen_candidate
 from dashboard.factor_program_discovery import persist_candidates
 from dashboard.research_repository import ResearchRepository
+from dashboard.automatic_research import (
+    FACTOR_PROGRAM_DEVELOPMENT_BATCH_SIZE,
+    factor_program_development_batches,
+)
 
 def rows(count=90):
     return [{"ts": i * 900, "open": 100 + i * .1, "high": 101 + i * .1, "low": 99 + i * .1,
@@ -53,3 +57,22 @@ def test_program_candidate_is_durable_in_existing_candidate_table(tmp_path):
     persist_candidates(repo,run,[program()],seed=1)
     with repo.connect() as c: row=c.execute("SELECT program_ast,factor_versions,program_version,candidate_identity,configuration_hash,direction,program_timeframe,complexity FROM strategy_discovery_candidates").fetchone()
     assert row[0] and row[1] and row[3]==row[4]==program().identity and row[5]=="LONG"
+
+
+def test_development_batches_bound_500_candidates_and_resume_without_replaying_completed_work():
+    rows = [{"id": index, "status": "GENERATED"} for index in range(1, 501)]
+    batches = factor_program_development_batches(rows)
+    assert FACTOR_PROGRAM_DEVELOPMENT_BATCH_SIZE == 25
+    assert len(batches) == 20
+    assert all(len(batch) <= FACTOR_PROGRAM_DEVELOPMENT_BATCH_SIZE for batch in batches)
+    assert [row["id"] for batch in batches for row in batch] == list(range(1, 501))
+
+    # Candidate completion is durable before the batch checkpoint.  A restart
+    # therefore selects only unfinished IDs and cannot repeat prior batches.
+    resumed = [{"id": index, "status": "DEVELOPMENT_CANDIDATE" if index <= 50 else "GENERATED"}
+               for index in range(1, 501)]
+    resumed_batches = factor_program_development_batches(resumed)
+    assert [row["id"] for batch in resumed_batches for row in batch] == list(range(51, 501))
+    # Fixed ordering means batch evaluation has the same candidate order as an
+    # equivalent single-pass evaluation.
+    assert [row["id"] for batch in batches for row in batch] == [row["id"] for row in rows]

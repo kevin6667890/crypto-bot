@@ -31,8 +31,8 @@ export default function StrategyResearchRoute({
         </nav>
       </header>
       <div hidden={view !== "overview"} data-research-view="overview">
-        <DiscoveryLab />
         <AiReportResearch instrument={instrument} />
+        <DiscoveryLab />
         <details className="advanced-manual-research">
           <summary><span><b>Advanced Manual Research</b><small>For single-strategy reproduction, debugging, parameter experiments, and manual historical validation.</small></span><i>Open workspace</i></summary>
           <p className="advanced-manual-research-note">This does not represent the Active Strategy and cannot bypass Automatic Research or the Approved Registry.</p>

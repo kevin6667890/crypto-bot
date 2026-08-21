@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { compactAiSummary, coverageMatrixRows, isPresent, localizeWorkspaceNarrative, presentAiLevels, workspaceScenarioLabel } from "./aiWorkspaceSemantics";
 import { researchPresentationCopy, selectResearchReport } from "./aiResearchPresentation";
 import { workspaceAiPrimaryState } from "./aiWorkspaceState";
+import { crossTimeframeNarrative, frameNarrative, intelligenceCenter, localizeAiRule } from "./aiIntelligencePresentation";
 // @ts-expect-error Node source inspection is a product-layout regression test.
 import { readFileSync } from "node:fs";
 
@@ -87,5 +88,31 @@ describe("AI product presentation closure", () => {
     expect(source).toContain('data-testid="research-ai-timeframes"');
     expect(source).toContain('data-testid="research-ai-price-map"');
     expect(source).toContain('data-testid="research-ai-scenarios"');
+    expect(source).toContain('data-testid="research-ai-synthesis"');
+    expect(source).toContain('data-testid="research-ai-timeframe-narratives"');
+  });
+
+  it("builds explainable five-timeframe research prose without raw rule fragments", () => {
+    const center = intelligenceCenter({
+      audit: { overall_score: 100 },
+      intelligence: {
+        alignment: "CONFLICTED",
+        conflicts: ["SETUP_COOLING_WHILE_HIGHER_TIMEFRAMES_EXTENDED"],
+        dominant_context: "HIGHER_TIMEFRAME_EXTENSION",
+        tactical: { trigger: "confirmed close above the nearest active resistance or impulse extreme", invalidation: "two confirmed 15m closes violate the referenced boundary" },
+        timeframes: {
+          "15m": { role: "TACTICAL", state: "IMPULSE_UP", local_low: 2300, local_high: 2400, ma_distances_pct: { ema20: 1, ma60: 2 }, momentum: { state: "MOMENTUM_REACCELERATING" } },
+          "1H": { role: "SETUP_CONTEXT", state: "TREND_CONTINUATION", momentum: { state: "MOMENTUM_COOLING" } },
+          "4H": { role: "PRIMARY_ENVIRONMENT", state: "HIGH_LEVEL_COMPRESSION", extension_state: "HIGHLY_EXTENDED" },
+          "1D": { role: "MEDIUM_TERM_DIRECTION", state: "TREND_CONTINUATION", extension_state: "HIGHLY_EXTENDED" },
+          "1W": { role: "LONG_TERM_STRUCTURE", state: "DEEP_PULLBACK", ma_distances_pct: { ma60: 3, ma200: 5 } },
+        },
+      },
+    }, [], "zh");
+    expect(center.frames).toHaveLength(5);
+    expect(center.frames.find(item => item.timeframe === "1W")?.state).toBe("长期修复");
+    expect(frameNarrative(center.frames[0], "zh")).toContain("局部支撑参考 2300");
+    expect(crossTimeframeNarrative(center, "zh")).toContain("核心矛盾");
+    expect(localizeAiRule("two confirmed 15m closes violate the referenced boundary", "zh")).toContain("连续两根");
   });
 });

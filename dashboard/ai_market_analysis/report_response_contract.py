@@ -36,6 +36,13 @@ FULL_SECTION_IDS = (
     "CONCLUSION", "RECENT_PROCESS", "MOVE_NATURE", "TF_15M", "TF_1H", "TF_4H", "TF_1D",
     "TF_1W", "ORDER_FLOW", "KEY_LEVELS", "SCENARIOS", "LIMITATIONS",
 )
+# QUICK remains one provider request and one audit, but it is no longer a
+# one-paragraph-only product surface.  These bounded sections give Research
+# an auditable narrative while Workspace continues to consume QUICK_SUMMARY.
+QUICK_SECTION_IDS = (
+    "QUICK_SUMMARY", "CONCLUSION", "TF_15M", "TF_1H", "TF_4H", "TF_1D", "TF_1W",
+    "ORDER_FLOW", "KEY_LEVELS", "SCENARIOS", "LIMITATIONS",
+)
 ALL_SECTION_IDS = (
     "QUICK_SUMMARY", "CONCLUSION", "MACRO_BACKGROUND", "RECENT_PROCESS", "MOVE_NATURE",
     "TF_15M", "TF_1H", "TF_4H", "TF_1D", "TF_1W", "ORDER_FLOW", "KEY_LEVELS",
@@ -135,7 +142,7 @@ def expected_section_manifest(mode: str, has_macro: bool, *, has_flow: bool = Tr
                               has_long_term: bool = True) -> dict[str, Any]:
     """Return the one canonical required/forbidden section contract for a frozen context."""
     if mode == "QUICK":
-        required = ["QUICK_SUMMARY"]
+        required = list(QUICK_SECTION_IDS)
     else:
         required = list(FULL_SECTION_IDS)
         if not has_flow:
@@ -148,10 +155,10 @@ def expected_section_manifest(mode: str, has_macro: bool, *, has_flow: bool = Tr
             required.append("POSITION_PLAN")
     forbidden = [section_id for section_id in ALL_SECTION_IDS if section_id not in required]
     conditions = {
-        "QUICK_SUMMARY": "required only in QUICK",
+        "QUICK_SUMMARY": "required only in QUICK and is the compact Workspace projection",
         "MACRO_BACKGROUND": "required only in FULL/POSITION_AWARE with frozen macro evidence; otherwise forbidden",
-        "ORDER_FLOW": "required only when usable flow evidence exists; otherwise forbidden and note one limitation in LIMITATIONS",
-        "TF_1W": "required only when usable long-term evidence exists; otherwise forbidden and note status once in LIMITATIONS",
+        "ORDER_FLOW": "required in every report; when flow is unavailable, state that limitation without a directional flow claim",
+        "TF_1W": "required in every report; when long-term evidence is unavailable, state that status without a directional long-term claim",
         "KEY_LEVELS": "required in FULL/POSITION_AWARE; use limitation text when levels are unavailable",
         "SCENARIOS": "required in FULL/POSITION_AWARE; use limitation text when scenarios are unavailable",
         "POSITION_PLAN": "required only in POSITION_AWARE; otherwise forbidden",

@@ -1,2 +1,2 @@
-生成 QUICK 报告，保持简洁，正常约 1200–1800 tokens，硬上限 200000 tokens。包含 headline、当前阶段、方向、本轮性质、两个支撑、两个压力、三条订单流事实、一条失效条件和数据警告。不展开五周期，不给持仓操作或无来源宏观。
-QUICK 摘要顺序固定为：市场阶段、方向、当前结构、场景、关键位/失效、订单流确认、长期背景、宏观背景。无对应证据的增强项只在末尾简短说明一次，不得重复。
+生成 QUICK 报告，保持紧凑但可用于 Research 深度中心，正常约 1800–2600 tokens，硬上限 200000 tokens。一次输出同时服务 Workspace 与 Research：QUICK_SUMMARY 仅用于首页压缩决策视图；其余 section 为同一审计报告中的有界研究叙事，不增加 Provider 调用。
+严格依照 EXPECTED_SECTION_MANIFEST。每个周期 section 使用两至四句，解释该周期的结构、动量或伸展与当前含义；不得重复同一事实。ORDER_FLOW 必须分别说明 CVD 与 OI 的可用性及 Price × OI 的 proxy 边界。KEY_LEVELS 仅解释已注册位置。SCENARIOS 保持条件式，逐项包含触发、确认与失效。LIMITATIONS 只集中披露一次。不给持仓操作或无来源宏观。

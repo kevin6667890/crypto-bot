@@ -29,7 +29,8 @@ def audit_coverage(report:dict[str,Any],claims:list[dict[str,Any]],context:dict[
     invalid_ratio=1.0 if required_invalidations==0 else covered_invalidations/required_invalidations
     if invalid_ratio<1:codes.append("INVALIDATION_MISSING")
     warnings=[f for f in facts if f["category"]=="WARNING" and f["fact_id"].startswith(("DATA_","MACRO_UNAVAILABLE"))]
-    warning_refs={r for c in claims if c["section_id"] in ({"QUICK_SUMMARY"} if mode=="QUICK" else {"LIMITATIONS"}) for r in c.get("fact_refs",[])}
+    warning_sections={"QUICK_SUMMARY", "LIMITATIONS"} if mode=="QUICK" else {"LIMITATIONS"}
+    warning_refs={r for c in claims if c["section_id"] in warning_sections for r in c.get("fact_refs",[])}
     critical=[f for f in warnings if f["fact_id"] in {"DATA_QUALITY","CORE_QUALITY","ANALYSIS_AVAILABILITY"} or (f["fact_id"].startswith("DATA_WARNING_") and any(x in str(f["value"]).upper() for x in ("GAP","STALE","MISSING")))]
     covered_warnings=sum(1 for f in critical if f["fact_id"] in warning_refs);warning_ratio=1.0 if not critical else covered_warnings/len(critical)
     if warning_ratio<1:codes.append("CRITICAL_WARNING_OMITTED")

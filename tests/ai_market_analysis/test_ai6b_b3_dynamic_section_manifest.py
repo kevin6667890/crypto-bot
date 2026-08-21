@@ -15,7 +15,7 @@ from tests.ai_market_analysis.test_report_provider_validation import setup
 
 
 @pytest.mark.parametrize(("mode", "macro", "required", "forbidden"), [
-    ("QUICK", False, ["QUICK_SUMMARY"], "MACRO_BACKGROUND"),
+    ("QUICK", False, ["QUICK_SUMMARY", "CONCLUSION", "TF_15M", "TF_1H", "TF_4H", "TF_1D", "TF_1W", "ORDER_FLOW", "KEY_LEVELS", "SCENARIOS", "LIMITATIONS"], "MACRO_BACKGROUND"),
     ("FULL", False, ["CONCLUSION", "RECENT_PROCESS", "MOVE_NATURE", "TF_15M", "TF_1H",
                      "TF_4H", "TF_1D", "TF_1W", "ORDER_FLOW", "KEY_LEVELS", "SCENARIOS",
                      "LIMITATIONS"], "MACRO_BACKGROUND"),
@@ -62,4 +62,3 @@ def test_full_empty_flow_levels_scenarios_keep_required_sections_as_limitations(
     assert all(section in required for section in ("ORDER_FLOW", "KEY_LEVELS", "SCENARIOS"))
     rules = manifest["conditional_section_rules"]
     assert all("limitation" in rules[section] for section in ("ORDER_FLOW", "KEY_LEVELS", "SCENARIOS"))
-

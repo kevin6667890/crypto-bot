@@ -95,6 +95,11 @@ def _intelligence_projection(
             "volume": intelligence.get("volume"),
             "local_high": intelligence.get("local_high"),
             "local_low": intelligence.get("local_low"),
+            "current_price": intelligence.get("current_price"),
+            "ma_distances_pct": intelligence.get("ma_distances_pct"),
+            "atr_normalized_extension": intelligence.get("atr_normalized_extension"),
+            "recent_return_pct": intelligence.get("recent_return_pct"),
+            "recent_drawdown_pct": intelligence.get("recent_drawdown_pct"),
         }
     summary = base.get("multi_timeframe_summary") or {}
     tactical = ((frames.get("15m") or {}).get("tactical") or {}).copy()

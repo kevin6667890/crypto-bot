@@ -22,6 +22,14 @@ export type IntelligenceFrame = {
   momentum?: string;
   extension?: string;
   observation?: string;
+  localHigh?: number;
+  localLow?: number;
+  maDistances?: LooseRecord;
+  impulse?: LooseRecord;
+  pullback?: LooseRecord;
+  compression?: LooseRecord;
+  volumeStates?: string[];
+  providerNarrative?: string;
 };
 
 export type IntelligenceCenter = {
@@ -30,6 +38,7 @@ export type IntelligenceCenter = {
   alignment?: string;
   flow?: string;
   oi?: string;
+  oiQuality?: string;
   priceOi?: string;
   volume?: string;
   impulse?: string;
@@ -39,6 +48,8 @@ export type IntelligenceCenter = {
   trigger?: string;
   invalidation?: string;
   auditScore?: unknown;
+  conflicts: string[];
+  dominantContext?: string;
 };
 
 const role: Record<IntelligenceTimeframe, Record<Language, string>> = {
@@ -84,10 +95,19 @@ const stateLabels: Record<string, Record<Language, string>> = {
   FLOW_COMPLETE: { zh: "订单流完整", en: "Flow complete" },
   FLOW_PARTIAL_USABLE: { zh: "订单流部分可用", en: "Flow partially usable" },
   FLOW_UNAVAILABLE: { zh: "订单流暂不可用", en: "Flow unavailable" },
+  VALID: { zh: "可用", en: "Available" },
+  AVAILABLE: { zh: "可用", en: "Available" },
+  MISSING: { zh: "不可用", en: "Unavailable" },
+  INSUFFICIENT_DATA: { zh: "数据不足", en: "Insufficient data" },
   ALIGNED: { zh: "多周期同向", en: "Aligned" },
   MIXED: { zh: "多周期混合", en: "Mixed" },
   CONFLICTED: { zh: "多周期分歧", en: "Conflicted" },
   HIGHER_TIMEFRAME_EXTENSION: { zh: "高周期仍伸展", en: "Higher-timeframe extension" },
+  TACTICAL_WEAKNESS_INSIDE_HIGHER_TIMEFRAME_EXTENSION: { zh: "短线走弱，但高周期仍处于伸展", en: "Tactical weakness inside higher-timeframe extension" },
+  SETUP_COOLING_WHILE_HIGHER_TIMEFRAMES_EXTENDED: { zh: "小时级动量降温，但高周期仍处于伸展", en: "Setup cooling while higher timeframes remain extended" },
+  LONG_TERM_RECOVERY: { zh: "长期修复", en: "Long-term recovery" },
+  LONG_TERM_PULLBACK: { zh: "长期回撤", en: "Long-term pullback" },
+  LONG_TERM_TREND: { zh: "长期趋势", en: "Long-term trend" },
 };
 
 function record(value: unknown): LooseRecord { return value && typeof value === "object" && !Array.isArray(value) ? value as LooseRecord : {}; }
@@ -101,6 +121,38 @@ function section(sections: Section[], id: string): string | undefined {
 function field(value: LooseRecord, ...names: string[]): unknown {
   for (const name of names) if (value[name] != null && value[name] !== "") return value[name];
   return undefined;
+}
+function numeric(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+export function localizeAiRule(value: unknown, language: Language): string | undefined {
+  if (typeof value !== "string" || !value.trim()) return undefined;
+  const known: Record<string, Record<Language, string>> = {
+    "confirmed close above the nearest active resistance or impulse extreme": { zh: "确认收于最近有效压力位或当前脉冲高点上方", en: "Confirmed close above the nearest active resistance or impulse extreme" },
+    "two confirmed 15m closes violate the referenced boundary": { zh: "连续两根已确认的15分钟K线收于该战术边界下方", en: "Two confirmed 15-minute closes violate the referenced tactical boundary" },
+    "price enters the flipped breakout/retest zone": { zh: "价格进入已翻转的突破／回测区域", en: "Price enters the flipped breakout/retest zone" },
+    "two confirmed closes return inside the prior range below the core breakout zone": { zh: "连续两根已确认K线重新收回核心突破区下方的原区间", en: "Two confirmed closes return inside the prior range below the core breakout zone" },
+    "a confirmed retest fails to reclaim the referenced zone with weakening CVD": { zh: "确认回测未能重新站回该区域，且 CVD 走弱", en: "A confirmed retest fails to reclaim the referenced zone with weakening CVD" },
+    "volume recovers and CVD turns positive on the confirming close": { zh: "确认收盘时成交量回升，且 CVD 转为正向", en: "Volume recovers and CVD turns positive on the confirming close" },
+    "two confirmed closes hold the referenced zone with contracting sell volume": { zh: "连续两根已确认K线守住该区域，且卖出量能收缩", en: "Two confirmed closes hold the referenced zone with contracting sell volume" },
+    "OI must not expand aggressively while price loses the zone": { zh: "价格失守该区域时，OI 不应激进扩张", en: "OI must not expand aggressively while price loses the zone" },
+    "funding/basis must not show extreme leverage expansion opposing the path": { zh: "资金费率／基差不应出现与该路径相反的极端杠杆扩张", en: "Funding/basis must not show extreme leverage expansion opposing the path" },
+    "volume regime must agree with the trigger, contraction on retest and expansion on continuation/failure": { zh: "量能状态需与触发一致：回测时收缩，延续或失败时扩张", en: "Volume regime must agree with the trigger, contracting on retest and expanding on continuation or failure" },
+  };
+  if (known[value]) return known[value][language];
+  const fallback = localizeWorkspaceNarrative(value, language);
+  return language === "zh" && /[A-Za-z]{4,}/.test(fallback) ? "依据已注册的审计条件" : fallback;
+}
+function weeklyPresentationState(frame: LooseRecord): string | undefined {
+  const state = String(field(frame, "state", "structure_state", "tactical_state") ?? field(record(frame.tactical), "state") ?? "");
+  if (!state) return undefined;
+  if (["DEEP_PULLBACK", "PULLBACK", "SHALLOW_PULLBACK"].includes(state)) {
+    const distances = record(frame.ma_distances_pct);
+    const major = [numeric(distances.ma60), numeric(distances.ma200)].filter((value): value is number => value != null);
+    return major.length >= 1 && major.every(value => value >= 0) ? "LONG_TERM_RECOVERY" : "LONG_TERM_PULLBACK";
+  }
+  if (["TREND_CONTINUATION", "IMPULSE_UP"].includes(state)) return "LONG_TERM_TREND";
+  return state;
 }
 
 /**
@@ -122,12 +174,20 @@ export function intelligenceCenter(input: unknown, sections: Section[] = [], lan
     return {
       timeframe,
       role: text(field(frame, "role"), language) || role[timeframe][language],
-      state: text(field(frame, "state", "structure_state", "tactical_state") ?? field(tactical, "state"), language),
+      state: text(timeframe === "1W" ? weeklyPresentationState(frame) : field(frame, "state", "structure_state", "tactical_state") ?? field(tactical, "state"), language),
       momentum: text(field(momentum, "state") ?? field(frame, "momentum_state"), language),
       extension: text(field(frame, "extension_state"), language),
       // Volume is folded into the observation only when the API supplied no
       // narrative, keeping individual cards compact and non-duplicative.
       observation,
+      localHigh: numeric(frame.local_high),
+      localLow: numeric(frame.local_low),
+      maDistances: record(frame.ma_distances_pct),
+      impulse: record(tactical.impulse),
+      pullback: record(tactical.pullback),
+      compression: record(tactical.compression),
+      volumeStates: Array.isArray(volume.states) ? volume.states.map(String) : [],
+      providerNarrative: language === "zh" ? fallback : undefined,
     };
   });
   const tactical = record(intelligence.tactical);
@@ -142,20 +202,91 @@ export function intelligenceCenter(input: unknown, sections: Section[] = [], lan
     alignment: text(field(intelligence, "alignment", "dominant_context", "multi_timeframe_state"), language),
     flow: text(field(flowOi, "flow_state", "flow_quality", "flow_confirmation") ?? field(record(brief.evidence_quality), "flow_quality"), language),
     oi: text(field(flowOi, "oi_state"), language),
+    oiQuality: text(field(flowOi, "oi_quality"), language),
     priceOi: text(field(flowOi, "price_oi_state", "price_oi_relation"), language),
     volume: text(field(volume, "state") ?? intelligence.volume_state, language),
     impulse: text(field(tactical, "impulse") ?? intelligence.impulse_state, language),
     priceMap,
     longTerm,
     scenarios,
-    trigger: text(field(tactical, "trigger") ?? intelligence.trigger, language),
-    invalidation: text(field(tactical, "invalidation") ?? intelligence.invalidation, language),
+    trigger: localizeAiRule(field(tactical, "trigger") ?? intelligence.trigger, language),
+    invalidation: localizeAiRule(field(tactical, "invalidation") ?? intelligence.invalidation, language),
     auditScore: record(brief.audit).overall_score,
+    conflicts: Array.isArray(intelligence.conflicts) ? intelligence.conflicts.map(String) : [],
+    dominantContext: text(field(intelligence, "dominant_context"), language),
   };
 }
 
 export function visibleFrame(frame: IntelligenceFrame): boolean {
   return Boolean(frame.state || frame.momentum || frame.extension || frame.observation);
+}
+
+function price(value: number | undefined): string | undefined {
+  return value == null ? undefined : Number.isInteger(value) ? value.toFixed(0) : value.toFixed(2);
+}
+function signedRelation(distances: LooseRecord | undefined, language: Language): string | undefined {
+  if (!distances) return undefined;
+  const ema = numeric(distances.ema20 ?? distances.ma20);
+  const ma60 = numeric(distances.ma60);
+  const above = [ema, ma60].filter((value): value is number => value != null).filter(value => value >= 0).length;
+  const below = [ema, ma60].filter((value): value is number => value != null).filter(value => value < 0).length;
+  if (above >= 2) return language === "zh" ? "价格仍位于 EMA20 与 MA60 上方。" : "Price remains above EMA20 and MA60.";
+  if (below >= 2) return language === "zh" ? "价格仍位于 EMA20 与 MA60 下方。" : "Price remains below EMA20 and MA60.";
+  if (above || below) return language === "zh" ? "价格与短中期均线关系存在分歧。" : "Price has a mixed relationship with short- and medium-term averages.";
+  return undefined;
+}
+
+export function frameNarrative(frame: IntelligenceFrame, language: Language): string {
+  const sentences: string[] = [];
+  const subject = language === "zh" ? `${frame.timeframe} ${frame.role || ""}` : `${frame.timeframe} ${frame.role || ""}`;
+  if (frame.state) sentences.push(language === "zh" ? `${subject}当前为${frame.state}。` : `${subject} is currently in ${frame.state.toLowerCase()}.`);
+  const relation = signedRelation(frame.maDistances, language);
+  if (relation) sentences.push(relation);
+  if (frame.timeframe === "15m" && (frame.localLow != null || frame.localHigh != null)) {
+    const parts = [
+      frame.localLow != null && (language === "zh" ? `局部支撑参考 ${price(frame.localLow)}` : `local support reference ${price(frame.localLow)}`),
+      frame.localHigh != null && (language === "zh" ? `局部压力参考 ${price(frame.localHigh)}` : `local resistance reference ${price(frame.localHigh)}`),
+    ].filter(Boolean);
+    if (parts.length) sentences.push(language === "zh" ? `${parts.join("；")}。` : `${parts.join("; ")}.`);
+  }
+  if (frame.momentum) sentences.push(language === "zh" ? `动量状态为${frame.momentum}，用于判断该周期的推进是否延续。` : `Momentum is ${frame.momentum.toLowerCase()}, which frames whether this timeframe's move is still developing.`);
+  if (frame.extension && frame.extension !== (language === "zh" ? "正常" : "Normal")) sentences.push(language === "zh" ? `相对均线的伸展状态为${frame.extension}，需要与更低周期的触发条件一起观察。` : `Its moving-average extension is ${frame.extension.toLowerCase()}, so it should be read alongside lower-timeframe triggers.`);
+  const volume = frame.volumeStates?.map(value => text(value, language)).filter(Boolean) || [];
+  if (volume.length) sentences.push(language === "zh" ? `量能观察为${volume.join("、")}。` : `Volume observations are ${volume.join(" and ").toLowerCase()}.`);
+  // Provider prose is already audited. It enriches the deterministic account
+  // in Chinese; English remains deterministic so a Chinese source report never
+  // leaks fragments into the English interface.
+  if (frame.providerNarrative) sentences.push(frame.providerNarrative);
+  return sentences.join(" ");
+}
+
+export function crossTimeframeNarrative(center: IntelligenceCenter, language: Language): string {
+  const state = center.alignment || (language === "zh" ? "多周期混合" : "Mixed");
+  const parts = language === "zh"
+    ? [`多周期当前呈现${state}。`, center.dominantContext ? `主导背景为${center.dominantContext}。` : ""]
+    : [`The multi-timeframe view is ${state.toLowerCase()}.`, center.dominantContext ? `The dominant context is ${center.dominantContext.toLowerCase()}.` : ""];
+  for (const conflict of center.conflicts) {
+    const label = text(conflict, language);
+    if (label) parts.push(language === "zh" ? `核心矛盾：${label}。` : `Key tension: ${label}.`);
+  }
+  return parts.filter(Boolean).join(" ");
+}
+
+export function derivativesNarrative(center: IntelligenceCenter, language: Language): string {
+  const cvd = center.flow || (language === "zh" ? "CVD 状态未提供" : "CVD status was not provided");
+  const oi = [center.oiQuality, center.oi].filter(Boolean).join(language === "zh" ? " · " : " · ") || (language === "zh" ? "OI 状态未提供" : "OI status was not provided");
+  const relation = center.priceOi || (language === "zh" ? "价格 × OI 关系未提供" : "Price × OI relation was not provided");
+  return language === "zh"
+    ? `CVD：${cvd}，其不可用或覆盖不足时不参与方向确认。OI：${oi}。价格 × OI：${relation}；这仅反映仓位变化的代理关系，不能单独证明多头或空头主导。`
+    : `CVD: ${cvd}; unavailable or insufficient coverage is excluded from directional confirmation. OI: ${oi}. Price × OI: ${relation}; this is a positioning proxy and cannot alone prove long or short control.`;
+}
+
+export function volumeImpulseNarrative(center: IntelligenceCenter, language: Language): string {
+  const impulse = center.impulse || (language === "zh" ? "未形成可审计脉冲结论" : "No auditable impulse conclusion");
+  const volume = center.volume || (language === "zh" ? "量能状态未提供" : "Volume state was not provided");
+  return language === "zh"
+    ? `最新推进：${impulse}。量能：${volume}。该组合用于判断推进后的跟随或消化，不单独推断参与者身份。`
+    : `Latest impulse: ${impulse}. Volume: ${volume}. Together they describe follow-through or digestion after the move, not participant identity.`;
 }
 
 export function levelLabel(level: LooseRecord, language: Language): string {

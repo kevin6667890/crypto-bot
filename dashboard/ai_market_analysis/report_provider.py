@@ -235,15 +235,13 @@ class FakeAIReportProvider:
             quick_refs.extend(warning_ids)
         quick_body="；".join(quick_parts)+"。" if quick_parts else "证据不足，当前限制条件下无法形成可审计快速结论。"
 
-        if mode == "QUICK": ids=["QUICK_SUMMARY"]
-        else:
-            evidence=(registry.get("provider_claim_pack") or {}).get("evidence_status") or {}
-            fact_values={str(item.get("fact_id")):item.get("value") for item in registry.get("facts",[])}
-            ids=list(expected_section_manifest(
-                mode, bool(macro_ids),
-                has_flow=evidence.get("flow_coverage_state","FLOW_COMPLETE")!="FLOW_UNAVAILABLE",
-                has_long_term=fact_values.get("LONG_TERM_QUALITY") in {None,"COMPLETE","PARTIAL"},
-            )["required_section_ids_in_exact_order"])
+        evidence=(registry.get("provider_claim_pack") or {}).get("evidence_status") or {}
+        fact_values={str(item.get("fact_id")):item.get("value") for item in registry.get("facts",[])}
+        ids=list(expected_section_manifest(
+            mode, bool(macro_ids),
+            has_flow=evidence.get("flow_coverage_state","FLOW_COMPLETE")!="FLOW_UNAVAILABLE",
+            has_long_term=fact_values.get("LONG_TERM_QUALITY") in {None,"COMPLETE","PARTIAL"},
+        )["required_section_ids_in_exact_order"])
         bodies={
           "CONCLUSION":conclusion_body,
           "RECENT_PROCESS":recent_body,
@@ -284,7 +282,7 @@ class FakeAIReportProvider:
               "asserted_role":level["role"],"asserted_state":level["state"],"asserted_strength":level["strength"],
               "asserted_timeframe":level.get("primary_timeframe"),"asserted_dynamic":level.get("dynamic",False),
               "valid_until":level.get("valid_until"),"fact_refs":[fact["fact_id"]],"level_refs":[level["level_id"]]})
-        projected_scenario_facts=[facts[x] for x in scenario_ids[:1] if mode=="QUICK"] if mode=="QUICK" else [facts[x] for x in scenario_ids]
+        projected_scenario_facts=[facts[x] for x in scenario_ids]
         scenario_projections=[]
         for fact in projected_scenario_facts:
             scenario=fact["value"];trigger=scenario.get("trigger") or {};confirmation=scenario.get("confirmation") or {};invalidation=scenario.get("invalidation") or {}

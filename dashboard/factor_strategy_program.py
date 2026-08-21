@@ -68,7 +68,7 @@ def validate(program: FactorStrategyProgram) -> tuple[str, ...]:
 
 def generate(seed: int = 20260820, budget: int = 200) -> list[FactorStrategyProgram]:
     """Bounded seeded combinations, rather than template parameter sampling."""
-    if not 1 <= budget <= 200: raise ValueError("program search budget must be 1..200")
+    if not 1 <= budget <= 500: raise ValueError("program search budget must be 1..500")
     # Cartesian composition is intentionally over-complete; a seed only chooses
     # a stable bounded ordering.  No named strategy family or Python template is
     # present in the search space.

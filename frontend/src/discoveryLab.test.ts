@@ -15,4 +15,8 @@ describe("research UI simplification", () => {
     expect(route).toContain("<details");
     expect(route).toContain("<StrategyResearch />");
   });
+
+  it("places the audited AI center before automatic research", () => {
+    expect(route.indexOf("<AiReportResearch")).toBeLessThan(route.indexOf("<DiscoveryLab"));
+  });
 });

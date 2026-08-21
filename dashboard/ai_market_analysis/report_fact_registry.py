@@ -12,6 +12,38 @@ MAX_FACTS = 160
 MAX_KEY_LEVELS = 12
 TIMEFRAME_IDS = {"15m": "TF15", "1H": "TF1H", "4H": "TF4H", "1D": "TF1D", "1W": "TF1W"}
 TF_RANK={"MULTI":0,"15m":1,"1H":2,"4H":3,"1D":4,"1W":5}
+CURRENT_LEVEL_TIMEFRAMES={"15m","1H","4H","1D","MULTI"}
+
+def current_level_relevance(base:dict[str,Any], level:dict[str,Any])->dict[str,Any]:
+    """Classify a registry level for a *current* surface without deleting it.
+
+    The registry remains the full evidence record.  This policy only prevents a
+    valid but remote weekly/global level from being presented as an immediate
+    support or resistance.  The distance limit is volatility-normalized and
+    therefore has no instrument-specific price constants.
+    """
+    frame=next((item for item in base.get("timeframe_structures",[]) if item.get("timeframe")=="15m"),{})
+    current=_number(frame.get("last_confirmed_close")) or 0.0
+    atr=_number(frame.get("atr")) or current*.005
+    price=_number(level.get("representative_price")) or 0.0
+    distance_pct=abs(price-current)/current if current else None
+    # At least 5%, widening deterministically with the current 15m ATR.
+    # The upper bound prevents an anomalous ATR from turning a global reference
+    # into a tactical level.
+    max_distance_pct=min(.12,max(.05,6*atr/current)) if current else 0.0
+    decision=_timestamp(base.get("decision_time"))
+    valid_until=_timestamp(level.get("valid_until"))
+    fresh=valid_until is None or decision is None or valid_until>=decision
+    state=str(level.get("state") or "")
+    role=str(level.get("role") or "")
+    timeframes=set(level.get("timeframes") or [])
+    current_timeframe=bool(timeframes&CURRENT_LEVEL_TIMEFRAMES)
+    side_ok=(role=="SUPPORT" and price<=current) or (role=="RESISTANCE" and price>=current) or role=="PIVOT"
+    current_eligible=(state in {"ACTIVE","FLIPPED"} and fresh and current_timeframe and side_ok
+                      and distance_pct is not None and distance_pct<=max_distance_pct)
+    return {"current_price":current,"distance_pct":distance_pct,"max_distance_pct":max_distance_pct,
+            "fresh":fresh,"current_eligible":current_eligible,
+            "reference_tier":"CURRENT" if current_eligible else "LONG_TERM_REFERENCE"}
 
 def _number(item:Any)->float|None:
     if isinstance(item,dict):item=item.get("value")
@@ -26,6 +58,10 @@ def _timestamp(value:Any)->float|None:
 def select_relevant_levels(base:dict[str,Any],limit:int=MAX_KEY_LEVELS)->list[dict[str,Any]]:
     decision=datetime.fromisoformat(str(base.get("decision_time")).replace("Z","+00:00")).timestamp() if base.get("decision_time") else float("inf")
     levels={str(x.get("level_id")):x for x in base.get("key_levels",[]) if x.get("level_id") and x.get("state") in {"ACTIVE","FLIPPED"} and (_timestamp(x.get("first_detected")) is None or _timestamp(x.get("first_detected"))<=decision) and (_timestamp(x.get("valid_until")) is None or _timestamp(x.get("valid_until"))>=decision)};chosen=[]
+    # Claim-pack LEVEL facts are tactical/current only.  The complete registry
+    # stays in ``base.key_levels`` for Research and replay, but a distant weekly
+    # level cannot be promoted merely because it is strong or scenario-linked.
+    levels={key:value for key,value in levels.items() if current_level_relevance(base,value)["current_eligible"]}
     scenarios=base.get("scenario_tree",{}).get("scenarios",[])
     def add(ids):
         for level_id in sorted({str(x) for x in ids if x in levels}):
@@ -41,8 +77,6 @@ def select_relevant_levels(base:dict[str,Any],limit:int=MAX_KEY_LEVELS)->list[di
     for role in ("SUPPORT","RESISTANCE"):
         eligible=[v for v in levels.values() if v.get("role")==role and v.get("state") not in {"INVALIDATED","BROKEN"}]
         if eligible:add([min(eligible,key=lambda v:(abs(float(v.get("representative_price",0))-current),str(v["level_id"]))) ["level_id"]])
-    add(k for k,v in levels.items() if v.get("strength") in {"STRONG","MAJOR"} and any(TF_RANK.get(tf,0)>=4 for tf in v.get("timeframes",[])))
-    add(k for k,v in levels.items() if any(TF_RANK.get(tf,0)>=4 for tf in v.get("timeframes",[])) and v.get("role") in {"SUPPORT","RESISTANCE"})
     strength={"MAJOR":3,"STRONG":2,"MODERATE":1,"WEAK":0};state={"FLIPPED":4,"ACTIVE":3,"UNCONFIRMED":1,"BROKEN":0,"INVALIDATED":-1}
     rest=sorted((v for k,v in levels.items() if k not in chosen),key=lambda v:(-state.get(v.get("state"),0),-strength.get(v.get("strength"),0),-max((TF_RANK.get(x,0) for x in v.get("timeframes",[])),default=0),abs(float(v.get("representative_price",0))-current),str(v["level_id"])))
     singleton_families={next(iter({c.get("source_family") for c in levels[k].get("source_candidates",[]) if c.get("source_family")})) for k in chosen if len({c.get("source_family") for c in levels[k].get("source_candidates",[]) if c.get("source_family")})==1}

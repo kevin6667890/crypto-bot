@@ -5,6 +5,7 @@ from copy import deepcopy
 from dashboard.ai_market_analysis.key_level_candidates import psychological_levels
 from dashboard.ai_market_analysis.key_level_zones import merge_level_zones
 from dashboard.ai_market_analysis.report_fact_registry import select_relevant_levels
+from dashboard.ai_market_analysis.report_fact_registry import current_level_relevance
 
 
 def candidate(price,source="RANGE_HIGH",tf="15m",detected=0,dynamic=False,family=None,touches=1,low=None,high=None):
@@ -132,3 +133,16 @@ def test_only_active_or_valid_flipped_levels_are_current_candidates():
         level("broken", "BROKEN", "RESISTANCE", 101), level("expired", "EXPIRED", "SUPPORT", 99),
     ]}
     assert {item["level_id"] for item in select_relevant_levels(base)} == {"active", "flipped"}
+
+
+def test_current_relevance_excludes_remote_weekly_reference_without_deleting_it():
+    base = {"decision_time": "2026-08-21T00:00:00Z", "timeframe_structures": [{
+        "timeframe": "15m", "last_confirmed_close": {"value": 2390}, "atr": {"value": 18},
+    }]}
+    nearby = {"representative_price": 2400, "role": "RESISTANCE", "state": "ACTIVE", "timeframes": ["15m"]}
+    remote = {"representative_price": 3000, "role": "RESISTANCE", "state": "ACTIVE", "timeframes": ["1W"]}
+    broken = {"representative_price": 2400, "role": "RESISTANCE", "state": "BROKEN", "timeframes": ["15m"]}
+    assert current_level_relevance(base, nearby)["current_eligible"] is True
+    assert current_level_relevance(base, remote)["current_eligible"] is False
+    assert current_level_relevance(base, remote)["reference_tier"] == "LONG_TERM_REFERENCE"
+    assert current_level_relevance(base, broken)["current_eligible"] is False

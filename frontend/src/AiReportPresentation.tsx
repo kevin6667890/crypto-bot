@@ -161,6 +161,7 @@ export function AiReportResearch({ instrument }: { instrument: string }) {
     {loading ? <p className="muted">{copy.loading}</p> : failed ? <p className="muted">{copy.requestFailed}</p> : detail?.report ? <article className="ai-report-detail">
       <div className="ai-report-detail-head"><div><span className="status-pill healthy">{copy.auditPassed} · {detail.summary.audit.overall_score ?? 100}/100</span><span className={`freshness-badge ${fresh?.tone}`}>{fresh?.label}</span></div><small>{detail.summary.status === "STALE_AUDITED_REPORT" ? copy.stale : copy.current} · {when(detail.summary.market_snapshot_at)}</small></div>
       <h3>{detail.report.headline}</h3><DataCoverage brief={detail.summary} language={language} />
+      {!!detail.summary.long_term_levels?.length && <section className="ai-long-term-levels"><h4>{copy.longTermLevels}</h4><p>{detail.summary.long_term_levels.map(level => `${level.representative_price} · ${level.primary_timeframe || ""}`).join(" · ")}</p></section>}
       {detail.report.sections.map((section) => <section key={section.section_id}><h4>{section.title || section.section_id}</h4><p>{section.body}</p>{section.uncertainties?.map((item) => <small key={item}>· {item}</small>)}</section>)}
     </article> : requestedReportId ? <p className="muted">{copy.unavailable}</p> : null}
     <div className="ai-history-title"><h3>{copy.history}</h3><span>{copy.historyHint}</span></div>

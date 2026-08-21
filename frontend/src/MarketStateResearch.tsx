@@ -16,19 +16,22 @@ type MarketState = {
 
 const frames = ["15m", "1H", "4H", "1D", "1W"];
 const degradedStatusKeys: Record<string, TranslationKey> = { UNKNOWN: "state.waitingData", UNAVAILABLE: "state.unavailableFrame", MISSING: "state.unavailableFrame", STALE: "state.staleObservation", INSUFFICIENT_DATA: "state.waitingData", PARTIAL: "state.partialCoverage", NO_CLEAR_STATE: "state.noClearStructure", LOADING: "common.loading" };
-const structureZh: Record<string, string> = { TREND_UP: "结构上行", TREND_DOWN: "结构下行", TRANSITION_UP: "向上过渡", TRANSITION_DOWN: "向下过渡", TRANSITION_MIXED: "混合过渡", RANGE_LOW_VOLATILITY: "低波动区间", RANGE_HIGH_VOLATILITY: "高波动区间", NO_CLEAR_STATE: "暂无清晰状态", INSUFFICIENT_DATA: "等待足够数据", UNKNOWN: "等待足够数据" };
-const availabilityZh: Record<string, string> = { AVAILABLE: "可用", PARTIAL: "部分", STALE: "陈旧", MISSING: "缺失" };
+// Canonical Market-state enum labels.  User-facing zh output never falls back
+// to a raw enum; technical codes remain available only in the detail tooltip.
+const structureZh: Record<string, string> = { TREND_UP: "结构上行", TREND_DOWN: "结构下行", TRANSITION_UP: "向上过渡", TRANSITION_DOWN: "向下过渡", TRANSITION_MIXED: "混合过渡", CONFLICTED: "周期分歧", BREAKOUT_DEVELOPING: "突破发展中", RANGE_LOW_VOLATILITY: "低波动区间", RANGE_HIGH_VOLATILITY: "高波动区间", NO_CLEAR_STATE: "暂无清晰状态", INSUFFICIENT_DATA: "等待足够数据", UNKNOWN: "等待足够数据" };
+const availabilityZh: Record<string, string> = { AVAILABLE: "可用", PARTIAL: "部分", STALE: "陈旧", MISSING: "缺失", UNAVAILABLE: "不可用", UNKNOWN: "未知" };
 
 function statusLabel(value: string | undefined, t: (key: TranslationKey) => string, zh = false) {
   if (!value) return t("state.waitingData");
   if (zh && structureZh[value]) return structureZh[value];
+  if (zh) return "未分类状态";
   return degradedStatusKeys[value] ? t(degradedStatusKeys[value]) : value.replace(/_/g, " ").toLowerCase().replace(/^./, (letter) => letter.toUpperCase());
 }
 function statusTone(value: string | undefined) { return !value || ["UNKNOWN", "UNAVAILABLE", "MISSING", "STALE", "INSUFFICIENT_DATA", "PARTIAL", "NO_CLEAR_STATE"].includes(value) ? "degraded" : "available"; }
 function age(value: number | null | undefined, zh: boolean) { if (value == null) return zh ? "无时间" : "No timestamp"; if (value < 120) return zh ? `${value} 秒前` : `${value}s ago`; if (value < 7200) return zh ? `${Math.round(value / 60)} 分钟前` : `${Math.round(value / 60)}m ago`; if (value < 172800) return zh ? `${Math.round(value / 3600)} 小时前` : `${Math.round(value / 3600)}h ago`; return zh ? `${Math.round(value / 86400)} 天前` : `${Math.round(value / 86400)}d ago`; }
 function stamp(value: number | null | undefined) { return value ? new Date(value * 1000).toLocaleString() : "—"; }
-function levelType(value: string, zh: boolean) { const map: Record<string, string> = { CONFLUENCE_ZONE: zh ? "共振位" : "Confluence", SWING_HIGH: zh ? "摆动高点" : "Swing high", SWING_LOW: zh ? "摆动低点" : "Swing low", MA200: "MA200", MA60: "MA60", EMA20: "EMA20", PSYCHOLOGICAL_ROUND: zh ? "整数位" : "Round level" }; return map[value] || value.replace(/_/g, " "); }
-function interaction(value: string, zh: boolean) { const map: Record<string, string> = { UNKNOWN: zh ? "观察中" : "Observing", TOUCHING: zh ? "正在测试" : "Touching", INSIDE_ZONE: zh ? "区间内测试" : "Inside zone", APPROACHING: zh ? "接近" : "Approaching", BROKEN: zh ? "已突破" : "Broken", RECLAIMED: zh ? "已收复" : "Reclaimed", REJECTED: zh ? "已拒绝" : "Rejected", INVALIDATED: zh ? "已失效" : "Invalidated" }; return map[value] || value.replace(/_/g, " "); }
+function levelType(value: string, zh: boolean) { const map: Record<string, string> = { CONFLUENCE_ZONE: zh ? "共振位" : "Confluence", SWING_HIGH: zh ? "摆动高点" : "Swing high", SWING_LOW: zh ? "摆动低点" : "Swing low", MA200: "MA200", MA60: "MA60", EMA20: "EMA20", PSYCHOLOGICAL_ROUND: zh ? "整数位" : "Round level" }; return map[value] || (zh ? "未分类位置" : value.replace(/_/g, " ")); }
+function interaction(value: string, zh: boolean) { const map: Record<string, string> = { UNKNOWN: zh ? "观察中" : "Observing", TOUCHING: zh ? "正在测试" : "Touching", INSIDE_ZONE: zh ? "区间内测试" : "Inside zone", APPROACHING: zh ? "接近" : "Approaching", BROKEN: zh ? "已突破" : "Broken", RECLAIMED: zh ? "已收复" : "Reclaimed", REJECTED: zh ? "已拒绝" : "Rejected", INVALIDATED: zh ? "已失效" : "Invalidated" }; return map[value] || (zh ? "未分类互动" : value.replace(/_/g, " ")); }
 
 export default function MarketStateResearch({ instrument }: { instrument: string }) {
   const { t } = useLanguage(); const zh = t("state.title") === "市场结构";

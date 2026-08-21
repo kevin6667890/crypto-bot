@@ -8,6 +8,7 @@ from typing import Any
 from .presentation import PresentationError, build_latest_presentation, build_report_presentation
 from .report_repository import ReportRepository
 from .intelligence_quality import classify_evidence_quality
+from .report_fact_registry import current_level_relevance
 
 
 TIMEFRAMES = ("15m", "1H", "4H", "1D", "1W")
@@ -102,15 +103,30 @@ def _summary(presentation: dict[str, Any], repository: ReportRepository) -> dict
         for item in presentation.get("referenced_facts", [])
         if item.get("fact_id") == "TF15_SUMMARY"
     ), None)
-    eligible_levels = [item for item in presentation.get("referenced_levels", [])
-                       if item.get("asserted_state") in {"ACTIVE", "FLIPPED"}]
+    # The report can retain valid weekly/global evidence, but Workspace must
+    # only call a nearby, fresh ACTIVE/FLIPPED level "current".  In particular,
+    # an old distant target must not displace the actual tactical resistance.
+    annotated_levels = [dict(item, **current_level_relevance(base, {
+        "representative_price": item.get("representative_price"),
+        "role": item.get("asserted_role"), "state": item.get("asserted_state"),
+        "timeframes": item.get("timeframes") or [item.get("asserted_timeframe")],
+        "valid_until": item.get("valid_until"),
+    })) for item in presentation.get("referenced_levels", [])]
+    eligible_levels = [item for item in annotated_levels if item.get("current_eligible")]
     supports = [item for item in eligible_levels if item.get("asserted_role") == "SUPPORT"]
     resistances = [item for item in eligible_levels if item.get("asserted_role") == "RESISTANCE"]
     distance = lambda item: abs(float(item.get("representative_price") or 0) - float(current_price or 0))
     selected_levels = ([min(supports, key=distance)] if supports else []) + ([min(resistances, key=distance)] if resistances else [])
     levels = [{key: item.get(key) for key in ("level_id", "representative_price", "asserted_role",
-                                               "asserted_state", "primary_timeframe", "invalidation", "observed_at")}
+                                               "asserted_state", "primary_timeframe", "invalidation", "observed_at",
+                                               "distance_pct", "max_distance_pct", "reference_tier")}
               for item in selected_levels]
+    long_term_levels = [{key: item.get(key) for key in ("level_id", "representative_price", "asserted_role",
+                                                         "asserted_state", "primary_timeframe", "invalidation", "observed_at",
+                                                         "distance_pct", "reference_tier")}
+                        for item in annotated_levels if item.get("reference_tier") == "LONG_TERM_REFERENCE"
+                        and item.get("asserted_state") in {"ACTIVE", "FLIPPED"}]
+    long_term_levels.sort(key=lambda item: (float(item.get("distance_pct") or 0), str(item.get("level_id") or "")))
     scenarios = [{key: item.get(key) for key in ("scenario_id", "scenario_type", "direction", "status",
                                                   "trigger_text", "confirmation_text", "invalidation_text")}
                  for item in presentation.get("referenced_scenarios", [])[:2]]
@@ -133,6 +149,7 @@ def _summary(presentation: dict[str, Any], repository: ReportRepository) -> dict
         "drivers": [_driver(item) for item in presentation.get("referenced_facts", [])
                     if item.get("category") in {"TIMELINE", "TIMEFRAME"}][:3] if eligible else [],
         "risks": uncertainties if eligible else [], "levels": levels if eligible else [],
+        "long_term_levels": long_term_levels if eligible else [],
         "scenarios": scenarios if eligible else [],
         "timeframe_quality": _timeframe_quality(repository, presentation),
         "evidence_quality": evidence_quality,

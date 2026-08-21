@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import os
 import gc
+import ctypes
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Mapping
 
@@ -56,6 +57,20 @@ def factor_program_development_batches(rows: list[Mapping[str, Any]], *,
         raise ValueError("factor program batch size must be positive")
     pending = [row for row in rows if str(row.get("status") or "") != "DEVELOPMENT_CANDIDATE"]
     return [pending[index:index + batch_size] for index in range(0, len(pending), batch_size)]
+
+
+def release_factor_program_transients() -> None:
+    """Return completed canonical-backtest allocations before the next program.
+
+    CPython can retain arenas after a large backtest.  On the Linux worker,
+    ``malloc_trim`` makes that release observable to the container cgroup while
+    retaining the same deterministic evaluator and evaluation pipeline.
+    """
+    gc.collect()
+    try:
+        ctypes.CDLL("libc.so.6").malloc_trim(0)
+    except (AttributeError, OSError):
+        pass
 
 
 def rolling_window(now: datetime | None = None, lookback_days: int = 730) -> tuple[int, int]:
@@ -397,7 +412,7 @@ class AutomaticResearchService:
                 # Generation is bounded, but its AST objects are not needed during
                 # evaluation.  Re-read each persisted AST only in its own batch.
                 del programs
-                gc.collect()
+                release_factor_program_transients()
             with self.repository.connect() as connection:
                 program_rows = [dict(row) for row in connection.execute(
                     """SELECT id,status FROM strategy_discovery_candidates
@@ -451,6 +466,7 @@ class AutomaticResearchService:
                              DISCOVERY_SCORING_VERSION, utc_now(), candidate_id),
                         )
                     del candidate, program, folds, metrics, verdict, components
+                    release_factor_program_transients()
                 last_id = int(batch[-1]["id"])
                 self._save_checkpoint(cycle_id, "factor_program_development", {
                     "run_id": int(discovery_id), "batch_size": FACTOR_PROGRAM_DEVELOPMENT_BATCH_SIZE,
@@ -462,7 +478,7 @@ class AutomaticResearchService:
                            {"batch": batch_index, "total_batches": total_batches,
                             "last_completed_candidate_id": last_id})
                 del dev_rows, benchmarks
-                gc.collect()
+                release_factor_program_transients()
             # Eligible rank remains derived from the durable candidate records,
             # so a resumed run never needs to keep all candidate results in RAM.
             with self.repository.connect() as connection:
@@ -475,7 +491,7 @@ class AutomaticResearchService:
                 for rank, row in enumerate(eligible_rows, 1):
                     connection.execute("UPDATE strategy_discovery_candidates SET eligible_rank=? WHERE id=?", (rank, int(row["id"])))
             del program_rows, batches
-            gc.collect()
+            release_factor_program_transients()
         self._save_checkpoint(cycle_id, "development_complete", {"run_id":discovery_id})
         with self.repository.connect() as connection:
             rows = connection.execute(

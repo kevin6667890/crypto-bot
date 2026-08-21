@@ -10,6 +10,7 @@ from dashboard.research_repository import ResearchRepository
 from dashboard.automatic_research import (
     FACTOR_PROGRAM_DEVELOPMENT_BATCH_SIZE,
     factor_program_development_batches,
+    release_factor_program_transients,
 )
 
 def rows(count=90):
@@ -76,3 +77,9 @@ def test_development_batches_bound_500_candidates_and_resume_without_replaying_c
     # Fixed ordering means batch evaluation has the same candidate order as an
     # equivalent single-pass evaluation.
     assert [row["id"] for batch in batches for row in batch] == [row["id"] for row in rows]
+
+
+def test_development_batch_transient_release_is_safe_for_each_completed_candidate():
+    # Linux workers trim large canonical-backtest allocator arenas; other
+    # supported environments retain the same safe no-op fallback.
+    release_factor_program_transients()

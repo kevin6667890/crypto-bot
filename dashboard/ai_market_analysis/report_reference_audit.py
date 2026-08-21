@@ -24,6 +24,10 @@ def audit_references(claims:list[dict[str,Any]],registry:dict[str,Any])->dict[st
     known_macro={f["value"].get("evidence_id") for f in facts.values() if f["category"]=="MACRO" and isinstance(f["value"],dict)}
     for claim in claims:
         refs=claim.get("fact_refs",[]);missing=sorted(set(refs)-set(facts));categories={facts[r]["category"] for r in refs if r in facts}
+        # A neutral absence statement is a warning fact, but it is also the
+        # only valid support for the scoped claim that macro was not included.
+        if "MACRO_UNAVAILABLE" in refs:
+            categories.add("MACRO")
         expected=REFERENCE_COMPATIBILITY.get(claim["claim_type"],set());code=None;reason=None
         is_factual=claim["claim_type"] not in NON_FACTUAL and claim["modality"] not in {"UNKNOWN","NOT_AVAILABLE","CONDITIONAL"}
         if is_factual:factual+=1

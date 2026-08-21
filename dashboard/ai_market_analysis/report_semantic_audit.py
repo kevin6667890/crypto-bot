@@ -7,8 +7,8 @@ from .versions import AI_REPORT_SEMANTIC_AUDIT_VERSION
 
 UNKNOWN_VALUES={"UNKNOWN","NOT_AVAILABLE","NOT_IMPLEMENTED","INSUFFICIENT_EVIDENCE","PARTIAL","PARTIAL_AFTER_GAP","GAP_AFFECTED","UNAVAILABLE"}
 PARTIAL_VALUES={"PARTIAL","PARTIAL_AFTER_GAP","GAP_AFFECTED"}
-FLOW_ASSERTION_TERMS=("订单流显示","订单流数据显示","订单流证据显示","净流入","净流出","资金正在")
-PARTIAL_MARKERS=("部分观察","部分可用","部分数据","仅覆盖","无法判断","证据不足","数据不足")
+FLOW_ASSERTION_TERMS=("订单流显示","订单流数据显示","订单流证据显示","净流入","净流出","资金正在","买盘主导","卖盘主导")
+PARTIAL_MARKERS=("部分观察","部分可用","部分数据","仅覆盖","无法判断","证据不足","数据不足","覆盖部分","确认度受限")
 
 def _has_liquidation_evidence(value:Any)->bool:
     if not isinstance(value,dict):return False

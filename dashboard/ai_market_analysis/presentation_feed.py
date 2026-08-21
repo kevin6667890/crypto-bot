@@ -7,6 +7,7 @@ from typing import Any
 
 from .presentation import PresentationError, build_latest_presentation, build_report_presentation
 from .report_repository import ReportRepository
+from .intelligence_quality import classify_evidence_quality
 
 
 TIMEFRAMES = ("15m", "1H", "4H", "1D", "1W")
@@ -91,9 +92,25 @@ def _summary(presentation: dict[str, Any], repository: ReportRepository) -> dict
     body = str((section or {}).get("body") or (report or {}).get("headline") or "")[:900]
     stored = repository.get_report(report_id=presentation.get("report_id")) or {}
     uncertainties = [str(item) for item in (section or {}).get("uncertainties", [])][:3]
+    context = repository.load_context(presentation.get("context_id")) or {}
+    base = context.get("base_context") or context
+    evidence_quality = context.get("evidence_quality") or base.get("evidence_quality") or classify_evidence_quality(
+        base, context.get("macro_context")
+    )
+    current_price = next((
+        ((item.get("value") or {}).get("close") if isinstance(item.get("value"), dict) else None)
+        for item in presentation.get("referenced_facts", [])
+        if item.get("fact_id") == "TF15_SUMMARY"
+    ), None)
+    eligible_levels = [item for item in presentation.get("referenced_levels", [])
+                       if item.get("asserted_state") in {"ACTIVE", "FLIPPED"}]
+    supports = [item for item in eligible_levels if item.get("asserted_role") == "SUPPORT"]
+    resistances = [item for item in eligible_levels if item.get("asserted_role") == "RESISTANCE"]
+    distance = lambda item: abs(float(item.get("representative_price") or 0) - float(current_price or 0))
+    selected_levels = ([min(supports, key=distance)] if supports else []) + ([min(resistances, key=distance)] if resistances else [])
     levels = [{key: item.get(key) for key in ("level_id", "representative_price", "asserted_role",
-                                               "asserted_state", "primary_timeframe", "invalidation")}
-              for item in presentation.get("referenced_levels", [])[:3]]
+                                               "asserted_state", "primary_timeframe", "invalidation", "observed_at")}
+              for item in selected_levels]
     scenarios = [{key: item.get(key) for key in ("scenario_id", "scenario_type", "direction", "status",
                                                   "trigger_text", "confirmation_text", "invalidation_text")}
                  for item in presentation.get("referenced_scenarios", [])[:2]]
@@ -113,10 +130,12 @@ def _summary(presentation: dict[str, Any], repository: ReportRepository) -> dict
         "market_phase": (report or {}).get("market_phase") if eligible else None,
         "directional_bias": (report or {}).get("directional_bias") if eligible else None,
         "confidence": (report or {}).get("confidence") if eligible else None,
-        "drivers": [_driver(item) for item in presentation.get("referenced_facts", [])[:3]] if eligible else [],
+        "drivers": [_driver(item) for item in presentation.get("referenced_facts", [])
+                    if item.get("category") in {"TIMELINE", "TIMEFRAME"}][:3] if eligible else [],
         "risks": uncertainties if eligible else [], "levels": levels if eligible else [],
         "scenarios": scenarios if eligible else [],
         "timeframe_quality": _timeframe_quality(repository, presentation),
+        "evidence_quality": evidence_quality,
         "data_warnings": list((report or {}).get("data_warnings") or presentation.get("data_warnings") or [])[:12]
                          if eligible else [],
     }

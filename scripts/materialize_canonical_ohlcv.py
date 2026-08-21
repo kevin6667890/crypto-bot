@@ -13,7 +13,7 @@ COMPLETE, INCOMPLETE, VALIDATION, NETWORK = 0, 2, 3, 4
 
 def partitions(args):
     if args.all:
-        return [(i, t) for i in ("BTC-USDT","ETH-USDT","SOL-USDT") for t in ("1D","4H","1H","15m")]
+        return [(i, t) for i in ("BTC-USDT","ETH-USDT","SOL-USDT") for t in ("1W","1D","4H","1H","15m")]
     if not args.instrument or not args.timeframe: raise ValueError("--instrument and --timeframe are required unless --all")
     return [(args.instrument,args.timeframe)]
 

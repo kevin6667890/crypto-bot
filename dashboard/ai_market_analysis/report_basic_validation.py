@@ -20,8 +20,16 @@ class ReportValidationError(ValueError):
         super().__init__(code); self.code=code; self.details=details or []
 
 
-def expected_sections(mode: str, has_macro: bool) -> list[str]:
-    return list(expected_section_manifest(mode,has_macro)["required_section_ids_in_exact_order"])
+def expected_sections(mode: str, has_macro: bool, registry: dict[str, Any] | None = None) -> list[str]:
+    registry = registry or {}
+    pack = registry.get("provider_claim_pack") or {}
+    evidence = pack.get("evidence_status") or {}
+    fact_values = {str(item.get("fact_id")): item.get("value") for item in registry.get("facts", [])}
+    return list(expected_section_manifest(
+        mode, has_macro,
+        has_flow=evidence.get("flow_coverage_state", "FLOW_COMPLETE") != "FLOW_UNAVAILABLE",
+        has_long_term=fact_values.get("LONG_TERM_QUALITY") in {None, "COMPLETE", "PARTIAL"},
+    )["required_section_ids_in_exact_order"])
 
 
 def _numbers(text: str) -> list[float]:
@@ -48,7 +56,7 @@ def validate_report(report: dict[str,Any], request: dict[str,Any], registry: dic
     rank={"LOW":0,"MEDIUM":1,"HIGH":2}
     if report["confidence"] not in rank or rank[report["confidence"]]>rank[registry["max_confidence"]]: raise ReportValidationError("CONFIDENCE_EXCEEDS_CAP")
     macro_items=request["macro_items"]
-    wanted=expected_sections(report["mode"],bool(macro_items)); got=[s["section_id"] for s in report["sections"]]
+    wanted=expected_sections(report["mode"],bool(macro_items),request.get("compiled_context")); got=[s["section_id"] for s in report["sections"]]
     if got!=wanted: raise ReportValidationError("SECTION_ORDER_OR_COMPLETENESS",[str(got),str(wanted)])
     fact_ids={f["fact_id"] for f in registry["facts"]}
     level_ids={f["value"].get("level_id") for f in registry["facts"] if f["category"]=="LEVEL" and isinstance(f["value"],dict)}

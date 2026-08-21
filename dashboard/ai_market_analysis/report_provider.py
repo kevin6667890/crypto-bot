@@ -7,7 +7,7 @@ from typing import Any, Protocol
 from .canonical import stable_hash
 from .versions import AI_REPORT_PROVIDER_VERSION, AI_REPORT_RESPONSE_VERSION
 from .report_identity import REPORT_PIPELINE_VERSIONS
-from .report_response_contract import FULL_SECTION_IDS
+from .report_response_contract import expected_section_manifest
 
 
 @dataclass(frozen=True)
@@ -72,7 +72,8 @@ class FakeAIReportProvider:
         all_ids=list(facts); level_ids=[x for x in all_ids if x.startswith("LEVEL_")]; scenario_ids=[x for x in all_ids if x.startswith("SCENARIO_")]
         macro_ids=[x for x in all_ids if x.startswith("MACRO_") and x!="MACRO_UNAVAILABLE"]
         position_ids=[x for x in all_ids if x.startswith("POSITION_")]
-        flow_ids=[x for x in all_ids if x.startswith("FLOW_")]
+        packed_flow_ids=list(((registry.get("provider_claim_pack") or {}).get("fact_ids_by_category") or {}).get("ORDER_FLOW", []))
+        flow_ids=[x for x in packed_flow_ids if x in facts] or [x for x in all_ids if x.startswith("FLOW_")]
         scenario_values=[facts[x]["value"] for x in scenario_ids]
         scenario_labels={
             "BULLISH_CONTINUATION":"上行延续路径",
@@ -117,7 +118,7 @@ class FakeAIReportProvider:
             "POSSIBLE_NEW_POSITION_BUILDUP":"可能有新增持仓","INSUFFICIENT_EVIDENCE":"证据不足",
             "UNAVAILABLE":"不可用",
         }
-        flow_values=[(fact_id,facts[fact_id]["value"]) for fact_id in flow_ids if isinstance(facts[fact_id]["value"],dict)]
+        flow_values=[(fact_id,facts[fact_id]["value"]) for fact_id in flow_ids if fact_id in facts and isinstance(facts[fact_id]["value"],dict)]
 
         phase_fact=next((fact_id for fact_id in timeline_ids if fact_id=="TIMELINE_CURRENT_PHASE"),None)
         phase_value=facts[phase_fact]["value"] if phase_fact else None
@@ -236,9 +237,13 @@ class FakeAIReportProvider:
 
         if mode == "QUICK": ids=["QUICK_SUMMARY"]
         else:
-            ids=list(FULL_SECTION_IDS)
-            if macro_ids: ids.insert(1,"MACRO_BACKGROUND")
-            if mode == "POSITION_AWARE": ids.append("POSITION_PLAN")
+            evidence=(registry.get("provider_claim_pack") or {}).get("evidence_status") or {}
+            fact_values={str(item.get("fact_id")):item.get("value") for item in registry.get("facts",[])}
+            ids=list(expected_section_manifest(
+                mode, bool(macro_ids),
+                has_flow=evidence.get("flow_coverage_state","FLOW_COMPLETE")!="FLOW_UNAVAILABLE",
+                has_long_term=fact_values.get("LONG_TERM_QUALITY") in {None,"COMPLETE","PARTIAL"},
+            )["required_section_ids_in_exact_order"])
         bodies={
           "CONCLUSION":conclusion_body,
           "RECENT_PROCESS":recent_body,
@@ -274,6 +279,8 @@ class FakeAIReportProvider:
         for fact in projected_level_facts:
             level=fact["value"]
             key_level_projections.append({"level_id":level["level_id"],"analysis_text":f"{level['role']} {level['state']} {level['strength']} on {level.get('primary_timeframe')}",
+              "representative_price":level.get("representative_price"),"zone_low":level.get("zone_low"),"zone_high":level.get("zone_high"),
+              "observed_at":level.get("observed_at"),"source_fact":level.get("source_fact"),
               "asserted_role":level["role"],"asserted_state":level["state"],"asserted_strength":level["strength"],
               "asserted_timeframe":level.get("primary_timeframe"),"asserted_dynamic":level.get("dynamic",False),
               "valid_until":level.get("valid_until"),"fact_refs":[fact["fact_id"]],"level_refs":[level["level_id"]]})

@@ -153,8 +153,12 @@ def build_multi_timeframe_facts(datasets: dict[str, list[dict[str, Any]]], instr
                                 decision_time: int) -> dict[str, dict[str, Any]]:
     result = {tf: build_timeframe_facts(datasets.get(tf, []), instrument, tf, decision_time)
               for tf in ("15m", "1H", "4H", "1D")}
-    daily = result["1D"]["confirmed_bars"]
-    weekly, weekly_quality = derive_weekly(daily, instrument, decision_time)
-    result["1W"] = build_timeframe_facts(weekly, instrument, "1W", decision_time,
-                                         pre_normalized=True, supplied_quality=weekly_quality)
+    native_weekly = datasets.get("1W", [])
+    if native_weekly:
+        result["1W"] = build_timeframe_facts(native_weekly, instrument, "1W", decision_time)
+    else:
+        daily = result["1D"]["confirmed_bars"]
+        weekly, weekly_quality = derive_weekly(daily, instrument, decision_time)
+        result["1W"] = build_timeframe_facts(weekly, instrument, "1W", decision_time,
+                                             pre_normalized=True, supplied_quality=weekly_quality)
     return result

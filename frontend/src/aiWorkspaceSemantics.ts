@@ -30,6 +30,20 @@ export const workspaceScenarioLabel = (value: unknown, language: UiLanguage = "z
   || (language === "zh" ? "主要场景" : "Primary scenario");
 export const presentAiLevels = <T extends object>(levels: T[] = []) => levels.filter(item => isPresent((item as { representative_price?: unknown }).representative_price));
 
+export function coverageMatrixRows(quality: any, language: UiLanguage = "zh") {
+  const flow = quality?.flow_quality || "FLOW_UNAVAILABLE";
+  const labels = language === "zh" ? {
+    core: "\u6838\u5fc3\u5e02\u573a\u6570\u636e", flow: "\u8ba2\u5355\u6d41", long: "\u957f\u671f\u7ed3\u6784", macro: "\u5b8f\u89c2\u80cc\u666f",
+    complete: "\u5b8c\u6574", usable: "\u53ef\u7528", partial: "\u90e8\u5206", unavailable: "\u4e0d\u53ef\u7528", limited: "\u6709\u9650", notIncluded: "\u672c\u8f6e\u672a\u7eb3\u5165",
+  } : { core: "Core market data", flow: "Order flow", long: "Long-term structure", macro: "Macro context", complete: "Complete", usable: "Usable", partial: "Partial", unavailable: "Unavailable", limited: "Limited", notIncluded: "Not included" };
+  return [
+    { key: "core", label: labels.core, state: quality?.core_quality === "COMPLETE" ? "complete" : quality?.core_quality === "USABLE" ? "partial" : "warning", text: quality?.core_quality === "COMPLETE" ? labels.complete : quality?.core_quality === "USABLE" ? labels.usable : labels.unavailable },
+    { key: "flow", label: labels.flow, state: flow === "FLOW_COMPLETE" ? "complete" : flow === "FLOW_PARTIAL_USABLE" ? "partial" : "muted", text: flow === "FLOW_COMPLETE" ? labels.complete : flow === "FLOW_PARTIAL_USABLE" ? labels.partial : labels.unavailable },
+    { key: "long", label: labels.long, state: quality?.long_term_quality === "COMPLETE" ? "complete" : "partial", text: quality?.long_term_quality === "COMPLETE" ? labels.complete : labels.limited },
+    { key: "macro", label: labels.macro, state: quality?.macro_quality === "AVAILABLE" ? "complete" : quality?.macro_quality === "STALE" ? "partial" : "neutral", text: quality?.macro_quality === "AVAILABLE" ? labels.complete : quality?.macro_quality === "STALE" ? labels.limited : labels.notIncluded },
+  ];
+}
+
 export function localizeWorkspaceNarrative(value: unknown, language: UiLanguage): string {
   const text = typeof value === "string" ? value : "";
   return text.replace(/\b[A-Z]+(?:_[A-Z]+)+\b/g, enumValue => {

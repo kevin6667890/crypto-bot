@@ -17,7 +17,7 @@ except ImportError:  # package imports in tests
     from .research_repository import ResearchRepository
 
 
-TIMEFRAME_SECONDS = {"15m": 900, "1H": 3600, "4H": 14400, "1D": 86400}
+TIMEFRAME_SECONDS = {"15m": 900, "1H": 3600, "4H": 14400, "1D": 86400, "1W": 604800}
 INSTRUMENTS = {"BTC-USDT", "ETH-USDT", "SOL-USDT"}
 
 
@@ -63,9 +63,10 @@ class OkxHistoryClient:
         if instrument not in INSTRUMENTS or timeframe not in TIMEFRAME_SECONDS:
             raise ValueError("Unsupported instrument or timeframe.")
         step = TIMEFRAME_SECONDS[timeframe]
-        requested_start = (start_ts // step) * step - warmup_bars * step
+        offset = 345_600 if timeframe == "1W" else 0
+        requested_start = ((start_ts-offset) // step) * step + offset - warmup_bars * step
         now_ts = int(datetime.now(timezone.utc).timestamp())
-        last_confirmed_start = (min(end_ts, now_ts) // step) * step - step
+        last_confirmed_start = ((min(end_ts, now_ts)-offset) // step) * step + offset - step
         minimum, maximum = self.repository.candle_coverage(instrument, timeframe)
         cache_complete = minimum is not None and maximum is not None and minimum <= requested_start and maximum >= last_confirmed_start
         fetched = 0
@@ -127,7 +128,8 @@ class OkxHistoryClient:
         if instrument not in INSTRUMENTS or timeframe not in TIMEFRAME_SECONDS:
             raise ValueError("Unsupported instrument or timeframe.")
         step = TIMEFRAME_SECONDS[timeframe]
-        if start_ts >= end_ts or start_ts % step or end_ts % step:
+        offset = 345_600 if timeframe == "1W" else 0
+        if start_ts >= end_ts or (start_ts-offset) % step or (end_ts-offset) % step:
             raise ValueError("Canonical ranges must be aligned, non-empty [start, end).")
         existing = self.repository.candles(instrument, timeframe, start_ts, end_ts - 1)
         present = {int(row["ts"]) for row in existing}
@@ -138,7 +140,7 @@ class OkxHistoryClient:
             cursor = max(cursor, ts + step)
         if cursor < end_ts: missing.append((cursor, end_ts))
         stats = {"rows_reused": len(existing), "rows_inserted": 0, "pages_requested": 0, "retries": 0, "duplicate_count": 0, "status": "COMPLETE", "missing_intervals": missing}
-        bar = "1Dutc" if timeframe == "1D" else timeframe
+        bar = {"1D": "1Dutc", "1W": "1Wutc"}.get(timeframe, timeframe)
         limit = max_pages if max_pages is not None else 6000
         try:
             for gap_start, gap_end in missing:
@@ -164,7 +166,7 @@ class OkxHistoryClient:
                             ts = int(row[0]) // 1000; o,h,l,c,v = (float(row[i]) for i in range(1,6))
                         except (IndexError, TypeError, ValueError, OverflowError): continue
                         if len(row) < 9 or row[8] != "1" or not (gap_start <= ts < gap_end): continue
-                        if ts % step or not all(math.isfinite(x) for x in (o,h,l,c,v)) or min(o,h,l,c) <= 0 or v < 0 or h < max(o,c) or l > min(o,c): continue
+                        if (ts-offset) % step or not all(math.isfinite(x) for x in (o,h,l,c,v)) or min(o,h,l,c) <= 0 or v < 0 or h < max(o,c) or l > min(o,c): continue
                         if ts in present: stats["duplicate_count"] += 1; continue
                         page[ts] = {"ts":ts,"open":o,"high":h,"low":l,"close":c,"volume":v,"confirmed":1,"source_instrument":instrument,"normalized_instrument":instrument,"source_version":"okx-history-candles-v5"}
                     if page:

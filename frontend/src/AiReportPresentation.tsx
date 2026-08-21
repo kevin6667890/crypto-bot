@@ -2,17 +2,13 @@ import { BrainCircuit, CheckCircle2, Clock3, ExternalLink, ShieldCheck } from "l
 import { useEffect, useRef, useState } from "react";
 import { AuditedAiBrief, AuditedAiReportDetail, fetchAuditedAiBrief, fetchAuditedAiHistory, fetchAuditedAiReport } from "./data";
 import { translateKnownEnum } from "./aiMarketAnalysis/enumTranslations";
-import { compactAiSummary, isPresent, localizeWorkspaceNarrative, presentAiLevels, renderIfPresent, workspaceScenarioLabel } from "./aiWorkspaceSemantics";
+import { compactAiSummary, coverageMatrixRows, isPresent, localizeWorkspaceNarrative, presentAiLevels, renderIfPresent, workspaceScenarioLabel } from "./aiWorkspaceSemantics";
 import { useLanguage, type Language } from "./i18n";
 import { researchPresentationCopy, selectResearchReport } from "./aiResearchPresentation";
 
 const when = (value: string | null | undefined) => value ? new Date(value).toLocaleString() : "—";
 const source = (brief: AuditedAiBrief | null) => [brief?.provider, brief?.model].filter(Boolean).join(" / ") || "DeepSeek";
 const containsCjk = (value: unknown) => /[\u3400-\u9fff]/.test(String(value || ""));
-const qualityLabel: Record<Language, Record<string, string>> = {
-  zh: { AVAILABLE: "可用", PARTIAL: "历史不足", STALE: "数据较旧", MISSING: "数据不足" },
-  en: { AVAILABLE: "Available", PARTIAL: "Limited history", STALE: "Stale", MISSING: "Insufficient data" },
-};
 const workspaceCopy = {
   zh: { eyebrow: "审计后市场研判", title: "AI 市场研判", audit: "AI 审计通过", auditTitle: "内容已通过引用、数值、方向、语义、关键位置与场景一致性检查", loading: "正在读取审计后的 AI 分析…", conclusion: "结论", observe: "观察", evidence: "关键依据", phase: "市场阶段", watching: "观察中", levels: "关键位置", noLevels: "当前无可靠关键位置", support: "支撑", resistance: "压力", level: "关键位", multi: "多周期", invalidation: "失效", scenario: "关注场景", updated: "更新时间", dataTime: "数据时间", confidence: "置信边界", coverage: "数据覆盖", complete: "完整", partial: "部分", limited: "受限", risks: "风险 / 限制", report: "查看完整 AI 分析", staleTitle: "AI 分析已过期", staleBody: "历史内容不会作为当前市场结论展示，正在等待下一次有效分析。", lastValid: "最后有效分析", next: "下一次预计更新时间", history: "查看历史完整 AI 分析", auditFailed: "最新 AI 分析未通过审计", unavailable: "暂无当前有效 AI 分析", unavailableBody: "等待下一次有效分析。未通过审计的报告正文不会展示。", dataQuality: "数据质量", dataLimit: "数据限制", current: "当前", aging: "即将过期", stale: "已过期" },
   en: { eyebrow: "Audited market intelligence", title: "AI Market View", audit: "AI audit passed", auditTitle: "Citations, values, direction, semantics, levels and scenarios passed consistency checks", loading: "Loading the audited AI analysis…", conclusion: "Conclusion", observe: "Observe", evidence: "Key evidence", phase: "Market phase", watching: "Monitoring", levels: "Key levels", noLevels: "No reliable key levels are available", support: "Support", resistance: "Resistance", level: "Key level", multi: "Multi-timeframe", invalidation: "Invalidation", scenario: "Scenario", updated: "Updated", dataTime: "Market data time", confidence: "Confidence boundary", coverage: "Data coverage", complete: "Complete", partial: "Partial", limited: "Limited", risks: "Data limitations", report: "View full AI analysis", staleTitle: "AI analysis is stale", staleBody: "Historical content is not shown as a current market conclusion. Waiting for the next eligible analysis.", lastValid: "Last valid analysis", next: "Next expected update", history: "View full historical AI analysis", auditFailed: "Latest AI analysis did not pass audit", unavailable: "No current eligible AI analysis", unavailableBody: "Waiting for the next eligible analysis. Audit-failed report content remains hidden.", dataQuality: "Data quality", dataLimit: "Data limitation", current: "Current", aging: "Aging", stale: "Stale" },
@@ -26,13 +22,14 @@ function freshness(brief: AuditedAiBrief, language: Language = "zh") {
   return { label: copy.current, tone: "current" };
 }
 
-function DataCoverage({ brief, language = "zh" }: { brief: AuditedAiBrief; language?: Language }) {
+export function DataCoverage({ brief, language = "zh" }: { brief: AuditedAiBrief; language?: Language }) {
   const items = brief.timeframe_quality || [];
   const copy = workspaceCopy[language];
-  return <div className="ai-coverage"><span className="ai-meta-label">{copy.coverage}: {brief.freshness.quality === "PARTIAL" ? copy.partial : brief.freshness.quality === "AVAILABLE" ? copy.complete : copy.limited}</span>
-    <div>{items.filter((item) => item.availability !== "AVAILABLE").map((item) => <span className={`coverage-chip ${item.availability.toLowerCase()}`} key={item.timeframe}>
-      <b>{item.timeframe}</b> · {item.availability === "PARTIAL" && item.reason_code !== "INDICATOR_WARMUP_INCOMPLETE" ? copy.partial : qualityLabel[language][item.availability] || copy.limited}
-    </span>)}</div>
+  const quality = brief.evidence_quality;
+  const rows = coverageMatrixRows(quality, language);
+  return <div className="ai-coverage" data-testid="ai-coverage-matrix"><span className="ai-meta-label">{copy.coverage}</span>
+    <div className="coverage-matrix">{rows.map((item) => <span className={`coverage-row ${item.state}`} key={item.key}><b>{item.label}</b><small>{item.state === "complete" ? "✓" : item.state === "partial" || item.state === "warning" ? "△" : "○"} {item.text}</small></span>)}</div>
+    {items.length > 0 && <div className="coverage-timeframes" aria-label="timeframe coverage">{items.map((item) => <span key={item.timeframe} className={item.availability === "AVAILABLE" ? "complete" : "partial"}>{item.timeframe} {item.availability === "AVAILABLE" ? "✓" : "△"}</span>)}</div>}
   </div>;
 }
 
@@ -59,12 +56,10 @@ export function WorkspaceAiBrief({ instrument }: { instrument: string }) {
   const enumText = (value: unknown) => ["BEARISH_CONTINUATION", "BULLISH_CONTINUATION", "RANGE", "WAIT", "MIXED"].includes(String(value || ""))
     ? workspaceScenarioLabel(value, language)
     : translateKnownEnum(value, language);
-  const headline = language === "zh"
-    ? localizeWorkspaceNarrative(brief?.headline, language)
-    : `${enumText(brief?.market_phase) || copy.watching} · ${enumText(brief?.directional_bias) || copy.observe}`;
+  const headline = `${enumText(brief?.market_phase) || copy.watching} · ${enumText(brief?.directional_bias) || copy.observe}`;
   const summary = language === "zh"
     ? compactAiSummary(brief?.executive_summary, 220, language)
-    : `${enumText(brief?.market_phase)} market phase with ${String(enumText(brief?.confidence)).toLowerCase()} confidence. ${copy.coverage}: ${qualityLabel.en[brief?.freshness.quality || ""] || copy.limited}.`;
+    : `${enumText(brief?.market_phase)} market phase with ${String(enumText(brief?.confidence)).toLowerCase()} core conviction.`;
   const decision = language === "zh" && !containsCjk(brief?.decision_label) ? enumText(brief?.decision_label) : language === "zh" ? brief?.decision_label : copy.observe;
   return <section className={`ai-insight-hero ${stale ? "stale" : ""}`} data-testid="workspace-ai6b-brief" aria-labelledby="ai-insight-title">
     <header className="ai-hero-header">
@@ -83,7 +78,6 @@ export function WorkspaceAiBrief({ instrument }: { instrument: string }) {
       <div className="ai-hero-meta">
         <dl><div><dt>{copy.updated}</dt><dd>{when(brief.generated_at)}</dd></div><div><dt>{copy.dataTime}</dt><dd>{when(brief.market_snapshot_at)}</dd></div><div><dt>{copy.phase}</dt><dd>{enumText(brief.market_phase) || "—"}</dd></div><div><dt>{copy.confidence}</dt><dd>{enumText(brief.confidence) || "—"}</dd></div></dl>
         <DataCoverage brief={brief} language={language} />
-        {!!brief.risks?.length && <div className="ai-risk-list"><span>{copy.risks}</span>{language === "zh" ? brief.risks.slice(0, 2).map((item) => <p key={item}>{localizeWorkspaceNarrative(item, language)}</p>) : <p>{copy.coverage}: {qualityLabel.en[brief.freshness.quality || ""] || copy.limited}.</p>}</div>}
         <a className="secondary-btn ai-research-link" href={`#research/report/${encodeURIComponent(brief.report_id)}`}>{copy.report} <ExternalLink size={14} /></a>
       </div>
     </div> : stale && brief ? <div className="ai-hero-empty stale"><strong>{copy.staleTitle}</strong><p>{copy.lastValid}: {when(brief.generated_at)}. {copy.staleBody}</p>{brief.scheduler?.enabled && <p>{copy.next}: {when(brief.scheduler.next_tick)}</p>}<DataCoverage brief={brief} language={language} /><a className="secondary-btn ai-research-link" href={`#research/report/${encodeURIComponent(brief.report_id)}`}>{copy.history} <ExternalLink size={14} /></a></div> : <div className="ai-hero-empty failed"><ShieldCheck size={20} /><strong>{brief?.latest_generated?.eligibility === "AUDIT_FAILED" ? copy.auditFailed : copy.unavailable}</strong><p>{copy.unavailableBody}</p></div>}</div>

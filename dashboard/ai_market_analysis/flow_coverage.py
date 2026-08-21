@@ -6,6 +6,7 @@ FLOW_COVERAGE_POLICY = {
     "minimum_complete_ratio": 0.995, "minimum_partial_ratio": 0.90,
     "partial_max_gap_minutes": 2, "partial_max_consecutive_gap_minutes": 1,
     "partial_recent_gap_age_minutes": 5,
+    "maximum_latest_bucket_age_multiple": 2,
 }
 
 
@@ -25,12 +26,15 @@ def classify_flow_coverage(*, snapshot_start: int, snapshot_end: int,
     max_consecutive_seconds = max((len(run) * bucket_seconds for run in runs), default=0)
     coverage_ratio = round((len(expected) - len(missing)) / len(expected), 4) if expected else 0.0
     recent_gap_age_seconds = snapshot_end - max(missing) if missing else None
+    latest_trade_age_seconds = snapshot_end - max(observed) if observed else None
     p = FLOW_COVERAGE_POLICY
-    if not missing and coverage_ratio >= p["minimum_complete_ratio"]:
+    stale_latest = latest_trade_age_seconds is None or latest_trade_age_seconds > bucket_seconds * p["maximum_latest_bucket_age_multiple"]
+    if not missing and coverage_ratio >= p["minimum_complete_ratio"] and not stale_latest:
         state = "FLOW_COMPLETE"
     elif (coverage_ratio >= p["minimum_partial_ratio"] and total_gap_seconds <= p["partial_max_gap_minutes"] * 60
           and max_consecutive_seconds <= p["partial_max_consecutive_gap_minutes"] * 60
-          and (recent_gap_age_seconds is None or recent_gap_age_seconds > p["partial_recent_gap_age_minutes"] * 60)):
+          and (recent_gap_age_seconds is None or recent_gap_age_seconds > p["partial_recent_gap_age_minutes"] * 60)
+          and not stale_latest):
         state = "FLOW_PARTIAL_USABLE"
     else:
         state = "FLOW_UNAVAILABLE"
@@ -41,5 +45,6 @@ def classify_flow_coverage(*, snapshot_start: int, snapshot_end: int,
             "total_gap_minutes": round(total_gap_seconds / 60, 3),
             "max_consecutive_gap_minutes": round(max_consecutive_seconds / 60, 3),
             "recent_gap_age_minutes": round(recent_gap_age_seconds / 60, 3) if recent_gap_age_seconds is not None else None,
+            "latest_trade_age_minutes": round(latest_trade_age_seconds / 60, 3) if latest_trade_age_seconds is not None else None,
             "gap_runs": [{"start": run[0], "end": run[-1] + bucket_seconds, "minutes": round(len(run) * bucket_seconds / 60, 3)} for run in runs],
             "synthetic_data": False, "interpolation": False}

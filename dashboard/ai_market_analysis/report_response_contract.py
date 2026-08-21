@@ -20,7 +20,8 @@ SECTION_FIELDS = (
     "position_refs", "uncertainties",
 )
 LEVEL_PROJECTION_FIELDS = (
-    "level_id", "analysis_text", "asserted_role", "asserted_state", "asserted_strength",
+    "level_id", "analysis_text", "representative_price", "zone_low", "zone_high", "observed_at", "source_fact",
+    "asserted_role", "asserted_state", "asserted_strength",
     "asserted_timeframe", "asserted_dynamic", "valid_until", "fact_refs", "level_refs",
 )
 SCENARIO_PROJECTION_FIELDS = (
@@ -130,12 +131,17 @@ def provider_reference_namespace_matrix() -> dict[str, dict[str, str]]:
     }
 
 
-def expected_section_manifest(mode: str, has_macro: bool) -> dict[str, Any]:
+def expected_section_manifest(mode: str, has_macro: bool, *, has_flow: bool = True,
+                              has_long_term: bool = True) -> dict[str, Any]:
     """Return the one canonical required/forbidden section contract for a frozen context."""
     if mode == "QUICK":
         required = ["QUICK_SUMMARY"]
     else:
         required = list(FULL_SECTION_IDS)
+        if not has_flow:
+            required.remove("ORDER_FLOW")
+        if not has_long_term:
+            required.remove("TF_1W")
         if has_macro:
             required.insert(1, "MACRO_BACKGROUND")
         if mode == "POSITION_AWARE":
@@ -144,7 +150,8 @@ def expected_section_manifest(mode: str, has_macro: bool) -> dict[str, Any]:
     conditions = {
         "QUICK_SUMMARY": "required only in QUICK",
         "MACRO_BACKGROUND": "required only in FULL/POSITION_AWARE with frozen macro evidence; otherwise forbidden",
-        "ORDER_FLOW": "required in FULL/POSITION_AWARE; use limitation text when flow evidence is unavailable",
+        "ORDER_FLOW": "required only when usable flow evidence exists; otherwise forbidden and note one limitation in LIMITATIONS",
+        "TF_1W": "required only when usable long-term evidence exists; otherwise forbidden and note status once in LIMITATIONS",
         "KEY_LEVELS": "required in FULL/POSITION_AWARE; use limitation text when levels are unavailable",
         "SCENARIOS": "required in FULL/POSITION_AWARE; use limitation text when scenarios are unavailable",
         "POSITION_PLAN": "required only in POSITION_AWARE; otherwise forbidden",
@@ -152,6 +159,8 @@ def expected_section_manifest(mode: str, has_macro: bool) -> dict[str, Any]:
     return {
         "mode": mode,
         "macro_evidence_available": bool(has_macro),
+        "flow_evidence_available": bool(has_flow),
+        "long_term_evidence_available": bool(has_long_term),
         "required_section_ids_in_exact_order": required,
         "forbidden_section_ids": forbidden,
         "conditional_section_rules": conditions,
@@ -190,7 +199,14 @@ def provider_json_schema(metadata: dict[str, Any], compiled_context: dict[str, A
         for item in compiled_context.get("facts", [])
     )
     mode = str(metadata["mode"])
-    section_manifest = expected_section_manifest(mode, has_macro)
+    evidence_status = (compiled_context.get("provider_claim_pack") or {}).get("evidence_status", {})
+    fact_values = {str(item.get("fact_id")): item.get("value") for item in compiled_context.get("facts", [])}
+    long_term_quality = fact_values.get("LONG_TERM_QUALITY")
+    section_manifest = expected_section_manifest(
+        mode, has_macro,
+        has_flow=evidence_status.get("flow_coverage_state") != "FLOW_UNAVAILABLE",
+        has_long_term=long_term_quality in {None, "COMPLETE", "PARTIAL"},
+    )
     sections = section_manifest["required_section_ids_in_exact_order"]
     confidence_rank = {"LOW": 0, "MEDIUM": 1, "HIGH": 2}
     max_rank = confidence_rank.get(str(compiled_context.get("max_confidence")), 0)

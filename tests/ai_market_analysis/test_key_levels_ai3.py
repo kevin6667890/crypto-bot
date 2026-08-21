@@ -4,6 +4,7 @@ from copy import deepcopy
 
 from dashboard.ai_market_analysis.key_level_candidates import psychological_levels
 from dashboard.ai_market_analysis.key_level_zones import merge_level_zones
+from dashboard.ai_market_analysis.report_fact_registry import select_relevant_levels
 
 
 def candidate(price,source="RANGE_HIGH",tf="15m",detected=0,dynamic=False,family=None,touches=1,low=None,high=None):
@@ -117,3 +118,17 @@ def test_dynamic_identity_differs_from_static():
 def test_source_family_confluence_not_raw_source_count():
     out=zones([candidate(99,"MA20",dynamic=True,family="MOVING_AVERAGE"),candidate(99.1,"EMA20",dynamic=True,family="MOVING_AVERAGE"),candidate(99.2,"VPVR_POC",family="VPVR")])[0]
     assert out["confluences"]==["MOVING_AVERAGE","VPVR"]
+
+
+def test_only_active_or_valid_flipped_levels_are_current_candidates():
+    def level(level_id, state, role, price):
+        return {"level_id": level_id, "state": state, "role": role, "representative_price": price,
+                "strength": "STRONG", "timeframes": ["1H"], "source_candidates": [],
+                "confluences": [], "evidence_paths": [], "first_detected": 0}
+    base = {"decision_time": "2026-08-21T00:00:00Z", "timeframe_structures": [
+        {"timeframe": "15m", "last_confirmed_close": {"value": 100}}
+    ], "scenario_tree": {"scenarios": []}, "key_levels": [
+        level("active", "ACTIVE", "SUPPORT", 95), level("flipped", "FLIPPED", "RESISTANCE", 105),
+        level("broken", "BROKEN", "RESISTANCE", 101), level("expired", "EXPIRED", "SUPPORT", 99),
+    ]}
+    assert {item["level_id"] for item in select_relevant_levels(base)} == {"active", "flipped"}

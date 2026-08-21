@@ -452,6 +452,15 @@ export type AuditedAiBrief = {
   levels?: Array<{ level_id: string; representative_price?: number; asserted_role?: string; asserted_state?: string; primary_timeframe?: string; invalidation?: string }>;
   scenarios?: Array<{ scenario_id: string; scenario_type?: string; direction?: string; status?: string; trigger_text?: string; confirmation_text?: string; invalidation_text?: string }>;
   timeframe_quality?: Array<{ timeframe: string; availability: "AVAILABLE" | "PARTIAL" | "STALE" | "MISSING"; quality: string; bar_count: number; required_bar_count: number; latest_at?: string | null; reason_code?: string | null }>;
+  evidence_quality?: {
+    policy_version?: string;
+    core_quality: "COMPLETE" | "USABLE" | "DEGRADED" | "UNAVAILABLE";
+    flow_quality: "FLOW_COMPLETE" | "FLOW_PARTIAL_USABLE" | "FLOW_UNAVAILABLE";
+    long_term_quality: "COMPLETE" | "PARTIAL" | "UNAVAILABLE";
+    macro_quality: "AVAILABLE" | "STALE" | "NOT_INCLUDED";
+    analysis_availability: "ANALYSIS_AVAILABLE" | "ANALYSIS_DEGRADED" | "ANALYSIS_UNAVAILABLE";
+    flow_coverage?: { coverage_ratio?: number; gap_count?: number; max_consecutive_gap_minutes?: number; recent_gap_age_minutes?: number | null };
+  };
   data_warnings: string[];
   scheduler?: { enabled?: boolean; cadence_seconds?: number; next_tick?: string | null; last_tick?: string | null; last_queued?: string | null; last_error?: string | null };
 };

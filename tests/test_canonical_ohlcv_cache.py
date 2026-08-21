@@ -61,3 +61,19 @@ def test_daily_ma200_has_raw_warmup_and_features_do_not_mutate_rows() -> None:
     before = [dict(row) for row in rows]
     assert build_features(rows)[199]["sma_200"] is not None
     assert rows == before
+
+
+def test_weekly_materialization_uses_utc_week_and_is_idempotent(tmp_path, monkeypatch) -> None:
+    repo = ResearchRepository(tmp_path / "weekly.db")
+    client = OkxHistoryClient(repo)
+    monday = 1_780_272_000
+    rows = [candle(monday + index * 604_800) for index in range(2)]
+    calls = []
+    monkeypatch.setattr(client, "_request", lambda params, *_args, **_kwargs: calls.append(params) or list(reversed(rows)))
+    first = client.materialize_partition("BTC-USDT", "1W", monday, monday + 2 * 604_800)
+    second = client.materialize_partition("BTC-USDT", "1W", monday, monday + 2 * 604_800)
+    stored = repo.candles("BTC-USDT", "1W", monday, monday + 2 * 604_800)
+    assert first["rows_inserted"] == 2 and second["rows_inserted"] == 0
+    assert len(stored) == 2 and len({row["ts"] for row in stored}) == 2
+    assert all((row["ts"] - 345_600) % 604_800 == 0 for row in stored)
+    assert calls[0]["bar"] == "1Wutc"

@@ -43,6 +43,9 @@ def _level_projection(fact: dict[str, Any], narrative: dict[str, Any] | None = N
     value = fact["value"]
     return {
         "level_id": value["level_id"], "analysis_text": str((narrative or {}).get("analysis_text") or "Registry-grounded key level."),
+        "representative_price": value.get("representative_price"), "zone_low": value.get("zone_low"),
+        "zone_high": value.get("zone_high"), "observed_at": value.get("observed_at"),
+        "source_fact": value.get("source_fact"),
         "asserted_role": value.get("role"), "asserted_state": value.get("state"), "asserted_strength": value.get("strength"),
         "asserted_timeframe": value.get("primary_timeframe"), "asserted_dynamic": value.get("dynamic"),
         "valid_until": value.get("valid_until"), "fact_refs": [fact["fact_id"]], "level_refs": [value["level_id"]],
@@ -53,32 +56,39 @@ def build_provider_claim_pack(compiled_context: dict[str, Any], mode: str) -> di
     facts = list(compiled_context.get("facts", [])); by_category: dict[str, list[dict[str, Any]]] = {}
     for fact in facts: by_category.setdefault(str(fact.get("category")), []).append(fact)
     all_flow = list(by_category.get("ORDER_FLOW", []))
+    current_flow = [item for item in all_flow if isinstance(item.get("value"), dict) and item["value"].get("phase") == "CURRENT"]
+    active_flow = current_flow or all_flow[-1:]
 
     def confirmed_flow_direction(item: dict[str, Any]) -> bool:
         value = item.get("value") if isinstance(item.get("value"), dict) else {}
         qualities = {str(item.get("quality") or "").upper(), str(value.get("quality") or "").upper(), str(value.get("flow_quality") or "").upper()}
-        if qualities & {"PARTIAL", "FLOW_PARTIAL_USABLE", "GAP_AFFECTED", "PARTIAL_AFTER_GAP", "MISSING", "FLOW_UNAVAILABLE", "UNAVAILABLE", "UNKNOWN"}:
+        if qualities & {"MISSING", "FLOW_UNAVAILABLE", "UNAVAILABLE", "UNKNOWN"}:
             return False
         cvd_status = str(value.get("cvd_status") or "").upper()
         flow_status = str(value.get("net_flow_status") or value.get("flow_status") or "").upper()
-        if cvd_status in {"PARTIAL", "GAP_AFFECTED", "MISSING", "UNAVAILABLE", "UNKNOWN"}:
+        if cvd_status in {"GAP_AFFECTED", "MISSING", "UNAVAILABLE", "UNKNOWN"}:
             return False
-        if flow_status in {"PARTIAL", "GAP_AFFECTED", "MISSING", "UNAVAILABLE", "UNKNOWN"}:
+        if flow_status in {"GAP_AFFECTED", "MISSING", "UNAVAILABLE", "UNKNOWN"}:
             return False
         return value.get("cvd_delta") is not None or value.get("net_flow") is not None
 
     usable_flow = [
         item for item in all_flow if confirmed_flow_direction(item)
     ]
-    flow_states = {str((item.get("value") or {}).get("flow_quality") or "") for item in all_flow if isinstance(item.get("value"), dict)}
+    flow_states = {str((item.get("value") or {}).get("flow_quality") or "") for item in active_flow if isinstance(item.get("value"), dict)}
     partial_flow_present = "FLOW_PARTIAL_USABLE" in flow_states or any(
         str(item.get("quality") or "").upper() in {"PARTIAL", "GAP_AFFECTED", "PARTIAL_AFTER_GAP", "MISSING", "UNKNOWN"}
         or (isinstance(item.get("value"), dict)
             and str(item["value"].get("quality") or "").upper() in {"PARTIAL", "GAP_AFFECTED", "PARTIAL_AFTER_GAP", "MISSING", "UNKNOWN"})
-        for item in all_flow
+        for item in active_flow
     )
-    partial_observations = [item for item in all_flow if isinstance(item.get("value"), dict) and item["value"].get("flow_quality") == "FLOW_PARTIAL_USABLE"]
+    partial_observations = [item for item in active_flow if isinstance(item.get("value"), dict)
+                            and item["value"].get("flow_quality") == "FLOW_PARTIAL_USABLE"
+                            and (item["value"].get("cvd_delta") is not None or item["value"].get("net_flow") is not None)]
+    auxiliary_flow = [item for item in all_flow if isinstance(item.get("value"), dict) and "phase" not in item["value"]]
     by_category["ORDER_FLOW"] = usable_flow + [item for item in partial_observations if item not in usable_flow]
+    if mode != "QUICK" and "FLOW_UNAVAILABLE" not in flow_states:
+        by_category["ORDER_FLOW"] += [item for item in auxiliary_flow if item not in by_category["ORDER_FLOW"]]
     levels = [_level_projection(item) for item in by_category.get("LEVEL", [])
               if isinstance(item.get("value"), dict) and all(key in item["value"] for key in ("level_id", "role", "state", "strength"))]
     scenarios = [_scenario_projection(item) for item in by_category.get("SCENARIO", [])
@@ -165,7 +175,7 @@ def _section_categories(section_id: str) -> set[str]:
     if section_id == "RECENT_PROCESS": return {"TIMELINE", "LEVEL", "ORDER_FLOW"}
     if section_id == "MOVE_NATURE": return {"TIMELINE", "TIMEFRAME", "ORDER_FLOW", "LEVEL"}
     if section_id.startswith("TF_"): return {"TIMEFRAME", "WARNING"}
-    if section_id == "ORDER_FLOW": return {"ORDER_FLOW", "WARNING"}
+    if section_id == "ORDER_FLOW": return {"ORDER_FLOW"}
     if section_id == "KEY_LEVELS": return {"LEVEL"}
     if section_id == "SCENARIOS": return {"SCENARIO", "LEVEL", "ORDER_FLOW"}
     if section_id == "MACRO_BACKGROUND": return {"MACRO"}
@@ -235,7 +245,8 @@ _FLOW_ASSERTION_TERMS = (
     "资金净流入", "资金净流出", "净流入", "净流出", "CVD", "OI",
     "成交量", "量能", "资金费率", "Funding", "基差", "Basis", "强平", "爆仓", "Liquidation",
 )
-_FLOW_LIMITATION = "订单流数据不足，无法判断净流方向"
+_FLOW_LIMITATION = "订单流不可用，本轮不作为方向确认依据"
+_FLOW_PARTIAL_LIMITATION = "订单流覆盖部分，确认度受限"
 
 
 def _enforce_numeric_namespaces(value: str, claim_pack: dict[str, Any]) -> str:
@@ -315,12 +326,14 @@ def ground_provider_report(report: dict[str, Any], claim_pack: dict[str, Any]) -
         section["body"] = _enforce_numeric_namespaces(
             _macro_limitation_text(_narrative_text(section["body"]), macro_statement), claim_pack
         )
-        if claim_pack["evidence_status"].get("flow_partial") and section.get("section_id") in {"MOVE_NATURE", "ORDER_FLOW"}:
+        if claim_pack["evidence_status"].get("flow_partial") and section.get("section_id") in {"QUICK_SUMMARY", "MOVE_NATURE", "ORDER_FLOW"}:
             section["body"] = section["body"].replace(
                 "\u8ba2\u5355\u6d41\u6570\u636e\u663e\u793a", "\u90e8\u5206\u53ef\u7528\u7684\u8ba2\u5355\u6d41\u8bc1\u636e\u663e\u793a"
             ).replace(
                 "\u8ba2\u5355\u6d41\u8f6c\u53d8\u663e\u793a", "\u90e8\u5206\u53ef\u7528\u7684\u8ba2\u5355\u6d41\u8f6c\u53d8\u8bc1\u636e\u663e\u793a"
             )
+            if _FLOW_PARTIAL_LIMITATION not in section["body"]:
+                section["body"] = section["body"].rstrip("。") + f"。{_FLOW_PARTIAL_LIMITATION}。"
         if section.get("section_id") == "SCENARIOS":
             section["body"] = _scenario_narrative_text(section["body"])
         if (claim_pack["evidence_status"].get("flow_coverage_state") == "FLOW_UNAVAILABLE"

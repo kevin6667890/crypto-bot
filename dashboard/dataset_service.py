@@ -11,7 +11,9 @@ def fingerprint(rows:list[dict[str,Any]])->str:
     canonical=[(int(x['ts']),float(x['open']),float(x['high']),float(x['low']),float(x['close']),float(x['volume'])) for x in sorted(rows,key=lambda x:int(x['ts']))]
     return hashlib.sha256(json.dumps(canonical,separators=(',',':')).encode()).hexdigest()
 def quality(rows:list[dict[str,Any]], timeframe:str,start_ts:int,end_ts:int)->dict[str,Any]:
-    step=TIMEFRAME_SECONDS[timeframe]; alignment_offset=(start_ts % step if timeframe=='1D' else 0); seen=set(); duplicates=0; malformed=[]; misaligned=[]; unconfirmed=[]; valid=[]
+    step=TIMEFRAME_SECONDS[timeframe]
+    alignment_offset = 345_600 if timeframe == "1W" else (start_ts % step if timeframe == "1D" else 0)
+    seen=set(); duplicates=0; malformed=[]; misaligned=[]; unconfirmed=[]; valid=[]
     for row in rows:
         try: ts=int(row['ts']); o,h,l,c,v=map(float,(row['open'],row['high'],row['low'],row['close'],row['volume']))
         except (KeyError,TypeError,ValueError,OverflowError): malformed.append('invalid'); continue

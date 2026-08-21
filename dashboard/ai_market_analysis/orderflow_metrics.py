@@ -66,7 +66,9 @@ def compute_phase_metrics(window: dict[str, Any], price_rows: list[dict[str, Any
                  for r in oi if r.get("close", r.get("last_value", r.get("value", r.get("confirmed_oi")))) is not None]
     oi_change = oi_values[-1]-oi_values[0] if len(oi_values) >= 2 and not oi_gap else None
     oi_pct = oi_change/oi_values[0] if oi_change is not None and oi_values[0] else None
-    cvd_delta = sum(deltas) if deltas and not cvd_gap else None
+    # A partial window may expose the sum of genuinely observed buckets.  It is
+    # explicitly labelled PARTIAL and never promoted to complete net flow.
+    cvd_delta = sum(deltas) if deltas else None
     if not deltas and len(cumulative) >= 2 and not cvd_gap:
         cvd_delta = cumulative[-1]-cumulative[0]
     settled = [r for r in funding if r.get("state") == "SETTLED" or r.get("source_type") == "SETTLED"]

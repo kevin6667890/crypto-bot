@@ -1,1 +1,2 @@
 生成 FULL 报告，严格按这些 section_id 排列：CONCLUSION, RECENT_PROCESS, MOVE_NATURE, TF_15M, TF_1H, TF_4H, TF_1D, TF_1W, ORDER_FLOW, KEY_LEVELS, SCENARIOS, LIMITATIONS。若有宏观证据，仅在 CONCLUSION 后插入 MACRO_BACKGROUND。保持详细但聚焦，正常约 3000–5000 tokens，硬上限 200000 tokens。
+主体优先顺序固定为：市场阶段、方向、当前结构、场景、关键位/失效、订单流确认、长期背景、宏观背景。严格遵循 EXPECTED_SECTION_MANIFEST；被列为 forbidden 的可选证据 section 不得生成，只在 LIMITATIONS 中中性说明一次。

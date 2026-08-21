@@ -42,3 +42,13 @@ def test_lowercase_timeframe_still_requires_matching_referenced_fact():
         {"fact_id":"TF1H_SUMMARY","category":"TIMEFRAME","value":{"timeframe":"1H"}}]}
     result=audit_references([_timeframe_claim("1d","TF15_SUMMARY")],registry)
     assert result["failure_codes"]==["TIMEFRAME_MISMATCH"]
+
+
+def test_macro_not_included_is_supported_by_neutral_absence_fact():
+    registry={"instrument":"ETH-USDT-SWAP","facts":[
+        {"fact_id":"MACRO_UNAVAILABLE","category":"WARNING","value":"本轮未纳入宏观背景。"}]}
+    claim={"claim_id":"claim","claim_type":"MACRO","modality":"FACT",
+           "original_text":"本轮未纳入宏观背景。","fact_refs":["MACRO_UNAVAILABLE"],
+           "level_refs":[],"scenario_refs":[],"macro_refs":[],"position_refs":[],
+           "timeframe_mentions":[],"instrument_mentions":[]}
+    assert audit_references([claim],registry)["failure_codes"]==[]

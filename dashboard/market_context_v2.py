@@ -37,7 +37,7 @@ LEVEL_TOUCH_THRESHOLD_PCT = 0.10
 SWING_VERSION = "confirmed-fractal-2x2-v1"
 TIMEFRAME_SECONDS = {"15m": 900, "1H": 3_600, "4H": 14_400, "1D": 86_400, "1W": 604_800}
 SUPPORTED_TIMEFRAMES = tuple(TIMEFRAME_SECONDS)
-DEFAULT_LOOKBACK = {"15m": 512, "1H": 512, "4H": 512, "1D": 1_500}
+DEFAULT_LOOKBACK = {"15m": 512, "1H": 512, "4H": 512, "1D": 1_500, "1W": 256}
 FLOW_WINDOW_SECONDS = 4 * 900
 FLOW_STALE_SECONDS = 180
 CACHE_TTL_SECONDS = 5.0
@@ -464,7 +464,7 @@ class BoundedMarketDataReaderV2:
         return connection
 
     def candles(self, instrument: str, timeframe: str, as_of: int, limit: int) -> list[dict[str, Any]]:
-        if not self.paper_db.exists() or timeframe == "1W":
+        if not self.paper_db.exists():
             return []
         width = TIMEFRAME_SECONDS[timeframe]
         start = max(0, int(as_of) - width * (int(limit) + 2))
@@ -720,14 +720,13 @@ class MarketContextServiceV2:
             if cached and time.monotonic()-cached[0] <= CACHE_TTL_SECONDS:
                 return cached[1]
         datasets = {frame: self.reader.candles(normalized, frame, resolved, DEFAULT_LOOKBACK[frame])
-                    for frame in ("15m", "1H", "4H", "1D")}
-        datasets["1W"] = aggregate_confirmed_daily_to_weekly(datasets["1D"], resolved)
+                    for frame in ("15m", "1H", "4H", "1D", "1W")}
+        if not datasets["1W"]:
+            datasets["1W"] = aggregate_confirmed_daily_to_weekly(datasets["1D"], resolved)
         contexts: dict[str, TimeframeMarketContextV2] = {}
-        current_week_start = _week_start(resolved)
-        weekly_partial = current_week_start + TIMEFRAME_SECONDS["1W"] > resolved
         for frame in SUPPORTED_TIMEFRAMES:
             contexts[frame] = self.registry.calculate(datasets[frame], frame, resolved,
-                                                       source_partial=weekly_partial if frame == "1W" else False)
+                                                       source_partial=False)
         execution = contexts[execution_timeframe]
         execution_rows = confirmed_candles_as_of(datasets[execution_timeframe], execution_timeframe, resolved)
         price_value = float(execution_rows[-1]["close"]) if execution_rows else None
@@ -785,7 +784,7 @@ class MarketContextServiceV2:
                                            "missing_sources": sorted(set(missing_sources)),
                                            "gaps": gaps}).to_dict()
         for frame in SUPPORTED_TIMEFRAMES:
-            source_rows = datasets["1D"] if frame == "1W" else None
+            source_rows = datasets[frame] if frame == "1W" else None
             context["timeframes"][frame]["observation"] = asdict(timeframe_observation(
                 normalized, frame, datasets[frame], resolved, contexts[frame].quality,
                 source_rows=source_rows,

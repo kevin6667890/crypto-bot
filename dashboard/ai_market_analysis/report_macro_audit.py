@@ -15,8 +15,10 @@ def audit_macro(claims:list[dict[str,Any]],macro:dict[str,Any],decision_time:str
     for claim in claims:
         text=claim["original_text"];refs=claim.get("macro_refs",[])
         is_macro=claim["claim_type"]=="MACRO" or any(x.lower() in text.lower() for x in MACRO_TERMS)
+        neutral_absence=("MACRO_UNAVAILABLE" in claim.get("fact_refs",[]) and
+                         any(marker in text for marker in ("本轮未纳入宏观背景", "NOT_INCLUDED")))
         code=None
-        if is_macro and not items and not any(x in text for x in ("未加入已验证宏观证据","无已验证宏观证据")):code="UNSUPPORTED_MACRO"
+        if is_macro and not items and not neutral_absence and not any(x in text for x in ("未加入已验证宏观证据","无已验证宏观证据")):code="UNSUPPORTED_MACRO"
         elif is_macro and items and (not refs or not set(refs)<=set(items)):code="UNSUPPORTED_MACRO"
         elif any("http" in text and item.get("source_url","") not in text for item in items.values()):code="UNSUPPORTED_MACRO"
         if code:codes.append(code)

@@ -6,6 +6,7 @@ from datetime import datetime
 from .canonical import stable_hash
 from .versions import AI_REPORT_FACT_REGISTRY_VERSION,AI_REPORT_NUMERIC_REGISTRY_VERSION
 from .report_numeric_semantics import numeric_semantics
+from .intelligence_quality import classify_evidence_quality
 
 MAX_FACTS = 160
 MAX_KEY_LEVELS = 12
@@ -24,7 +25,7 @@ def _timestamp(value:Any)->float|None:
 
 def select_relevant_levels(base:dict[str,Any],limit:int=MAX_KEY_LEVELS)->list[dict[str,Any]]:
     decision=datetime.fromisoformat(str(base.get("decision_time")).replace("Z","+00:00")).timestamp() if base.get("decision_time") else float("inf")
-    levels={str(x.get("level_id")):x for x in base.get("key_levels",[]) if x.get("level_id") and (_timestamp(x.get("first_detected")) is None or _timestamp(x.get("first_detected"))<=decision)};chosen=[]
+    levels={str(x.get("level_id")):x for x in base.get("key_levels",[]) if x.get("level_id") and x.get("state") in {"ACTIVE","FLIPPED"} and (_timestamp(x.get("first_detected")) is None or _timestamp(x.get("first_detected"))<=decision) and (_timestamp(x.get("valid_until")) is None or _timestamp(x.get("valid_until"))>=decision)};chosen=[]
     scenarios=base.get("scenario_tree",{}).get("scenarios",[])
     def add(ids):
         for level_id in sorted({str(x) for x in ids if x in levels}):
@@ -55,7 +56,7 @@ def select_relevant_levels(base:dict[str,Any],limit:int=MAX_KEY_LEVELS)->list[di
 def _level_value(level:dict[str,Any])->dict[str,Any]:
     candidates=level.get("source_candidates",[]);timeframes=sorted(set(level.get("timeframes",[])),key=lambda x:(-TF_RANK.get(x,0),x))
     dynamic=any(bool(c.get("dynamic")) for c in candidates);valid=[c.get("valid_until") for c in candidates if c.get("valid_until") is not None];slopes=[c.get("slope") for c in candidates if c.get("slope") is not None]
-    return {"level_id":level.get("level_id"),"representative_price":level.get("representative_price"),"zone_low":level.get("zone_low"),"zone_high":level.get("zone_high"),"role":level.get("role"),"state":level.get("state"),"strength":level.get("strength"),"timeframes":timeframes,"primary_timeframe":timeframes[0] if timeframes else None,"dynamic":dynamic,"valid_until":max(valid) if valid else None,"slope":{"values":slopes,"semantic":"MOVING" if dynamic else "STATIC"},"first_detected":level.get("first_detected"),"last_tested":level.get("last_tested"),"broken_at":level.get("broken_at"),"flipped_at":level.get("flipped_at"),"invalidation":level.get("invalidation"),"source_types":sorted({str(c.get("source")) for c in candidates if c.get("source")}),"source_families":sorted({str(c.get("source_family")) for c in candidates if c.get("source_family")}),"evidence_paths":sorted(set(level.get("evidence_paths",[]))|{p for c in candidates for p in c.get("evidence_paths",[])}),"quality":level.get("quality")}
+    return {"level_id":level.get("level_id"),"representative_price":level.get("representative_price"),"zone_low":level.get("zone_low"),"zone_high":level.get("zone_high"),"role":level.get("role"),"state":level.get("state"),"strength":level.get("strength"),"timeframes":timeframes,"primary_timeframe":timeframes[0] if timeframes else None,"dynamic":dynamic,"valid_until":max(valid) if valid else None,"slope":{"values":slopes,"semantic":"MOVING" if dynamic else "STATIC"},"first_detected":level.get("first_detected"),"observed_at":level.get("observed_at"),"source_fact":level.get("source_fact"),"last_tested":level.get("last_tested"),"broken_at":level.get("broken_at"),"flipped_at":level.get("flipped_at"),"invalidation":level.get("invalidation"),"source_types":sorted({str(c.get("source")) for c in candidates if c.get("source")}),"source_families":sorted({str(c.get("source_family")) for c in candidates if c.get("source_family")}),"evidence_paths":sorted(set(level.get("evidence_paths",[]))|{p for c in candidates for p in c.get("evidence_paths",[])}),"quality":level.get("quality")}
 
 
 def _fact(fact_id: str, category: str, label: str, value: Any, pointer: str, *, unit: str | None = None,
@@ -74,9 +75,17 @@ def build_fact_registry(enriched: dict[str, Any]) -> dict[str, Any]:
     base, facts = enriched["base_context"], []
     decision = enriched["decision_time"]
     quality = base.get("data_quality", {})
-    facts.append(_fact("DATA_QUALITY", "WARNING", "数据质量", quality.get("overall", "UNKNOWN"), "/data_quality", timestamp=decision, priority=100))
+    dimensions = classify_evidence_quality(base, enriched.get("macro_context"))
+    # Compatibility identifier; its value is CORE quality, never the worst
+    # optional/enhanced source.
+    facts.append(_fact("DATA_QUALITY", "WARNING", "核心市场数据", dimensions.get("core_quality", "UNKNOWN"), "/evidence_quality/core_quality", timestamp=decision, priority=100))
+    facts.append(_fact("ANALYSIS_AVAILABILITY", "WARNING", "分析可用性", dimensions.get("analysis_availability", "ANALYSIS_UNAVAILABLE"), "/evidence_quality/analysis_availability", timestamp=decision, priority=100))
+    facts.append(_fact("EVIDENCE_FLOW_QUALITY", "WARNING", "订单流覆盖", dimensions.get("flow_quality", "FLOW_UNAVAILABLE"), "/evidence_quality/flow_quality", timestamp=decision, priority=85))
+    facts.append(_fact("LONG_TERM_QUALITY", "WARNING", "长期结构", dimensions.get("long_term_quality", "UNAVAILABLE"), "/evidence_quality/long_term_quality", timestamp=decision, priority=80))
     for index, warning in enumerate(quality.get("gaps", []) + quality.get("missing_sources", []) + quality.get("watermark_mismatches", [])):
-        facts.append(_fact(f"DATA_WARNING_{index+1:02d}", "WARNING", "数据限制", warning, "/data_quality", timestamp=decision, priority=100))
+        source = str(warning.get("source") if isinstance(warning, dict) else warning)
+        priority = 100 if source in {"15m", "1H", "4H", "1D"} else 70
+        facts.append(_fact(f"DATA_WARNING_{index+1:02d}", "WARNING", "数据限制", warning, "/data_quality", timestamp=decision, priority=priority))
     for index, frame in enumerate(base.get("timeframe_structures", [])):
         tf = frame.get("timeframe"); prefix = TIMEFRAME_IDS.get(tf, f"TF{index}")
         close = frame.get("last_confirmed_close") or {}
@@ -105,7 +114,7 @@ def build_fact_registry(enriched: dict[str, Any]) -> dict[str, Any]:
                            f"/order_flow_phases/{len(phases)-min(4,len(phases))+index}", timestamp=phase.get("end"), quality=phase.get("quality", "UNKNOWN"), priority=95-index))
     for index, transition in enumerate(base.get("phase_transitions", [])[-1:]):
         facts.append(_fact(f"FLOW_TRANSITION_{index+1:02d}", "ORDER_FLOW", "订单流转变", {k:transition.get(k) for k in ("price_change","oi_behavior","cvd_behavior","volume_change","interpretation","confidence","counterevidence")},
-            f"/phase_transitions/{len(base.get('phase_transitions', []))-1+index}", timestamp=decision, priority=83-index))
+            f"/phase_transitions/{len(base.get('phase_transitions', []))-1+index}", timestamp=decision, priority=93-index))
     all_levels=base.get("key_levels",[]);selected_levels=select_relevant_levels(base)
     level_indexes={level.get("level_id"):index for index,level in enumerate(all_levels)}
     for display_index, level in enumerate(selected_levels):
@@ -127,7 +136,7 @@ def build_fact_registry(enriched: dict[str, Any]) -> dict[str, Any]:
     for index, item in enumerate(macro.get("items", [])):
         facts.append(_fact(f"MACRO_{index+1:02d}", "MACRO", item["title"], {"evidence_id":item["evidence_id"],"category":item["category"],"factual_summary":item["factual_summary"],"publisher":item["publisher"],"published_at":item["published_at"]}, f"/macro_context/items/{index}", timestamp=item["published_at"], source=item["source_type"], claim_scope="MACRO", priority=100))
     if not macro.get("items"):
-        facts.append(_fact("MACRO_UNAVAILABLE", "WARNING", "宏观证据", "本次未加入已验证宏观证据。", "/macro_context/warnings", timestamp=decision, priority=100))
+        facts.append(_fact("MACRO_UNAVAILABLE", "WARNING", "宏观背景", "本轮未纳入宏观背景。", "/macro_context/warnings", timestamp=decision, priority=30))
     for index, claim in enumerate(base.get("unsupported_claims", [])):
         facts.append(_fact(f"UNSUPPORTED_{index+1:02d}", "WARNING", "禁止断言", claim, f"/unsupported_claims/{index}", timestamp=decision, priority=10))
     facts = facts[:MAX_FACTS]
@@ -153,6 +162,8 @@ def build_fact_registry(enriched: dict[str, Any]) -> dict[str, Any]:
     core = {"version": AI_REPORT_FACT_REGISTRY_VERSION,"numeric_registry_version":AI_REPORT_NUMERIC_REGISTRY_VERSION, "context_id": enriched["enriched_context_id"],
             "instrument": enriched["instrument"], "decision_time": decision, "facts": facts,
             "numeric_registry": numeric, "allowed_directional_biases": ["BULLISH","NEUTRAL","BEARISH"],
-            "max_confidence": "MEDIUM" if quality.get("overall") == "VALID" else "LOW",
+            "max_confidence": ("HIGH" if dimensions.get("core_quality") == "COMPLETE"
+                               else "MEDIUM" if dimensions.get("core_quality") == "USABLE"
+                               else "LOW"),
             "allowed_market_phases": sorted({str(timeline.get("current_phase") or "UNKNOWN"), "MIXED"})}
     return {**core, "registry_hash": stable_hash(core)}

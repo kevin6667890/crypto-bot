@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { compactAiSummary, isPresent, localizeWorkspaceNarrative, presentAiLevels, workspaceScenarioLabel } from "./aiWorkspaceSemantics";
+import { compactAiSummary, coverageMatrixRows, isPresent, localizeWorkspaceNarrative, presentAiLevels, workspaceScenarioLabel } from "./aiWorkspaceSemantics";
 import { researchPresentationCopy, selectResearchReport } from "./aiResearchPresentation";
 
 describe("Workspace AI presentation", () => {
@@ -38,6 +38,13 @@ describe("Workspace AI presentation", () => {
     const value = "第一句是核心结论。第二句说明最重要的确认条件。第三句属于完整报告，不应进入 Workspace。";
     expect(compactAiSummary(value)).toBe("第一句是核心结论。第二句说明最重要的确认条件。…");
     expect(compactAiSummary(value)).not.toContain("第三句");
+  });
+
+  it("renders the four-dimension coverage matrix without a global PARTIAL badge", () => {
+    const rows = coverageMatrixRows({ core_quality: "COMPLETE", flow_quality: "FLOW_PARTIAL_USABLE", long_term_quality: "PARTIAL", macro_quality: "NOT_INCLUDED" }, "en");
+    expect(rows.map(item => item.label)).toEqual(["Core market data", "Order flow", "Long-term structure", "Macro context"]);
+    expect(rows.map(item => item.text)).toEqual(["Complete", "Partial", "Limited", "Not included"]);
+    expect(JSON.stringify(rows)).not.toContain("Data quality: Partial");
   });
 });
 

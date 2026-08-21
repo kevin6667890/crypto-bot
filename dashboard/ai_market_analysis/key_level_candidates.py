@@ -66,12 +66,12 @@ def build_level_candidates(facts: dict[str, dict[str, Any]], timelines: dict[str
             add(min(r["low"] for r in recent), "ROLLING_LOW", timeframe, stamp, f"/timeframe_structures/{tf_index}/last_confirmed_close")
         for name in ("ma20","ma30","ma60","ma200"):
             metric=fact["moving_averages"][name]; value=metric["value"]
-            if value is not None and fact["quality"]["warmup_complete"] and abs(current_price-value)/current_price <= .06:
+            if value is not None and abs(current_price-value)/current_price <= .06:
                 slope=fact["slopes"][name]["value"]
                 add(value, name.upper(), timeframe, stamp, f"/timeframe_structures/{tf_index}/moving_averages/{name}",
                     dynamic=True, slope=slope, valid_until=stamp+TIMEFRAME_SECONDS[timeframe])
         ema=fact["moving_averages"]["ema20"]; value=ema["value"]
-        if value is not None and fact["quality"]["warmup_complete"] and abs(current_price-value)/current_price <= .06:
+        if value is not None and abs(current_price-value)/current_price <= .06:
             add(value, "EMA20", timeframe, stamp, f"/timeframe_structures/{tf_index}/moving_averages/ema20",
                 dynamic=True, slope=fact["slopes"]["ema20"]["value"], valid_until=stamp+TIMEFRAME_SECONDS[timeframe])
     for name in ("POC","VAH","VAL"):

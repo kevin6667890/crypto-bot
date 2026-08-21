@@ -40,7 +40,7 @@ def validate_report_body(payload:dict[str,Any])->dict[str,Any]:
 
 def build_base_context_from_stores(payload:dict[str,Any],paper_db:str|Path,micro_db:str|Path|None)->dict[str,Any]:
     decision=int(datetime.fromisoformat(payload["decision_time"].replace("Z","+00:00")).timestamp());instrument=payload["instrument"]
-    reader=BoundedMarketDataReaderV2(paper_db,micro_db);datasets={tf:reader.candles(instrument,tf,decision,1500 if tf=="1D" else 512) for tf in SUPPORTED_TIMEFRAMES if tf!="1W"}
+    reader=BoundedMarketDataReaderV2(paper_db,micro_db);datasets={tf:reader.candles(instrument,tf,decision,1500 if tf=="1D" else 512) for tf in SUPPORTED_TIMEFRAMES}
     orderflow=None
     if micro_db and Path(micro_db).exists():
         raw_start=min((int(row["ts"]) for rows in datasets.values() for row in rows),default=decision-30*86400)

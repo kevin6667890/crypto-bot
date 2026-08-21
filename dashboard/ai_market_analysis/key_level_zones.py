@@ -9,6 +9,7 @@ from .key_level_candidates import SOURCE_FAMILY
 from .versions import AI_KEY_LEVEL_ZONE_VERSION
 
 STRENGTHS=("WEAK","MODERATE","STRONG","MAJOR")
+LEVEL_STATES=("ACTIVE","TOUCHED","BROKEN","FLIPPED","EXPIRED")
 
 
 def merge_level_zones(candidates: list[dict[str,Any]], current_price: float, atr: float | None,
@@ -32,7 +33,7 @@ def merge_level_zones(candidates: list[dict[str,Any]], current_price: float, atr
         families=sorted({c["source_family"] for c in cluster}); timeframes=sorted({c["timeframe"] for c in cluster})
         static=any(not c["dynamic"] for c in cluster)
         role="SUPPORT" if high < current_price else "RESISTANCE" if low > current_price else "PIVOT"
-        state,broken_at,flipped_at=_state(cluster,bars,low,high,role,direction,static)
+        state,broken_at,flipped_at=_state(cluster,bars,low,high,role,direction,static,decision_time)
         if state=="FLIPPED":
             role="SUPPORT" if direction=="UP" else "RESISTANCE" if direction=="DOWN" else role
         score=_strength_score(cluster,families,timeframes,state)
@@ -44,6 +45,8 @@ def merge_level_zones(candidates: list[dict[str,Any]], current_price: float, atr
                       "role":role,"state":state,"strength":strength,"source_candidates":cluster,"timeframes":timeframes,
                       "confluences":families,"touch_count":sum(c["touch_count"] for c in cluster),
                       "first_detected":min(c["detected"] for c in cluster),"last_tested":_last_test(bars,low,high),
+                      "observed_at":decision_time,
+                      "source_fact":sorted({p for c in cluster for p in c["evidence_paths"]}),
                       "broken_at":broken_at,"flipped_at":flipped_at,
                       "invalidation":_invalidation(role,state,low,high,timeframes),
                       "evidence_paths":sorted({p for c in cluster for p in c["evidence_paths"]}),
@@ -59,8 +62,10 @@ def merge_level_zones(candidates: list[dict[str,Any]], current_price: float, atr
     return selected[:max_total]
 
 
-def _state(cluster,bars,low,high,role,direction,static):
-    if not static: return "ACTIVE",None,None
+def _state(cluster,bars,low,high,role,direction,static,decision_time):
+    if not static:
+        valid = [int(c["valid_until"]) for c in cluster if c.get("valid_until") is not None]
+        return ("EXPIRED", None, None) if valid and max(valid) < decision_time else ("ACTIVE",None,None)
     detected=min(c["detected"] for c in cluster)
     closes=[(int(r.get("close_time",r.get("ts",0))),float(r["close"])) for r in bars if int(r.get("close_time",r.get("ts",0)))>=detected]
     boundary_sources={c["source"] for c in cluster}

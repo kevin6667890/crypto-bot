@@ -1,0 +1,6 @@
+# Runtime-only protection for bounded, manual research on the production host.
+services:
+  research-worker:
+    cpus: "0.25"
+    mem_limit: 512m
+    pids_limit: 96

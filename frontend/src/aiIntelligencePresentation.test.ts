@@ -48,4 +48,9 @@ describe("deterministic intelligence presentation", () => {
     expect(center.frames.filter(visibleFrame)).toHaveLength(5);
     expect(center.flow).toBe("Flow unavailable");
   });
+
+  it("localizes the alignment enum on the Chinese surface", () => {
+    const center = intelligenceCenter({ intelligence: { alignment: "CONFLICTED" } }, [], "zh");
+    expect(center.alignment).toBe("多周期分歧");
+  });
 });

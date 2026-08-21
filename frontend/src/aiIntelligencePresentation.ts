@@ -84,6 +84,10 @@ const stateLabels: Record<string, Record<Language, string>> = {
   FLOW_COMPLETE: { zh: "订单流完整", en: "Flow complete" },
   FLOW_PARTIAL_USABLE: { zh: "订单流部分可用", en: "Flow partially usable" },
   FLOW_UNAVAILABLE: { zh: "订单流暂不可用", en: "Flow unavailable" },
+  ALIGNED: { zh: "多周期同向", en: "Aligned" },
+  MIXED: { zh: "多周期混合", en: "Mixed" },
+  CONFLICTED: { zh: "多周期分歧", en: "Conflicted" },
+  HIGHER_TIMEFRAME_EXTENSION: { zh: "高周期仍伸展", en: "Higher-timeframe extension" },
 };
 
 function record(value: unknown): LooseRecord { return value && typeof value === "object" && !Array.isArray(value) ? value as LooseRecord : {}; }

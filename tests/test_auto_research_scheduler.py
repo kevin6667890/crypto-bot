@@ -5,6 +5,7 @@ from dashboard.automatic_research import AutomaticResearchService
 from dashboard.discovery_service import DiscoveryService
 from dashboard.job_queue import JobQueue
 from dashboard.research_repository import ResearchRepository
+<<<<<<< HEAD
 from dashboard.research_service import ResearchService
 from scripts.run_auto_research_scheduler import DurableAutoResearchScheduler, run_forever
 
@@ -20,6 +21,9 @@ class ResidentScheduler:
     def initialize(self, enabled): self.initialized.append(enabled); return {"enabled": enabled}
     def tick(self): self.ticks += 1; return {"triggered": False, "state": {"enabled": False}}
     def sleep_seconds(self, _state): return 60.0
+=======
+from scripts.run_auto_research_scheduler import DurableAutoResearchScheduler
+>>>>>>> feat/auto-research-closed-loop
 
 
 class Clock:
@@ -106,6 +110,7 @@ def test_disabled_scheduler_does_not_run(tmp_path):
         assert connection.execute("SELECT COUNT(*) FROM research_jobs").fetchone()[0] == 0
 
 
+<<<<<<< HEAD
 def test_idle_worker_loop_stays_resident_until_stop_signal():
     scheduler, stop = ResidentScheduler(), StopAfterWaits(3)
     assert run_forever(scheduler, False, stop) == 0
@@ -132,6 +137,8 @@ def test_passive_api_service_never_interrupts_a_worker_owned_running_job(tmp_pat
     assert passive.jobs.get(job["id"])["status"] == "RUNNING"
 
 
+=======
+>>>>>>> feat/auto-research-closed-loop
 def test_interval_and_summary_are_persisted(tmp_path):
     now = datetime(2026, 8, 19, 7, 20, tzinfo=timezone.utc)
     _, _, automatic, _, scheduler = scheduler_service(tmp_path, now, interval=168)

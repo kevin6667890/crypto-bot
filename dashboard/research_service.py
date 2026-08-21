@@ -47,10 +47,14 @@ def _date_ts(value: str, end: bool = False) -> int:
 
 class ResearchService:
     def __init__(self, db_path: Path) -> None:
+<<<<<<< HEAD
         # A web/API process is a passive queue client.  Only the explicitly
         # configured research-worker may reconcile or claim durable jobs; an
         # API restart must never interrupt work owned by that process.
         worker_enabled=__import__('os').getenv('RESEARCH_JOB_WORKER_ENABLED','false').lower() in {'1','true','yes','on'}
+=======
+        worker_enabled=__import__('os').getenv('RESEARCH_JOB_WORKER_ENABLED','true').lower() in {'1','true','yes','on'}
+>>>>>>> feat/auto-research-closed-loop
         self.repository = ResearchRepository(db_path,reconcile_interrupted=worker_enabled)
         self.history = OkxHistoryClient(self.repository)
         self.alerts = AlertService(db_path)

@@ -3,8 +3,11 @@ from __future__ import annotations
 
 import json
 import os
+<<<<<<< HEAD
 import gc
 import ctypes
+=======
+>>>>>>> feat/auto-research-closed-loop
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Mapping
 
@@ -13,11 +16,14 @@ from .discovery_identity import build_candidate_identity
 from .discovery_robustness import generate_cost_scenarios
 from .discovery_scoring import evaluate_eligibility
 from .discovery_service import ENGINE_VERSION, POLICY_VERSION, aggregate, buy_and_hold
+<<<<<<< HEAD
 from .factor_program_discovery import canonical_backtest, persist_candidates
 from .factor_strategy_program import generate as generate_factor_programs, validate as validate_factor_program
 from .discovery_scoring import calculate_score, DISCOVERY_SCORING_VERSION
 from .approved_strategy_runtime import deserialize_program
 from .sqlite_retry import retry_locked
+=======
+>>>>>>> feat/auto-research-closed-loop
 from .okx_history import TIMEFRAME_SECONDS
 from .strategy_registry import (
     ACTIVE_SCOPE_POLICY_VERSION, APPROVAL_POLICY_VERSION, ApprovedStrategyRegistry, ROUTER_TEMPLATE_MAP,
@@ -30,7 +36,10 @@ ROLLING_SPLIT_POLICY_VERSION = "rolling-development-70-holdout-20-oot-10-v1"
 RUNTIME_ADAPTER_VERSION = "approved-strategy-runtime-v2.1-v1"
 DEFAULT_TEMPLATES = ("TREND_PULLBACK_V2_1", "TREND_BREAKOUT_V2_1", "RANGE_MEAN_REVERSION_V2_1")
 AUTO_RESEARCH_SCHEDULER_NAME = "automatic-research"
+<<<<<<< HEAD
 FACTOR_PROGRAM_DEVELOPMENT_BATCH_SIZE = 25
+=======
+>>>>>>> feat/auto-research-closed-loop
 
 
 def _loads(value: Any, fallback: Any) -> Any:
@@ -46,6 +55,7 @@ def _json(value: Any) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
 
 
+<<<<<<< HEAD
 def factor_program_development_batches(rows: list[Mapping[str, Any]], *,
                                        batch_size: int = FACTOR_PROGRAM_DEVELOPMENT_BATCH_SIZE) -> list[list[Mapping[str, Any]]]:
     """Return unfinished programs in their durable candidate order.
@@ -74,6 +84,8 @@ def release_factor_program_transients() -> None:
         pass
 
 
+=======
+>>>>>>> feat/auto-research-closed-loop
 def rolling_window(now: datetime | None = None, lookback_days: int = 730) -> tuple[int, int]:
     current = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     end = current.replace(hour=0, minute=0, second=0, microsecond=0)
@@ -223,6 +235,7 @@ class AutomaticResearchService:
         cycle_id = int((job.get("request_payload") or {}).get("cycle_id") or 0)
         if not cycle_id or job.get("status") not in {"FAILED", "CANCELLED", "INTERRUPTED"}:
             return
+<<<<<<< HEAD
         def write() -> None:
             with self.repository.connect() as connection:
                 connection.execute(
@@ -230,6 +243,13 @@ class AutomaticResearchService:
                     (job["status"], job.get("error"), utc_now(), utc_now(), cycle_id),
                 )
         retry_locked(write)
+=======
+        with self.repository.connect() as connection:
+            connection.execute(
+                "UPDATE automatic_research_cycles SET status=?,error=?,updated_at=?,completed_at=? WHERE id=? AND status!='COMPLETED'",
+                (job["status"], job.get("error"), utc_now(), utc_now(), cycle_id),
+            )
+>>>>>>> feat/auto-research-closed-loop
 
     def _cycle(self, item: dict[str, Any], **extra: Any) -> dict[str, Any]:
         for key in ("request", "checkpoint", "versions", "result"):
@@ -326,6 +346,7 @@ class AutomaticResearchService:
                 "next_due_at": scheduler.get("next_due_at") if scheduler else None}
 
     def _save_checkpoint(self, cycle_id: int, stage: str, payload: Any = None, **updates: Any) -> None:
+<<<<<<< HEAD
         def write() -> None:
             # Read and merge within each retry attempt so a competing service
             # cannot cause a stale checkpoint overwrite.
@@ -341,6 +362,19 @@ class AutomaticResearchService:
                 values.append(cycle_id)
                 connection.execute(f"UPDATE automatic_research_cycles SET {','.join(fields)} WHERE id=?", values)
         retry_locked(write)
+=======
+        item = self.detail(cycle_id)
+        checkpoint = dict((item or {}).get("checkpoint") or {})
+        checkpoint[stage] = payload if payload is not None else {"completed_at": utc_now()}
+        fields = ["checkpoint=?", "updated_at=?"]
+        values: list[Any] = [_json(checkpoint), utc_now()]
+        for key, value in updates.items():
+            fields.append(f"{key}=?")
+            values.append(value)
+        values.append(cycle_id)
+        with self.repository.connect() as connection:
+            connection.execute(f"UPDATE automatic_research_cycles SET {','.join(fields)} WHERE id=?", values)
+>>>>>>> feat/auto-research-closed-loop
 
     @staticmethod
     def _stage_pass(metrics: Mapping[str, Any], benchmark: Mapping[str, Any]) -> tuple[str, list[str]]:
@@ -358,11 +392,18 @@ class AutomaticResearchService:
         timeframe = str(candidate["timeframe"]); step = TIMEFRAME_SECONDS[timeframe]
         rows = self.repository.candles(instrument, timeframe, start - 240 * step, end - 1)
         rows = [row for row in rows if bool(row.get("confirmed", 1))]
+<<<<<<< HEAD
         if candidate["template"] == "FACTOR_PROGRAM":
             program=deserialize_program(candidate["program_ast"])
             outcome=canonical_backtest(program,rows,instrument,timeframe,start,end-step)
         else:
             outcome = run_discovery_candidate_backtest(rows, instrument, timeframe, candidate["template"], candidate["parameters"], start, end-step, execution, fingerprint)
+=======
+        outcome = run_discovery_candidate_backtest(
+            rows, instrument, timeframe, candidate["template"], candidate["parameters"],
+            start, end-step, execution, fingerprint,
+        )
+>>>>>>> feat/auto-research-closed-loop
         benchmark = buy_and_hold(rows, start, end-step, execution)
         status, reasons = self._stage_pass(outcome["metrics"], benchmark)
         return {"status": status, "reason_codes": reasons, "instrument": instrument,
@@ -396,6 +437,7 @@ class AutomaticResearchService:
             })
             discovery_id, discovery_request = inline["id"], inline["request"]
             self._save_checkpoint(cycle_id, "discovery_created", {"run_id":discovery_id}, discovery_run_id=discovery_id)
+<<<<<<< HEAD
         with self.repository.connect() as connection:
             template_development_complete = connection.execute(
                 "SELECT COUNT(*) FROM strategy_discovery_candidates WHERE discovery_run_id=? AND template!='FACTOR_PROGRAM' AND status='DEVELOPMENT_CANDIDATE'",
@@ -508,6 +550,10 @@ class AutomaticResearchService:
             retry_locked(rank_eligible)
             del program_rows, batches
             release_factor_program_transients()
+=======
+        self.discovery._run_job(cycle["job_id"], discovery_request,
+            lambda _, pct, msg, args=None: checkpoint(cycle["job_id"], 12+int((pct or 0)*.38), msg, args or {}))
+>>>>>>> feat/auto-research-closed-loop
         self._save_checkpoint(cycle_id, "development_complete", {"run_id":discovery_id})
         with self.repository.connect() as connection:
             rows = connection.execute(
@@ -518,8 +564,11 @@ class AutomaticResearchService:
         for row in rows:
             item = dict(row)
             item["parameters"] = _loads(item["parameters"], {})
+<<<<<<< HEAD
             item["program_ast"] = _loads(item.get("program_ast"), {})
             item["factor_versions"] = _loads(item.get("factor_versions"), {})
+=======
+>>>>>>> feat/auto-research-closed-loop
             item["aggregate_metrics"] = _loads(item["aggregate_metrics"], {})
             item["elimination_reasons"] = _loads(item["elimination_reasons"], [])
             if item.get("eligibility_status") == "ELIGIBLE": candidates.append(item)
@@ -548,6 +597,7 @@ class AutomaticResearchService:
             } for value in robust_folds])
             robust_eligibility = evaluate_eligibility(robust_aggregate, timeframe, "DEVELOPMENT_CANDIDATE")
             robust_status = "PASS" if robust_eligibility["eligible"] else "FAIL"
+<<<<<<< HEAD
             is_program=item["template"] == "FACTOR_PROGRAM"
             router_parameters = _router_parameters(item["template"],item["parameters"])
             candidate_identity = item.get("candidate_identity") if is_program else build_candidate_identity(item["template"],item["parameters"],execution.execution_hash())
@@ -555,6 +605,14 @@ class AutomaticResearchService:
                 "schema_version":"approved-deterministic-definition-v1", "template":item["template"],
                 "template_version":item["template_version"], "parameters":item["parameters"],
                 "direction":item.get("direction") or "BOTH", "router_family":ROUTER_TEMPLATE_MAP.get(item["template"]),
+=======
+            router_parameters = _router_parameters(item["template"],item["parameters"])
+            candidate_identity = build_candidate_identity(item["template"],item["parameters"],execution.execution_hash())
+            definition = {
+                "schema_version":"approved-deterministic-definition-v1", "template":item["template"],
+                "template_version":item["template_version"], "parameters":item["parameters"],
+                "direction":"BOTH", "router_family":ROUTER_TEMPLATE_MAP.get(item["template"]),
+>>>>>>> feat/auto-research-closed-loop
                 "router_parameters":router_parameters, "runtime_adapter_version":RUNTIME_ADAPTER_VERSION,
                 "dataset_range":{"start":request["research_start"],"end":request["research_end"]},
                 "validation_status":{"development":"PASS","walk_forward":"PASS","holdout":holdout["status"],
@@ -563,8 +621,11 @@ class AutomaticResearchService:
                 "activation_scope":{"mode":"GLOBAL_CROSS_ASSET","policy_version":ACTIVE_SCOPE_POLICY_VERSION,
                     "instruments":["BTC-USDT","ETH-USDT","SOL-USDT"]},
             }
+<<<<<<< HEAD
             if is_program:
                 definition.update(program_ast=_loads(item.get("program_ast"),{}),factor_versions=_loads(item.get("factor_versions"),{}),program_version=item.get("program_version"))
+=======
+>>>>>>> feat/auto-research-closed-loop
             evidence = {
                 "candidate": item, "candidate_identity": candidate_identity, "definition": definition,
                 "configuration_hash": canonical_hash(definition), "development":{"eligible":True,"reasons":[],"score":item["development_score"]},
@@ -575,7 +636,11 @@ class AutomaticResearchService:
                     "policy":"existing development eligibility applied to all five 2x-cost folds"},
                 "contamination":{"state":"CLEAR","candidate_frozen_before_holdout":True,"post_holdout_adjustment":False},
                 "identity":{"candidate_identity":candidate_identity,"configuration_hash":canonical_hash(definition)},
+<<<<<<< HEAD
                 "runtime":{"deterministic":True,"execution_compatible":router_parameters is not None or is_program,"router_family":ROUTER_TEMPLATE_MAP.get(item["template"]),"program_runtime":is_program},
+=======
+                "runtime":{"deterministic":True,"execution_compatible":router_parameters is not None,"router_family":ROUTER_TEMPLATE_MAP.get(item["template"])},
+>>>>>>> feat/auto-research-closed-loop
                 "dataset_id":dataset["id"],"dataset_fingerprint":fingerprint,"discovery_run_id":discovery_id,
             }
             self._save_checkpoint(cycle_id,validation_key,evidence)

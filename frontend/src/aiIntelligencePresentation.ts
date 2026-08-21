@@ -171,7 +171,7 @@ export function intelligenceCenter(input: unknown, sections: Section[] = [], lan
     const fallback = section(sections, `TF_${timeframe.toUpperCase()}`);
     // Keep the summary card deterministic and compact. The audited provider
     // prose is rendered below as the explanatory narrative, not repeated here.
-    const observation = text(field(frame, "observation", "summary"), language)
+    const observation = text(field(frame, "observation", "summary") ?? (Object.keys(frame).length ? undefined : fallback), language)
       || text(field(volume, "state"), language);
     return {
       timeframe,

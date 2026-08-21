@@ -59,7 +59,9 @@ services:
     environment:
       <<: [*ai-disabled, *ai-budget]
       PAPER_API_HOST: 0.0.0.0
+      GIT_COMMIT: ${FACTOR_PROGRAM_GIT_COMMIT:?Factor Program source commit is required}
       PAPER_DB_PATH: /var/lib/paper/paper_trades.db
+      GIT_COMMIT: ${FACTOR_PROGRAM_GIT_COMMIT:?Factor Program source commit is required}
       MICROSTRUCTURE_DB_PATH: /var/lib/microstructure/market_microstructure.db
       CANONICAL_MICROSTRUCTURE_HISTORY_DB_PATH: /var/lib/microstructure/canonical_microstructure_history_v1.db
       AI_MARKET_REPORT_DB_PATH: /var/lib/ai-report/ai_market_reports.db

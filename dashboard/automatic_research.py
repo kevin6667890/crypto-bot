@@ -17,6 +17,7 @@ from .factor_program_discovery import canonical_backtest, persist_candidates
 from .factor_strategy_program import generate as generate_factor_programs, validate as validate_factor_program
 from .discovery_scoring import calculate_score, DISCOVERY_SCORING_VERSION
 from .approved_strategy_runtime import deserialize_program
+from .sqlite_retry import retry_locked
 from .okx_history import TIMEFRAME_SECONDS
 from .strategy_registry import (
     ACTIVE_SCOPE_POLICY_VERSION, APPROVAL_POLICY_VERSION, ApprovedStrategyRegistry, ROUTER_TEMPLATE_MAP,
@@ -222,11 +223,13 @@ class AutomaticResearchService:
         cycle_id = int((job.get("request_payload") or {}).get("cycle_id") or 0)
         if not cycle_id or job.get("status") not in {"FAILED", "CANCELLED", "INTERRUPTED"}:
             return
-        with self.repository.connect() as connection:
-            connection.execute(
-                "UPDATE automatic_research_cycles SET status=?,error=?,updated_at=?,completed_at=? WHERE id=? AND status!='COMPLETED'",
-                (job["status"], job.get("error"), utc_now(), utc_now(), cycle_id),
-            )
+        def write() -> None:
+            with self.repository.connect() as connection:
+                connection.execute(
+                    "UPDATE automatic_research_cycles SET status=?,error=?,updated_at=?,completed_at=? WHERE id=? AND status!='COMPLETED'",
+                    (job["status"], job.get("error"), utc_now(), utc_now(), cycle_id),
+                )
+        retry_locked(write)
 
     def _cycle(self, item: dict[str, Any], **extra: Any) -> dict[str, Any]:
         for key in ("request", "checkpoint", "versions", "result"):
@@ -323,17 +326,21 @@ class AutomaticResearchService:
                 "next_due_at": scheduler.get("next_due_at") if scheduler else None}
 
     def _save_checkpoint(self, cycle_id: int, stage: str, payload: Any = None, **updates: Any) -> None:
-        item = self.detail(cycle_id)
-        checkpoint = dict((item or {}).get("checkpoint") or {})
-        checkpoint[stage] = payload if payload is not None else {"completed_at": utc_now()}
-        fields = ["checkpoint=?", "updated_at=?"]
-        values: list[Any] = [_json(checkpoint), utc_now()]
-        for key, value in updates.items():
-            fields.append(f"{key}=?")
-            values.append(value)
-        values.append(cycle_id)
-        with self.repository.connect() as connection:
-            connection.execute(f"UPDATE automatic_research_cycles SET {','.join(fields)} WHERE id=?", values)
+        def write() -> None:
+            # Read and merge within each retry attempt so a competing service
+            # cannot cause a stale checkpoint overwrite.
+            with self.repository.connect() as connection:
+                row = connection.execute("SELECT checkpoint FROM automatic_research_cycles WHERE id=?", (cycle_id,)).fetchone()
+                checkpoint = dict(_loads(row["checkpoint"] if row else None, {}))
+                checkpoint[stage] = payload if payload is not None else {"completed_at": utc_now()}
+                fields = ["checkpoint=?", "updated_at=?"]
+                values: list[Any] = [_json(checkpoint), utc_now()]
+                for key, value in updates.items():
+                    fields.append(f"{key}=?")
+                    values.append(value)
+                values.append(cycle_id)
+                connection.execute(f"UPDATE automatic_research_cycles SET {','.join(fields)} WHERE id=?", values)
+        retry_locked(write)
 
     @staticmethod
     def _stage_pass(metrics: Mapping[str, Any], benchmark: Mapping[str, Any]) -> tuple[str, list[str]]:
@@ -460,16 +467,18 @@ class AutomaticResearchService:
                     scoring_complexity = min(8, max(5, int(candidate["complexity"])))
                     score, components = calculate_score(metrics, scoring_complexity, timeframe)
                     status = "ELIGIBLE" if verdict["eligible"] else "REJECTED"
-                    with self.repository.connect() as connection:
-                        connection.execute(
-                            """UPDATE strategy_discovery_candidates
-                               SET status='DEVELOPMENT_CANDIDATE',aggregate_metrics=?,eligibility_status=?,
-                                   development_score=?,score_components=?,elimination_reasons=?,
-                                   scoring_policy_version=?,completed_at=? WHERE id=?""",
-                            (_json(metrics), status, score, _json(components),
-                             _json([] if verdict["eligible"] else verdict["reasons"]),
-                             DISCOVERY_SCORING_VERSION, utc_now(), candidate_id),
-                        )
+                    def write_candidate() -> None:
+                        with self.repository.connect() as connection:
+                            connection.execute(
+                                """UPDATE strategy_discovery_candidates
+                                   SET status='DEVELOPMENT_CANDIDATE',aggregate_metrics=?,eligibility_status=?,
+                                       development_score=?,score_components=?,elimination_reasons=?,
+                                       scoring_policy_version=?,completed_at=? WHERE id=?""",
+                                (_json(metrics), status, score, _json(components),
+                                 _json([] if verdict["eligible"] else verdict["reasons"]),
+                                 DISCOVERY_SCORING_VERSION, utc_now(), candidate_id),
+                            )
+                    retry_locked(write_candidate)
                     del candidate, program, folds, metrics, verdict, components
                     release_factor_program_transients()
                 last_id = int(batch[-1]["id"])
@@ -486,15 +495,17 @@ class AutomaticResearchService:
                 release_factor_program_transients()
             # Eligible rank remains derived from the durable candidate records,
             # so a resumed run never needs to keep all candidate results in RAM.
-            with self.repository.connect() as connection:
-                eligible_rows = connection.execute(
-                    """SELECT id FROM strategy_discovery_candidates
-                       WHERE discovery_run_id=? AND template='FACTOR_PROGRAM' AND eligibility_status='ELIGIBLE'
-                       ORDER BY development_score DESC,id DESC""", (int(discovery_id),),
-                ).fetchall()
-                connection.execute("UPDATE strategy_discovery_candidates SET eligible_rank=NULL WHERE discovery_run_id=? AND template='FACTOR_PROGRAM'", (int(discovery_id),))
-                for rank, row in enumerate(eligible_rows, 1):
-                    connection.execute("UPDATE strategy_discovery_candidates SET eligible_rank=? WHERE id=?", (rank, int(row["id"])))
+            def rank_eligible() -> None:
+                with self.repository.connect() as connection:
+                    eligible_rows = connection.execute(
+                        """SELECT id FROM strategy_discovery_candidates
+                           WHERE discovery_run_id=? AND template='FACTOR_PROGRAM' AND eligibility_status='ELIGIBLE'
+                           ORDER BY development_score DESC,id DESC""", (int(discovery_id),),
+                    ).fetchall()
+                    connection.execute("UPDATE strategy_discovery_candidates SET eligible_rank=NULL WHERE discovery_run_id=? AND template='FACTOR_PROGRAM'", (int(discovery_id),))
+                    for rank, row in enumerate(eligible_rows, 1):
+                        connection.execute("UPDATE strategy_discovery_candidates SET eligible_rank=? WHERE id=?", (rank, int(row["id"])))
+            retry_locked(rank_eligible)
             del program_rows, batches
             release_factor_program_transients()
         self._save_checkpoint(cycle_id, "development_complete", {"run_id":discovery_id})

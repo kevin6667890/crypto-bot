@@ -11,6 +11,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable
 
+try:
+    from sqlite_retry import retry_locked
+except ImportError:
+    from .sqlite_retry import retry_locked
+
 
 def utc_now() -> str:
     return datetime.now(timezone.utc).replace(microsecond=0).isoformat()
@@ -142,15 +147,17 @@ class JobQueue:
 
     def checkpoint(self, job_id: int, progress: int | None = None, message: str | None = None,
                    message_params: dict[str, Any] | None = None) -> None:
-        with self.connect() as conn:
-            row = conn.execute("SELECT status,progress FROM research_jobs WHERE id=?", (job_id,)).fetchone()
-            if not row or row[0] in {"CANCEL_REQUESTED","CANCELLED"}: raise JobCancelled()
-            if progress is not None or message is not None:
-                next_progress = int(row[1] or 0) if progress is None else max(int(row[1] or 0), max(0, min(99, int(progress))))
-                is_code = bool(message and "." in message and " " not in message)
-                legacy = message if not is_code else None
-                conn.execute("UPDATE research_jobs SET progress=?,progress_message=COALESCE(?,progress_message),message_code=COALESCE(?,message_code),message_params=? WHERE id=?",
-                             (next_progress, legacy, message if is_code else None, json.dumps(message_params or {}), job_id))
+        def write() -> None:
+            with self.connect() as conn:
+                row = conn.execute("SELECT status,progress FROM research_jobs WHERE id=?", (job_id,)).fetchone()
+                if not row or row[0] in {"CANCEL_REQUESTED","CANCELLED"}: raise JobCancelled()
+                if progress is not None or message is not None:
+                    next_progress = int(row[1] or 0) if progress is None else max(int(row[1] or 0), max(0, min(99, int(progress))))
+                    is_code = bool(message and "." in message and " " not in message)
+                    legacy = message if not is_code else None
+                    conn.execute("UPDATE research_jobs SET progress=?,progress_message=COALESCE(?,progress_message),message_code=COALESCE(?,message_code),message_params=? WHERE id=?",
+                                 (next_progress, legacy, message if is_code else None, json.dumps(message_params or {}), job_id))
+        retry_locked(write)
 
     def _loop(self) -> None:
         while not self._stop.is_set():

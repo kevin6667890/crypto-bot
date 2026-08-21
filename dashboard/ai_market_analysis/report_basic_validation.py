@@ -6,6 +6,7 @@ from .versions import AI_REPORT_BASIC_VALIDATION_VERSION, AI_REPORT_RESPONSE_VER
 from .report_numeric_normalizer import normalize_numbers
 from .report_response_contract import LEVEL_PROJECTION_FIELDS, SCENARIO_PROJECTION_FIELDS, expected_section_manifest
 from .report_identity import REPORT_PIPELINE_VERSIONS
+from .provider_response_diagnostics import allowed_level_references
 
 NUMBER_RE=re.compile(r"(?<![A-Za-z_\d])[-+]?\d+(?:\.\d+)?%?(?![A-Za-z_\d])")
 TIMEFRAME_RE=re.compile(r"(?i)(?:15m|1H|4H|1D|1W|15分钟|1小时|4小时)")
@@ -59,7 +60,7 @@ def validate_report(report: dict[str,Any], request: dict[str,Any], registry: dic
     wanted=expected_sections(report["mode"],bool(macro_items),request.get("compiled_context")); got=[s["section_id"] for s in report["sections"]]
     if got!=wanted: raise ReportValidationError("SECTION_ORDER_OR_COMPLETENESS",[str(got),str(wanted)])
     fact_ids={f["fact_id"] for f in registry["facts"]}
-    level_ids={f["value"].get("level_id") for f in registry["facts"] if f["category"]=="LEVEL" and isinstance(f["value"],dict)}
+    level_ids=allowed_level_references(registry["facts"])
     scenario_ids={f["value"].get("scenario_id") for f in registry["facts"] if f["category"]=="SCENARIO" and isinstance(f["value"],dict)}
     macro_ids={i["evidence_id"] for i in macro_items}
     position_ids={x for x in fact_ids if x.startswith("POSITION_")}

@@ -18,6 +18,39 @@ _TEXT_PATTERNS = (
 )
 
 
+def allowed_level_references(facts: list[dict[str, Any]]) -> set[str]:
+    """Return every deterministic level id that may be referenced.
+
+    Current-level projections intentionally exclude remote or unconfirmed
+    boundaries from the compact price map.  Scenario facts still own their
+    trigger, path, target and invalidation boundary ids, so those ids remain
+    auditable references even when they are not promoted to a current LEVEL
+    card.
+    """
+    allowed = {
+        str(item["value"]["level_id"])
+        for item in facts
+        if item.get("category") == "LEVEL"
+        and isinstance(item.get("value"), dict)
+        and item["value"].get("level_id")
+    }
+    for item in facts:
+        if item.get("category") != "SCENARIO" or not isinstance(item.get("value"), dict):
+            continue
+        value = item["value"]
+        trigger = value.get("trigger") or {}
+        invalidation = value.get("invalidation") or {}
+        candidates = [
+            *(trigger.get("level_ids") or []),
+            *(value.get("expected_path") or []),
+            *(value.get("targets") or []),
+            *(value.get("source_level_ids") or []),
+            invalidation.get("level_id"),
+        ]
+        allowed.update(str(candidate) for candidate in candidates if candidate)
+    return allowed
+
+
 def _redact_value(value: Any) -> Any:
     if isinstance(value, dict):
         return {
@@ -51,7 +84,7 @@ def reference_diagnostics(report: dict[str, Any], request: dict[str, Any], regis
     allowed = {
         "fact_refs": {str(item["fact_id"]) for item in facts if item.get("fact_id")},
         "macro_refs": {str(item["evidence_id"]) for item in request.get("macro_items", []) if item.get("evidence_id")},
-        "level_refs": {str(item["value"]["level_id"]) for item in facts if item.get("category") == "LEVEL" and isinstance(item.get("value"), dict) and item["value"].get("level_id")},
+        "level_refs": allowed_level_references(facts),
         "scenario_refs": {str(item["value"]["scenario_id"]) for item in facts if item.get("category") == "SCENARIO" and isinstance(item.get("value"), dict) and item["value"].get("scenario_id")},
         "position_refs": {str(item["fact_id"]) for item in facts if item.get("category") == "POSITION" and item.get("fact_id")},
     }

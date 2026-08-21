@@ -14,7 +14,9 @@ from dashboard.ai_market_analysis.report_response_contract import (
     provider_json_schema, provider_reference_allowlists, provider_reference_namespace_matrix,
     response_metadata_contract,
 )
-from dashboard.ai_market_analysis.provider_response_diagnostics import reference_diagnostics, sanitize_provider_response
+from dashboard.ai_market_analysis.provider_response_diagnostics import (
+    allowed_level_references, reference_diagnostics, sanitize_provider_response,
+)
 from dashboard.ai_market_analysis.report_service import ReportService
 from dashboard.ai_market_analysis.versions import AI_REPORT_PROMPT_VERSION
 from tests.ai_market_analysis.ai4_helpers import base_context
@@ -151,6 +153,25 @@ def test_host_owned_scenario_identity_is_not_a_provider_reference_field():
     value = reference_diagnostics(report, request, registry)
 
     assert value["unknown_refs"]["scenario_refs"] == []
+
+
+def test_scenario_owned_boundary_is_auditable_without_current_level_promotion():
+    facts = [
+        {"fact_id": "LEVEL_01", "category": "LEVEL", "value": {"level_id": "current-level"}},
+        {"fact_id": "SCENARIO_01", "category": "SCENARIO", "value": {
+            "scenario_id": "scenario-1",
+            "trigger": {"level_ids": ["trigger-boundary"]},
+            "expected_path": ["path-boundary"],
+            "targets": ["target-boundary"],
+            "invalidation": {"level_id": "invalidation-boundary"},
+            "source_level_ids": ["source-boundary"],
+        }},
+    ]
+
+    assert allowed_level_references(facts) == {
+        "current-level", "trigger-boundary", "path-boundary", "target-boundary",
+        "invalidation-boundary", "source-boundary",
+    }
 
 
 def test_unknown_section_scenario_reference_remains_in_diagnostics():

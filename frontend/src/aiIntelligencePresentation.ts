@@ -169,7 +169,9 @@ export function intelligenceCenter(input: unknown, sections: Section[] = [], lan
     const tactical = record(frame.tactical);
     const volume = record(frame.volume);
     const fallback = section(sections, `TF_${timeframe.toUpperCase()}`);
-    const observation = text(field(frame, "observation", "summary") ?? fallback, language)
+    // Keep the summary card deterministic and compact. The audited provider
+    // prose is rendered below as the explanatory narrative, not repeated here.
+    const observation = text(field(frame, "observation", "summary"), language)
       || text(field(volume, "state"), language);
     return {
       timeframe,
@@ -191,6 +193,7 @@ export function intelligenceCenter(input: unknown, sections: Section[] = [], lan
     };
   });
   const tactical = record(intelligence.tactical);
+  const tacticalImpulse = record(tactical.impulse);
   const volume = record(intelligence.volume);
   const flowOi = record(intelligence.flow_oi);
   const priceMap = Array.isArray(intelligence.price_map) ? intelligence.price_map.map(record) : presentAiLevels(brief.levels || []);
@@ -205,7 +208,7 @@ export function intelligenceCenter(input: unknown, sections: Section[] = [], lan
     oiQuality: text(field(flowOi, "oi_quality"), language),
     priceOi: text(field(flowOi, "price_oi_state", "price_oi_relation"), language),
     volume: text(field(volume, "state") ?? intelligence.volume_state, language),
-    impulse: text(field(tactical, "impulse") ?? intelligence.impulse_state, language),
+    impulse: text(field(tacticalImpulse, "state") ?? intelligence.impulse_state, language),
     priceMap,
     longTerm,
     scenarios,

@@ -64,10 +64,10 @@ export function WorkspaceAiBrief({ instrument }: { instrument: string }) {
   const headline = [intelligence.tactical || enumText(brief?.market_phase) || copy.watching, intelligence.alignment || enumText(brief?.directional_bias) || copy.observe].filter((item, index, all) => item && all.indexOf(item) === index).join(" · ");
   const deterministicSummary = language === "zh"
     ? [
-      intelligence.frames.find(item => item.timeframe === "15m")?.state,
-      intelligence.frames.find(item => item.timeframe === "1H")?.momentum,
-      intelligence.frames.find(item => item.timeframe === "4H")?.extension,
-      intelligence.frames.find(item => item.timeframe === "1D")?.extension,
+      intelligence.frames.find(item => item.timeframe === "15m")?.state && `15m ${intelligence.frames.find(item => item.timeframe === "15m")?.state}`,
+      intelligence.frames.find(item => item.timeframe === "1H")?.momentum && `1H ${intelligence.frames.find(item => item.timeframe === "1H")?.momentum}`,
+      intelligence.frames.find(item => item.timeframe === "4H")?.extension && `4H ${intelligence.frames.find(item => item.timeframe === "4H")?.extension}`,
+      intelligence.frames.find(item => item.timeframe === "1D")?.extension && `1D ${intelligence.frames.find(item => item.timeframe === "1D")?.extension}`,
     ].filter(Boolean).join("；")
     : `${intelligence.frames.find(item => item.timeframe === "15m")?.state || enumText(brief?.market_phase)}; ${intelligence.frames.find(item => item.timeframe === "1H")?.momentum || enumText(brief?.confidence)}; ${intelligence.frames.find(item => item.timeframe === "4H")?.extension || ""}.`;
   const providerSummary = compactAiSummary(brief?.executive_summary, 220, language);

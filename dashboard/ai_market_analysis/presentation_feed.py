@@ -187,6 +187,35 @@ def _summary(presentation: dict[str, Any], repository: ReportRepository) -> dict
                                                "asserted_state", "primary_timeframe", "invalidation", "observed_at",
                                                "distance_pct", "max_distance_pct", "reference_tier")}
               for item in selected_levels]
+    # A current surface must not lose valid tactical boundaries merely because
+    # the clustered LEVEL registry promoted no nearby support or resistance.
+    # These values are already frozen as TACTICAL_LOCAL_LOW/HIGH facts; this is
+    # a display projection, never a newly inferred backend fact.
+    tactical_frame = next((item for item in base.get("timeframe_structures", [])
+                           if item.get("timeframe") == "15m"), {})
+    tactical_intelligence = tactical_frame.get("deterministic_intelligence") or {}
+    fallback_boundaries = (
+        ("TACTICAL_LOCAL_LOW", tactical_intelligence.get("local_low"), "SUPPORT"),
+        ("TACTICAL_LOCAL_HIGH", tactical_intelligence.get("local_high"), "RESISTANCE"),
+    )
+    present_roles = {item.get("asserted_role") for item in levels}
+    for fact_id, price, role in fallback_boundaries:
+        if role in present_roles or not isinstance(price, (int, float)) or not isinstance(current_price, (int, float)):
+            continue
+        if (role == "SUPPORT" and price > current_price) or (role == "RESISTANCE" and price < current_price):
+            continue
+        levels.append({
+            "level_id": fact_id, "representative_price": price,
+            "asserted_role": role, "asserted_state": "ACTIVE",
+            "primary_timeframe": "15m", "invalidation": (
+                "confirmed close below tactical support" if role == "SUPPORT"
+                else "confirmed close above tactical resistance"
+            ),
+            "observed_at": (tactical_frame.get("last_confirmed_close") or {}).get("timestamp"),
+            "distance_pct": abs(float(price) - float(current_price)) / float(current_price),
+            "reference_tier": "CURRENT", "source_fact_id": fact_id,
+        })
+        present_roles.add(role)
     long_term_levels = [{key: item.get(key) for key in ("level_id", "representative_price", "asserted_role",
                                                          "asserted_state", "primary_timeframe", "invalidation", "observed_at",
                                                          "distance_pct", "reference_tier")}

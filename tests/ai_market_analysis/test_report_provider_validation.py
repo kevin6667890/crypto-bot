@@ -9,6 +9,7 @@ from dashboard.ai_market_analysis.report_basic_validation import validate_report
 from dashboard.ai_market_analysis.report_context_compiler import compile_report_context
 from dashboard.ai_market_analysis.report_fact_registry import build_fact_registry
 from dashboard.ai_market_analysis.report_provider import FakeAIReportProvider,ProviderError
+from dashboard.ai_market_analysis.provider_claim_pack import ground_provider_report
 from dashboard.ai_market_analysis.report_response_parser import parse_report_response,ReportParseError
 from dashboard.ai_market_analysis.report_level_audit import audit_report_levels
 from dashboard.ai_market_analysis.report_scenario_audit import audit_report_scenarios
@@ -86,6 +87,21 @@ def test_btc_quick_none_breakout_attempt_without_registry_scenarios_validates():
     assert scenario["required_scenario_count"]==0
     assert scenario["field_coverage"]==scenario["invalidation_coverage"]==1.0
     assert scenario["failure_codes"]==[]
+
+
+def test_grounded_unsupported_level_without_scenario_retains_invalidation_disclosure():
+    """A fail-closed level suppression cannot erase the required QUICK disclosure."""
+    q, registry = setup("QUICK")
+    registry = {**registry, "facts": [fact for fact in registry["facts"] if fact["category"] != "SCENARIO"]}
+    q = {**q, "compiled_context": compile_report_context(registry, "QUICK")}
+    report = parse_report_response(FakeAIReportProvider().generate(q).raw_text)
+    report["sections"][0]["body"] = "关键位置 999999 未获注册表支持。"
+
+    grounded = ground_provider_report(report, q["compiled_context"]["provider_claim_pack"])
+
+    assert "限制" in grounded["sections"][0]["body"]
+    assert "失效" in grounded["sections"][0]["body"]
+    assert validate_report(grounded, q, registry)["status"] == "VALID"
 
 
 def test_empty_registry_does_not_allow_provider_to_invent_a_scenario():

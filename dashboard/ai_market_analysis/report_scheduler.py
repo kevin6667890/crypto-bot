@@ -58,6 +58,38 @@ class ReportScheduler:
             ).fetchone()
         return _parse(row[0] if row else None)
 
+    def _staleness(self, now: datetime) -> list[dict[str, Any]]:
+        """Expose cadence-relative display freshness through the health plane.
+
+        A failed report remains fail-closed, but it must not leave an old valid
+        snapshot silently presented forever.  This intentionally reads only the
+        current scheduler instruments and their latest promoted audit.
+        """
+        cadence = self._cadence()
+        warning_after = cadence * 2
+        critical_after = cadence * 4
+        values: list[dict[str, Any]] = []
+        with self.repository.connect() as conn:
+            for instrument in self._instruments():
+                row = conn.execute(
+                    "SELECT MAX(p.created_at) FROM ai_market_reports p "
+                    "JOIN ai_report_requests r ON r.request_id=p.request_id "
+                    "JOIN ai_report_audits a ON a.report_id=p.report_id "
+                    "WHERE r.instrument=? AND r.mode='QUICK' AND r.language='zh-CN' "
+                    "AND a.status='PASSED' AND a.promotion_eligible=1",
+                    (instrument,),
+                ).fetchone()
+                latest = _parse(row[0] if row else None)
+                age = int((now - latest).total_seconds()) if latest else None
+                status = ("AI_REPORT_STALE_CRITICAL" if age is None or age > critical_after
+                          else "AI_REPORT_STALE_WARNING" if age > warning_after
+                          else "OK")
+                values.append({"instrument": instrument, "last_display_eligible_report": row[0] if row else None,
+                               "age_seconds": age, "expected_refresh_interval_seconds": cadence,
+                               "warning_after_seconds": warning_after, "critical_after_seconds": critical_after,
+                               "status": status})
+        return values
+
     def state(self) -> dict[str, Any]:
         telemetry = {
             "last_queue_attempt": None, "last_successful_queue": None,
@@ -84,6 +116,11 @@ class ReportScheduler:
         except Exception:
             # Scheduler liveness must not depend on optional diagnostics.
             pass
+        now = _iso_now()
+        try:
+            staleness = self._staleness(now)
+        except Exception:
+            staleness = []
         return {
             "enabled": _enabled("AI_REPORT_SCHEDULER_ENABLED"),
             "cadence_seconds": self._cadence(),
@@ -94,6 +131,7 @@ class ReportScheduler:
             "last_error": self.last_error,
             "last_scheduler_error": self.last_error,
             "lease_required": False,
+            "report_staleness": staleness,
             **telemetry,
         }
 

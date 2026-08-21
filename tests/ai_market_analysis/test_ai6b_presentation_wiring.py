@@ -107,6 +107,20 @@ def test_scheduler_queues_once_per_cadence(tmp_path, monkeypatch):
     assert all(item["mode"] == "QUICK" and item["position_source"] == "NONE" for item in queued)
 
 
+def test_scheduler_exposes_cadence_relative_staleness(tmp_path, monkeypatch):
+    path = tmp_path / "scheduler-staleness.db"; migrate_database(path); migrate_audit_database(path)
+    reports = ReportRepository(path)
+    monkeypatch.setenv("AI_REPORT_SCHEDULER_INSTRUMENTS", "ETH-USDT-SWAP")
+    monkeypatch.setenv("AI_REPORT_SCHEDULER_CADENCE_SECONDS", "3600")
+    scheduler = ReportScheduler(reports, tmp_path / "paper.db", None)
+    state = scheduler.state()
+    stale = state["report_staleness"]
+    assert stale == [{"instrument": "ETH-USDT-SWAP", "last_display_eligible_report": None,
+                      "age_seconds": None, "expected_refresh_interval_seconds": 3600,
+                      "warning_after_seconds": 7200, "critical_after_seconds": 14400,
+                      "status": "AI_REPORT_STALE_CRITICAL"}]
+
+
 def test_provider_attempt_cap_disables_retry(tmp_path, monkeypatch):
     path = tmp_path / "attempt-cap.db"; migrate_database(path)
     reports = ReportRepository(path); item = ReportService(reports).submit(base_context(), mode="QUICK")

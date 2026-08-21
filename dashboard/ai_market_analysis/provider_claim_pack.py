@@ -247,7 +247,11 @@ _FLOW_ASSERTION_TERMS = (
 )
 _FLOW_LIMITATION = "订单流不可用，本轮不作为方向确认依据"
 _FLOW_PARTIAL_LIMITATION = "订单流覆盖部分，确认度受限"
-_UNSUPPORTED_LEVEL_LIMITATION = "本轮不展示未经注册表支持的数值位置"
+# This is also the fallback when an unsupported level claim replaces the
+# no-scenario disclosure below.  Keep an explicit limitation/invalidation
+# disclosure here: QUICK reports without deterministic scenarios must still
+# satisfy the fail-closed invalidation contract after grounding.
+_UNSUPPORTED_LEVEL_LIMITATION = "本轮限制展示未经注册表支持的数值位置，缺少可审计的情景失效路径"
 _LEVEL_CLAIM_TERMS = ("支撑", "压力", "阻力", "关键位", "关键位置")
 
 

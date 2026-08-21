@@ -6,6 +6,7 @@ import { compactAiSummary, coverageMatrixRows, isPresent, localizeWorkspaceNarra
 import { useLanguage, type Language } from "./i18n";
 import { researchPresentationCopy, selectResearchReport } from "./aiResearchPresentation";
 import { workspaceAiPrimaryState } from "./aiWorkspaceState";
+import { intelligenceCenter, levelLabel, scenarioLabel, visibleFrame } from "./aiIntelligencePresentation";
 
 const when = (value: string | null | undefined) => value ? new Date(value).toLocaleString() : "—";
 const source = (brief: AuditedAiBrief | null) => [brief?.provider, brief?.model].filter(Boolean).join(" / ") || "DeepSeek";
@@ -55,11 +56,12 @@ export function WorkspaceAiBrief({ instrument }: { instrument: string }) {
   const fresh = brief ? freshness(brief, language) : null;
   const levels = presentAiLevels(brief?.levels);
   const scenarios = (brief?.scenarios || []).filter(item => isPresent(item.scenario_type));
+  const intelligence = intelligenceCenter((brief || {}) as AuditedAiBrief, [], language);
   const drivers = (brief?.drivers || []).filter(item => isPresent(item.label)).filter((item, index, all) => all.findIndex(other => other.label === item.label && other.value === item.value) === index).slice(0, 3);
   const enumText = (value: unknown) => ["BEARISH_CONTINUATION", "BULLISH_CONTINUATION", "RANGE", "WAIT", "MIXED"].includes(String(value || ""))
     ? workspaceScenarioLabel(value, language)
     : translateKnownEnum(value, language);
-  const headline = `${enumText(brief?.market_phase) || copy.watching} · ${enumText(brief?.directional_bias) || copy.observe}`;
+  const headline = [intelligence.tactical || enumText(brief?.market_phase) || copy.watching, intelligence.alignment || enumText(brief?.directional_bias) || copy.observe].filter((item, index, all) => item && all.indexOf(item) === index).join(" · ");
   const summary = language === "zh"
     ? compactAiSummary(brief?.executive_summary, 220, language)
     : `${enumText(brief?.market_phase)} market phase with ${String(enumText(brief?.confidence)).toLowerCase()} core conviction.`;
@@ -74,9 +76,18 @@ export function WorkspaceAiBrief({ instrument }: { instrument: string }) {
         <span className="ai-conclusion-label">{copy.conclusion} · {decision || copy.observe}</span>
         <h3>{headline}</h3>
         <p>{summary}</p>
-        <div className="ai-hero-section"><span>{copy.evidence}</span><ul>{drivers.map((item, index) => <li key={`${item.label}-${index}`}><b>{language === "en" ? (item.label === "数据质量" ? copy.dataQuality : copy.dataLimit) : item.label}</b>{renderIfPresent(item.value, value => <small>{containsCjk(value) && language === "en" ? copy.limited : enumText(value)}</small>)}</li>)}{!drivers.length && <li><b>{copy.phase}</b><small>{enumText(brief.market_phase) || copy.watching}</small></li>}</ul></div>
-        <div className="ai-hero-section" data-testid="workspace-ai-levels"><span>{copy.levels}</span>{levels.length ? <ul>{levels.slice(0, 3).map((item) => <li key={item.level_id} data-level-card><b>{item.asserted_role === "SUPPORT" ? copy.support : item.asserted_role === "RESISTANCE" ? copy.resistance : enumText(item.asserted_role) || copy.level} · {item.primary_timeframe || copy.multi}</b><small>{item.representative_price}{renderIfPresent(item.invalidation, value => ` · ${copy.invalidation}: ${value}`)}</small></li>)}</ul> : <p className="ai-section-empty">{copy.noLevels}</p>}</div>
-        {!!scenarios.length && <div className="ai-hero-section" data-testid="workspace-ai-scenario"><span>{copy.scenario}</span><ul>{scenarios.slice(0, 1).map((item) => <li key={item.scenario_id}><b>{workspaceScenarioLabel(item.scenario_type, language)}</b></li>)}</ul></div>}
+        <div className="ai-hero-section ai-hero-conditions" data-testid="workspace-ai-conditions"><span>{language === "zh" ? "短线结构与多周期" : "Tactical and multi-timeframe"}</span><ul>
+          {(intelligence.tactical || intelligence.frames.find(item => item.timeframe === "15m")?.state) && <li><b>{language === "zh" ? "短线结构" : "Tactical"}</b><small>{intelligence.tactical || intelligence.frames.find(item => item.timeframe === "15m")?.state}</small></li>}
+          {(intelligence.alignment || intelligence.frames.find(item => item.timeframe === "1H")?.momentum) && <li><b>{copy.multi}</b><small>{intelligence.alignment || intelligence.frames.find(item => item.timeframe === "1H")?.momentum}</small></li>}
+          {intelligence.flow && <li><b>{language === "zh" ? "订单流 / OI" : "Flow / OI"}</b><small>{[intelligence.flow, intelligence.priceOi || intelligence.oi].filter(Boolean).join(" · ")}</small></li>}
+          {!intelligence.tactical && !intelligence.alignment && !intelligence.flow && drivers.slice(0, 2).map((item, index) => <li key={`${item.label}-${index}`}><b>{language === "en" ? (item.label === "数据质量" ? copy.dataQuality : copy.dataLimit) : item.label}</b>{renderIfPresent(item.value, value => <small>{containsCjk(value) && language === "en" ? copy.limited : enumText(value)}</small>)}</li>)}
+        </ul></div>
+        <div className="ai-hero-section" data-testid="workspace-ai-levels"><span>{copy.levels}</span>{levels.length ? <ul>{levels.slice(0, 2).map((item) => <li key={item.level_id} data-level-card><b>{levelLabel(item as Record<string, unknown>, language)} · {item.primary_timeframe || copy.multi}</b><small>{item.representative_price}{renderIfPresent(item.invalidation, value => ` · ${copy.invalidation}: ${value}`)}</small></li>)}</ul> : <p className="ai-section-empty">{copy.noLevels}</p>}</div>
+        {(intelligence.trigger || intelligence.invalidation || scenarios.length) && <div className="ai-hero-section" data-testid="workspace-ai-scenario"><span>{language === "zh" ? "确认 / 失效" : "Confirmation / invalidation"}</span><ul>
+          {intelligence.trigger && <li><b>{language === "zh" ? "确认" : "Trigger"}</b><small>{intelligence.trigger}</small></li>}
+          {intelligence.invalidation && <li><b>{copy.invalidation}</b><small>{intelligence.invalidation}</small></li>}
+          {!intelligence.trigger && !intelligence.invalidation && scenarios.slice(0, 1).map((item) => <li key={item.scenario_id}><b>{workspaceScenarioLabel(item.scenario_type, language)}</b><small>{item.trigger_text || item.invalidation_text || ""}</small></li>)}
+        </ul></div>}
       </div>
       <div className="ai-hero-meta">
         <dl><div><dt>{copy.updated}</dt><dd>{when(brief.generated_at)}</dd></div><div><dt>{copy.dataTime}</dt><dd>{when(brief.market_snapshot_at)}</dd></div><div><dt>{copy.phase}</dt><dd>{enumText(brief.market_phase) || "—"}</dd></div><div><dt>{copy.confidence}</dt><dd>{enumText(brief.confidence) || "—"}</dd></div></dl>
@@ -113,6 +124,35 @@ function LegacyAiReportResearch({ instrument }: { instrument: string }) {
 function routeReportId() {
   const match = window.location.hash.match(/^#research\/report\/([^/?#]+)/);
   return match ? decodeURIComponent(match[1]) : "";
+}
+
+function AiDeepResearch({ detail, language }: { detail: AuditedAiReportDetail; language: Language }) {
+  if (!detail.report) return null;
+  const brief = { ...detail.summary, intelligence: detail.report.intelligence || detail.summary.intelligence };
+  const center = intelligenceCenter(brief, detail.report.sections, language);
+  const frames = center.frames.filter(visibleFrame);
+  const labels = language === "zh" ? {
+    conclusion: "总体结论", timeframe: "多周期结构", derivatives: "订单流 / 衍生品", volume: "成交量与推进", map: "价格地图", current: "当前关键位置", long: "长期参考", scenarios: "场景", trigger: "触发", invalidation: "失效", audit: "审计与证据", macro: "宏观背景：本轮未纳入",
+  } : {
+    conclusion: "Overall conclusion", timeframe: "Multi-timeframe structure", derivatives: "Order flow / derivatives", volume: "Volume and impulse", map: "Price map", current: "Current key levels", long: "Long-term reference", scenarios: "Scenarios", trigger: "Trigger", invalidation: "Invalidation", audit: "Audit and evidence", macro: "Macro context: not included in this report",
+  };
+  const narrativeSections = detail.report.sections.filter(section => !["CONCLUSION", "TF_15M", "TF_1H", "TF_4H", "TF_1D", "TF_1W", "ORDER_FLOW", "KEY_LEVELS", "SCENARIOS", "LIMITATIONS"].includes(section.section_id || "") && section.body);
+  const limitations = [...new Set(detail.report.sections.filter(section => section.section_id === "LIMITATIONS").flatMap(section => [section.body, ...(section.uncertainties || [])]).filter(Boolean) as string[])];
+  return <div className="ai-deep-center" data-testid="research-ai-deep-center">
+    <section className="ai-deep-summary"><span className="eyebrow">{labels.conclusion}</span><h4>{detail.report.headline}</h4>{center.alignment && <p>{center.alignment}</p>}</section>
+    {frames.length > 0 && <section className="ai-deep-section" data-testid="research-ai-timeframes"><div className="ai-deep-heading"><span className="eyebrow">{labels.timeframe}</span><h4>{labels.timeframe}</h4></div><div className="ai-timeframe-grid">
+      {frames.map(frame => <article key={frame.timeframe} data-timeframe-card><div><b>{frame.timeframe}</b><span>{frame.role}</span></div>{frame.state && <strong>{frame.state}</strong>}{frame.momentum && <p>{language === "zh" ? "动量：" : "Momentum: "}{frame.momentum}</p>}{frame.extension && <p>{language === "zh" ? "伸展：" : "Extension: "}{frame.extension}</p>}{frame.observation && <small>{frame.observation}</small>}</article>)}
+    </div></section>}
+    {(center.flow || center.oi || center.priceOi) && <section className="ai-deep-section" data-testid="research-ai-flow"><div className="ai-deep-heading"><span className="eyebrow">{labels.derivatives}</span><h4>{labels.derivatives}</h4></div><div className="ai-deep-facts">
+      {center.flow && <article><b>CVD</b><span>{center.flow}</span></article>}{center.oi && <article><b>OI</b><span>{center.oi}</span></article>}{center.priceOi && <article><b>Price × OI</b><span>{center.priceOi}</span></article>}
+    </div></section>}
+    {(center.volume || center.impulse) && <section className="ai-deep-section" data-testid="research-ai-volume"><div className="ai-deep-heading"><span className="eyebrow">{labels.volume}</span><h4>{labels.volume}</h4></div><div className="ai-deep-facts">{center.impulse && <article><b>{language === "zh" ? "推进" : "Impulse"}</b><span>{center.impulse}</span></article>}{center.volume && <article><b>{language === "zh" ? "量能" : "Volume"}</b><span>{center.volume}</span></article>}</div></section>}
+    {(center.priceMap.length || center.longTerm.length) && <section className="ai-deep-section" data-testid="research-ai-price-map"><div className="ai-deep-heading"><span className="eyebrow">{labels.map}</span><h4>{labels.map}</h4></div>{center.priceMap.length > 0 && <><h5>{labels.current}</h5><div className="ai-deep-facts">{center.priceMap.slice(0, 4).map((level, index) => <article key={String(level.level_id || index)}><b>{levelLabel(level, language)}</b><span>{String(level.representative_price ?? "")}</span></article>)}</div></>}{center.longTerm.length > 0 && <><h5>{labels.long}</h5><div className="ai-deep-facts long-term">{center.longTerm.slice(0, 4).map((level, index) => <article key={String(level.level_id || index)}><b>{levelLabel(level, language)}</b><span>{String(level.representative_price ?? "")}</span></article>)}</div></>}</section>}
+    {center.scenarios.length > 0 && <section className="ai-deep-section" data-testid="research-ai-scenarios"><div className="ai-deep-heading"><span className="eyebrow">{labels.scenarios}</span><h4>{labels.scenarios}</h4></div><div className="ai-scenario-grid">{center.scenarios.slice(0, 3).map((scenario, index) => <article key={String(scenario.scenario_id || index)}><strong>{scenarioLabel(scenario, language)}</strong>{Boolean(scenario.trigger_text) && <p><b>{labels.trigger}</b>{String(scenario.trigger_text)}</p>}{Boolean(scenario.confirmation_text) && <p><b>{language === "zh" ? "确认" : "Confirmation"}</b>{String(scenario.confirmation_text)}</p>}{Boolean(scenario.invalidation_text) && <p><b>{labels.invalidation}</b>{String(scenario.invalidation_text)}</p>}</article>)}</div></section>}
+    <section className="ai-deep-section ai-deep-audit" data-testid="research-ai-audit"><div className="ai-deep-heading"><span className="eyebrow">{labels.audit}</span><h4>{labels.audit}</h4></div><p>{language === "zh" ? "审计分数" : "Audit score"}: {String(center.auditScore ?? "—")} · {language === "zh" ? "宏观背景：本轮未纳入" : labels.macro}</p></section>
+    {narrativeSections.map(section => <section className="ai-deep-narrative" key={section.section_id || section.title}><h4>{section.title}</h4><p>{section.body}</p></section>)}
+    {limitations.length > 0 && <section className="ai-deep-limitations"><h4>{language === "zh" ? "数据边界" : "Data boundaries"}</h4>{limitations.map(item => <p key={item}>{item}</p>)}</section>}
+  </div>;
 }
 
 export function AiReportResearch({ instrument }: { instrument: string }) {
@@ -164,8 +204,7 @@ export function AiReportResearch({ instrument }: { instrument: string }) {
     {loading ? <p className="muted">{copy.loading}</p> : failed ? <p className="muted">{copy.requestFailed}</p> : detail?.report ? <article className="ai-report-detail">
       <div className="ai-report-detail-head"><div><span className="status-pill healthy">{copy.auditPassed} · {detail.summary.audit.overall_score ?? 100}/100</span><span className={`freshness-badge ${fresh?.tone}`}>{fresh?.label}</span></div><small>{detail.summary.status === "STALE_AUDITED_REPORT" ? copy.stale : copy.current} · {when(detail.summary.market_snapshot_at)}</small></div>
       <h3>{detail.report.headline}</h3><DataCoverage brief={detail.summary} language={language} />
-      {!!detail.summary.long_term_levels?.length && <section className="ai-long-term-levels"><h4>{copy.longTermLevels}</h4><p>{detail.summary.long_term_levels.map(level => `${level.representative_price} · ${level.primary_timeframe || ""}`).join(" · ")}</p></section>}
-      {detail.report.sections.map((section) => <section key={section.section_id}><h4>{section.title || section.section_id}</h4><p>{section.body}</p>{section.uncertainties?.map((item) => <small key={item}>· {item}</small>)}</section>)}
+      <AiDeepResearch detail={detail} language={language} />
     </article> : requestedReportId ? <p className="muted">{copy.unavailable}</p> : null}
     <div className="ai-history-title"><h3>{copy.history}</h3><span>{copy.historyHint}</span></div>
     {!loading && !items.length ? <p className="muted">{copy.empty}</p> : <div className="ai-report-history">{items.map((item) => <button key={item.report_id} onClick={() => select(item)} aria-label={`${copy.openReport}: ${item.mode}`}><b>{item.mode}</b><span>{when(item.generated_at)}</span><span className={`status-pill ${item.display_eligible ? "healthy" : "unhealthy"}`}>{item.display_eligible ? `${copy.auditPassed} ${item.audit.overall_score ?? ""}` : copy.auditHidden}</span></button>)}</div>}

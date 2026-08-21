@@ -474,6 +474,9 @@ export type AuditedAiBrief = {
     flow_coverage?: { coverage_ratio?: number; gap_count?: number; max_consecutive_gap_minutes?: number; recent_gap_age_minutes?: number | null };
   };
   data_warnings: string[];
+  // Optional display projection of registered deterministic intelligence.
+  // It is absent on historical reports created before this closure.
+  intelligence?: Record<string, unknown>;
   scheduler?: { enabled?: boolean; cadence_seconds?: number; next_tick?: string | null; last_tick?: string | null; last_queued?: string | null; last_error?: string | null };
 };
 
@@ -485,6 +488,7 @@ export type AuditedAiReportDetail = {
     directional_bias?: string;
     confidence?: string;
     sections: Array<{ section_id?: string; title?: string; body?: string; uncertainties?: string[] }>;
+    intelligence?: Record<string, unknown>;
   };
 };
 

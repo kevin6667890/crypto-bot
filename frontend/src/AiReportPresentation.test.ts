@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { compactAiSummary, coverageMatrixRows, isPresent, localizeWorkspaceNarrative, presentAiLevels, workspaceScenarioLabel } from "./aiWorkspaceSemantics";
 import { researchPresentationCopy, selectResearchReport } from "./aiResearchPresentation";
 import { workspaceAiPrimaryState } from "./aiWorkspaceState";
+// @ts-expect-error Node source inspection is a product-layout regression test.
+import { readFileSync } from "node:fs";
 
 describe("Workspace AI presentation", () => {
   it("makes a latest audit failure primary over an old valid report", () => {
@@ -74,5 +76,16 @@ describe("Research report selection and localization", () => {
     expect(researchPresentationCopy.zh.history).toBe("\u5386\u53f2\u62a5\u544a");
     expect(researchPresentationCopy.en.latest).toBe("Latest Analysis");
     expect(researchPresentationCopy.en.history).toBe("History");
+  });
+});
+
+describe("AI product presentation closure", () => {
+  const source = readFileSync(new URL("./AiReportPresentation.tsx", import.meta.url), "utf8");
+  it("keeps the homepage compressed and sends detail into the Research deep centre", () => {
+    expect(source).toContain('data-testid="workspace-ai-conditions"');
+    expect(source).toContain('data-testid="research-ai-deep-center"');
+    expect(source).toContain('data-testid="research-ai-timeframes"');
+    expect(source).toContain('data-testid="research-ai-price-map"');
+    expect(source).toContain('data-testid="research-ai-scenarios"');
   });
 });

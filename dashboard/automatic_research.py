@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import gc
 from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Mapping
 
@@ -27,6 +28,7 @@ ROLLING_SPLIT_POLICY_VERSION = "rolling-development-70-holdout-20-oot-10-v1"
 RUNTIME_ADAPTER_VERSION = "approved-strategy-runtime-v2.1-v1"
 DEFAULT_TEMPLATES = ("TREND_PULLBACK_V2_1", "TREND_BREAKOUT_V2_1", "RANGE_MEAN_REVERSION_V2_1")
 AUTO_RESEARCH_SCHEDULER_NAME = "automatic-research"
+FACTOR_PROGRAM_DEVELOPMENT_BATCH_SIZE = 25
 
 
 def _loads(value: Any, fallback: Any) -> Any:
@@ -40,6 +42,20 @@ def _loads(value: Any, fallback: Any) -> Any:
 
 def _json(value: Any) -> str:
     return json.dumps(value, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+
+
+def factor_program_development_batches(rows: list[Mapping[str, Any]], *,
+                                       batch_size: int = FACTOR_PROGRAM_DEVELOPMENT_BATCH_SIZE) -> list[list[Mapping[str, Any]]]:
+    """Return unfinished programs in their durable candidate order.
+
+    A completed candidate is its own durable resume marker.  The cycle checkpoint
+    records completed batches for observability, while this database state makes a
+    retry safe even if the host stops between the candidate update and checkpoint.
+    """
+    if batch_size < 1:
+        raise ValueError("factor program batch size must be positive")
+    pending = [row for row in rows if str(row.get("status") or "") != "DEVELOPMENT_CANDIDATE"]
+    return [pending[index:index + batch_size] for index in range(0, len(pending), batch_size)]
 
 
 def rolling_window(now: datetime | None = None, lookback_days: int = 730) -> tuple[int, int]:
@@ -372,34 +388,94 @@ class AutomaticResearchService:
             budget = min(500, max(1, int(os.getenv("PROGRAM_DISCOVERY_SEARCH_BUDGET", "200"))))
             with self.repository.connect() as connection:
                 existing_programs = connection.execute(
-                    "SELECT id,program_ast FROM strategy_discovery_candidates WHERE discovery_run_id=? AND template='FACTOR_PROGRAM' ORDER BY id",
+                    "SELECT id FROM strategy_discovery_candidates WHERE discovery_run_id=? AND template='FACTOR_PROGRAM' ORDER BY id",
                     (int(discovery_id),),
                 ).fetchall()
-            if existing_programs:
-                programs=[deserialize_program(_loads(row["program_ast"], {})) for row in existing_programs]
-                program_candidate_ids=[int(row["id"]) for row in existing_programs]
-            else:
+            if not existing_programs:
                 programs = [p for p in generate_factor_programs(request["seed"], budget) if not validate_factor_program(p)]
-                program_candidate_ids=persist_candidates(self.repository, int(discovery_id), programs, seed=request["seed"])
-            dev_rows = self.repository.candles("BTC-USDT", timeframe, request["splits"]["development_start"] - 240 * TIMEFRAME_SECONDS[timeframe], request["splits"]["development_end"] - 1)
-            dev_rows = [row for row in dev_rows if bool(row.get("confirmed", 1))]
-            ranked=[]
+                persist_candidates(self.repository, int(discovery_id), programs, seed=request["seed"])
+                # Generation is bounded, but its AST objects are not needed during
+                # evaluation.  Re-read each persisted AST only in its own batch.
+                del programs
+                gc.collect()
             with self.repository.connect() as connection:
-                for candidate_id, program in zip(program_candidate_ids, programs):
-                    folds=[]
+                program_rows = [dict(row) for row in connection.execute(
+                    """SELECT id,status FROM strategy_discovery_candidates
+                       WHERE discovery_run_id=? AND template='FACTOR_PROGRAM' ORDER BY id""",
+                    (int(discovery_id),),
+                ).fetchall()]
+            batches = factor_program_development_batches(program_rows)
+            total_batches = len(batches)
+            execution = DiscoveryExecutionConfig(**request["execution_assumptions"]).validate()
+            for batch_index, batch in enumerate(batches, 1):
+                # Load the bounded evaluation window per batch, then release it
+                # before the next one.  Do not retain 500 program evaluators,
+                # backtest results, or candle windows in this worker.
+                dev_rows = self.repository.candles(
+                    "BTC-USDT", timeframe,
+                    request["splits"]["development_start"] - 240 * TIMEFRAME_SECONDS[timeframe],
+                    request["splits"]["development_end"] - 1,
+                )
+                dev_rows = [row for row in dev_rows if bool(row.get("confirmed", 1))]
+                benchmarks = [buy_and_hold(dev_rows, start, end - TIMEFRAME_SECONDS[timeframe], execution)
+                              for _, _, start, end in splits["development_folds"]]
+                for item in batch:
+                    candidate_id = int(item["id"])
+                    with self.repository.connect() as connection:
+                        candidate = connection.execute(
+                            "SELECT program_ast,complexity FROM strategy_discovery_candidates WHERE id=?",
+                            (candidate_id,),
+                        ).fetchone()
+                    program = deserialize_program(_loads(candidate["program_ast"], {}))
+                    folds = []
                     for _, _, start, end in splits["development_folds"]:
-                        outcome=canonical_backtest(program, dev_rows, "BTC-USDT", timeframe, start, end-TIMEFRAME_SECONDS[timeframe])
-                        folds.append({"status":"COMPLETED", "metrics":outcome["metrics"], "buy_hold_metrics":buy_and_hold(dev_rows,start,end-TIMEFRAME_SECONDS[timeframe],DiscoveryExecutionConfig(**request["execution_assumptions"]).validate())})
-                    metrics=aggregate(folds); verdict=evaluate_eligibility(metrics,timeframe,"DEVELOPMENT_CANDIDATE")
+                        outcome = canonical_backtest(program, dev_rows, "BTC-USDT", timeframe, start, end - TIMEFRAME_SECONDS[timeframe])
+                        folds.append({"status": "COMPLETED", "metrics": outcome["metrics"],
+                                      "buy_hold_metrics": benchmarks[len(folds)]})
+                        del outcome
+                    metrics = aggregate(folds); verdict = evaluate_eligibility(metrics, timeframe, "DEVELOPMENT_CANDIDATE")
                     # Existing discovery scoring accepts its structural-complexity
                     # band (5..8); preserve program complexity separately while
                     # mapping it into that established penalty scale.
-                    scoring_complexity=min(8,max(5,program.complexity))
-                    score,components=calculate_score(metrics,scoring_complexity,timeframe)
-                    status="ELIGIBLE" if verdict["eligible"] else "REJECTED"
-                    connection.execute("UPDATE strategy_discovery_candidates SET status='DEVELOPMENT_CANDIDATE',aggregate_metrics=?,eligibility_status=?,development_score=?,score_components=?,elimination_reasons=?,scoring_policy_version=?,completed_at=? WHERE id=?",(_json(metrics),status,score,_json(components),_json([] if verdict["eligible"] else verdict["reasons"]),DISCOVERY_SCORING_VERSION,utc_now(),candidate_id))
-                    if verdict["eligible"]: ranked.append((float(score),candidate_id))
-                for rank,(_, candidate_id) in enumerate(sorted(ranked,reverse=True),1): connection.execute("UPDATE strategy_discovery_candidates SET eligible_rank=? WHERE id=?",(rank,candidate_id))
+                    scoring_complexity = min(8, max(5, int(candidate["complexity"])))
+                    score, components = calculate_score(metrics, scoring_complexity, timeframe)
+                    status = "ELIGIBLE" if verdict["eligible"] else "REJECTED"
+                    with self.repository.connect() as connection:
+                        connection.execute(
+                            """UPDATE strategy_discovery_candidates
+                               SET status='DEVELOPMENT_CANDIDATE',aggregate_metrics=?,eligibility_status=?,
+                                   development_score=?,score_components=?,elimination_reasons=?,
+                                   scoring_policy_version=?,completed_at=? WHERE id=?""",
+                            (_json(metrics), status, score, _json(components),
+                             _json([] if verdict["eligible"] else verdict["reasons"]),
+                             DISCOVERY_SCORING_VERSION, utc_now(), candidate_id),
+                        )
+                    del candidate, program, folds, metrics, verdict, components
+                last_id = int(batch[-1]["id"])
+                self._save_checkpoint(cycle_id, "factor_program_development", {
+                    "run_id": int(discovery_id), "batch_size": FACTOR_PROGRAM_DEVELOPMENT_BATCH_SIZE,
+                    "completed_batches": batch_index, "total_batches": total_batches,
+                    "last_completed_candidate_id": last_id,
+                })
+                checkpoint(cycle["job_id"], 12 + int(batch_index / max(1, total_batches) * 38),
+                           "auto_research.factor_program_development_batch",
+                           {"batch": batch_index, "total_batches": total_batches,
+                            "last_completed_candidate_id": last_id})
+                del dev_rows, benchmarks
+                gc.collect()
+            # Eligible rank remains derived from the durable candidate records,
+            # so a resumed run never needs to keep all candidate results in RAM.
+            with self.repository.connect() as connection:
+                eligible_rows = connection.execute(
+                    """SELECT id FROM strategy_discovery_candidates
+                       WHERE discovery_run_id=? AND template='FACTOR_PROGRAM' AND eligibility_status='ELIGIBLE'
+                       ORDER BY development_score DESC,id DESC""", (int(discovery_id),),
+                ).fetchall()
+                connection.execute("UPDATE strategy_discovery_candidates SET eligible_rank=NULL WHERE discovery_run_id=? AND template='FACTOR_PROGRAM'", (int(discovery_id),))
+                for rank, row in enumerate(eligible_rows, 1):
+                    connection.execute("UPDATE strategy_discovery_candidates SET eligible_rank=? WHERE id=?", (rank, int(row["id"])))
+            del program_rows, batches
+            gc.collect()
         self._save_checkpoint(cycle_id, "development_complete", {"run_id":discovery_id})
         with self.repository.connect() as connection:
             rows = connection.execute(

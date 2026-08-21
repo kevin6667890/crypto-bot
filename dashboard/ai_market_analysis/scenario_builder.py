@@ -12,7 +12,11 @@ SCENARIO_TYPES=("BULLISH_CONTINUATION","NORMAL_RETEST","FAILED_BREAKOUT",
 
 def build_scenario_tree(direction: str, current_phase: str, levels: list[dict[str,Any]],
                         phases: list[dict[str,Any]], source_event_ids: list[str]) -> dict[str,Any]:
-    if not levels or direction not in {"UP","DOWN"} or current_phase not in {"BREAKOUT_CONFIRMED","IMPULSE","POST_BREAKOUT_PULLBACK","RETEST","CONTINUATION","FAILED_BREAKOUT"}:
+    # A missing flow phase or a market that is still consolidating must not
+    # erase an otherwise auditable price scenario.  Direction plus an active
+    # deterministic boundary is sufficient to build conditional paths; flow
+    # quality only changes confirmation strength below.
+    if not levels or direction not in {"UP","DOWN"}:
         return {"status":"NOT_IMPLEMENTED","direction":direction,"scenarios":[],"version":AI_SCENARIO_TREE_VERSION}
     supports=sorted((l for l in levels if l["role"] in {"SUPPORT","PIVOT"}),key=lambda l:l["representative_price"],reverse=True)
     resistances=sorted((l for l in levels if l["role"] in {"RESISTANCE","PIVOT"}),key=lambda l:l["representative_price"])

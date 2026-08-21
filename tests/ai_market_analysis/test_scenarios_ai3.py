@@ -54,7 +54,12 @@ def test_partial_quality_caps_likelihood():
 
 
 def test_missing_levels_degrades_to_not_implemented(): assert tree(levels=[])["status"]=="NOT_IMPLEMENTED"
-def test_unconfirmed_breakout_has_no_continuation(): assert tree(current="BREAKOUT_ATTEMPT")["scenarios"]==[]
+def test_unconfirmed_breakout_keeps_conditional_auditable_paths():
+    value = tree(current="BREAKOUT_ATTEMPT")
+    assert value["status"] == "AVAILABLE"
+    assert len(value["scenarios"]) == 3
+    assert all(item["trigger"]["level_ids"] and item["invalidation"]["level_id"]
+               for item in value["scenarios"])
 def test_non_breakout_range_has_no_scenarios(): assert tree(direction="NONE",current="RANGE_BUILDING")["scenarios"]==[]
 
 

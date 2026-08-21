@@ -31,10 +31,7 @@ class JobQueue:
                  recover_interrupted: bool = True) -> None:
         import sqlite3
         self.sqlite3, self.db_path, self.max_queue, self.autostart = sqlite3, Path(db_path), max_queue, autostart
-<<<<<<< HEAD
         self.worker_id = f"research-worker-{uuid.uuid4().hex}"
-=======
->>>>>>> feat/auto-research-closed-loop
         self.recover_interrupted = bool(recover_interrupted)
         self.handlers: dict[str, Callable[..., Any]] = {}
         self.terminal_handlers: dict[str, Callable[[dict[str, Any]], None]] = {}
@@ -75,7 +72,6 @@ class JobQueue:
                 conn.execute("ALTER TABLE research_jobs ADD COLUMN message_code TEXT")
             if "message_params" not in columns:
                 conn.execute("ALTER TABLE research_jobs ADD COLUMN message_params TEXT")
-<<<<<<< HEAD
             if "worker_owner_id" not in columns:
                 conn.execute("ALTER TABLE research_jobs ADD COLUMN worker_owner_id TEXT")
             conn.execute("""CREATE TABLE IF NOT EXISTS research_worker_leases (
@@ -87,15 +83,12 @@ class JobQueue:
                              WHERE lease.worker_id=OLD.worker_owner_id
                                AND lease.heartbeat_unix >= CAST(strftime('%s','now') AS INTEGER)-45)
                 BEGIN SELECT RAISE(IGNORE); END""")
-=======
->>>>>>> feat/auto-research-closed-loop
             if self.recover_interrupted:
                 conn.execute("""UPDATE research_jobs
                     SET status='INTERRUPTED', error='Service restarted while job was running',
                         progress_message='Service restarted while job was running',
                         message_code='job.interrupted.restart', message_params='{}', completed_at=?
                     WHERE status IN ('RUNNING','CANCEL_REQUESTED')""", (utc_now(),))
-<<<<<<< HEAD
 
     def _touch_lease(self) -> None:
         def write() -> None:
@@ -113,8 +106,6 @@ class JobQueue:
                 # The job loop owns terminal state; a later heartbeat retry will
                 # restore the lease without terminating a running evaluation.
                 pass
-=======
->>>>>>> feat/auto-research-closed-loop
 
     def register(self, job_type: str, handler: Callable[..., Any]) -> None: self.handlers[job_type] = handler
 

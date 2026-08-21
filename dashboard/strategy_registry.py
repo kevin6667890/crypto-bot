@@ -108,11 +108,7 @@ class StrategyApprovalPolicy:
             reasons.append("RUNTIME_NOT_DETERMINISTIC")
         if not runtime.get("execution_compatible"):
             reasons.append("EXECUTION_ASSUMPTIONS_INCOMPATIBLE")
-<<<<<<< HEAD
         if runtime.get("router_family") not in set(ROUTER_TEMPLATE_MAP.values()) and not runtime.get("program_runtime"):
-=======
-        if runtime.get("router_family") not in set(ROUTER_TEMPLATE_MAP.values()):
->>>>>>> feat/auto-research-closed-loop
             reasons.append("ROUTER_DEFINITION_UNSUPPORTED")
         return ApprovalDecision(not reasons, "APPROVED" if not reasons else "REJECTED", tuple(dict.fromkeys(reasons)))
 

@@ -30,7 +30,15 @@ export default function StrategyResearchRoute({
           <button className={view === "router" ? "active" : ""} onClick={() => selectView("router")}>{t("research.routerTab")}</button>
         </nav>
       </header>
-      <div hidden={view !== "overview"} data-research-view="overview"><AiReportResearch instrument={instrument} /><StrategyResearch /><DiscoveryLab /></div>
+      <div hidden={view !== "overview"} data-research-view="overview">
+        <DiscoveryLab />
+        <AiReportResearch instrument={instrument} />
+        <details className="advanced-manual-research">
+          <summary><span><b>Advanced Manual Research</b><small>For single-strategy reproduction, debugging, parameter experiments, and manual historical validation.</small></span><i>Open workspace</i></summary>
+          <p className="advanced-manual-research-note">This does not represent the Active Strategy and cannot bypass Automatic Research or the Approved Registry.</p>
+          <StrategyResearch />
+        </details>
+      </div>
       {view === "router" && <Suspense fallback={<div className="route-loading" role="status">{t("common.loading")}</div>}><StrategyRouterResearch instrument={instrument} /></Suspense>}
     </div>
   );

@@ -37,7 +37,6 @@ def evaluate_frozen_candidate(
     over confirmed candles, so Router and Paper cannot drift through adapters.
     """
     definition = dict(registry["serialized_definition"])
-<<<<<<< HEAD
     requested = canonical_instrument(instrument)
     # Program ASTs use this same public canonical entrypoint.  Router and Paper
     # therefore cannot select a different evaluator for an ACTIVE program.
@@ -48,17 +47,11 @@ def evaluate_frozen_candidate(
         if not visible: raise ValueError("no confirmed candles for frozen program")
         result = evaluator.evaluate(visible, len(visible) - 1)
         return {"runtime_version": RUNTIME_VERSION, "action": result["action"], "warmed": result["warmed"], "state": "TRIGGERED" if result["action"] != "WAIT" else "WATCH", "evidence": {"program_ast": definition["program_ast"], "factor_versions": definition.get("factor_versions", {}), "program_version": definition.get("program_version")}, "stop_price": None, "target_price": None, "candle_close_ts": int(visible[-1].get("candle_close_ts", visible[-1]["ts"])), "last_close": float(visible[-1]["close"]), "strategy_registry_id": registry["registry_id"], "candidate_identity": registry["candidate_identity"], "strategy_version": registry["strategy_version"], "configuration_hash": registry["configuration_hash"], "parameters": definition["parameters"], "instrument": requested, "timeframe": definition.get("timeframe", "15m")}
-=======
->>>>>>> feat/auto-research-closed-loop
     parameters = dict(registry["parameters"])
     if definition.get("parameters") != parameters:
         raise ValueError("approved strategy parameter snapshots disagree")
     if canonical_hash(definition) != registry.get("configuration_hash"):
         raise ValueError("approved strategy configuration hash mismatch")
-<<<<<<< HEAD
-=======
-    requested = canonical_instrument(instrument)
->>>>>>> feat/auto-research-closed-loop
     scope = {canonical_instrument(str(value)) for value in registry.get("instrument_scope", [])}
     definition_scope = {
         canonical_instrument(str(value))
@@ -110,7 +103,6 @@ def evaluate_frozen_candidate(
         "instrument": requested,
         "timeframe": timeframe,
     }
-<<<<<<< HEAD
 
 
 # Factor-program adapter.  It is intentionally side-by-side with the existing
@@ -138,5 +130,3 @@ class FrozenProgramEvaluator:
             return basic and all(check(type(c)(c.factor,c.operator,c.threshold),j) for j in range(max(1,i-c.bars+1),i))
         feature=self.features[index]; triggered=bool(feature.get("warm")) and all(check(c,index) for stage in (self.program.environment,self.program.setup,self.program.trigger) for c in stage); atr=feature.get("atr"); ts=int(candles[index]["ts"]); action=self.program.direction if triggered and atr else "WAIT"
         return {"action":action,"atr":atr,"stop_distance":float(atr) if atr else None,"target_r":1.5,"warmed":bool(feature.get("warm")),"score":100-self.program.complexity*5,"signal_ts":ts,"signal_id":f"program:{self.program.identity[:16]}:{ts}","strategy_version":self.program.schema_version,"config_hash":self.configuration_hash,"registry_id":self.registry_id,"candidate_identity":self.program.identity,"program_version":self.program.grammar_version}
-=======
->>>>>>> feat/auto-research-closed-loop

@@ -5,6 +5,7 @@ from dashboard.automatic_research import AutomaticResearchService
 from dashboard.discovery_service import DiscoveryService
 from dashboard.job_queue import JobQueue
 from dashboard.research_repository import ResearchRepository
+from dashboard.research_service import ResearchService
 from scripts.run_auto_research_scheduler import DurableAutoResearchScheduler, run_forever
 
 
@@ -117,6 +118,18 @@ def test_active_worker_loop_stays_resident_until_stop_signal():
     assert run_forever(scheduler, True, stop) == 0
     assert scheduler.initialized == [True]
     assert scheduler.ticks == 2
+
+
+def test_passive_api_service_never_interrupts_a_worker_owned_running_job(tmp_path, monkeypatch):
+    database = tmp_path / "research.db"
+    owner = JobQueue(database, autostart=False)
+    job = owner.enqueue("BACKTEST", {"fixture": True}, "fixture")
+    with owner.connect() as connection:
+        connection.execute("UPDATE research_jobs SET status='RUNNING' WHERE id=?", (job["id"],))
+    monkeypatch.delenv("RESEARCH_JOB_WORKER_ENABLED", raising=False)
+    passive = ResearchService(database)
+    assert passive.jobs.autostart is False
+    assert passive.jobs.get(job["id"])["status"] == "RUNNING"
 
 
 def test_interval_and_summary_are_persisted(tmp_path):

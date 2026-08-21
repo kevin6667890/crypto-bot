@@ -122,6 +122,9 @@ def build_timeframe_facts(rows: list[dict[str, Any]], instrument: str, timeframe
         "atr14": _metric(latest.get("atr"), timestamp, 14),
         "atr_percentage": _metric(float(latest["atr_pct"])*100 if latest.get("atr_pct") else None, timestamp, 14),
         "rsi14": _metric(latest.get("rsi"), timestamp, 14),
+        # Internal bounded history used by deterministic momentum-state rules.
+        # This is not provider prose and contains confirmed bars only.
+        "recent_rsi_values": [finite_or_none(item) for item in rsi_series[-20:]],
         "stoch_rsi": {name: _metric(stoch.get(name), timestamp, [14, 3, 3], version=STOCH_RSI_VERSION)
                       for name in ("stoch_rsi", "stoch_rsi_k", "stoch_rsi_d")},
         "bollinger": {

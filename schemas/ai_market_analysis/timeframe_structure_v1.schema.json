@@ -4,6 +4,8 @@
   "required": ["timeframe", "last_confirmed_close", "current_incomplete_candle", "moving_averages", "slopes", "price_position", "moving_average_ordering", "swing_structure", "rsi", "stoch_rsi", "atr", "volume_regime", "trend_classification", "structure_classification", "nearest_support", "nearest_resistance", "invalidation", "confidence", "supporting_facts", "contradicting_facts", "source_bar_timestamps"],
   "properties": {
     "timeframe": {"enum": ["15m", "1H", "4H", "1D", "1W"]},
+    "role": {"enum": ["TACTICAL", "SETUP_CONTEXT", "PRIMARY_ENVIRONMENT", "MEDIUM_TERM_DIRECTION", "LONG_TERM_STRUCTURE"]},
+    "deterministic_intelligence": {"type": "object", "additionalProperties": true},
     "last_confirmed_close": {"$ref": "common_defs_v1.schema.json#/$defs/traced_number"},
     "current_incomplete_candle": {"type": ["object", "null"], "properties": {"open_time": {"$ref": "common_defs_v1.schema.json#/$defs/timestamp"}, "confirmed": {"const": false}}, "required": ["open_time", "confirmed"], "additionalProperties": true},
     "moving_averages": {"type": "object", "required": ["ma20", "ma30", "ma60", "ma200", "ema20"], "properties": {"ma20": {"$ref": "common_defs_v1.schema.json#/$defs/traced_number"}, "ma30": {"$ref": "common_defs_v1.schema.json#/$defs/traced_number"}, "ma60": {"$ref": "common_defs_v1.schema.json#/$defs/traced_number"}, "ma200": {"$ref": "common_defs_v1.schema.json#/$defs/traced_number"}, "ema20": {"$ref": "common_defs_v1.schema.json#/$defs/traced_number"}}, "additionalProperties": false},

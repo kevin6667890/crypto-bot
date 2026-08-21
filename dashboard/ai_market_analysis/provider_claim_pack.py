@@ -75,7 +75,15 @@ def build_provider_claim_pack(compiled_context: dict[str, Any], mode: str) -> di
     usable_flow = [
         item for item in all_flow if confirmed_flow_direction(item)
     ]
-    flow_states = {str((item.get("value") or {}).get("flow_quality") or "") for item in active_flow if isinstance(item.get("value"), dict)}
+    price_oi_facts = [item for item in all_flow if isinstance(item.get("value"), dict)
+                      and item["value"].get("evidence_kind") == "PRICE_OI"
+                      and item["value"].get("state") not in {None, "INSUFFICIENT_DATA"}
+                      and str(item["value"].get("quality") or "").upper() not in {"MISSING", "UNAVAILABLE", "UNKNOWN"}]
+    flow_states = {
+        ("FLOW_UNAVAILABLE" if str(item.get("quality") or "").upper() in {"MISSING", "UNAVAILABLE", "UNKNOWN"}
+         else str((item.get("value") or {}).get("flow_quality") or ""))
+        for item in active_flow if isinstance(item.get("value"), dict)
+    }
     partial_flow_present = "FLOW_PARTIAL_USABLE" in flow_states or any(
         str(item.get("quality") or "").upper() in {"PARTIAL", "GAP_AFFECTED", "PARTIAL_AFTER_GAP", "MISSING", "UNKNOWN"}
         or (isinstance(item.get("value"), dict)
@@ -83,10 +91,10 @@ def build_provider_claim_pack(compiled_context: dict[str, Any], mode: str) -> di
         for item in active_flow
     )
     partial_observations = [item for item in active_flow if isinstance(item.get("value"), dict)
-                            and item["value"].get("flow_quality") == "FLOW_PARTIAL_USABLE"
-                            and (item["value"].get("cvd_delta") is not None or item["value"].get("net_flow") is not None)]
+                            and item["value"].get("flow_quality") == "FLOW_PARTIAL_USABLE"]
     auxiliary_flow = [item for item in all_flow if isinstance(item.get("value"), dict) and "phase" not in item["value"]]
     by_category["ORDER_FLOW"] = usable_flow + [item for item in partial_observations if item not in usable_flow]
+    by_category["ORDER_FLOW"] += [item for item in price_oi_facts if item not in by_category["ORDER_FLOW"]]
     if mode != "QUICK" and "FLOW_UNAVAILABLE" not in flow_states:
         by_category["ORDER_FLOW"] += [item for item in auxiliary_flow if item not in by_category["ORDER_FLOW"]]
     levels = [_level_projection(item) for item in by_category.get("LEVEL", [])

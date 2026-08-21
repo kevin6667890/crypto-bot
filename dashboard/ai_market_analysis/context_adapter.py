@@ -7,6 +7,7 @@ from .quality import iso
 from .structure_timeline import build_timeline
 from .swing_structure import confirmed_swings, swing_summary
 from .timeframe_facts import build_multi_timeframe_facts
+from .deterministic_intelligence import build_multi_timeframe_intelligence, build_timeframe_intelligence
 from .orderflow_context_adapter import build_ai3_facts
 from .versions import (
     AI_CONTEXT_ADAPTER_VERSION, AI_CONTEXT_SCHEMA_VERSION, AI_MARKET_FACTS_VERSION,
@@ -16,6 +17,7 @@ from .versions import (
     AI_ORDERFLOW_ATTRIBUTION_VERSION, AI_KEY_LEVEL_ENGINE_VERSION,
     AI_KEY_LEVEL_ZONE_VERSION, AI_SCENARIO_TREE_VERSION,
     AI_CONTEXT_ORDERFLOW_ADAPTER_VERSION,
+    AI_DETERMINISTIC_INTELLIGENCE_VERSION,
 )
 
 
@@ -111,8 +113,10 @@ def _structure(facts: dict[str, Any], index: int) -> tuple[dict[str, Any], dict[
     paths = [f"/timeframe_structures/{index}/last_confirmed_close"]
     confidence = "LOW" if facts["quality"]["status"] in {"GAP_AFFECTED", "STALE", "INVALID"} else (
         "INSUFFICIENT" if trend == "INSUFFICIENT_DATA" else "HIGH" if len(supporting) >= 4 and not contradicting else "MEDIUM")
+    intelligence = build_timeframe_intelligence(facts, timeline, swings)
     structure = {
         "timeframe": facts["timeframe"],
+        "role": intelligence["role"],
         "last_confirmed_close": _traced(facts["confirmed_close"], "USDT", timestamp, source,
                                          "last confirmed close at causal cutoff", AI_MARKET_FACTS_VERSION, quality),
         "current_incomplete_candle": live_out,
@@ -136,6 +140,7 @@ def _structure(facts: dict[str, Any], index: int) -> tuple[dict[str, Any], dict[
         "contradicting_facts": [{"claim": claim, "evidence_paths": paths} for claim in contradicting],
         "source_bar_timestamps": [iso(row["close_time"]) for row in facts["confirmed_bars"]],
     }
+    structure["deterministic_intelligence"] = intelligence
     return structure, timeline, swings
 
 
@@ -176,8 +181,10 @@ def _multi_summary(structures: list[dict[str, Any]], timelines: dict[str, dict[s
             obstacles.append(f"{lower} upside structure meets {higher} bearish structure")
         if timelines[lower]["direction"] == "DOWN" and _bias(by_tf[higher]["trend_classification"]) == 1:
             obstacles.append(f"{lower} downside structure remains inside {higher} bullish structure")
+    intelligence = build_multi_timeframe_intelligence(structures)
     return {"version": AI_TIMEFRAME_STRUCTURE_VERSION, "pair_relationships": pairs,
-            "dominant_timeframe": dominant, "higher_timeframe_obstacles": obstacles}
+            "dominant_timeframe": dominant, "higher_timeframe_obstacles": obstacles,
+            **intelligence}
 
 
 def _schema_event(event: dict[str, Any], tf_index: int) -> dict[str, Any]:
@@ -223,6 +230,7 @@ def build_market_analysis_context(datasets: dict[str, list[dict[str, Any]]], ins
         "key_level_engine": AI_KEY_LEVEL_ENGINE_VERSION,
         "key_level_zone": AI_KEY_LEVEL_ZONE_VERSION,
         "scenario_tree": AI_SCENARIO_TREE_VERSION,
+        "deterministic_intelligence": AI_DETERMINISTIC_INTELLIGENCE_VERSION,
         "context_orderflow_adapter": AI_CONTEXT_ORDERFLOW_ADAPTER_VERSION,
     }
     ai3 = build_ai3_facts(facts=facts, timelines=timelines, swings=all_swings, dominant=dominant,

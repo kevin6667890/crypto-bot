@@ -1,5 +1,6 @@
 AI_MARKET_FACTS_VERSION = "ai-market-facts-v1"
 AI_TIMEFRAME_STRUCTURE_VERSION = "ai-timeframe-structure-v1"
+AI_DETERMINISTIC_INTELLIGENCE_VERSION = "ai-deterministic-intelligence-v1"
 AI_SWING_STRUCTURE_VERSION = "ai-swing-structure-v1"
 AI_RANGE_COMPRESSION_VERSION = "ai-range-compression-v1"
 AI_MARKET_TIMELINE_VERSION = "ai-market-timeline-v1"

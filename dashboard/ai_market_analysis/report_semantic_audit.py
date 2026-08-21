@@ -63,5 +63,11 @@ def audit_semantics(claims:list[dict[str,Any]],facts:list[dict[str,Any]])->dict[
                 codes.append("ORDER_FLOW_SEMANTIC_NAMESPACE_MISMATCH")
         if "订单流" in text and any(term in text for term in ("价格变化","价格变动","净正价格","净负价格")):
             codes.append("ORDER_FLOW_SEMANTIC_NAMESPACE_MISMATCH")
+        forced_exit_terms=("\u7206\u4ed3","\u5f3a\u5e73","liquidation")
+        causal_certainty=("\u786e\u5b9a","\u786e\u8ba4","\u8bc1\u660e","\u5c31\u662f","\u5b8c\u5168\u7531","definitely","confirmed")
+        if (any(term.casefold() in text.casefold() for term in forced_exit_terms)
+                and any(term.casefold() in text.casefold() for term in causal_certainty)
+                and not any(_has_liquidation_evidence(v) for v in values)):
+            codes.append("UNSUPPORTED_CAUSALITY")
         failures.extend(codes);audits.append({"version":AI_REPORT_SEMANTIC_AUDIT_VERSION,"claim_id":claim["claim_id"],"result":"FAILED" if codes else "SUPPORTED","codes":sorted(set(codes))})
     return {"version":AI_REPORT_SEMANTIC_AUDIT_VERSION,"audits":audits,"failure_codes":sorted(set(failures))}

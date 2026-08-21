@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import argparse
 import os
+import signal
+import threading
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -47,6 +49,17 @@ def enabled(name: str, default: str = "false") -> bool:
     return os.getenv(name, default).strip().lower() in {"1", "true", "yes", "on"}
 
 
+def run_forever(scheduler: DurableAutoResearchScheduler, is_enabled: bool,
+                stop_event: threading.Event) -> int:
+    """Keep the worker process resident for both idle and active queue work."""
+    state = scheduler.initialize(is_enabled)
+    while not stop_event.is_set():
+        result = scheduler.tick()
+        state = result.get("state") or state
+        stop_event.wait(scheduler.sleep_seconds(state))
+    return 0
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--once", action="store_true", help="enqueue one deduplicated cycle and wait for it")
@@ -63,11 +76,12 @@ def main() -> int:
                 return 0 if current.get("status") == "COMPLETED" else 1
             time.sleep(2)
     scheduler = DurableAutoResearchScheduler(service, interval)
-    state = scheduler.initialize(enabled("AUTO_RESEARCH_ENABLED"))
-    while True:
-        result = scheduler.tick()
-        state = result.get("state") or state
-        time.sleep(scheduler.sleep_seconds(state))
+    stop_event = threading.Event()
+    def stop(_signum, _frame) -> None:
+        stop_event.set()
+    signal.signal(signal.SIGTERM, stop)
+    signal.signal(signal.SIGINT, stop)
+    return run_forever(scheduler, enabled("AUTO_RESEARCH_ENABLED"), stop_event)
 
 
 if __name__ == "__main__":

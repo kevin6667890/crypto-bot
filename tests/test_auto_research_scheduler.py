@@ -5,7 +5,20 @@ from dashboard.automatic_research import AutomaticResearchService
 from dashboard.discovery_service import DiscoveryService
 from dashboard.job_queue import JobQueue
 from dashboard.research_repository import ResearchRepository
-from scripts.run_auto_research_scheduler import DurableAutoResearchScheduler
+from scripts.run_auto_research_scheduler import DurableAutoResearchScheduler, run_forever
+
+
+class StopAfterWaits:
+    def __init__(self, waits: int): self.waits, self.calls = waits, 0
+    def is_set(self): return self.calls >= self.waits
+    def wait(self, _seconds): self.calls += 1; return self.is_set()
+
+
+class ResidentScheduler:
+    def __init__(self): self.initialized = []; self.ticks = 0
+    def initialize(self, enabled): self.initialized.append(enabled); return {"enabled": enabled}
+    def tick(self): self.ticks += 1; return {"triggered": False, "state": {"enabled": False}}
+    def sleep_seconds(self, _state): return 60.0
 
 
 class Clock:
@@ -90,6 +103,20 @@ def test_disabled_scheduler_does_not_run(tmp_path):
     with repository.connect() as connection:
         assert connection.execute("SELECT COUNT(*) FROM automatic_research_cycles").fetchone()[0] == 0
         assert connection.execute("SELECT COUNT(*) FROM research_jobs").fetchone()[0] == 0
+
+
+def test_idle_worker_loop_stays_resident_until_stop_signal():
+    scheduler, stop = ResidentScheduler(), StopAfterWaits(3)
+    assert run_forever(scheduler, False, stop) == 0
+    assert scheduler.initialized == [False]
+    assert scheduler.ticks == 3
+
+
+def test_active_worker_loop_stays_resident_until_stop_signal():
+    scheduler, stop = ResidentScheduler(), StopAfterWaits(2)
+    assert run_forever(scheduler, True, stop) == 0
+    assert scheduler.initialized == [True]
+    assert scheduler.ticks == 2
 
 
 def test_interval_and_summary_are_persisted(tmp_path):

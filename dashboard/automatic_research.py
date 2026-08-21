@@ -376,7 +376,11 @@ class AutomaticResearchService:
                         outcome=canonical_backtest(program, dev_rows, "BTC-USDT", timeframe, start, end-TIMEFRAME_SECONDS[timeframe])
                         folds.append({"status":"COMPLETED", "metrics":outcome["metrics"], "buy_hold_metrics":buy_and_hold(dev_rows,start,end-TIMEFRAME_SECONDS[timeframe],DiscoveryExecutionConfig(**request["execution_assumptions"]).validate())})
                     metrics=aggregate(folds); verdict=evaluate_eligibility(metrics,timeframe,"DEVELOPMENT_CANDIDATE")
-                    score,components=calculate_score(metrics,program.complexity,timeframe)
+                    # Existing discovery scoring accepts its structural-complexity
+                    # band (5..8); preserve program complexity separately while
+                    # mapping it into that established penalty scale.
+                    scoring_complexity=min(8,max(5,program.complexity))
+                    score,components=calculate_score(metrics,scoring_complexity,timeframe)
                     status="ELIGIBLE" if verdict["eligible"] else "REJECTED"
                     connection.execute("UPDATE strategy_discovery_candidates SET status='DEVELOPMENT_CANDIDATE',aggregate_metrics=?,eligibility_status=?,development_score=?,score_components=?,elimination_reasons=?,scoring_policy_version=?,completed_at=? WHERE id=?",(_json(metrics),status,score,_json(components),_json([] if verdict["eligible"] else verdict["reasons"]),DISCOVERY_SCORING_VERSION,utc_now(),candidate_id))
                     if verdict["eligible"]: ranked.append((float(score),candidate_id))

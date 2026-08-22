@@ -25,8 +25,10 @@ if [[ ! -e $artifact ]]; then
   cp -a "$old/deployment/." "$artifact/deployment/"
   cp "$env_file" "$artifact/deployment/integration.env"
   printf '\nAI6B_APP_IMAGE=crypto-bot-integration-app:%s\nAI6B_FRONTEND_IMAGE=crypto-bot-integration-frontend:%s\nFACTOR_PROGRAM_GIT_COMMIT=%s\nLIVE_TRADING_ENABLED=false\n' "$revision" "$revision" "$revision" >> "$artifact/deployment/integration.env"
+  cp "$artifact/deployment/integration.env" "$artifact/source/.env"
 else
   test -f "$artifact/source/dashboard/paper_api.py" && test -f "$artifact/deployment/integration.env" || { echo "existing artifact is incomplete" >&2; exit 4; }
+  cp "$artifact/deployment/integration.env" "$artifact/source/.env"
 fi
 
 stage immutable-images; cd "$artifact/source"

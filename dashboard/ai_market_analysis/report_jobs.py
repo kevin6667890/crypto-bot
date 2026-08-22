@@ -219,8 +219,14 @@ class ReportWorker:
         if provider_budget_chargeable(request["provider"]):
             raw_reference_diagnostics=reference_diagnostics(report,provider_request,registry)
             unknown=raw_reference_diagnostics["unknown_refs"]
-            reference_codes=(("fact_refs","UNKNOWN_FACT_REF"),("level_refs","UNKNOWN_LEVEL_REF"),
-              ("scenario_refs","UNKNOWN_SCENARIO_REF"),("macro_refs","UNKNOWN_MACRO_REF"),("position_refs","UNKNOWN_POSITION_REF"))
+            # Level and scenario projection references are host-owned: the
+            # claim pack replaces them with the frozen registry projection
+            # before canonical validation and display.  A provider may echo a
+            # stale projection id, but that must neither reach presentation nor
+            # consume the next cadence window.  Keep raw diagnostics while
+            # still fail-closing provider-controlled namespaces.
+            reference_codes=(("fact_refs","UNKNOWN_FACT_REF"),
+              ("macro_refs","UNKNOWN_MACRO_REF"),("position_refs","UNKNOWN_POSITION_REF"))
             unknown_code=next((code for name,code in reference_codes if unknown[name]),None)
             if unknown_code:
                 raw_reference_diagnostics.update({"status":"FAILED","failure_code":unknown_code})

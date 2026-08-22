@@ -1713,6 +1713,16 @@ class Handler(BaseHTTPRequestHandler):
         elif parsed.path == "/api/alerts": self._send({"items":ALERTS.list()})
         elif parsed.path == "/api/data-coverage": self._send({"items":RESEARCH.repository.data_coverage()})
         elif parsed.path == "/api/automatic-research": self._send(RESEARCH.automatic_research.summary())
+        elif parsed.path.startswith("/api/automatic-research/cycles/") and parsed.path.endswith("/diagnostics"):
+            try:
+                cycle_id=int(parsed.path.split("/")[4]); result=RESEARCH.repository.automatic_research_diagnostics(cycle_id,page=int(query.get("page",["1"])[0]),page_size=int(query.get("page_size",["25"])[0]),reason=query.get("reason",[None])[0],eligibility=query.get("eligibility",[None])[0],search=query.get("search",[None])[0])
+                self._send(result or {"error":"Research cycle not found"},HTTPStatus.OK if result else HTTPStatus.NOT_FOUND)
+            except ValueError:self._send({"error":"Invalid research diagnostics query"},HTTPStatus.BAD_REQUEST)
+        elif parsed.path.startswith("/api/automatic-research/candidates/") and parsed.path.endswith("/diagnostics"):
+            try:
+                candidate_id=int(parsed.path.split("/")[4]); result=RESEARCH.repository.automatic_research_candidate_diagnostics(candidate_id)
+                self._send(result or {"error":"Candidate not found"},HTTPStatus.OK if result else HTTPStatus.NOT_FOUND)
+            except ValueError:self._send({"error":"Invalid candidate id"},HTTPStatus.BAD_REQUEST)
         elif parsed.path.startswith("/api/automatic-research/cycles/"):
             try:
                 cycle=RESEARCH.automatic_research.detail(int(parsed.path.rsplit('/',1)[1]));self._send(cycle or {'error':'Research cycle not found'},HTTPStatus.OK if cycle else HTTPStatus.NOT_FOUND)

@@ -84,7 +84,8 @@ else
   cp "$artifact/deployment/integration.env" "$artifact/source/.env"
 fi
 
-stage frontend-build; npm --prefix frontend ci --ignore-scripts; npm --prefix frontend run build
+stage frontend-build
+docker run --rm -v "$artifact/source:/workspace" -w /workspace/frontend node:20-alpine sh -ec 'npm ci --ignore-scripts; npm run build'
 stage immutable-images; cd "$artifact/source"
 docker build --pull -t "crypto-bot-integration-app:$revision" .
 docker build --pull -t "crypto-bot-integration-frontend:$revision" -f frontend/Dockerfile .

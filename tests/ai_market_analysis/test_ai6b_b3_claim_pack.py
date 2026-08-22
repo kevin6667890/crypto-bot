@@ -168,6 +168,23 @@ def test_grounding_canonicalizes_timeframe_and_no_macro_status_without_accepting
     assert grounded["sections"][0]["body"] == "中周期 数据过期，本次未加入已验证宏观证据。"
 
 
+def test_grounding_blocks_negative_levels_and_macro_interpretation_without_weakening_audit():
+    request, registry, report = _real_style_report("QUICK")
+    pack = compile_report_context(registry, "QUICK")["provider_claim_pack"]
+    assert pack["evidence_status"]["levels_available"] is True
+    assert pack["evidence_status"]["macro_available"] is False
+    report["sections"][0]["body"] = "No registered key levels. Macro neutral."
+    grounded = ground_provider_report(report, pack)
+    section = grounded["sections"][0]
+    assert "No registered key levels" not in section["body"]
+    assert "Macro neutral" not in section["body"]
+    assert section["level_refs"]
+    claims = extract_claims("boundary-replay", grounded)
+    assert audit_references(claims, registry)["failure_codes"] == []
+    assert audit_macro(claims, {"items": []}, "2099-01-01T00:00:00Z")["failure_codes"] == []
+    assert len(grounded["sections"]) == 11
+
+
 def test_provider_claim_pack_contract_is_compact_view_of_host_source_of_truth():
     _request, registry = setup("QUICK")
     host = compile_report_context(registry, "QUICK")["provider_claim_pack"]

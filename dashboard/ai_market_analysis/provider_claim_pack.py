@@ -263,6 +263,53 @@ _UNSUPPORTED_LEVEL_LIMITATION = "本轮限制展示未经注册表支持的数�
 _LEVEL_CLAIM_TERMS = ("支撑", "压力", "阻力", "关键位", "关键位置")
 
 
+_NEGATIVE_LEVEL_RE = re.compile(
+    r"(?:\bno\s+(?:registered|reliable|key)\s+(?:key\s+)?levels?\b|"
+    r"\b(?:no|without)\s+(?:reliable|registered)\s+(?:support|resistance|levels?)\b|"
+    r"(?:\u65e0|\u6ca1\u6709).{0,12}(?:\u6ce8\u518c|\u53ef\u9760|\u5173\u952e).{0,12}(?:\u4ef7\u4f4d|\u4f4d\u7f6e|\u6c34\u5e73))",
+    re.I,
+)
+_MACRO_NARRATIVE_RE = re.compile(
+    r"(?:\bmacro\b|\bFed\b|\bETF\b|\bCPI\b|\bneutral\b|"
+    r"\u5b8f\u89c2|\u7f8e\u8054\u50a8|\u964d\u606f|\u98ce\u9669\u504f\u597d)",
+    re.I,
+)
+_MACRO_COVERAGE_RE = re.compile(
+    r"(?:\u672c\u6b21\u672a\u52a0\u5165\u5df2\u9a8c\u8bc1\u5b8f\u89c2\u8bc1\u636e|"
+    r"\u5b8f\u89c2\u8bc1\u636e\u672a\u52a0\u5165|\bnot\s+included\s+in\s+(?:this\s+)?analysis\b)",
+    re.I,
+)
+
+
+def _registered_levels_sentence(claim_pack: dict[str, Any]) -> str:
+    """A host-authored bounded replacement for a contradictory no-level claim."""
+    return "\u5f53\u524d\u5173\u952e\u4f4d\u7f6e\u5df2\u7531\u5df2\u6ce8\u518c\u7684\u786e\u5b9a\u6027\u4ef7\u683c\u5730\u56fe\u63d0\u4f9b\uff0c\u652f\u6491\u4e0e\u538b\u529b\u89c1\u7ed3\u6784\u5316\u5173\u952e\u4f4d\u3002"
+
+
+def _apply_narrative_boundaries(value: str, claim_pack: dict[str, Any]) -> str:
+    """Remove provider prose outside the deterministic evidence namespace.
+
+    This is pre-audit grounding, not an audit exception: a provider cannot
+    contradict available levels or interpret macro without macro evidence.
+    """
+    from .report_claim_extractor import split_sentences
+    levels_available = bool(claim_pack["evidence_status"].get("levels_available"))
+    macro_available = bool(claim_pack["evidence_status"].get("macro_available"))
+    canonical_macro = str(claim_pack.get("macro_unavailable_statement") or "").rstrip("\u3002.")
+    retained: list[str] = []
+    for sentence in split_sentences(str(value or "")):
+        if levels_available and _NEGATIVE_LEVEL_RE.search(sentence):
+            retained.append(_registered_levels_sentence(claim_pack))
+            continue
+        # A claim-pack exact coverage disclosure is deterministic metadata;
+        # every other macro sentence is an unsupported market interpretation.
+        if (not macro_available and _MACRO_NARRATIVE_RE.search(sentence)
+                and canonical_macro not in sentence and not _MACRO_COVERAGE_RE.search(sentence)):
+            continue
+        retained.append(sentence)
+    return "\u3002".join(dict.fromkeys(retained)) + ("\u3002" if retained else "")
+
+
 def bind_level_fact_refs(text: str, claim_pack: dict[str, Any]) -> tuple[list[str], bool]:
     """Return exact LEVEL facts for numeric level prose, or fail closed.
 
@@ -361,15 +408,15 @@ def ground_provider_report(report: dict[str, Any], claim_pack: dict[str, Any]) -
     macro_statement = claim_pack.get("macro_unavailable_statement")
     section_ids = {str(item.get("section_id")) for item in report.get("sections", [])}
     empty_scenario_limitation_section = "QUICK_SUMMARY" if "QUICK_SUMMARY" in section_ids else "LIMITATIONS"
-    grounded["headline"] = _enforce_numeric_namespaces(
+    grounded["headline"] = _apply_narrative_boundaries(_enforce_numeric_namespaces(
         _macro_limitation_text(_narrative_text(report["headline"]), macro_statement), claim_pack
-    ); sections = []
+    ), claim_pack); sections = []
     for original in report.get("sections", []):
         section = dict(original); categories = _section_categories(str(section.get("section_id")))
         section["title"] = _narrative_text(str(section.get("title") or section.get("section_id") or ""))
-        section["body"] = _enforce_numeric_namespaces(
+        section["body"] = _apply_narrative_boundaries(_enforce_numeric_namespaces(
             _macro_limitation_text(_narrative_text(section["body"]), macro_statement), claim_pack
-        )
+        ), claim_pack)
         if claim_pack["evidence_status"].get("flow_partial") and section.get("section_id") in {"QUICK_SUMMARY", "MOVE_NATURE", "ORDER_FLOW"}:
             section["body"] = section["body"].replace(
                 "\u8ba2\u5355\u6d41\u6570\u636e\u663e\u793a", "\u90e8\u5206\u53ef\u7528\u7684\u8ba2\u5355\u6d41\u8bc1\u636e\u663e\u793a"

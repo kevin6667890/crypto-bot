@@ -207,6 +207,24 @@ def build_fact_registry(enriched: dict[str, Any]) -> dict[str, Any]:
             facts.append(_fact(fact_id, "TIMEFRAME", label, value,
                                f"/timeframe_structures/0/deterministic_intelligence/{key}",
                                unit="USDT", timestamp=tactical_ts, priority=86))
+    # A missing long-horizon registry level must not hide a valid current
+    # tactical boundary. These are registered LEVEL facts, derived directly
+    # from the existing 15m local swing facts; no price is invented.
+    if not selected_levels:
+        for fact_id, key, role in (("LEVEL_TACTICAL_RESISTANCE", "local_high", "RESISTANCE"),
+                                   ("LEVEL_TACTICAL_SUPPORT", "local_low", "SUPPORT")):
+            price = intelligence.get(key)
+            if not isinstance(price, (int, float)):
+                continue
+            level_id = stable_hash({"kind": "TACTICAL_LOCAL", "role": role, "price": price, "timestamp": tactical_ts})
+            value = {"level_id": level_id, "representative_price": price, "zone_low": price,
+                     "zone_high": price, "role": role, "state": "ACTIVE", "strength": "MEDIUM",
+                     "timeframes": ["15m"], "primary_timeframe": "15m", "dynamic": False,
+                     "valid_until": None, "observed_at": tactical_ts, "source_fact": key,
+                     "quality": "VALID"}
+            facts.append(_fact(fact_id, "LEVEL", f"Tactical {role.lower()}", value,
+                               f"/timeframe_structures/0/deterministic_intelligence/{key}",
+                               unit="USDT", timestamp=tactical_ts, priority=95))
     for fact_id, key, label in (("TACTICAL_IMPULSE", "impulse", "Tactical impulse"),
                                 ("TACTICAL_PULLBACK", "pullback", "Tactical pullback"),
                                 ("TACTICAL_COMPRESSION", "compression", "Tactical compression")):

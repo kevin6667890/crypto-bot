@@ -382,11 +382,9 @@ def _dedupe_section_bodies(sections: list[dict[str, Any]]) -> list[dict[str, Any
         section = dict(original); retained: list[str] = []
         for sentence in split_sentences(str(section.get("body") or "")):
             key = re.sub(r"[\W_]+", "", re.sub(r"\d+(?:\.\d+)?", "#", sentence), flags=re.UNICODE)
-            canonical_flow_limitation = sentence == _FLOW_LIMITATION
-            if not canonical_flow_limitation and key in seen:
+            if key in seen:
                 continue
-            if not canonical_flow_limitation:
-                seen.add(key)
+            seen.add(key)
             retained.append(sentence)
         if retained:
             section["body"] = "\u3002".join(retained) + "\u3002"

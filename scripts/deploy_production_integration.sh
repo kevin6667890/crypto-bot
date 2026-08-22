@@ -12,13 +12,17 @@ git cat-file -e "$revision^{commit}"; git diff --check "$revision^" "$revision"
 
 active=$(docker inspect crypto-bot-paper-api-1 -f '{{ index .Config.Labels "com.docker.compose.project.config_files" }}')
 env_file=$(docker inspect crypto-bot-paper-api-1 -f '{{ index .Config.Labels "com.docker.compose.project.environment_file" }}')
-[[ -n $active && -n $env_file && ! -e $artifact ]] || { echo "active topology unavailable or artifact exists" >&2; exit 4; }
+[[ -n $active && -n $env_file ]] || { echo "active topology unavailable" >&2; exit 4; }
 old=$(printf '%s' "$active" | cut -d, -f1 | sed 's#/source/docker-compose.yml##')
-mkdir -p "$artifact/source" "$artifact/deployment"
-git archive --format=tar "$revision" | tar -x -C "$artifact/source"
-cp -a "$old/deployment/." "$artifact/deployment/"
-cp "$env_file" "$artifact/deployment/integration.env"
-printf '\nAI6B_APP_IMAGE=crypto-bot-integration-app:%s\nAI6B_FRONTEND_IMAGE=crypto-bot-integration-frontend:%s\nFACTOR_PROGRAM_GIT_COMMIT=%s\nLIVE_TRADING_ENABLED=false\n' "$revision" "$revision" "$revision" >> "$artifact/deployment/integration.env"
+if [[ ! -e $artifact ]]; then
+  mkdir -p "$artifact/source" "$artifact/deployment"
+  git archive --format=tar "$revision" | tar -x -C "$artifact/source"
+  cp -a "$old/deployment/." "$artifact/deployment/"
+  cp "$env_file" "$artifact/deployment/integration.env"
+  printf '\nAI6B_APP_IMAGE=crypto-bot-integration-app:%s\nAI6B_FRONTEND_IMAGE=crypto-bot-integration-frontend:%s\nFACTOR_PROGRAM_GIT_COMMIT=%s\nLIVE_TRADING_ENABLED=false\n' "$revision" "$revision" "$revision" >> "$artifact/deployment/integration.env"
+else
+  test -f "$artifact/source/dashboard/paper_api.py" && test -f "$artifact/deployment/integration.env" || { echo "existing artifact is incomplete" >&2; exit 4; }
+fi
 
 cd "$artifact/source"
 docker build --pull -t "crypto-bot-integration-app:$revision" .

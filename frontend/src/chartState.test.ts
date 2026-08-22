@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { CHART_CACHE_VERSION, CHART_POINT_LIMIT, chartCacheKey, formatMillions, loadChartSnapshot, normalizePoints, saveChartSnapshot } from "./chartState";
+import { CHART_CACHE_VERSION, CHART_POINT_LIMIT, chartCacheKey, formatMillions, loadChartSnapshot, normalizePoints, saveChartSnapshot, symmetricCvdPriceRange } from "./chartState";
 
 class MemoryStorage implements Storage {
   private values = new Map<string, string>();
@@ -60,6 +60,10 @@ describe("last-known-good chart snapshots", () => {
 });
 
 describe("CVD/OI display formatting", () => {
+  it("uses the current visible CVD range symmetrically around zero", () => {
+    expect(symmetricCvdPriceRange(-20, 10)).toEqual({ minValue: -23, maxValue: 23 });
+    expect(symmetricCvdPriceRange(0, 0)).toEqual({ minValue: -1.15, maxValue: 1.15 });
+  });
   it("formats positive, negative, and zero values in millions", () => {
     expect(formatMillions(12_500_000)).toBe("12.50M"); expect(formatMillions(-8_400_000)).toBe("-8.40M"); expect(formatMillions(0)).toBe("0.00M");
   });

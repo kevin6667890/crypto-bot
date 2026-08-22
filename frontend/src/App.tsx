@@ -1054,7 +1054,7 @@ function Workspace() {
               </div>
               <div className="workspace-chart">
                 <MarketChart key={`${perpetualInstrument(instrument)}:${interval}`} instrument={perpetualInstrument(instrument)} interval={interval} flow={chartFlow} indicators={visibleIndicators} />
-                <div className="flow-pane-labels" aria-label={language === "zh" ? "图表分区" : "Chart panes"}><span className="volume-pane-label" data-testid="volume-pane-label">{language === "zh" ? "成交量 · 实际成交量" : "Volume · actual traded volume"}</span><span className="cvd-pane-label" data-testid="cvd-pane-label" data-delta-series="histogram" data-cumulative-series="line" data-zero-axis="true">{language === "zh" ? "CVD Δ 柱 · CVD 累计线 · 零轴" : "CVD Δ histogram · cumulative CVD line · zero axis"}</span><span className="oi-pane-label" data-testid="oi-pane-label">{language === "zh" ? "OI · 永续未平仓量绝对值" : "OI · absolute perpetual open interest"}</span></div>
+                <div className="flow-pane-labels" aria-label={language === "zh" ? "图表分区" : "Chart panes"}><span className="volume-pane-label" data-testid="volume-pane-label">{language === "zh" ? "成交量 · 实际成交量" : "Volume · actual traded volume"}</span><span className="cvd-pane-label" data-testid="cvd-pane-label" data-delta-series="histogram" data-zero-axis="true">{language === "zh" ? "CVD 强弱柱 · 零轴" : "CVD strength histogram · zero axis"}</span><span className="oi-pane-label" data-testid="oi-pane-label">{language === "zh" ? "OI · 永续未平仓量绝对值" : "OI · absolute perpetual open interest"}</span></div>
               </div>
               <div className="chart-footer">
               <div className={`flow-status ${flowStatus.toLowerCase()}`}>

@@ -3,6 +3,12 @@ export const CHART_CACHE_VERSION = 3;
 export const CHART_POINT_LIMIT = 10_000;
 const PREFIX = `crypto-bot.chart-cache.v${CHART_CACHE_VERSION}:`;
 
+/** Keeps the CVD strength view centred on zero without flattening quiet data. */
+export function symmetricCvdPriceRange(minValue: number, maxValue: number, padding = 1.15, minimumAbs = 1) {
+  const maxAbs = Math.max(Math.abs(minValue), Math.abs(maxValue), minimumAbs);
+  return { minValue: -maxAbs * padding, maxValue: maxAbs * padding };
+}
+
 export type ChartSeriesType = "candles" | "cvd" | "oi";
 export type ChartCacheKey = { instrument: string; timeframe: string; series: ChartSeriesType };
 type Snapshot<T> = { version: number; savedAt: number; points: T[]; metadata?: unknown };

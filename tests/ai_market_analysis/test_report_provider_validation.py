@@ -32,6 +32,11 @@ def setup(mode="FULL",macro=False):
 def test_valid_schema_modes(mode):
     q,r=setup(mode);report=parse_report_response(FakeAIReportProvider().generate(q).raw_text);assert validate_report(report,q,r)["status"]=="VALID"
 
+def test_indicator_periods_are_not_treated_as_market_numeric_claims():
+    """Indicator labels are not invented price/count claims in provider prose."""
+    from dashboard.ai_market_analysis.report_numeric_normalizer import normalize_numbers
+    assert normalize_numbers("价格位于20、30、60、200周期均线上方") == []
+
 def test_full_structured_scenario_invalidations_satisfy_invalidation_contract():
     q,r=setup("FULL");report=parse_report_response(FakeAIReportProvider().generate(q).raw_text)
     limitations=next(section for section in report["sections"] if section["section_id"]=="LIMITATIONS")

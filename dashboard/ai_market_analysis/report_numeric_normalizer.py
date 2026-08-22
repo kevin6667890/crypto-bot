@@ -10,7 +10,10 @@ CN_CHARS="零〇一二两三四五六七八九十百千万亿点"
 ARABIC_RE=re.compile(r"(?<![A-Za-z_\d])(?P<approx>约|接近|附近|超过|低于)?\s*(?P<sign>[+-]|负)?\s*(?P<num>\d[\d, ]*(?:\.\d+)?)(?P<scale>[kK万亿])?\s*(?P<unit>%|个百分点|USDT|USD|美元|枚|张|合约|倍|R|ATR)?")
 CHINESE_RE=re.compile(rf"(?P<approx>约|接近|附近|超过|低于)?(?P<prefix>百分之)?(?P<sign>负)?(?P<num>[{CN_CHARS}]+)(?P<unit>个百分点|美元|USDT|USD|枚|张|合约|倍|R)?")
 RANGE_SEP_RE=re.compile(r"\s*(?:到|至|—|–|-)\s*")
-EXCLUDED=re.compile(r"(?:\d{4}-\d{2}-\d{2}(?:\s*(?:至|到|~)\s*\d{2}-\d{2})?|\b(?:15m|1H|4H|1D|1W|v\d+(?:\.\d+)*|[A-Z_]+_\d+(?:/\d+)*)\b|\d+\s*(?:分钟|小时|日|周))",re.I)
+EXCLUDED=re.compile(r"(?:\d{4}-\d{2}-\d{2}(?:\s*(?:至|到|~)\s*\d{2}-\d{2})?|\b(?:15m|1H|4H|1D|1W|v\d+(?:\.\d+)*|[A-Z_]+_\d+(?:/\d+)*)\b|\d+\s*(?:分钟|小时|日|周|周期|期)(?:均线)?)",re.I)
+INDICATOR_PERIOD_SEQUENCE_RE = re.compile(
+    r"\d+(?:\s*[、,/]\s*\d+)+(?:\s*)(?:周期|期)(?:均线)?", re.I
+)
 
 def chinese_to_number(token:str)->float:
     if not token or any(c not in CN_DIGITS and c not in CN_UNITS and c!="点" for c in token): raise ValueError("unparsed Chinese number")
@@ -51,6 +54,7 @@ TIMESTAMP_ASSIGNMENT_RE = re.compile(
 
 def _excluded(text:str,start:int,end:int)->bool:
     return (any(m.start()<end and start<m.end() for m in EXCLUDED.finditer(text))
+            or any(m.start()<end and start<m.end() for m in INDICATOR_PERIOD_SEQUENCE_RE.finditer(text))
             or any(m.start()<end and start<m.end() for pattern in (
                 CLOCK_RE, UNICODE_TIMEFRAME_RE, ENUMERATOR_RE, SCENARIO_LABEL_RE,
                 VALID_UNTIL_RE, TIMESTAMP_ASSIGNMENT_RE,

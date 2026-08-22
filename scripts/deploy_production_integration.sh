@@ -1,15 +1,20 @@
 #!/usr/bin/env bash
 # Must run on the production host from a disposable Git checkout.
-set -euo pipefail
+set -Eeuo pipefail
+trap 'rc=$?; printf "ERROR line=%s exit=%s command=%q\n" "$LINENO" "$rc" "$BASH_COMMAND" >&2; exit "$rc"' ERR
+stage(){ printf 'STAGE %s\n' "$1"; }
 cd "$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 revision=${1:?usage: $0 <revision> [--validate-only|--promote]}
 mode=${2:---validate-only}
 [[ $mode == --validate-only || $mode == --promote ]] || exit 2
 [[ ${PRODUCTION_ORIGIN_HOST:-8.217.62.226} == 8.217.62.226 ]] || exit 2
 root=/opt/crypto-bot-staging; artifact="$root/$revision"
+evidence="/opt/crypto-bot-deploy-runner/deployment-validation/$revision"
+mkdir -p "$evidence"
 [[ $PWD != /opt/crypto-bot-ai6b-staging/c110869-exact/source* ]] || { echo "refusing active artifact" >&2; exit 3; }
-git cat-file -e "$revision^{commit}"; git diff --check "$revision^" "$revision"
+stage lineage; git cat-file -e "$revision^{commit}"; git diff --check "$revision^" "$revision"
 
+stage active-topology
 active=$(docker inspect crypto-bot-paper-api-1 -f '{{ index .Config.Labels "com.docker.compose.project.config_files" }}')
 env_file=$(docker inspect crypto-bot-paper-api-1 -f '{{ index .Config.Labels "com.docker.compose.project.environment_file" }}')
 [[ -n $active && -n $env_file ]] || { echo "active topology unavailable" >&2; exit 4; }
@@ -24,18 +29,23 @@ else
   test -f "$artifact/source/dashboard/paper_api.py" && test -f "$artifact/deployment/integration.env" || { echo "existing artifact is incomplete" >&2; exit 4; }
 fi
 
-cd "$artifact/source"
+stage immutable-images; cd "$artifact/source"
 docker build --pull -t "crypto-bot-integration-app:$revision" .
 docker build --pull -t "crypto-bot-integration-frontend:$revision" -f frontend/Dockerfile .
-files=${active//"$old\/source"/"$artifact\/source"}; args=(--profile ai6b-candidate --env-file "$artifact/deployment/integration.env")
-IFS=, read -ra paths <<< "$files"; for file in "${paths[@]}"; do args+=(-f "$file"); done
+stage compose-reconstruction
+files=${active//"$old/source"/"$artifact/source"}; args=(--profile ai6b-candidate --env-file "$artifact/deployment/integration.env")
+IFS=, read -ra paths <<< "$files"; : > "$evidence/compose-files.txt"; for file in "${paths[@]}"; do test -f "$file"; printf '%s\n' "$file" >> "$evidence/compose-files.txt"; args+=(-f "$file"); done
+cat "$evidence/compose-files.txt"
+stage compose-config
 docker compose "${args[@]}" config -q
-config=$(docker compose "${args[@]}" config)
-grep -q '443:8443' <<< "$config"; grep -q '/var/lib/paper' <<< "$config"; grep -q 'research-worker:' <<< "$config"; grep -q 'LIVE_TRADING_ENABLED: "false"' <<< "$config" || true
+docker compose "${args[@]}" config > "$evidence/compose-config.yml"
+stage topology-validation
+grep -q '443:8443' "$evidence/compose-config.yml"; grep -q '8765' "$evidence/compose-config.yml"; grep -q 'research-worker:' "$evidence/compose-config.yml"; grep -q '/var/lib/paper' "$evidence/compose-config.yml"; grep -q 'tls_certificate' "$evidence/compose-config.yml"; ! grep -q '8501:80' "$evidence/compose-config.yml"; grep -q 'LIVE_TRADING_ENABLED: "false"' "$artifact/deployment/integration.env"
+printf 'revision=%s\nmode=%s\nconfig=PASS\ntopology=PASS\nlive_trading=false\n' "$revision" "$mode" > "$evidence/validation-summary.txt"
 printf '%s\n' "$active" > "$artifact/deployment/previous-compose-files"
-docker image inspect "crypto-bot-ai6b-app:74c6c8e" --format '{{index .RepoDigests 0}}' > "$artifact/deployment/previous-paper-api-image" 2>/dev/null || true
-docker image inspect "crypto-bot-ai6b-frontend:c110869" --format '{{index .RepoDigests 0}}' > "$artifact/deployment/previous-frontend-image" 2>/dev/null || true
-[[ $mode == --validate-only ]] && { echo "VALIDATED_ARTIFACT=$artifact"; exit 0; }
+docker image inspect "crypto-bot-integration-app:$revision" --format '{{index .Id}}' > "$evidence/image-digests.txt"
+docker image inspect "crypto-bot-integration-frontend:$revision" --format '{{index .Id}}' >> "$evidence/image-digests.txt"
+[[ $mode == --validate-only ]] && { echo "VALIDATED_ARTIFACT=$artifact EVIDENCE=$evidence"; exit 0; }
 
 # The durable research worker remains untouched; it is the only research queue owner.
 docker compose "${args[@]}" up -d --no-deps paper-api frontend report-worker audit-worker

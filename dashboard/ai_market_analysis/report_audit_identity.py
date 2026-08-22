@@ -13,6 +13,7 @@ AUDIT_SOURCE_VERSIONS = {
  "safety_audit":AI_REPORT_SAFETY_AUDIT_VERSION,"evaluation":AI_REPORT_EVALUATION_VERSION,
  "replay":AI_REPORT_REPLAY_VERSION,"database":AI_REPORT_AUDIT_DB_VERSION,
  "level_audit":AI_REPORT_LEVEL_AUDIT_VERSION,"scenario_audit":AI_REPORT_SCENARIO_AUDIT_VERSION,
+ "narrative_contract":AI_REPORT_NARRATIVE_CONTRACT_VERSION,
 }
 
 def audit_identity(report_id:str, report_hash:str, context_id:str, context_hash:str, versions:dict|None=None,*,

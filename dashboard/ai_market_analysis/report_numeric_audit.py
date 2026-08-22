@@ -74,7 +74,13 @@ def audit_numeric_claims(claims:list[dict[str,Any]],registry:list[dict[str,Any]]
             for item in registry:
                 canonical=float(item["canonical_value"]);tolerance=float(item.get("absolute_tolerance",0))
                 unit=item.get("unit")
-                unit_ok=unit in units or unit is None or None in units or (unit=="ratio" and "percent" in units and abs(canonical*100-value)<=max(tolerance,0.01))
+                typed_same_value=any(
+                    other.get("unit") is not None
+                    and abs(abs(float(other["canonical_value"]))-abs(value))<=float(other.get("absolute_tolerance",0))
+                    for other in registry
+                )
+                unit_ok=(unit in units or None in units or (unit is None and not typed_same_value)
+                         or (unit=="ratio" and "percent" in units and abs(canonical*100-value)<=max(tolerance,0.01)))
                 value_ok=abs(canonical-value)<=tolerance or abs(round(canonical)-value)<=tolerance
                 direction_only=abs(abs(canonical)-abs(value))<=tolerance
                 if q.get("approximate"):value_ok=value_ok or abs(canonical-value)<=max(tolerance,abs(canonical)*.02)

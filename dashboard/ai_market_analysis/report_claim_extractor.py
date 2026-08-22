@@ -5,6 +5,7 @@ from typing import Any
 from .canonical import identity
 from .report_audit_models import ClaimType, Modality
 from .report_numeric_normalizer import normalize_numbers,suspicious_unparsed
+from .report_narrative_contract import claim_role,claim_scope,narrative_claim_type,semantic_key
 from .versions import AI_REPORT_CLAIM_EXTRACTOR_VERSION
 
 URL_RE=re.compile(r"https?://[^\s，。！？；]+",re.I)
@@ -81,7 +82,25 @@ def extract_claims(report_id:str,report:dict[str,Any])->list[dict[str,Any]]:
                   "extractor_version":AI_REPORT_CLAIM_EXTRACTOR_VERSION}
             lower=normalized.lower()
             quantities=normalize_numbers(text)+[{"version":"ai-report-numeric-normalizer-v1","original":x,"parsed":False,"kind":"CHINESE"} for x in suspicious_unparsed(text)]
-            claim={**core,"claim_id":identity("claim",core),"original_text":text,"claim_type":_claim_type(sid,text).value,
+            legacy_type=_claim_type(sid,text).value
+            typed_type=narrative_claim_type(sid,text)
+            if typed_type in {"LIMITATION","COVERAGE_METADATA"}:
+                legacy_type=ClaimType.LIMITATION.value
+            preserved={"MACRO","POSITION","POSITION_DISCIPLINE","FUNDING","BASIS","LIQUIDATION","SAFETY"}
+            if legacy_type in preserved:typed_type=legacy_type
+            elif legacy_type=="CVD":typed_type="FLOW"
+            elif legacy_type=="OPEN_INTEREST":typed_type="OI"
+            elif legacy_type=="KEY_LEVEL":typed_type="LEVEL"
+            elif legacy_type=="TIMEFRAME_TREND" and typed_type=="MARKET_STATE":typed_type="TIMEFRAME_STRUCTURE"
+            refs=sorted(set(section.get("fact_refs",[])))
+            typed_refs=sorted(set(section.get("level_refs",[])+section.get("scenario_refs",[])+
+                                  section.get("macro_refs",[])+section.get("position_refs",[])))
+            scope=claim_scope(sid,text,section.get("scenario_refs",[]));role=claim_role(sid,text)
+            claim={**core,"claim_id":identity("claim",core),"original_text":text,"claim_type":typed_type,
+              "legacy_claim_type":legacy_type,"scope":scope,"role":role,
+              "semantic_key":semantic_key(typed_type,scope,text,refs),"section_owner":sid,
+              "source_fact_ids":refs,"reference_ids":sorted(set(refs+typed_refs)),
+              "numeric_refs":[item.get("original") for item in quantities],"derived_from_claim_ids":[],
               "modality":_modality(text).value,"polarity":"NEGATIVE" if any(x in text for x in ("不","未","无","下降","减少","偏空","负")) else "POSITIVE",
               "subjects":[x for x in ("price","CVD","OI","volume","funding","basis","liquidation","position","macro","level","scenario") if x.lower() in lower or {"price":"价格","volume":"成交量","position":"持仓","macro":"宏观","level":"支撑","scenario":"路径"}.get(x,"") in text],
               "predicates":[],"quantities":quantities,"timeframe_mentions":TIMEFRAME_RE.findall(text),
@@ -91,4 +110,11 @@ def extract_claims(report_id:str,report:dict[str,Any])->list[dict[str,Any]]:
               "uncertainty_markers":[x for x in ("可能","尚未确认","数据不足","无法判断","不能排除") if x in text],
               "assertion_markers":[x for x in ("已确认","明确","证明","必然","数据显示") if x in text],"version":AI_REPORT_CLAIM_EXTRACTOR_VERSION}
             claims.append(claim)
+    details=[claim for claim in claims if claim.get("role")=="DETAIL"]
+    for claim in claims:
+        if claim.get("role") not in {"SUMMARY","SYNTHESIS"}:continue
+        evidence=set(claim.get("source_fact_ids",[]));lineage=[]
+        for detail in details:
+            if evidence.intersection(detail.get("source_fact_ids",[])):lineage.append(detail["claim_id"])
+        claim["derived_from_claim_ids"]=sorted(set(lineage))
     return claims

@@ -12,7 +12,7 @@ CHINESE_RE=re.compile(rf"(?P<approx>约|接近|附近|超过|低于)?(?P<prefix>
 RANGE_SEP_RE=re.compile(r"\s*(?:到|至|—|–|-)\s*")
 EXCLUDED=re.compile(r"(?:\d{4}-\d{2}-\d{2}(?:\s*(?:至|到|~)\s*\d{2}-\d{2})?|\b(?:15m|1H|4H|1D|1W|v\d+(?:\.\d+)*|[A-Z_]+_\d+(?:/\d+)*)\b|\d+\s*(?:分钟|小时|日|周|周期|期)(?:均线)?)",re.I)
 INDICATOR_PERIOD_SEQUENCE_RE = re.compile(
-    r"\d+(?:\s*[、,/]\s*\d+)+(?:\s*)(?:周期|期)(?:均线)?", re.I
+    r"\d+(?:\s*(?:[、,/]|和|与|及|&)\s*\d+)+(?:\s*)(?:周期|期)(?:均线)?", re.I
 )
 
 def chinese_to_number(token:str)->float:

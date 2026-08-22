@@ -67,7 +67,9 @@ def audit_report(bundle:dict[str,Any],*,created_at:str|None=None)->dict[str,Any]
     macro=audit_macro(claims,bundle["macro_evidence_set"],context["decision_time"]);safety=audit_safety(report,claims)
     for component in (numeric,reference,semantic,contradiction,coverage,level,scenario,position,macro,safety):hard.extend(component.get("failure_codes",[]))
     mode=report.get("mode","FULL")
-    if repetition["repeated_claim_ratio"]>POLICY["repeated_claim_ratio"].get(mode,.18) or repetition["standalone_vague_sentence_count"]:hard.append("UNSUPPORTED_CLAIM")
+    if (repetition.get("duplicate_pair_count",0)
+            or repetition["repeated_claim_ratio"]>POLICY["repeated_claim_ratio"].get(mode,.18)
+            or repetition["standalone_vague_sentence_count"]):hard.append("UNSUPPORTED_CLAIM")
     ratios={"numeric_grounding":numeric["numeric_grounding_ratio"],"reference_semantic_support":reference["reference_support_ratio"],
       "contradiction_freedom":1.0 if not contradiction["critical_contradiction_count"] else 0.0,
       "scenario_invalidation":scenario["invalidation_coverage"],
@@ -87,6 +89,9 @@ def audit_report(bundle:dict[str,Any],*,created_at:str|None=None)->dict[str,Any]
       "claim_count":len(claims),"factual_claim_count":reference["factual_claim_count"],"claim_audits":claims,"numeric_audits":numeric["audits"],
       "reference_audits":reference["audits"],"semantic_audits":semantic["audits"],"contradiction_audits":contradiction["audits"],
       "repetition_audit":repetition,"coverage_audit":coverage,"level_audit":level,"scenario_audit":scenario,"position_audit":position,"macro_audit":macro,"safety_audit":safety,
+      "failure_diagnostics":{"duplicate_pairs":repetition.get("duplicate_pairs",[]),
+        "unsupported_references":reference.get("unsupported_claims",[]),
+        "semantic_failures":[item for item in semantic.get("audits",[]) if item.get("codes")]},
       "frozen_replay_provenance":bundle.get("frozen_replay_provenance",{"source":"FROZEN_BUNDLE","external_market_databases_opened":False}),
       "scorecard":{"overall":round(overall,3),"ratios":{**ratios,"level_field_coverage":level["field_coverage"],"scenario_field_coverage":scenario["field_coverage"],"invalidation_coverage":scenario["invalidation_coverage"],"registry_identity_valid":not any(x.startswith("REGISTRY_") or x.endswith("REGISTRY_HASH_MISMATCH") for x in hard)},"weights":POLICY["weights"]},"promotion_eligible":status=="PASSED" and report.get("schema_version")==AI_REPORT_RESPONSE_VERSION,
       "created_at":created_at or _now(),"provenance":{"network":False,"provider_called":False,"current_market_read":False,"frozen_input_only":True,

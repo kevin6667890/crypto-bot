@@ -5,6 +5,10 @@ import re
 from datetime import datetime, timezone
 from typing import Any
 from .report_numeric_semantics import find_numeric_field, numeric_semantics
+from .report_narrative_contract import (
+    SECTION_CLAIM_PLAN, claim_role, narrative_claim_type, provider_section_claim_plan, section_fact_ids,
+    sentence_mentions_foreign_scope,
+)
 
 # Narrative labels intentionally contain no numeric glyphs or number words.
 # The numeric auditor treats every number as a market claim, while exact
@@ -123,7 +127,7 @@ def build_provider_claim_pack(compiled_context: dict[str, Any], mode: str) -> di
             semantic = numeric_semantics(source_fact_id, field, original.get("unit"))
         numeric.append({**item, **semantic})
     return {
-        "claim_pack_version": "ai6b-provider-claim-pack-v5", "mode": mode, "allowed_numeric_values": numeric,
+        "claim_pack_version": "ai6b-provider-claim-pack-v6", "mode": mode, "allowed_numeric_values": numeric,
         "suppressed_flow_numeric_values": sorted(set(suppressed_flow_numeric_values)),
         "levels": levels, "scenarios": scenarios, "macro_evidence_ids": macro_ids,
         "macro_unavailable_statement": None if macro_ids else unavailable_macro,
@@ -135,6 +139,9 @@ def build_provider_claim_pack(compiled_context: dict[str, Any], mode: str) -> di
                             "macro_available": bool(macro_ids),
                             "levels_available": bool(levels), "scenarios_available": bool(scenarios)},
         "fact_ids_by_category": {category: [item["fact_id"] for item in items] for category, items in sorted(by_category.items())},
+        "facts_by_id": {str(item["fact_id"]): item.get("value") for item in facts
+                        if str(item["fact_id"]).endswith(("_SUMMARY","_STRUCTURE"))
+                        or item["fact_id"] in {"TIMEFRAME_ALIGNMENT","TIMEFRAME_EXTENSION"}},
     }
 
 
@@ -174,6 +181,7 @@ def provider_claim_pack_contract(claim_pack: dict[str, Any]) -> dict[str, Any]:
         "macro_evidence_ids": claim_pack["macro_evidence_ids"],
         "macro_unavailable_statement": claim_pack["macro_unavailable_statement"],
         "evidence_status": claim_pack["evidence_status"],
+        "section_claim_plan": provider_section_claim_plan(tuple(SECTION_CLAIM_PLAN)),
     }
 
 
@@ -259,7 +267,7 @@ _FLOW_PARTIAL_LIMITATION = "订单流覆盖部分，确认度受限"
 # no-scenario disclosure below.  Keep an explicit limitation/invalidation
 # disclosure here: QUICK reports without deterministic scenarios must still
 # satisfy the fail-closed invalidation contract after grounding.
-_UNSUPPORTED_LEVEL_LIMITATION = "本轮限制展示未经注册表支持的数值位置，缺少可审计的情景失效路径"
+_UNSUPPORTED_LEVEL_LIMITATION = "本轮限制展示未经注册表支持的数值位置"
 _LEVEL_CLAIM_TERMS = ("支撑", "压力", "阻力", "关键位", "关键位置")
 
 
@@ -340,7 +348,7 @@ def bind_level_fact_refs(text: str, claim_pack: dict[str, Any]) -> tuple[list[st
     return list(dict.fromkeys(matched)), False
 
 
-def _enforce_numeric_namespaces(value: str, claim_pack: dict[str, Any]) -> str:
+def _enforce_numeric_namespaces(value: str, claim_pack: dict[str, Any], section_id: str | None = None) -> str:
     """Render provider numeric wording inside its deterministic semantic namespace."""
     result = str(value)
     from .report_claim_extractor import split_sentences
@@ -355,7 +363,8 @@ def _enforce_numeric_namespaces(value: str, claim_pack: dict[str, Any]) -> str:
         price_change_wording=any(term in sentence for term in ("价格变化", "价格变动", "净正价格", "净负价格"))
         unsupported_phase=bool(phase_ids-allowed_flow_ids)
         unsupported_flow_claim=net_flow and not any(exact in sentence for exact in cvd_values)
-        unavailable_flow=(claim_pack["evidence_status"].get("flow_coverage_state") == "FLOW_UNAVAILABLE"
+        unavailable_flow=(section_id in {None,"QUICK_SUMMARY","MOVE_NATURE","ORDER_FLOW"}
+                          and claim_pack["evidence_status"].get("flow_coverage_state") == "FLOW_UNAVAILABLE"
                           and any(term in sentence for term in _FLOW_ASSERTION_TERMS))
         suppressed_flow_number=any(
             re.search(rf"(?<![\d.]){re.escape(exact)}(?![\d.])",sentence)
@@ -373,32 +382,70 @@ def _enforce_numeric_namespaces(value: str, claim_pack: dict[str, Any]) -> str:
     return result
 
 
-def _dedupe_section_bodies(sections: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Remove repeated prose while deterministic projections retain all facts."""
+def _host_section_fallback(section: dict[str, Any], claim_pack: dict[str, Any]) -> str:
+    """Natural, evidence-derived fallback when section ownership removes all prose."""
+    section_id=str(section.get("section_id"));facts=claim_pack.get("facts_by_id",{})
+    if section_id=="CONCLUSION":
+        alignment=facts.get("TIMEFRAME_ALIGNMENT") or {};state=str(alignment.get("alignment") or "") if isinstance(alignment,dict) else ""
+        if state=="CONFLICTED":
+            return "短周期结构与高周期背景存在冲突；战术回撤仍需确认，而高周期伸展使趋势延续与位置风险并存。"
+        return "多周期结构保持一致，当前结论由各周期的独立结构证据共同支持。"
+    if section_id=="ORDER_FLOW":return f"{_FLOW_LIMITATION}。"
+    if section_id=="SCENARIOS" and claim_pack.get("scenarios"):
+        return "；".join(str(item.get("summary") or item.get("scenario_type")) for item in claim_pack["scenarios"]) + "。"
+    prefix={"TF_15M":"TF15_","TF_1H":"TF1H_","TF_4H":"TF4H_","TF_1D":"TF1D_","TF_1W":"TF1W_"}.get(section_id)
+    label={"TF_15M":"超短周期","TF_1H":"小时周期","TF_4H":"中周期","TF_1D":"日线","TF_1W":"周线"}.get(section_id,section.get("title") or section_id)
+    if prefix:
+        summary=facts.get(prefix+"SUMMARY") or {};structure=facts.get(prefix+"STRUCTURE") or {}
+        swing={"LH_LL":"更低高点与更低低点","HH_HL":"更高高点与更高低点","RANGE":"区间震荡"}.get(str(summary.get("swing_structure")),"结构方向尚未明确") if isinstance(summary,dict) else "结构方向尚未明确"
+        momentum={"MOMENTUM_RESET":"动量处于重置","MOMENTUM_COOLING":"动量正在降温","MOMENTUM_REACCELERATING":"动量重新增强","MOMENTUM_EXPANDING":"动量仍在扩张","MOMENTUM_STABLE":"动量保持稳定"}.get(str(structure.get("momentum_state")),"动量信号有限") if isinstance(structure,dict) else "动量信号有限"
+        extension={"EXTENDED":"位置已经伸展","HIGHLY_EXTENDED":"位置处于高伸展","NORMAL":"位置未见异常伸展"}.get(str(structure.get("extension_state")),"位置伸展状态待确认") if isinstance(structure,dict) else "位置伸展状态待确认"
+        return f"{label}呈现{swing}，{momentum}，{extension}；该证据用于解释本周期自身状态。"
+    if section_id=="LIMITATIONS":return "本节仅披露本轮证据覆盖与审计边界。"
+    return f"{section.get('title') or section_id}仅保留本节允许的已注册证据。"
+
+
+def _dedupe_section_bodies(sections: list[dict[str, Any]], claim_pack: dict[str, Any]) -> list[dict[str, Any]]:
+    """Deduplicate by section role/scope instead of global string identity."""
     from .report_claim_extractor import split_sentences
 
-    seen: set[str] = set(); output: list[dict[str, Any]] = []
+    occurrences: dict[str,list[str]]={}
+    for section in sections:
+        for sentence in split_sentences(str(section.get("body") or "")):
+            key=re.sub(r"[\W_]+","",re.sub(r"\d+(?:\.\d+)?","#",sentence),flags=re.UNICODE)
+            occurrences.setdefault(key,[]).append(str(section.get("section_id")))
+    seen: dict[str, tuple[str,str,set[str]]] = {}; output: list[dict[str, Any]] = []
     for original in sections:
-        section = dict(original); retained: list[str] = []
+        section = dict(original); retained: list[str] = [];section_id=str(section.get("section_id"))
+        plan=SECTION_CLAIM_PLAN.get(section_id,{"scope":"GLOBAL","role":"DETAIL"});evidence=set(section.get("fact_refs",[]))
         for sentence in split_sentences(str(section.get("body") or "")):
             key = re.sub(r"[\W_]+", "", re.sub(r"\d+(?:\.\d+)?", "#", sentence), flags=re.UNICODE)
-            if key in seen:
-                continue
-            seen.add(key)
+            sentence_role=claim_role(section_id,sentence)
+            owners=occurrences.get(key,[])
+            canonical_owner=("ORDER_FLOW" if "ORDER_FLOW" in owners and "订单流" in sentence
+                             else "LIMITATIONS" if "LIMITATIONS" in owners else owners[0])
+            if sentence_role=="LIMITATION" and section_id!=canonical_owner:continue
+            prior=seen.get(key)
+            if prior:
+                prior_scope,prior_role,prior_evidence=prior
+                same_identity=prior_scope==plan["scope"] and prior_role==plan["role"] and prior_evidence==evidence
+                redundant_global=(prior_scope==plan["scope"]=="GLOBAL" and {prior_role,plan["role"]}<={"SUMMARY","SYNTHESIS"})
+                repeated_limitation=plan["role"]=="LIMITATION" or prior_role=="LIMITATION"
+                no_new_detail=("DETAIL" in {prior_role,plan["role"]} and prior_evidence==evidence)
+                if same_identity or redundant_global or repeated_limitation or no_new_detail:continue
+            seen[key]=(str(plan["scope"]),sentence_role,evidence)
             retained.append(sentence)
         if retained:
             section["body"] = "\u3002".join(retained) + "\u3002"
         else:
-            section["body"] = (
-                f"{section.get('title') or section.get('section_id')}"
-                "\u4e0d\u91cd\u590d\u524d\u8ff0\u5185\u5bb9\uff0c\u786e\u5b9a\u6027\u8bc1\u636e\u89c1\u7ed3\u6784\u5316\u6295\u5f71\u3002"
-            )
+            section["body"] = _host_section_fallback(section,claim_pack)
         output.append(section)
     return output
 
 
 def ground_provider_report(report: dict[str, Any], claim_pack: dict[str, Any]) -> dict[str, Any]:
     """Attach deterministic evidence/projections while retaining provider narrative text."""
+    from .report_claim_extractor import split_sentences
     by_category = claim_pack["fact_ids_by_category"]; level_ids = [item["level_id"] for item in claim_pack["levels"]]
     scenario_ids = [item["scenario_id"] for item in claim_pack["scenarios"]]; macro_ids = list(claim_pack["macro_evidence_ids"])
     position_ids = list(by_category.get("POSITION", [])); provider_levels = {item.get("level_id"): item for item in report.get("key_levels", [])}
@@ -413,8 +460,23 @@ def ground_provider_report(report: dict[str, Any], claim_pack: dict[str, Any]) -
         section = dict(original); categories = _section_categories(str(section.get("section_id")))
         section["title"] = _narrative_text(str(section.get("title") or section.get("section_id") or ""))
         section["body"] = _apply_narrative_boundaries(_enforce_numeric_namespaces(
-            _macro_limitation_text(_narrative_text(section["body"]), macro_statement), claim_pack
+            _macro_limitation_text(_narrative_text(section["body"]), macro_statement), claim_pack,
+            str(section.get("section_id")),
         ), claim_pack)
+        if section.get("section_id") in SECTION_CLAIM_PLAN:
+            section_plan=SECTION_CLAIM_PLAN[str(section.get("section_id"))]
+            owned=[]; unsupported_unowned_level=False
+            for sentence in split_sentences(section["body"]):
+                sentence_type=narrative_claim_type(str(section.get("section_id")),sentence)
+                accepted=(not sentence_mentions_foreign_scope(str(section.get("section_id")),sentence)
+                          and sentence_type in section_plan["claim_types"])
+                if accepted:
+                    owned.append(sentence)
+                elif sentence_type=="LEVEL" and bind_level_fact_refs(sentence,claim_pack)[1]:
+                    unsupported_unowned_level=True
+            if unsupported_unowned_level:
+                owned.append(_UNSUPPORTED_LEVEL_LIMITATION)
+            section["body"]="。".join(owned)+( "。" if owned else "")
         if claim_pack["evidence_status"].get("flow_partial") and section.get("section_id") in {"QUICK_SUMMARY", "MOVE_NATURE", "ORDER_FLOW"}:
             section["body"] = section["body"].replace(
                 "\u8ba2\u5355\u6d41\u6570\u636e\u663e\u793a", "\u90e8\u5206\u53ef\u7528\u7684\u8ba2\u5355\u6d41\u8bc1\u636e\u663e\u793a"
@@ -429,18 +491,16 @@ def ground_provider_report(report: dict[str, Any], claim_pack: dict[str, Any]) -
                 and section.get("section_id") in {"MOVE_NATURE", "ORDER_FLOW"}):
             section["body"] = f"{_FLOW_LIMITATION}。"
         if (not scenario_ids and section.get("section_id") == empty_scenario_limitation_section
-                and "失效" not in section["body"] and "限制" not in section["body"]):
+                and "失效" not in section["body"]):
             section["body"] = section["body"].rstrip("。") + "。证据不足，当前没有可审计的情景失效路径。"
-        level_fact_ids, suppress_unsupported_level = bind_level_fact_refs(section["body"], claim_pack)
+        level_fact_ids, suppress_unsupported_level = (bind_level_fact_refs(section["body"], claim_pack)
+                                                       if "LEVEL" in categories else ([],False))
         if suppress_unsupported_level:
             section["body"] = _UNSUPPORTED_LEVEL_LIMITATION + "。"
             level_fact_ids = []
-        category_fact_ids = []
-        for category in sorted(categories):
-            if category == "LEVEL":
-                category_fact_ids.extend(level_fact_ids)
-            else:
-                category_fact_ids.extend(by_category.get(category, []))
+        category_fact_ids = section_fact_ids(str(section.get("section_id")),by_category)
+        if "LEVEL" in categories and level_fact_ids:
+            category_fact_ids.extend(level_fact_ids)
         section["fact_refs"] = list(dict.fromkeys(category_fact_ids))
         fact_to_level = {str(item["fact_refs"][0]): str(item["level_id"]) for item in claim_pack["levels"] if item.get("fact_refs")}
         section["level_refs"] = [fact_to_level[fact_id] for fact_id in level_fact_ids if fact_id in fact_to_level]
@@ -448,7 +508,7 @@ def ground_provider_report(report: dict[str, Any], claim_pack: dict[str, Any]) -
         section["macro_refs"] = macro_ids if "MACRO" in categories else []
         section["position_refs"] = position_ids if "POSITION" in categories else []
         sections.append(section)
-    grounded["sections"] = _dedupe_section_bodies(sections)
+    grounded["sections"] = _dedupe_section_bodies(sections,claim_pack)
     grounded["key_levels"] = [
         {**item, "analysis_text": _narrative_text(str(provider_levels.get(item["level_id"], {}).get("analysis_text") or item["analysis_text"]))}
         for item in claim_pack["levels"]

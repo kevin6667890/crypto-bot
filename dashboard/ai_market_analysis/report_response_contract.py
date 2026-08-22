@@ -5,6 +5,7 @@ from typing import Any
 
 from .versions import AI_REPORT_RESPONSE_VERSION
 from .provider_claim_pack import build_provider_claim_pack, provider_claim_pack_contract
+from .report_narrative_contract import provider_section_claim_plan
 
 SERVICE_REQUEST_ID_SENTINEL = "__SERVICE_REQUEST_ID__"
 SERVICE_SOURCE_VERSIONS_SENTINEL = "__SERVICE_SOURCE_VERSIONS__"
@@ -239,11 +240,15 @@ def provider_json_schema(metadata: dict[str, Any], compiled_context: dict[str, A
             "confidence": confidence,
         },
         "expected_section_manifest": section_manifest,
+        "section_claim_plan": provider_section_claim_plan(sections),
         "section_order": sections,
         "section_contract_rules": [
             "emit every required section exactly once and in required_section_ids_in_exact_order",
             "never emit any forbidden_section_ids, even to explain unavailable evidence",
             "put unavailable-evidence status text only in an already-required section such as LIMITATIONS or QUICK_SUMMARY",
+            "do not repeat the same complete conclusion across sections",
+            "summary must synthesize; timeframe detail must add scope-specific evidence",
+            "do not restate global summary verbatim; use only the assigned section claim/evidence scope",
         ],
         "exact_section_fields": list(SECTION_FIELDS),
         "section_ref_fields_are_string_arrays": list(SECTION_FIELDS[3:]),

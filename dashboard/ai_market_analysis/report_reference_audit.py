@@ -4,7 +4,7 @@ from typing import Any
 from .report_semantic_registry import REFERENCE_COMPATIBILITY
 from .versions import AI_REPORT_REFERENCE_AUDIT_VERSION
 
-NON_FACTUAL={"UNCERTAINTY","LIMITATION","SAFETY"}
+NON_FACTUAL={"UNCERTAINTY","LIMITATION","SAFETY","COVERAGE_METADATA"}
 TIMEFRAME_ALIASES={
     "15m":"15m","1h":"1H","4h":"4H","1d":"1D","1w":"1W",
     "15分钟":"15m","1小时":"1H","4小时":"4H","日线":"1D","周线":"1W",
@@ -28,7 +28,8 @@ def audit_references(claims:list[dict[str,Any]],registry:dict[str,Any])->dict[st
         # only valid support for the scoped claim that macro was not included.
         if "MACRO_UNAVAILABLE" in refs:
             categories.add("MACRO")
-        expected=REFERENCE_COMPATIBILITY.get(claim["claim_type"],set());code=None;reason=None
+        compatibility_type=claim.get("legacy_claim_type",claim["claim_type"])
+        expected=REFERENCE_COMPATIBILITY.get(compatibility_type,set());code=None;reason=None
         is_factual=claim["claim_type"] not in NON_FACTUAL and claim["modality"] not in {"UNKNOWN","NOT_AVAILABLE","CONDITIONAL"}
         if is_factual:factual+=1
         typed_missing=sorted((set(claim.get("level_refs",[]))-known_levels)|(set(claim.get("scenario_refs",[]))-known_scenarios)|(set(claim.get("macro_refs",[]))-known_macro)|(set(claim.get("position_refs",[]))-set(facts)))

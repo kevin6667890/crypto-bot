@@ -19,7 +19,7 @@ def audit_semantics(claims:list[dict[str,Any]],facts:list[dict[str,Any]])->dict[
     lookup={f["fact_id"]:f for f in facts};audits=[];failures=[]
     for claim in claims:
         text=claim["original_text"];all_refs=[lookup[r] for r in claim.get("fact_refs",[]) if r in lookup];refs=list(all_refs);codes=[]
-        expected_categories=REFERENCE_COMPATIBILITY.get(claim.get("claim_type"),set())
+        expected_categories=REFERENCE_COMPATIBILITY.get(claim.get("legacy_claim_type",claim.get("claim_type")),set())
         if expected_categories:refs=[fact for fact in refs if fact.get("category") in expected_categories]
         values=[f.get("value") for f in refs]
         flat=" ".join(str(v) for v in values)

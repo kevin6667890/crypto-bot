@@ -3,6 +3,47 @@
 set -Eeuo pipefail
 trap 'rc=$?; printf "ERROR line=%s exit=%s command=%q\n" "$LINENO" "$rc" "$BASH_COMMAND" >&2; exit "$rc"' ERR
 stage(){ printf 'STAGE %s\n' "$1"; }
+wait_for_promotion_readiness() {
+  local grace_seconds=${PROMOTION_READINESS_GRACE_SECONDS:-6}
+  local retry_seconds=${PROMOTION_READINESS_RETRY_SECONDS:-2}
+  local timeout_seconds=${PROMOTION_READINESS_TIMEOUT_SECONDS:-60}
+  local deadline frontend_health paper_health frontend_running paper_running status
+
+  printf 'READINESS grace=%ss retry=%ss timeout=%ss\n' "$grace_seconds" "$retry_seconds" "$timeout_seconds"
+  sleep "$grace_seconds"
+  deadline=$((SECONDS + timeout_seconds))
+  while (( SECONDS < deadline )); do
+    frontend_running=$(docker inspect -f '{{.State.Running}}' crypto-bot-frontend-1)
+    paper_running=$(docker inspect -f '{{.State.Running}}' crypto-bot-paper-api-1)
+    frontend_health=$(docker inspect -f '{{.State.Health.Status}}' crypto-bot-frontend-1)
+    paper_health=$(docker inspect -f '{{.State.Health.Status}}' crypto-bot-paper-api-1)
+    printf 'READINESS frontend=%s/%s paper-api=%s/%s\n' "$frontend_running" "$frontend_health" "$paper_running" "$paper_health"
+    if [[ $frontend_health == unhealthy || $paper_health == unhealthy ]]; then
+      printf 'READINESS unhealthy container\n' >&2
+      return 1
+    fi
+    if [[ $frontend_running == true && $paper_running == true && $frontend_health == healthy && $paper_health == healthy ]]; then
+      if docker exec crypto-bot-frontend-1 wget --no-check-certificate -q -O /dev/null https://127.0.0.1:8443/; then
+        if status=$(curl -sk --connect-timeout 3 --max-time 8 -o /dev/null -w '%{http_code}' https://127.0.0.1/); then
+          if [[ $status == 200 ]]; then
+            printf 'READINESS https=200\n'
+            return 0
+          fi
+          printf 'READINESS unexpected HTTPS status=%s\n' "$status" >&2
+          return 1
+        fi
+        printf 'READINESS transient TLS failure\n'
+      else
+        printf 'READINESS frontend internal probe pending\n'
+      fi
+    fi
+    sleep "$retry_seconds"
+  done
+  printf 'READINESS timeout after %ss\n' "$timeout_seconds" >&2
+  return 1
+}
+
+main() {
 cd "$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 revision=${1:?usage: $0 <revision> [--validate-only|--promote]}
 mode=${2:---validate-only}
@@ -64,9 +105,13 @@ docker image inspect "crypto-bot-integration-frontend:$revision" --format '{{ind
 
 # The durable research worker remains untouched; it is the only research queue owner.
 docker compose "${args[@]}" up -d --no-deps paper-api frontend
-curl -fsSk https://127.0.0.1/ >/dev/null
-[[ $(docker inspect -f '{{.State.Health.Status}}' crypto-bot-frontend-1) == healthy ]]
-[[ $(docker inspect -f '{{.State.Health.Status}}' crypto-bot-paper-api-1) == healthy ]]
+stage promotion-readiness
+wait_for_promotion_readiness | tee "$evidence/promotion-readiness.txt"
 docker inspect crypto-bot-research-worker-1 -f '{{.State.Running}}' | grep true
-curl -fsS http://127.0.0.1:8765/api/automatic-research >/dev/null
+docker exec crypto-bot-paper-api-1 python -c "from urllib.request import urlopen; assert urlopen('http://127.0.0.1:8765/api/automatic-research', timeout=10).status == 200"
 echo "DEPLOYED_ARTIFACT=$artifact"
+}
+
+if [[ ${BASH_SOURCE[0]} == "$0" ]]; then
+  main "$@"
+fi

@@ -17,7 +17,8 @@ stage lineage; git cat-file -e "$revision^{commit}"; git diff --check "$revision
 stage active-topology
 active=$(docker inspect crypto-bot-paper-api-1 -f '{{ index .Config.Labels "com.docker.compose.project.config_files" }}')
 env_file=$(docker inspect crypto-bot-paper-api-1 -f '{{ index .Config.Labels "com.docker.compose.project.environment_file" }}')
-[[ -n $active && -n $env_file ]] || { echo "active topology unavailable" >&2; exit 4; }
+project=$(docker inspect crypto-bot-paper-api-1 -f '{{ index .Config.Labels "com.docker.compose.project" }}')
+[[ -n $active && -n $env_file && -n $project ]] || { echo "active topology unavailable" >&2; exit 4; }
 old=$(printf '%s' "$active" | cut -d, -f1 | sed 's#/source/docker-compose.yml##')
 if [[ ! -e $artifact ]]; then
   mkdir -p "$artifact/source" "$artifact/deployment"
@@ -35,7 +36,7 @@ stage immutable-images; cd "$artifact/source"
 docker build --pull -t "crypto-bot-integration-app:$revision" .
 docker build --pull -t "crypto-bot-integration-frontend:$revision" -f frontend/Dockerfile .
 stage compose-reconstruction
-files=${active//"$old/source"/"$artifact/source"}; args=(--profile ai6b-candidate --env-file "$artifact/deployment/integration.env")
+files=${active//"$old/source"/"$artifact/source"}; args=(--project-name "$project" --profile ai6b-candidate --env-file "$artifact/deployment/integration.env")
 IFS=, read -ra paths <<< "$files"; : > "$evidence/compose-files.txt"; for file in "${paths[@]}"; do test -f "$file"; printf '%s\n' "$file" >> "$evidence/compose-files.txt"; args+=(-f "$file"); done
 cat "$evidence/compose-files.txt"
 stage compose-config
@@ -55,14 +56,14 @@ grep -q '^secrets:' "$evidence/compose-config.yml"
 grep -q 'tls_certificate' "$evidence/compose-config.yml"
 ! grep -Eq 'published: ?"?8501"?' "$evidence/compose-config.yml"
 grep -q 'LIVE_TRADING_ENABLED=false' "$artifact/deployment/integration.env"
-printf 'revision=%s\nmode=%s\nconfig=PASS\nfrontend_port=443->8443\npaper_api=internal_8765\nai6b_workers=audit-worker,report-worker\nresearch_worker=preserved\nvolumes=preserved\nsecrets=preserved\npublic_8501=absent\nlive_trading=false\n' "$revision" "$mode" > "$evidence/validation-summary.txt"
+printf 'revision=%s\nmode=%s\ncompose_project=%s\nconfig=PASS\nfrontend_port=443->8443\npaper_api=internal_8765\nai6b_workers=audit-worker,report-worker\nresearch_worker=preserved\nvolumes=preserved\nsecrets=preserved\npublic_8501=absent\nlive_trading=false\n' "$revision" "$mode" "$project" > "$evidence/validation-summary.txt"
 printf '%s\n' "$active" > "$artifact/deployment/previous-compose-files"
 docker image inspect "crypto-bot-integration-app:$revision" --format '{{index .Id}}' > "$evidence/image-digests.txt"
 docker image inspect "crypto-bot-integration-frontend:$revision" --format '{{index .Id}}' >> "$evidence/image-digests.txt"
 [[ $mode == --validate-only ]] && { echo "VALIDATED_ARTIFACT=$artifact EVIDENCE=$evidence"; exit 0; }
 
 # The durable research worker remains untouched; it is the only research queue owner.
-docker compose "${args[@]}" up -d --no-deps paper-api frontend report-worker audit-worker
+docker compose "${args[@]}" up -d --no-deps paper-api frontend
 curl -fsSk https://127.0.0.1/ >/dev/null
 [[ $(docker inspect -f '{{.State.Health.Status}}' crypto-bot-frontend-1) == healthy ]]
 [[ $(docker inspect -f '{{.State.Health.Status}}' crypto-bot-paper-api-1) == healthy ]]

@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AreaData, AreaSeries, CandlestickSeries, ColorType, createChart, IChartApi, ISeriesApi, LineSeries, UTCTimestamp, WhitespaceData } from "lightweight-charts";
+import { AreaData, AreaSeries, CandlestickSeries, ColorType, createChart, HistogramData, HistogramSeries, IChartApi, ISeriesApi, LineSeries, UTCTimestamp, WhitespaceData } from "lightweight-charts";
 import { Candle, fetchEthCandles, fetchOlderCandles, generateEquityCurve } from "./data";
 import { useLanguage } from "./i18n";
-import { formatMillions, normalizePoints } from "./chartState";
+import { formatMillions, normalizePoints, symmetricCvdPriceRange } from "./chartState";
 import { chartFollowRegistry, RangeChangeSource, synchronizeLiveViewport } from "./liveFollow";
 import { NativePriceAxisLabel, PriceLabelSource, updateLatestNativePriceAxisLabels, updateNativePriceAxisLabels } from "./priceLabels";
 import { PriceAxisLabelPrimitive } from "./priceAxisLabelPrimitive";
@@ -207,6 +207,19 @@ function gapAware(
   return result;
 }
 
+function cvdHistogramData(points: Array<AreaData<UTCTimestamp> | WhitespaceData<UTCTimestamp>>): Array<HistogramData<UTCTimestamp> | WhitespaceData<UTCTimestamp>> {
+  return points.map(point => "value" in point
+    ? { ...point, color: point.value >= 0 ? "#12b76a" : "#f04438" }
+    : point,
+  );
+}
+
+const symmetricCvdAutoscale = (original: () => { priceRange: { minValue: number; maxValue: number } | null; margins?: { above: number; below: number } } | null) => {
+  const info = original();
+  if (!info?.priceRange) return info;
+  return { ...info, priceRange: symmetricCvdPriceRange(info.priceRange.minValue, info.priceRange.maxValue) };
+};
+
 const PRICE_SERIES_CONFIG = [
   { id: "candles", name: "K线", color: "#00b37e" },
   { id: "ema20", name: "EMA20", color: "#2563eb" },
@@ -227,7 +240,7 @@ type MarketSeries = {
   ema20: ISeriesApi<"Line">;
   ma60: ISeriesApi<"Line">;
   ma200: ISeriesApi<"Line">;
-  cvd: ISeriesApi<"Area">;
+  cvd: ISeriesApi<"Histogram">;
   oi: ISeriesApi<"Area">;
 };
 
@@ -324,7 +337,7 @@ export function MarketChart({ instrument = "ETH-USDT", interval = "15m", flow }:
     series.ma200.setData(ma200);
     const projectedCvd = flowOnCandleTimeline(data.candles, data.cvd, intervalSeconds(data.interval));
     const projectedOi = flowOnCandleTimeline(data.candles, data.oi, intervalSeconds(data.interval));
-    series.cvd.setData(projectedCvd);
+    series.cvd.setData(cvdHistogramData(projectedCvd));
     series.oi.setData(projectedOi);
     priceSourcesRef.current = [...PRICE_SERIES_CONFIG, ...FLOW_SERIES_CONFIG].map(config => ({
       ...config,
@@ -360,7 +373,7 @@ export function MarketChart({ instrument = "ETH-USDT", interval = "15m", flow }:
       ema20: chart.addSeries(LineSeries, { color: PRICE_SERIES_CONFIG[1].color, lineWidth: 2, priceLineVisible: false, lastValueVisible: false, priceFormat: PRICE_FORMAT }),
       ma60: chart.addSeries(LineSeries, { color: PRICE_SERIES_CONFIG[2].color, lineWidth: 2, priceLineVisible: false, lastValueVisible: false, priceFormat: PRICE_FORMAT }),
       ma200: chart.addSeries(LineSeries, { color: PRICE_SERIES_CONFIG[3].color, lineWidth: 2, priceLineVisible: false, lastValueVisible: false, priceFormat: PRICE_FORMAT }),
-      cvd: chart.addSeries(AreaSeries, { lineColor: FLOW_SERIES_CONFIG[0].color, topColor: "rgba(124,58,237,.22)", bottomColor: "rgba(124,58,237,.02)", lineWidth: 2, priceLineVisible: false, lastValueVisible: false, priceFormat: { type: "custom", formatter: formatMillions } }, 1),
+      cvd: chart.addSeries(HistogramSeries, { color: "#12b76a", base: 0, priceLineVisible: false, lastValueVisible: false, autoscaleInfoProvider: symmetricCvdAutoscale, priceFormat: { type: "custom", formatter: formatMillions } }, 1),
       oi: chart.addSeries(AreaSeries, { lineColor: FLOW_SERIES_CONFIG[1].color, topColor: "rgba(14,165,233,.20)", bottomColor: "rgba(14,165,233,.02)", lineWidth: 2, priceLineVisible: false, lastValueVisible: false, priceFormat: { type: "custom", formatter: formatMillions } }, 2),
     };
     const axisLabels = {} as Record<AxisSeriesId, NativePriceAxisLabel>;
@@ -558,7 +571,7 @@ export function FlowChart({ points, color = "#7c3aed", zeroLine = false, instrum
   const history = useServerFlowHistory(instrument, interval, seriesType, points);
   const retained = history.points;
   const normalized = retained;
-  const seriesRef = useRef<ISeriesApi<"Area"> | null>(null);
+  const seriesRef = useRef<ISeriesApi<"Area"> | ISeriesApi<"Histogram"> | null>(null);
   const flowChartRef = useRef<IChartApi | null>(null);
   const rangeTimer = useRef(0);
   const historyRef = useRef(history);
@@ -569,14 +582,18 @@ export function FlowChart({ points, color = "#7c3aed", zeroLine = false, instrum
   const apply = () => {
     if (!dataRef.current.length) return;
     withPreservedTimeRange(flowChartRef.current?.timeScale(), () => {
-      seriesRef.current?.setData(gapAware(dataRef.current, history.coverage?.resolution_seconds || intervalSeconds(interval)));
+      const data = gapAware(dataRef.current, history.coverage?.resolution_seconds || intervalSeconds(interval));
+      if (seriesType === "cvd") (seriesRef.current as ISeriesApi<"Histogram"> | null)?.setData(cvdHistogramData(data));
+      else (seriesRef.current as ISeriesApi<"Area"> | null)?.setData(data);
     });
   };
   const { containerRef } = useResponsiveChart((container) => {
     const chart = createChart(container, { ...chartTheme, width: container.clientWidth, height: container.clientHeight, rightPriceScale: { visible: true, borderVisible: false, scaleMargins: { top: .15, bottom: .15 } }, timeScale: { visible: true, borderVisible: false, timeVisible: true, secondsVisible: true, fixLeftEdge: true, fixRightEdge: true } });
     flowChartRef.current = chart;
-    seriesRef.current = chart.addSeries(AreaSeries, { lineColor: color, topColor: `${color}38`, bottomColor: `${color}05`, lineWidth: 2, priceLineVisible: true, lastValueVisible: true, priceFormat: { type: "custom", formatter: formatMillions } });
-    if (zeroLine) seriesRef.current.createPriceLine({ price: 0, color: "rgba(71,84,103,.45)", lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: "0.00M" });
+    seriesRef.current = seriesType === "cvd"
+      ? chart.addSeries(HistogramSeries, { color: "#12b76a", base: 0, priceLineVisible: false, lastValueVisible: true, autoscaleInfoProvider: symmetricCvdAutoscale, priceFormat: { type: "custom", formatter: formatMillions } })
+      : chart.addSeries(AreaSeries, { lineColor: color, topColor: `${color}38`, bottomColor: `${color}05`, lineWidth: 2, priceLineVisible: true, lastValueVisible: true, priceFormat: { type: "custom", formatter: formatMillions } });
+    if (zeroLine) seriesRef.current?.createPriceLine({ price: 0, color: "rgba(71,84,103,.45)", lineWidth: 1, lineStyle: 2, axisLabelVisible: true, title: "0.00M" });
     apply();
     chart.timeScale().subscribeVisibleTimeRangeChange(range => {
       if (!range) return;

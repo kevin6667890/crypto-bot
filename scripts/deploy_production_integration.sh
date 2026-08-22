@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Must run on the production host from a disposable Git checkout.
 set -euo pipefail
+cd "$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 revision=${1:?usage: $0 <revision> [--validate-only|--promote]}
 mode=${2:---validate-only}
 [[ $mode == --validate-only || $mode == --promote ]] || exit 2

@@ -15,6 +15,7 @@ from .versions import (
     AI_REPORT_AUDIT_VERSION,
     SUPPORTED_INSTRUMENTS,
 )
+from .presentation_narrative import project_display_narrative
 
 MODES = ("QUICK", "FULL", "POSITION_AWARE")
 LANGUAGES = ("zh-CN", "en")
@@ -309,7 +310,10 @@ def _project(conn: Any, report: dict[str, Any], audit: dict[str, Any] | None, ev
              latest_status: dict[str, Any], *, superseded: bool) -> dict[str, Any]:
     if not audit:
         raise PresentationError("AUDIT_NOT_FOUND")
-    response = report["response"]
+    # The persisted response is the immutable audit input.  The UI receives a
+    # separate post-audit projection so Provider-era PENDING wording cannot
+    # contradict the audit that made this report display-eligible.
+    response = project_display_narrative(report["response"], audit_status=str(audit.get("status") or ""))
     if audit.get("_stored_audit_id") != audit.get("audit_id"):
         raise PresentationError("AUDIT_ID_MISMATCH")
     if response.get("directional_bias") not in {"BULLISH", "BEARISH", "NEUTRAL", "MIXED", "UNKNOWN"}:

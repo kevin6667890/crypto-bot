@@ -189,7 +189,7 @@ export function intelligenceCenter(input: unknown, sections: Section[] = [], lan
       pullback: record(tactical.pullback),
       compression: record(tactical.compression),
       volumeStates: Array.isArray(volume.states) ? volume.states.map(String) : [],
-      providerNarrative: language === "zh" ? fallback : undefined,
+      providerNarrative: language === "zh" ? text(fallback, language) : undefined,
     };
   });
   const tactical = record(intelligence.tactical);

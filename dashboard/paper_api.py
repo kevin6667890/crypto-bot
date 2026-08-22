@@ -1468,6 +1468,20 @@ class Handler(BaseHTTPRequestHandler):
                 rid=int(parsed.path.split('/')[4]);
                 with RESEARCH.repository.connect() as c:self._send({'items':[dict(x) for x in c.execute('SELECT * FROM strategy_discovery_candidates WHERE discovery_run_id=? ORDER BY candidate_number',(rid,))]})
             except ValueError:self._send({'error':'Invalid discovery run id'},HTTPStatus.BAD_REQUEST)
+        elif parsed.path.startswith("/api/discovery/runs/") and parsed.path.endswith('/diagnostics'):
+            try:
+                rid=int(parsed.path.split('/')[4])
+                page=int(query.get('page',['1'])[0]); page_size=int(query.get('page_size',['25'])[0])
+                result=RESEARCH.repository.discovery_diagnostics(rid,page=page,page_size=page_size,
+                    rejection_reason=query.get('reason',[None])[0],eligibility=query.get('eligibility',[None])[0],
+                    search=query.get('search',[None])[0],sort=query.get('sort',['score_desc'])[0])
+                self._send(result or {'error':'Discovery run not found'},HTTPStatus.OK if result else HTTPStatus.NOT_FOUND)
+            except ValueError:self._send({'error':'Invalid discovery diagnostics query'},HTTPStatus.BAD_REQUEST)
+        elif parsed.path.startswith("/api/discovery/candidates/") and parsed.path.endswith('/diagnostics'):
+            try:
+                cid=int(parsed.path.split('/')[4]); result=RESEARCH.repository.discovery_candidate_diagnostics(cid)
+                self._send(result or {'error':'Candidate not found'},HTTPStatus.OK if result else HTTPStatus.NOT_FOUND)
+            except ValueError:self._send({'error':'Invalid candidate id'},HTTPStatus.BAD_REQUEST)
         elif parsed.path.startswith("/api/discovery/candidates/"):
             try:
                 cid=int(parsed.path.split('/')[4]);table='strategy_discovery_candidates';

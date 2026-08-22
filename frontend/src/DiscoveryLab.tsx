@@ -1,21 +1,41 @@
 import { useEffect, useState } from "react";
 
-type Dataset = { id:number; name:string; status:string; dataset_fingerprint?:string; start_ts:number; end_ts:number };
+type Dataset = { id:number; name:string; status:string; dataset_fingerprint?:string };
+type Cycle = { id:number; status:string };
+type Reason = { code:string; count:number; percentage:number; description:string };
+type Candidate = { candidate_id:number; candidate_number:number; description:string; direction:string; complexity:number; development_score:number|null; eligibility_status:string; rejection_reasons:string[] };
+type Detail = { failed_gates:Array<{code:string;description:string;metric?:string;observed?:number|string|null;required?:string|null}>; folds:Array<{fold:number;status:string;trades?:number;return?:number;benchmark?:number;excess?:number;max_drawdown?:number;eligibility_notes?:string|null}> };
+type Diagnostics = { diagnostics_available:boolean; cycle_summary?:{total_candidates:number;eligible_candidates:number;rejected_candidates:number}; rejection_summary?:Reason[]; items?:Candidate[]; page:number; page_size:number; total_items:number };
+const pct=(n:number|undefined|null)=>typeof n === "number" ? `${n.toFixed(1)}%` : "—";
+
 export default function DiscoveryLab() {
-  const [items,setItems]=useState<Dataset[]>([]); const [message,setMessage]=useState("");
-  const [programSummary,setProgramSummary]=useState({program_candidates:0,unique_programs:0,screened:0,backtested:0,eligible:0,approved:0});
+  const [datasets,setDatasets]=useState<Dataset[]>([]), [cycles,setCycles]=useState<Cycle[]>([]), [cycle,setCycle]=useState<number>(), [data,setData]=useState<Diagnostics|null>(null);
+  const [reason,setReason]=useState(""), [status,setStatus]=useState("REJECTED"), [search,setSearch]=useState(""), [page,setPage]=useState(1), [expanded,setExpanded]=useState<number>(), [detail,setDetail]=useState<Detail|null>(null), [message,setMessage]=useState(""); const [programSummary,setProgramSummary]=useState({program_candidates:0,unique_programs:0,screened:0,backtested:0,eligible:0,approved:0});
   const load=()=>{
-    void fetch("/api/discovery/datasets").then(r=>r.json()).then(x=>setItems(x.items||[])).catch(()=>setMessage("Discovery API unavailable."));
+    void fetch("/api/discovery/datasets").then(r=>r.json()).then(x=>setDatasets(x.items||[])).catch(()=>setMessage("Discovery API unavailable."));
     void fetch("/api/discovery/programs/summary").then(r=>r.ok?r.json():null).then(x=>x&&setProgramSummary(x)).catch(()=>undefined);
+    void fetch("/api/discovery/runs").then(r=>r.json()).then(x=>{const next=x.items||[];setCycles(next);setCycle(old=>old??next[0]?.id)}).catch(()=>setMessage("Research cycles are unavailable."));
   };
-  useEffect(() => { void load(); },[]);
+  useEffect(()=>{void load()},[]);
+  useEffect(()=>{if(!cycle)return;const q=new URLSearchParams({page:String(page),page_size:"25",sort:"score_desc"});if(reason)q.set("reason",reason);if(status)q.set("eligibility",status);if(search)q.set("search",search);void fetch(`/api/discovery/runs/${cycle}/diagnostics?${q}`).then(r=>r.ok?r.json():Promise.reject()).then(setData).catch(()=>setData(null));setExpanded(undefined);setDetail(null)},[cycle,reason,status,search,page]);
+  const choose=(id:number)=>{setCycle(id);setPage(1);setReason("");setStatus("REJECTED");setSearch("")};
+  const toggle=async(item:Candidate)=>{if(expanded===item.candidate_id){setExpanded(undefined);return}setExpanded(item.candidate_id);setDetail(null);try{const r=await fetch(`/api/discovery/candidates/${item.candidate_id}/diagnostics`);if(!r.ok)throw Error();setDetail(await r.json())}catch{setMessage("Candidate diagnostics are unavailable.")}};
+  const summary=data?.cycle_summary;
   return <section className="panel" id="strategy-discovery-lab">
-    <div className="panel-head"><div><span className="eyebrow">RESEARCH ONLY</span><h2>Strategy Discovery Lab <small>策略探索实验室</small></h2></div></div>
-    <p>Discovery results use historical development data only. They do not authorize live trading or automatic strategy activation.</p>
-    <p>探索结果仅基于历史开发数据，不构成实盘交易或自动启用策略的依据。</p>
-    <button onClick={load}>Refresh datasets</button>{message && <small>{message}</small>}
+    <div className="panel-head"><div><span className="eyebrow">RESEARCH ONLY</span><h2>Strategy Discovery Lab</h2></div></div>
+    <p>Discovery results use historical Development data only. They do not authorize live trading or automatic strategy activation.</p><button onClick={load}>Refresh research data</button>{message&&<small>{message}</small>}
     <div className="table-wrap"><table><thead><tr><th>Discovery Mode</th><th>Program candidates</th><th>Unique programs</th><th>Screened</th><th>Backtested</th><th>Eligible</th><th>Approved</th></tr></thead><tbody><tr><td>Program (disabled by default)</td><td>{programSummary.program_candidates}</td><td>{programSummary.unique_programs}</td><td>{programSummary.screened}</td><td>{programSummary.backtested}</td><td>{programSummary.eligible}</td><td>{programSummary.approved}</td></tr></tbody></table></div>
-    <div className="table-wrap"><table><thead><tr><th>Dataset</th><th>Fixed range</th><th>Status</th><th>Fingerprint</th></tr></thead><tbody>{items.map(x=><tr key={x.id}><td>{x.name}</td><td>2024-01-01 – 2026-01-01 (exclusive)</td><td>{x.status}</td><td>{x.dataset_fingerprint?.slice(0,16) || "Pending"}</td></tr>)}</tbody></table></div>
-    <small>PRICE_ONLY is available by default. FLOW_OVERLAY remains disabled until real CVD/OI coverage is verified.</small>
+    <div className="table-wrap"><table><thead><tr><th>Dataset</th><th>Status</th><th>Fingerprint</th></tr></thead><tbody>{datasets.map(x=><tr key={x.id}><td>{x.name}</td><td>{x.status}</td><td>{x.dataset_fingerprint?.slice(0,16)||"Pending"}</td></tr>)}</tbody></table></div>
+    <section className="discovery-diagnostics"><div className="panel-head"><div><span className="eyebrow">AUTOMATIC RESEARCH</span><h2>Development Rejection Analysis</h2></div></div>
+      {cycles.length>0&&<div className="cycle-picker"><span>Recent Research</span>{cycles.map(x=><button className={cycle===x.id?"active":""} key={x.id} onClick={()=>choose(x.id)}>Cycle #{x.id} · {x.status}</button>)}</div>}
+      {data&&!data.diagnostics_available&&<p className="research-empty compact">Detailed rejection diagnostics unavailable for this historical cycle.</p>}
+      {summary&&<><div className="diagnostic-counts"><article><b>{summary.total_candidates}</b><span>candidates evaluated</span></article><article><b>{summary.eligible_candidates}</b><span>eligible</span></article><article><b>{summary.rejected_candidates}</b><span>rejected</span></article></div>
+        {summary.eligible_candidates===0&&<p className="diagnostic-notice"><b>No candidate passed Development eligibility.</b> {summary.total_candidates} candidates were evaluated. See the rejection analysis below to understand which gates eliminated them. Walk-forward, Holdout, OOT, Cross-asset, and Robustness were not run as part of the normal fail-closed process; this is not a system failure.</p>}
+        <div className="reason-list">{data?.rejection_summary?.map(x=><div className="reason-row" key={x.code}><div><b>{x.code}</b><small>{x.description}</small></div><span>{x.count} candidates · {x.percentage.toFixed(1)}%</span><i><em style={{width:`${x.percentage}%`}}/></i></div>)}</div><small>These are research screening conditions, not estimates of future profitability.</small>
+        <div className="panel-head candidate-head"><div><span className="eyebrow">CANDIDATE EXPLORER</span><h2>Candidate Diagnostics</h2></div><div className="table-controls"><select value={reason} onChange={e=>{setReason(e.target.value);setPage(1)}}><option value="">All failed gates</option>{data?.rejection_summary?.map(x=><option key={x.code}>{x.code}</option>)}</select><select value={status} onChange={e=>{setStatus(e.target.value);setPage(1)}}><option value="">All statuses</option><option value="REJECTED">Rejected</option><option value="ELIGIBLE">Eligible</option></select><input aria-label="Search candidates" placeholder="Search candidate" value={search} onChange={e=>{setSearch(e.target.value);setPage(1)}}/></div></div>
+        <div className="research-table-wrap"><table><thead><tr><th>Program / Candidate</th><th>Direction</th><th>Complexity</th><th>Score</th><th>Failed Gates</th><th>Status</th></tr></thead><tbody>{data?.items?.map(x=><><tr className="candidate-row" key={x.candidate_id} onClick={()=>void toggle(x)}><td>{x.description} <small>#{x.candidate_number}</small></td><td>{x.direction}</td><td>{x.complexity}</td><td>{x.development_score?.toFixed(2)??"—"}</td><td>{x.rejection_reasons.join(", ")||"—"}</td><td><span className={`status-pill ${x.eligibility_status.toLowerCase()}`}>{x.eligibility_status}</span></td></tr>{expanded===x.candidate_id&&<tr className="candidate-detail" key={`${x.candidate_id}-detail`}><td colSpan={6}>{detail?<><b>Why this candidate was eliminated</b><div className="gate-list">{detail.failed_gates.map(g=><div key={g.code}><b>{g.code}</b><span>{g.description}</span>{g.metric&&<small>{g.metric}: Observed <strong>{typeof g.observed==="number"?pct(g.observed):g.observed??"—"}</strong> · Required <strong>{g.required??"—"}</strong></small>}</div>)}</div>{detail.folds.length>0&&<div className="folds"><b>Development Fold Diagnostics</b><table><thead><tr><th>Fold</th><th>Trades</th><th>Return</th><th>Benchmark</th><th>Excess</th><th>Max DD</th><th>Eligibility notes</th></tr></thead><tbody>{detail.folds.map(f=><tr key={f.fold}><td>{f.fold}</td><td>{f.trades??"—"}</td><td>{pct(f.return)}</td><td>{pct(f.benchmark)}</td><td>{pct(f.excess)}</td><td>{pct(f.max_drawdown)}</td><td>{f.eligibility_notes??f.status}</td></tr>)}</tbody></table></div>}</>:"Loading candidate diagnostics…"}</td></tr>}</>)}</tbody></table></div>
+        <div className="research-pagination"><span>{data?.total_items??0} candidates</span><div><button disabled={page<=1} onClick={()=>setPage(page-1)}>Previous</button><span> Page {page} </span><button disabled={!data||page*data.page_size>=data.total_items} onClick={()=>setPage(page+1)}>Next</button></div></div>
+      </>}
+    </section><small>PRICE_ONLY is available by default. FLOW_OVERLAY remains disabled until real CVD/OI coverage is verified.</small>
   </section>;
 }

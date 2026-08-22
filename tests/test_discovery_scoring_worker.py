@@ -63,3 +63,26 @@ def test_scoring_queries_no_extra_candles_after_evaluation(tmp_path, monkeypatch
     repo.candles=spy
     service._run_job(1, payload(rid), lambda *_: None)
     assert calls and all(end < discovery.ts(2025,5,1) for _,_,_,end in calls)
+
+
+def test_diagnostics_aggregate_multi_reason_filter_pagination_and_fold_detail(tmp_path, monkeypatch):
+    repo, service, rid = setup(tmp_path); monkeypatch.setattr(discovery, 'run_discovery_candidate_backtest', fake_engine([]))
+    service._run_job(1, payload(rid), lambda *_: None)
+    with repo.connect() as c:
+        candidate = c.execute('SELECT id FROM strategy_discovery_candidates WHERE discovery_run_id=?', (rid,)).fetchone()
+        c.execute("UPDATE strategy_discovery_candidates SET elimination_reasons=? WHERE id=?", (json.dumps(['INSUFFICIENT_TOTAL_TRADES', 'NONPOSITIVE_MEDIAN_EXCESS_RETURN']), candidate['id']))
+    view = repo.discovery_diagnostics(rid, page=1, page_size=1, rejection_reason='NONPOSITIVE_MEDIAN_EXCESS_RETURN', eligibility='REJECTED')
+    assert view['diagnostics_available'] and view['cycle_summary'] == {'total_candidates': 1, 'eligible_candidates': 0, 'rejected_candidates': 1}
+    assert view['total_items'] == len(view['items']) == 1
+    assert {item['code']: item['count'] for item in view['rejection_summary']}['NONPOSITIVE_MEDIAN_EXCESS_RETURN'] == 1
+    detail = repo.discovery_candidate_diagnostics(candidate['id'])
+    assert detail['failed_gates'][0]['required'] == '>= 40' and len(detail['folds']) == 5
+
+
+def test_diagnostics_marks_historical_cycle_without_eligibility_as_unavailable(tmp_path):
+    repo = ResearchRepository(tmp_path/'research.db')
+    with repo.connect() as c:
+        dataset = c.execute("INSERT INTO discovery_datasets(name,start_ts,end_ts,instruments,timeframes,source,status,manifest,created_at,updated_at) VALUES('x',1,2,'[]','[]','x','COMPLETE','{}','n','n')").lastrowid
+        run = c.execute("INSERT INTO strategy_discovery_runs(dataset_id,status,request,search_policy,sampler,seed,maximum_trials,templates,feature_version,engine_version,scoring_version,progress,created_at,updated_at) VALUES(?, 'COMPLETED','{}','{}','x',1,1,'[]','x','x','x','{}','n','n')", (dataset,)).lastrowid
+        c.execute("INSERT INTO strategy_discovery_candidates(discovery_run_id,candidate_number,template,template_version,parameters,parameter_hash,feature_flags,complexity,status,created_at) VALUES(?,?, 'TREND_BREAKOUT','x','{}','hash','{}',5,'COMPLETED','n')", (run, 1))
+    assert repo.discovery_diagnostics(run)['diagnostics_available'] is False

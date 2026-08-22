@@ -277,6 +277,101 @@ class ResearchRepository:
         if column not in {row[1] for row in connection.execute(f"PRAGMA table_info({table})")}:
             connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {declaration}")
 
+    # These descriptions deliberately live next to the durable evidence reader.  They
+    # are policy text, not an AI interpretation of a candidate or a market forecast.
+    DISCOVERY_REJECTION_DESCRIPTIONS = {
+        "CANDIDATE_NOT_DEVELOPMENT_COMPLETE": "The candidate did not complete Development evaluation.",
+        "INCOMPLETE_FOLD_SET": "All required Development folds were not completed.",
+        "FAILED_DEVELOPMENT_FOLD": "At least one Development fold failed to evaluate.",
+        "INSUFFICIENT_FOLDS_WITH_TRADES": "Too few Development folds produced trades.",
+        "INSUFFICIENT_TOTAL_TRADES": "The total Development trade count was below the minimum.",
+        "INSUFFICIENT_MEDIAN_TRADES": "The median trades per Development fold was below the minimum.",
+        "INSUFFICIENT_PROFITABLE_FOLDS": "Too few Development folds had a positive return.",
+        "INSUFFICIENT_BENCHMARK_BEATING_FOLDS": "Too few Development folds beat the benchmark.",
+        "NONPOSITIVE_MEDIAN_EXCESS_RETURN": "Median excess return relative to the benchmark was not positive.",
+        "WORST_FOLD_RETURN_TOO_LOW": "The worst Development-fold return was below the allowed limit.",
+        "WORST_EXCESS_RETURN_TOO_LOW": "The worst Development-fold excess return was below the allowed limit.",
+        "MAXIMUM_DRAWDOWN_TOO_HIGH": "The worst Development-fold drawdown exceeded the allowed limit.",
+        "REQUIRED_METRIC_UNDEFINED": "A required Development eligibility metric was unavailable.",
+        "REQUIRED_METRIC_NONFINITE": "A required Development eligibility metric was invalid.",
+    }
+
+    @staticmethod
+    def _discovery_json(value: Any, fallback: Any) -> Any:
+        try:
+            return json.loads(value) if value else fallback
+        except (TypeError, json.JSONDecodeError):
+            return fallback
+
+    @staticmethod
+    def _discovery_direction(parameters: dict[str, Any]) -> str:
+        if parameters.get("direction") in {"LONG", "SHORT", "BOTH"}:
+            return parameters["direction"]
+        long_enabled, short_enabled = parameters.get("enable_long"), parameters.get("enable_short")
+        if long_enabled is True and short_enabled is False: return "LONG"
+        if short_enabled is True and long_enabled is False: return "SHORT"
+        return "BOTH"
+
+    def discovery_diagnostics(self, run_id: int, *, page: int = 1, page_size: int = 25,
+                              rejection_reason: str | None = None, eligibility: str | None = None,
+                              search: str | None = None, sort: str = "score_desc") -> dict[str, Any] | None:
+        """Read-only, bounded diagnostic projection for a Discovery run."""
+        page, page_size = max(1, page), min(max(1, page_size), 100)
+        with self.connect() as c:
+            run = c.execute("SELECT id,status,request,result FROM strategy_discovery_runs WHERE id=?", (run_id,)).fetchone()
+            if not run: return None
+            rows = [dict(row) for row in c.execute("SELECT id,candidate_number,template,parameters,parameter_hash,complexity,status,aggregate_metrics,elimination_reasons,eligibility_status,development_score FROM strategy_discovery_candidates WHERE discovery_run_id=?", (run_id,))]
+        # Earlier template-only cycles predate the durable eligibility fields.
+        available = bool(rows) and any(row.get("eligibility_status") is not None for row in rows)
+        if not available:
+            return {"cycle_id": run_id, "diagnostics_available": False}
+        total = len(rows)
+        eligible_count = sum(row["eligibility_status"] == "ELIGIBLE" for row in rows)
+        rejected_count = sum(row["eligibility_status"] == "REJECTED" for row in rows)
+        reason_counts: dict[str, int] = {}
+        normalized = []
+        for row in rows:
+            reasons = self._discovery_json(row["elimination_reasons"], [])
+            reasons = reasons if isinstance(reasons, list) else []
+            metrics = self._discovery_json(row["aggregate_metrics"], {})
+            params = self._discovery_json(row["parameters"], {})
+            normalized.append({**row, "rejection_reasons": reasons, "aggregate": metrics if isinstance(metrics, dict) else {}, "parameters_value": params if isinstance(params, dict) else {}})
+            for code in reasons: reason_counts[code] = reason_counts.get(code, 0) + 1
+        summary = [{"code": code, "count": count, "percentage": round(count * 100 / total, 1), "description": self.DISCOVERY_REJECTION_DESCRIPTIONS.get(code, "Development eligibility condition was not met.")} for code, count in sorted(reason_counts.items(), key=lambda item: (-item[1], item[0]))]
+        filtered = [row for row in normalized if (not rejection_reason or rejection_reason in row["rejection_reasons"]) and (not eligibility or row["eligibility_status"] == eligibility) and (not search or search.lower() in f"{row['id']} {row['candidate_number']} {row['template']} {row['parameter_hash']}".lower())]
+        filtered.sort(key=(lambda row: ((row["development_score"] is None), -(row["development_score"] or 0), row["candidate_number"])) if sort != "score_asc" else (lambda row: ((row["development_score"] is None), row["development_score"] or 0, row["candidate_number"])))
+        start = (page - 1) * page_size
+        items = [{"candidate_id": row["id"], "candidate_number": row["candidate_number"], "candidate_identity": row["aggregate"].get("candidate_config_hash") or row["parameter_hash"], "program_id": row["parameter_hash"], "strategy_type": row["template"], "description": row["template"].replace("_", " ").title(), "direction": self._discovery_direction(row["parameters_value"]), "complexity": row["complexity"], "development_score": row["development_score"], "eligibility_status": row["eligibility_status"], "rejection_reasons": row["rejection_reasons"]} for row in filtered[start:start + page_size]]
+        return {"cycle_id": run_id, "diagnostics_available": True, "cycle_summary": {"total_candidates": total, "eligible_candidates": eligible_count, "rejected_candidates": rejected_count}, "rejection_summary": summary, "items": items, "page": page, "page_size": page_size, "total_items": len(filtered)}
+
+    def discovery_candidate_diagnostics(self, candidate_id: int) -> dict[str, Any] | None:
+        with self.connect() as c:
+            row = c.execute("SELECT * FROM strategy_discovery_candidates WHERE id=?", (candidate_id,)).fetchone()
+            if not row: return None
+            folds = [dict(fold) for fold in c.execute("SELECT * FROM strategy_discovery_folds WHERE candidate_id=? ORDER BY fold_number", (candidate_id,))]
+            run = c.execute("SELECT request FROM strategy_discovery_runs WHERE id=?", (row["discovery_run_id"],)).fetchone()
+        candidate = dict(row); aggregate = self._discovery_json(candidate.get("aggregate_metrics"), {}); parameters = self._discovery_json(candidate.get("parameters"), {}); request = self._discovery_json(run["request"] if run else None, {})
+        reasons = self._discovery_json(candidate.get("elimination_reasons"), []); reasons = reasons if isinstance(reasons, list) else []
+        timeframe = request.get("timeframe")
+        total_minimum = {"15m": 40, "1H": 20, "4H": 10, "1D": 5}.get(timeframe, "?")
+        median_minimum = {"15m": 8, "1H": 4, "4H": 2, "1D": 1}.get(timeframe, "?")
+        thresholds = {"INSUFFICIENT_FOLDS_WITH_TRADES": ("folds_with_trades", ">= 4"), "INSUFFICIENT_TOTAL_TRADES": ("total_trades", f">= {total_minimum}"), "INSUFFICIENT_MEDIAN_TRADES": ("median_trades_per_fold", f">= {median_minimum}"), "NONPOSITIVE_MEDIAN_EXCESS_RETURN": ("median_excess_return", "> 0%"), "WORST_FOLD_RETURN_TOO_LOW": ("worst_validation_return", ">= -10%"), "WORST_EXCESS_RETURN_TOO_LOW": ("worst_excess_return", ">= -10%"), "MAXIMUM_DRAWDOWN_TOO_HIGH": ("worst_maximum_drawdown", "<= 20%")}
+        gates = []
+        for code in reasons:
+            metric, required = thresholds.get(code, (None, None))
+            observed = aggregate.get(metric) if metric else None
+            if code in {"INSUFFICIENT_PROFITABLE_FOLDS", "INSUFFICIENT_BENCHMARK_BEATING_FOLDS"}:
+                metric = "profitable_fold_ratio" if code == "INSUFFICIENT_PROFITABLE_FOLDS" else "benchmark_beating_fold_ratio"; completed = aggregate.get("completed_fold_count"); ratio = aggregate.get(metric)
+                observed = f"{round(ratio * completed)}/{completed}" if isinstance(ratio, (int, float)) and isinstance(completed, (int, float)) else ratio; required = ">= 3/5"
+            elif isinstance(observed, (int, float)):
+                observed = f"{observed:g}%" if metric in {"median_excess_return", "worst_validation_return", "worst_excess_return", "worst_maximum_drawdown"} else f"{observed:g}"
+            gates.append({"code": code, "description": self.DISCOVERY_REJECTION_DESCRIPTIONS.get(code, "Development eligibility condition was not met."), "metric": metric, "observed": observed, "required": required})
+        compact_folds = []
+        for fold in folds:
+            metrics, benchmark = self._discovery_json(fold["metrics"], {}), self._discovery_json(fold["buy_hold_metrics"], {})
+            compact_folds.append({"fold": fold["fold_number"], "status": fold["status"], "trades": metrics.get("total_trades"), "return": metrics.get("total_return"), "benchmark": benchmark.get("total_return"), "excess": benchmark.get("strategy_minus_benchmark_return"), "max_drawdown": metrics.get("maximum_drawdown"), "eligibility_notes": fold.get("error")})
+        return {"candidate_id": candidate_id, "candidate_identity": aggregate.get("candidate_config_hash") or candidate.get("parameter_hash"), "program_id": candidate.get("parameter_hash"), "strategy_type": candidate.get("template"), "direction": self._discovery_direction(parameters if isinstance(parameters, dict) else {}), "complexity": candidate.get("complexity"), "development_score": candidate.get("development_score"), "eligibility_status": candidate.get("eligibility_status"), "rejection_reasons": reasons, "failed_gates": gates, "aggregate_metrics": aggregate, "parameters": parameters, "folds": compact_folds}
+
     @staticmethod
     def fingerprint(payload: dict[str, Any]) -> str:
         return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()

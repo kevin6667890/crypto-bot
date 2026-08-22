@@ -61,9 +61,20 @@ env_file=$(docker inspect crypto-bot-paper-api-1 -f '{{ index .Config.Labels "co
 project=$(docker inspect crypto-bot-paper-api-1 -f '{{ index .Config.Labels "com.docker.compose.project" }}')
 [[ -n $active && -n $env_file && -n $project ]] || { echo "active topology unavailable" >&2; exit 4; }
 old=$(printf '%s' "$active" | cut -d, -f1 | sed 's#/source/docker-compose.yml##')
+IFS=, read -ra active_paths <<< "$active"
+base_source=""
+for active_path in "${active_paths[@]}"; do
+  if [[ $active_path == */deploy/compose/ai6b-production-candidate.yml ]]; then
+    base_source=${active_path%/deploy/compose/ai6b-production-candidate.yml}
+    break
+  fi
+done
+[[ -n $base_source && -f $base_source/dashboard/paper_api.py ]] || { echo "active AI6B source unavailable" >&2; exit 4; }
 if [[ ! -e $artifact ]]; then
   mkdir -p "$artifact/source" "$artifact/deployment"
-  git archive --format=tar "$revision" | tar -x -C "$artifact/source"
+  cp -a "$base_source/." "$artifact/source/"
+  git diff --binary c110869 "$revision" -- dashboard/paper_api.py dashboard/research_repository.py frontend/src/DiscoveryLab.tsx | git -C "$artifact/source" apply --check
+  git diff --binary c110869 "$revision" -- dashboard/paper_api.py dashboard/research_repository.py frontend/src/DiscoveryLab.tsx | git -C "$artifact/source" apply
   cp -a "$old/deployment/." "$artifact/deployment/"
   cp "$env_file" "$artifact/deployment/integration.env"
   printf '\nAI6B_APP_IMAGE=crypto-bot-integration-app:%s\nAI6B_FRONTEND_IMAGE=crypto-bot-integration-frontend:%s\nFACTOR_PROGRAM_GIT_COMMIT=%s\nLIVE_TRADING_ENABLED=false\n' "$revision" "$revision" "$revision" >> "$artifact/deployment/integration.env"
@@ -73,6 +84,7 @@ else
   cp "$artifact/deployment/integration.env" "$artifact/source/.env"
 fi
 
+stage frontend-build; npm --prefix frontend ci --ignore-scripts; npm --prefix frontend run build
 stage immutable-images; cd "$artifact/source"
 docker build --pull -t "crypto-bot-integration-app:$revision" .
 docker build --pull -t "crypto-bot-integration-frontend:$revision" -f frontend/Dockerfile .

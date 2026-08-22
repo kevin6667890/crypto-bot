@@ -10,6 +10,15 @@ describe("research UI simplification", () => {
     for (const token of ["automatic-research-summary", "Validation / Registry", "Approved / Active Strategy", "Recent Research", "No candidate passed Development eligibility", "dataset fingerprint"]) expect(source).toContain(token);
   });
 
+  it("renders completed-cycle diagnostics without a hidden entry point", () => {
+    for (const token of ["Development Rejection Analysis", "Candidate Diagnostics", "diagnostics_available", "eligibility:\"REJECTED\"", "Observed:", "Program AST / parameters", "Factor Program", "Template Discovery"]) expect(source).toContain(token);
+  });
+
+  it("keeps empty and historical diagnostics states explicit", () => {
+    expect(source).toContain("Detailed rejection diagnostics unavailable for this historical cycle.");
+    expect(source).toContain("setDiagnostics(null)");
+  });
+
   it("keeps the manual workspace available but collapsed by default", () => {
     expect(route).toContain("advanced-manual-research");
     expect(route).toContain("<details");

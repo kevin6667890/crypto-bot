@@ -54,3 +54,28 @@ def test_reset_rejects_unapproved_reason(tmp_path, monkeypatch):
         assert str(error) == "PAPER_RISK_RESET_REASON_NOT_APPROVED"
     else:
         raise AssertionError("unapproved reset must fail")
+
+
+def test_risk_status_is_read_only_unless_scheduler_syncs_alerts(tmp_path, monkeypatch):
+    class Alerts:
+        def __init__(self):
+            self.calls = []
+
+        def raise_alert(self, *args, **kwargs):
+            self.calls.append(("raise", args, kwargs))
+
+        def resolve(self, key):
+            self.calls.append(("resolve", key))
+
+    alerts = Alerts()
+    monkeypatch.setattr(paper_api, "ALERTS", alerts)
+    service = PaperService(tmp_path / "paper.db")
+
+    service.risk_state("ETH-USDT")
+    assert alerts.calls == []
+
+    service.risk_state("ETH-USDT", sync_alerts=True)
+    assert alerts.calls == [
+        ("resolve", "daily-loss|ETH-USDT"),
+        ("resolve", "consecutive-loss|ETH-USDT"),
+    ]

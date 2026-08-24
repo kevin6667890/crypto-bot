@@ -774,7 +774,12 @@ class PaperService:
             if not eligible: continue
             values=calculate_indicators(eligible,params)[-1]; row=eligible[-1]
             frames[frame]={"candle_close_ts":int(row["candle_close_ts"]),"close":row["close"],"fast_ma":values["fast_ma"],"slow_ma":values["slow_ma"],"trend":"Bullish" if values["fast_ma"] and values["slow_ma"] and row["close"]>values["fast_ma"]>values["slow_ma"] else "Bearish" if values["fast_ma"] and values["slow_ma"] and row["close"]<values["fast_ma"]<values["slow_ma"] else "Mixed","ema20_slope_pct":0.0,"ma60":values["fast_ma"],"ma200":values["slow_ma"]}
-        risk=self.risk_state(instrument, active_registry, allow_legacy=not canonical_paper)
+        risk=self.risk_state(
+            instrument,
+            active_registry,
+            allow_legacy=not canonical_paper,
+            sync_alerts=True,
+        )
         quality = (flow.get("decision_quality") or {})
         decision_stamp = decision_timestamp or now_iso()
         if active_registry and snapshot_identity:
@@ -868,7 +873,8 @@ class PaperService:
         return {"signal_id":setup_id,"signal_setup_id":setup_id,"evaluation_id":evaluation_id,"decision_engine_version":RUNTIME_VERSION,"instrument":instrument,"execution_timeframe":"15m","candle_close_ts":close_ts,"strategy_version":registry.get("strategy_version") if registry else "NO_ACTIVE_APPROVED_STRATEGY","config_hash":registry.get("configuration_hash") if registry else "NO_ACTIVE_APPROVED_STRATEGY","action":"WAIT","bias":"WAIT","score":0.0,"warmed":False,"contributions":[{"key":"registry_rule","label":"Approved deterministic rule","label_code":"decision.contribution.registry_rule","points":0,"max":100,"status":"watch"}],"failed_gates":["approved_registry","candidate_trigger"],"indicator_values":indicators,"timeframe_context":{"mode":"approved-registry-required","required_frames":[],"daily_enabled":False,"frames":{}},"flow_context":flow_payload,"risk_context":risk,"entry_allowed":False,"rejection_reason":reason,"data_source":"OKX","data_version":"public-confirmed-live-v1","decision_input_summary":{"close":float(execution["close"]),"indicator_keys":sorted(indicators),"frame_close_timestamps":{},"parameters":{}},"gate_results":gates,"regime":"TRANSITION","regime_version":"strategy-rules-v2.1","strategy_registry_id":registry.get("registry_id") if registry else None,"candidate_identity":registry.get("candidate_identity") if registry else None,"strategy_configuration_hash":registry.get("configuration_hash") if registry else None,"execution_runtime_version":RUNTIME_VERSION,"registry_snapshot_identity":registry.get("registry_snapshot_identity") if registry else None,"snapshot_identity":snapshot_identity,"decision_timestamp":stamp,"input_fingerprint":None,"factor_fingerprint":None,"stop_price":None,"target_price":None,"registry_source":"APPROVED_REGISTRY_BLOCKED" if registry else "NO_ACTIVE_REGISTRY"}
 
     def risk_state(self, instrument: str, registry_snapshot: dict[str,Any] | None = None, *,
-                   allow_legacy: bool = True) -> dict[str, Any]:
+                   allow_legacy: bool = True,
+                   sync_alerts: bool = False) -> dict[str, Any]:
         params, _ = self._active_strategy(registry_snapshot, allow_legacy=allow_legacy)
         day_start = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
         with self._connect() as conn:
@@ -901,7 +907,7 @@ class PaperService:
         with self._connect() as conn:
             instrument_open = bool(conn.execute("SELECT 1 FROM paper_trades WHERE instrument=? AND status='OPEN'", (instrument,)).fetchone())
         alerts=globals().get("ALERTS")
-        if alerts:
+        if alerts and sync_alerts:
             for condition,kind,key,message in ((today_r<=MAX_DAILY_LOSS_R,"Daily Loss Limit",f"daily-loss|{instrument}",f"{instrument} daily paper result reached {today_r:.2f}R"),(consecutive>=MAX_CONSECUTIVE_LOSSES,"Consecutive Loss Limit",f"consecutive-loss|{instrument}",f"{instrument} reached {consecutive} consecutive paper losses")):
                 if condition:alerts.raise_alert(kind,"critical","paper_risk",message,instrument,key=key)
                 else:alerts.resolve(key)

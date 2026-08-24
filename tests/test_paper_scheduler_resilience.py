@@ -37,6 +37,10 @@ def test_paper_scheduler_tick_records_success(monkeypatch):
     events = []
     monkeypatch.setattr(paper_api, "SERVICE", service)
     monkeypatch.setattr(
+        paper_api, "public_canonical_market_snapshot",
+        lambda instrument, timeframe: {"instrument": instrument, "timeframe": timeframe},
+    )
+    monkeypatch.setattr(
         paper_api,
         "log_event",
         lambda _logger, level, component, event, **fields: events.append(

@@ -39,10 +39,12 @@ def test_explicit_cutoff_contract_does_not_use_public_cache(monkeypatch):
     assert "canonical_market_snapshot(" in endpoint
 
 
-def test_paper_cycle_publishes_the_same_canonical_payload_for_public_reads():
+def test_paper_spot_snapshot_is_not_published_as_swap_and_scheduler_warms_swaps():
     source = paper_api.Path(paper_api.__file__).read_text(encoding="utf-8")
     start = source.index("def analyze(")
     cycle = source[start:source.index("def _active_strategy", start)]
-    assert "_publish_public_market_snapshot(" in cycle
-    assert "snapshot.to_dict()" in cycle
+    assert "_publish_public_market_snapshot(" not in cycle
+    assert paper_api.PUBLIC_MARKET_SNAPSHOT_WARM_INSTRUMENTS == (
+        "BTC-USDT-SWAP", "ETH-USDT-SWAP", "SOL-USDT-SWAP",
+    )
     assert 120 < paper_api.PUBLIC_MARKET_SNAPSHOT_CACHE_SECONDS < 15 * 60

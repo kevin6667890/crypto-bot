@@ -767,9 +767,6 @@ class PaperService:
                 raise ValueError("canonical snapshot does not match Paper execution candle")
             snapshot_identity = snapshot.snapshot_identity
             snapshot_version = snapshot.version
-            _publish_public_market_snapshot(
-                instrument, "15m", snapshot.to_dict(),
-            )
         params,active_version=self._active_strategy(active_registry, allow_legacy=not canonical_paper); ind15=calculate_indicators(c15,params)[-1]
         frames={}
         for frame in ("1H","4H","1D"):
@@ -1390,15 +1387,9 @@ def canonical_market_snapshot(instrument: str, as_of: int,
 PUBLIC_MARKET_SNAPSHOT_CACHE_SECONDS = 240
 _PUBLIC_MARKET_SNAPSHOT_LOCK = threading.Lock()
 _PUBLIC_MARKET_SNAPSHOT_CACHE: dict[tuple[str, str], tuple[float, dict[str, Any]]] = {}
-
-
-def _publish_public_market_snapshot(instrument: str, execution_timeframe: str,
-                                    payload: dict[str, Any]) -> None:
-    canonical = instrument if instrument.endswith("-SWAP") else f"{instrument}-SWAP"
-    with _PUBLIC_MARKET_SNAPSHOT_LOCK:
-        _PUBLIC_MARKET_SNAPSHOT_CACHE[(canonical, execution_timeframe)] = (
-            time.monotonic(), payload,
-        )
+PUBLIC_MARKET_SNAPSHOT_WARM_INSTRUMENTS = (
+    "BTC-USDT-SWAP", "ETH-USDT-SWAP", "SOL-USDT-SWAP",
+)
 
 
 def public_canonical_market_snapshot(instrument: str,
@@ -2312,6 +2303,18 @@ def paper_scheduler_tick() -> bool:
             error_type=type(error).__name__,
         )
         return False
+    for instrument in PUBLIC_MARKET_SNAPSHOT_WARM_INSTRUMENTS:
+        try:
+            public_canonical_market_snapshot(instrument, "15m")
+        except Exception as error:
+            log_event(
+                LOGGER,
+                "WARNING",
+                "paper_scheduler",
+                "public_snapshot_warm_failed",
+                instrument=instrument,
+                error_type=type(error).__name__,
+            )
     log_event(
         LOGGER,
         "INFO",

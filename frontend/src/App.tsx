@@ -49,6 +49,7 @@ const MicrostructureResearch = lazy(() => import("./MicrostructureResearch"));
 const Operations = lazy(() => import("./Operations"));
 const MarketStateResearch = lazy(() => import("./MarketStateResearch"));
 const ShadowMarketAnalysisPage = lazy(() => import("./aiMarketAnalysis/ShadowMarketAnalysisPage"));
+const TestAnIdeaPage = lazy(() => import("./thesis/TestAnIdeaPage"));
 
 type PrimaryPage = "workspace" | "market" | "research" | "microstructure" | "operations";
 type ResearchView = "overview" | "router";
@@ -892,6 +893,9 @@ function Workspace() {
           <strong>Crypto-Bot</strong>
           <span>{t("app.workspace")}</span>
           <div className="page-switch">
+            <button className="test-idea-nav" onClick={() => window.location.assign("/test-an-idea")}>
+              {language === "zh" ? "测试一个想法" : "Test an idea"}
+            </button>
             <button
               className={activePage === "workspace" ? "active" : ""}
               onClick={() => selectPage("workspace")}
@@ -1685,6 +1689,9 @@ function Workspace() {
 }
 
 export default function App() {
+  if (window.location.pathname === "/test-an-idea") {
+    return <DeferredRoute name="Test an idea"><TestAnIdeaPage /></DeferredRoute>;
+  }
   if (window.location.pathname === "/shadow/ai-market-analysis") {
     const enabled = import.meta.env.VITE_AI_MARKET_ANALYSIS_SHADOW_ENABLED === "true";
     if (!enabled) return <ShadowDisabledRoute />;

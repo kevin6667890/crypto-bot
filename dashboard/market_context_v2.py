@@ -7,6 +7,7 @@ reader; missing observations remain missing.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
+from copy import deepcopy
 from contextlib import closing
 from datetime import datetime, timezone
 import math
@@ -41,6 +42,8 @@ DEFAULT_LOOKBACK = {"15m": 512, "1H": 512, "4H": 512, "1D": 1_500, "1W": 256}
 FLOW_WINDOW_SECONDS = 4 * 900
 FLOW_STALE_SECONDS = 180
 CACHE_TTL_SECONDS = 5.0
+PROVENANCE_CLASSES = ("RAW", "CANONICAL_OBSERVATION", "DERIVED_FACT",
+                      "DETERMINISTIC_INTERPRETATION")
 TIMEFRAME_REQUIRED_BARS = {timeframe: 200 for timeframe in TIMEFRAME_SECONDS}
 TIMEFRAME_CONSUMERS = ("Workspace rule trend signal", "Market structure engine",
                        "AI deterministic claim pack")
@@ -66,6 +69,9 @@ class IndicatorValueV2:
     partial: bool = False
     warmup_complete: bool = True
     calculation_version: str = INDICATOR_REGISTRY_VERSION
+    provenance_class: str = "DERIVED_FACT"
+    source: str = "MarketIndicatorRegistryV2"
+    evidence_paths: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -77,6 +83,7 @@ class DataQualityV2:
     missing: bool = False
     gaps: tuple[dict[str, Any], ...] = ()
     notes: tuple[str, ...] = ()
+    provenance_class: str = "DERIVED_FACT"
 
 
 @dataclass(frozen=True)
@@ -90,6 +97,9 @@ class MarketLevelV2:
     confirmed: bool
     confluence_sources: tuple[str, ...] = ()
     calculation_version: str = CONFLUENCE_VERSION
+    provenance_class: str = "DERIVED_FACT"
+    source: str = "MarketContextServiceV2"
+    evidence_paths: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -158,20 +168,39 @@ class TimeframeObservation:
     coverage_state: str = "MISSING"
     registry_state: str = "WARMUP_INCOMPLETE"
     consumers: tuple[str, ...] = TIMEFRAME_CONSUMERS
+    provenance_class: str = "CANONICAL_OBSERVATION"
+    input_provenance_class: str = "RAW"
+    causal_cutoff: int | None = None
+    confirmed_ohlcv_source: str = "unknown"
+    last_open: float | None = None
+    last_high: float | None = None
+    last_low: float | None = None
+    last_close: float | None = None
+    last_volume: float | None = None
+    gap_state: str = "MISSING"
+    missing_reason: str | None = None
 
 
 def _null(timestamp: int | None = None, *, warmup: bool = False,
           stale: bool = False, partial: bool = False,
-          version: str = INDICATOR_REGISTRY_VERSION) -> IndicatorValueV2:
-    return IndicatorValueV2(None, timestamp, False, stale, partial, warmup, version)
+          version: str = INDICATOR_REGISTRY_VERSION,
+          provenance_class: str = "DERIVED_FACT", source: str = "MarketIndicatorRegistryV2",
+          evidence_paths: tuple[str, ...] = ()) -> IndicatorValueV2:
+    return IndicatorValueV2(None, timestamp, False, stale, partial, warmup, version,
+                            provenance_class, source, evidence_paths)
 
 
 def _value(value: float | str | None, timestamp: int | None, *, stale: bool = False,
            partial: bool = False, warmup: bool = True,
-           version: str = INDICATOR_REGISTRY_VERSION) -> IndicatorValueV2:
+           version: str = INDICATOR_REGISTRY_VERSION,
+           provenance_class: str = "DERIVED_FACT", source: str = "MarketIndicatorRegistryV2",
+           evidence_paths: tuple[str, ...] = ()) -> IndicatorValueV2:
     if value is None or (isinstance(value, float) and not math.isfinite(value)):
-        return _null(timestamp, warmup=warmup, stale=stale, partial=partial, version=version)
-    return IndicatorValueV2(value, timestamp, True, stale, partial, warmup, version)
+        return _null(timestamp, warmup=warmup, stale=stale, partial=partial, version=version,
+                     provenance_class=provenance_class, source=source,
+                     evidence_paths=evidence_paths)
+    return IndicatorValueV2(value, timestamp, True, stale, partial, warmup, version,
+                            provenance_class, source, evidence_paths)
 
 
 def _close_ts(row: dict[str, Any], timeframe: str) -> int:
@@ -322,6 +351,7 @@ def timeframe_observation(instrument: str, timeframe: str,
     raw = source_rows if source_rows is not None else rows
     latest_raw = int(raw[-1].get("candle_close_ts") or _close_ts(raw[-1], "1D")) if raw else None
     weekly = timeframe == "1W"
+    latest = rows[-1] if rows else None
     return TimeframeObservation(
         instrument=instrument, timeframe=timeframe, observed_at=int(as_of),
         source_at=source_at, oldest_at=oldest_at, bar_count=len(rows),
@@ -338,6 +368,17 @@ def timeframe_observation(instrument: str, timeframe: str,
         latest_aggregated_candle_timestamp=source_at,
         coverage_state=availability,
         registry_state="READY" if len(rows) >= required else "WARMUP_INCOMPLETE",
+        causal_cutoff=int(as_of),
+        confirmed_ohlcv_source=(str(latest.get("source") or latest.get("_source_store") or
+                                    (WEEKLY_AGGREGATION_VERSION if weekly else "unknown"))
+                                if latest else "unknown"),
+        last_open=float(latest["open"]) if latest is not None else None,
+        last_high=float(latest["high"]) if latest is not None else None,
+        last_low=float(latest["low"]) if latest is not None else None,
+        last_close=float(latest["close"]) if latest is not None else None,
+        last_volume=float(latest["volume"]) if latest is not None else None,
+        gap_state=("MISSING" if not rows else "GAPPED" if quality.gaps else "CONTIGUOUS"),
+        missing_reason="NO_CONFIRMED_CANDLES" if not rows else None,
     )
 
 
@@ -351,7 +392,8 @@ class MarketIndicatorRegistryV2:
         rows = confirmed_candles_as_of(candles, timeframe, as_of)
         quality = _quality(rows, timeframe, as_of, partial=source_partial)
         if not rows:
-            groups = {group: {name: _null() for name in names}
+            groups = {group: {name: _null(
+                evidence_paths=(f"/raw/candles/{timeframe}",)) for name in names}
                       for group, names in INDICATOR_GROUP_KEYS.items()}
             return TimeframeMarketContextV2(None, False, groups["trend"], groups["momentum"],
                                              groups["volatility"], groups["structure"],
@@ -364,7 +406,8 @@ class MarketIndicatorRegistryV2:
         stale, partial = quality.stale, quality.partial
         wrap = lambda value, warm=True, version=self.version: _value(
             value, timestamp, stale=stale, partial=partial,
-            warmup=warm and value is not None, version=version)
+            warmup=warm and value is not None, version=version,
+            evidence_paths=(f"/raw/candles/{timeframe}",))
         closes = [float(row["close"]) for row in rows]
         rsi_values = [item.get("rsi") for item in features]
         stoch = stoch_rsi_series(rsi_values)[-1]
@@ -608,7 +651,11 @@ def _flow_indicator(raw: dict[str, Any], key: str, as_of: int) -> IndicatorValue
     stale = timestamp is not None and as_of-int(timestamp) > FLOW_STALE_SECONDS
     return _value(raw.get(key), int(timestamp) if timestamp is not None else None,
                   stale=stale, partial=bool(raw.get("partial")),
-                  warmup=raw.get(key) is not None)
+                  warmup=raw.get(key) is not None,
+                  provenance_class=("CANONICAL_OBSERVATION" if key == "current"
+                                    else "DERIVED_FACT"),
+                  source="canonical microstructure boundary",
+                  evidence_paths=(f"/raw/flow/{key}",))
 
 
 def _combination(price_change: float | None, other_change: float | None,
@@ -625,7 +672,9 @@ def _combination(price_change: float | None, other_change: float | None,
             "start_timestamp": start_ts, "end_timestamp": end_ts,
             "price_change_pct": price_change,
             f"{other_name.lower()}_change": other_change, "data_quality": quality,
-            "calculation_version": "price-flow-combination-facts-v2"}
+            "calculation_version": "price-flow-combination-facts-v2",
+            "provenance_class": "DETERMINISTIC_INTERPRETATION",
+            "evidence_paths": ["/price", f"/flow/{other_name.lower()}"]}
 
 
 def _candidate_levels(timeframes: dict[str, TimeframeMarketContextV2],
@@ -732,7 +781,10 @@ class MarketContextServiceV2:
         price_value = float(execution_rows[-1]["close"]) if execution_rows else None
         price = _value(price_value, execution.candle_close_ts, stale=execution.quality.stale,
                        partial=execution.quality.partial, warmup=price_value is not None,
-                       version="confirmed-close-price-v2")
+                       version="confirmed-close-price-v2",
+                       provenance_class="CANONICAL_OBSERVATION",
+                       source="confirmed OHLCV close",
+                       evidence_paths=(f"/raw/candles/{execution_timeframe}",))
         raw_flow = self.reader.flow(normalized, resolved, execution_timeframe)
         cvd = {name: _flow_indicator(raw_flow["cvd"], source, resolved)
                for name, source in (("current", "current"), ("change", "change"), ("slope", "slope"))}
@@ -748,7 +800,11 @@ class MarketContextServiceV2:
         vpvr = {name: _value(profile.get(name) if profile.get("available") else None,
                              profile_timestamp, stale=execution.quality.stale,
                              partial=execution.quality.partial,
-                             warmup=bool(profile.get("available")), version=str(profile.get("method") or "ohlcv-unavailable-v2"))
+                             warmup=bool(profile.get("available")),
+                             version=str(profile.get("method") or "ohlcv-unavailable-v2"),
+                             provenance_class="DERIVED_FACT",
+                             source="volume profile over confirmed OHLCV",
+                             evidence_paths=(f"/raw/candles/{execution_timeframe}",))
                 for name in ("poc", "vah", "val")}
         price_change = None
         price_start_ts = None
@@ -782,13 +838,27 @@ class MarketContextServiceV2:
                                            "stale_sources": sorted(set(stale_sources)),
                                            "partial_sources": sorted(set(partial_sources)),
                                            "missing_sources": sorted(set(missing_sources)),
-                                           "gaps": gaps}).to_dict()
+                                           "gaps": gaps,
+                                           "provenance_class": "DERIVED_FACT",
+                                           "calculation_version": "market-context-quality-v2"}).to_dict()
         for frame in SUPPORTED_TIMEFRAMES:
             source_rows = datasets[frame] if frame == "1W" else None
             context["timeframes"][frame]["observation"] = asdict(timeframe_observation(
                 normalized, frame, datasets[frame], resolved, contexts[frame].quality,
                 source_rows=source_rows,
             ))
+        context["provenance"] = {
+            "contract_version": "market-context-provenance-v1",
+            "boundary": "MarketAnalysisContextV2",
+            "causal_cutoff": resolved,
+            "classes": list(PROVENANCE_CLASSES),
+            "layer_contract": {
+                "source_input": "RAW",
+                "accepted_observation": "CANONICAL_OBSERVATION",
+                "calculated_value": "DERIVED_FACT",
+                "semantic_lens": "DETERMINISTIC_INTERPRETATION",
+            },
+        }
         context["context_identity"] = hashlib.sha256(json.dumps(
             {key: value for key, value in context.items() if key != "context_identity"},
             sort_keys=True, separators=(",", ":"), ensure_ascii=False,
@@ -799,3 +869,24 @@ class MarketContextServiceV2:
                 oldest = min(self._cache, key=lambda item: self._cache[item][0])
                 self._cache.pop(oldest, None)
         return context
+
+    def canonical_snapshot(self, instrument: str, *, as_of: int | None = None,
+                           execution_timeframe: str = "15m",
+                           microstructure_evidence: Iterable[dict[str, Any]] | None = None) -> Any:
+        """Return the immutable canonical consumer contract for this cutoff.
+
+        The local import keeps the compatibility context module independent of
+        downstream lenses while giving API/report adapters one explicit hook.
+        """
+        try:
+            from canonical_market_snapshot import build_canonical_market_snapshot
+        except ImportError:
+            from .canonical_market_snapshot import build_canonical_market_snapshot
+        context = self.context(
+            instrument, as_of=as_of, execution_timeframe=execution_timeframe)
+        if microstructure_evidence is not None:
+            # Cached Context V2 payloads are shared compatibility values.  The
+            # canonical evidence overlay must never mutate that cache.
+            context = deepcopy(context)
+            context["microstructure_evidence"] = list(microstructure_evidence)
+        return build_canonical_market_snapshot(context)

@@ -848,9 +848,9 @@ function Workspace() {
   const flowState = paper?.flow?.professional;
   const flowStatus = flowState?.collector_status || "OFFLINE";
   const flowCoverage = flowState ? `${Math.round(flowState.coverage_seconds / 60)} / ${Math.round(flowState.window_seconds / 3600)}h` : "--";
-  const action =
-    runtimeAnalysis?.action || (signal.score >= 70 ? "WATCH" : "WAIT");
-  const decisionScore = runtimeAnalysis?.score ?? signal.score;
+  const browserObservation = snapshot.source === "Demo" ? "DEMO / BROWSER FALLBACK — not production truth" : `Browser ${snapshot.source} observation — not canonical production truth`;
+  const action = runtimeAnalysis?.action || "WAIT";
+  const decisionScore = runtimeAnalysis?.score ?? 0;
   const decisionConditions =
     runtimeAnalysis?.contributions?.map((item) => ({
       label: message(item.label_code, item.detail_params, item.label),
@@ -925,8 +925,9 @@ function Workspace() {
           </div>
         </div>
         <div className="market-controls">
-          <span className="live-dot" />{" "}
-          <strong>{t("market.publicData")}</strong>
+          <span className={`live-dot ${snapshot.source === "Demo" ? "degraded" : ""}`} />{" "}
+          <strong>{language === "zh" ? "原始 / 浏览器观测" : "Raw / Browser Observation"}</strong>
+          <small className="browser-observation" data-market-provenance={snapshot.source}>{browserObservation}</small>
           <select
             value={instrument}
             onChange={(event) => setInstrument(event.target.value)}
@@ -992,7 +993,7 @@ function Workspace() {
             <section className="market-summary">
               <div>
                 <span className="eyebrow">
-                  {perpetualInstrument(instrument)} · {t("market.publicDerivatives")}
+                  {language === "zh" ? "原始 / 标准观测边界" : "RAW / CANONICAL OBSERVATION BOUNDARY"} · {perpetualInstrument(instrument)}
                 </span>
                 <div className="price-line">
                   <strong>
@@ -1032,7 +1033,7 @@ function Workspace() {
             <section className="chart-workspace">
               <div className="chart-toolbar">
                 <div>
-                  <span className="eyebrow">{t("market.liveChart")}</span>
+                  <span className="eyebrow">{language === "zh" ? "原始观测 · 浏览器视图" : "RAW OBSERVATION · BROWSER VIEW"}</span>
                   <h2>{t("market.priceStructure")}</h2>
                 </div>
                 <div className="chart-actions">
@@ -1079,7 +1080,7 @@ function Workspace() {
               </div>
               </div>
             </section>
-            <WorkspaceAiBrief instrument={perpetualInstrument(instrument)} />
+            <div className="workspace-ai-provenance"><span className="eyebrow">{language === "zh" ? "AI 解读" : "AI INTERPRETATION"}</span><WorkspaceAiBrief instrument={perpetualInstrument(instrument)} /></div>
             </div>
             {legacyVpvr?.available && (
               <section className="flow-panel legacy-vpvr">
@@ -1101,9 +1102,7 @@ function Workspace() {
               <section className="flow-panel flow-legacy">
                 <div className="section-title">
                   <div>
-                    <span className="eyebrow">
-                      {t("market.publicDerivatives")}
-                    </span>
+                    <span className="eyebrow">{language === "zh" ? "派生证据 · SWAP 微观结构" : "DERIVED EVIDENCE · SWAP MICROSTRUCTURE"}</span>
                     <h2>{t("market.orderFlowOi")}</h2>
                   </div>
                   <small>{t("flow.source.okxTradesAndSwapOi")}</small>
@@ -1122,6 +1121,7 @@ function Workspace() {
                       </b>
                     </div>
                     <FlowChart points={paper.flow.professional?.available ? paper.flow.professional.cvd_series : paper.flow.cvd_series} zeroLine instrument={instrument} interval={interval} seriesType="cvd" />
+                    <small>{language === "zh" ? "CVD 仅来自 SWAP；不会用 SPOT 静默替代。下方显示窗口和采集质量。" : "CVD is SWAP-only: no SPOT substitution. Window and collector quality are shown below."}</small>
                     <small>{paper.flow.professional?.available ? (language === "zh" ? `WebSocket 逐笔成交聚合 · 已覆盖 ${Math.round(paper.flow.professional.coverage_seconds / 60)} 分钟 · 当前不参与评分` : `WebSocket trade aggregation · ${Math.round(paper.flow.professional.coverage_seconds / 60)} minutes covered · excluded from scoring`) : t("market.cvdHelp")}</small>
                   </article>
                   <article>
@@ -1158,7 +1158,7 @@ function Workspace() {
                 <div className="section-title">
                   <div>
                     <span className="eyebrow">
-                      {t("market.explainableEngine")}
+                      {language === "zh" ? "确定性解读" : "DETERMINISTIC INTERPRETATION"}
                     </span>
                     <h2>{t("market.scoreContribution")}</h2>
                   </div>
@@ -1313,7 +1313,7 @@ function Workspace() {
             <section className="paper-ledger">
               <div className="section-title">
                 <div>
-                  <span className="eyebrow">{t("paper.ledger")}</span>
+                  <span className="eyebrow">{language === "zh" ? "策略 / 模拟盘 · 标准账本" : "STRATEGY / PAPER · CANONICAL PAPER LEDGER"}</span>
                   <h2>{t("paper.executionResults")}</h2>
                 </div>
                 {paper ? (
@@ -1432,9 +1432,10 @@ function Workspace() {
                 <small>{language === "zh" ? "不代表成功率或收益概率" : "Not a success or return probability"}</small>
               </div>
             </div>
-            <div className="signal-lineage current-strategy" data-strategy-source={paper?.strategy_provenance?.source || "LEGACY_BASELINE"}>
+            <div className="signal-lineage current-strategy" data-strategy-source={paper?.strategy_provenance?.source || "ACTIVE_NONE"}>
+              <span><small>{language === "zh" ? "生效 Registry / 模拟盘" : "Active registry / Paper"}</small>{" "}<b>{paper?.active_strategy?.family || "ACTIVE NONE · WAIT"}</b></span>
               <span><small>当前策略 / Current strategy</small>{" "}<b>{paper?.active_strategy?.family || runtimeAnalysis?.strategy_version || "Legacy baseline"}</b></span>
-              <span><small>来源 / Source</small>{" "}<b>{paper?.active_strategy ? "自动研究验证 · Approved Registry" : "Legacy Baseline"}</b></span>
+              <span><small>来源 / Source</small>{" "}<b>{paper?.active_strategy ? "自动研究验证 · Approved Registry" : "ACTIVE NONE · no canonical paper strategy"}</b></span>
               {paper?.active_strategy && <>
                 <span><small>方向</small>{" "}<b>{paper.active_strategy.direction_capability}</b></span>
                 <span><small>Registry</small>{" "}<b title={paper.active_strategy.registry_id}>{paper.active_strategy.registry_id.slice(0,14)}</b></span>
@@ -1525,7 +1526,7 @@ function Workspace() {
             </div>
             {vpvr?.available && (
               <div className="vpvr-summary">
-                <span className="eyebrow">VPVR · {vpvr.interval || interval} · {vpvr.professional ? (language === "zh" ? "逐笔成交价" : "trade prices") : (language === "zh" ? "已确认K线" : "confirmed candles")}</span>
+                <span className="eyebrow">{language === "zh" ? "派生证据" : "DERIVED EVIDENCE"} · VPVR · {vpvr.interval || interval} · {vpvr.professional ? (language === "zh" ? "逐笔成交价精确分布" : "exact trade-price profile") : (language === "zh" ? "OHLCV 近似分布" : "OHLCV approximate profile")}</span>
                 <div><span>{language === "zh" ? "成交量控制点 POC" : "Point of control (POC)"}</span><b>${vpvr.poc?.toFixed(2)}</b></div>
                 <div><span>{language === "zh" ? "价值区下沿 · 支撑" : "Value-area low · support"}</span><b>${vpvr.val?.toFixed(2)}</b></div>
                 <div><span>{language === "zh" ? "价值区上沿 · 压力" : "Value-area high · resistance"}</span><b>${vpvr.vah?.toFixed(2)}</b></div>

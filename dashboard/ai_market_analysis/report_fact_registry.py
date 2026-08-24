@@ -110,6 +110,17 @@ def build_fact_registry(enriched: dict[str, Any]) -> dict[str, Any]:
     decision = enriched["decision_time"]
     quality = base.get("data_quality", {})
     dimensions = classify_evidence_quality(base, enriched.get("macro_context"))
+    canonical = base.get("canonical_market_snapshot")
+    if canonical:
+        facts.append(_fact(
+            "CANONICAL_MARKET_SNAPSHOT", "WARNING", "Canonical market evidence",
+            {key: canonical.get(key) for key in (
+                "snapshot_identity", "version", "instrument", "as_of",
+                "causal_cutoff", "quality", "fact_count",
+            )},
+            "/canonical_market_snapshot", timestamp=decision,
+            source="CanonicalMarketSnapshot", priority=100,
+        ))
     # Compatibility identifier; its value is CORE quality, never the worst
     # optional/enhanced source.
     facts.append(_fact("DATA_QUALITY", "WARNING", "核心市场数据", dimensions.get("core_quality", "UNKNOWN"), "/evidence_quality/core_quality", timestamp=decision, priority=100))

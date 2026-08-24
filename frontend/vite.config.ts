@@ -6,7 +6,7 @@ export default defineConfig(({mode}) => {
   const env=loadEnv(mode,".","");
   return {
     plugins: [react()],
-    test: { exclude: ["e2e/**", "node_modules/**", "dist/**"] },
+    test: { exclude: ["e2e/**", "**/node_modules/**", "**/dist/**"] },
     build: {
       chunkSizeWarningLimit: 300,
       rollupOptions: {

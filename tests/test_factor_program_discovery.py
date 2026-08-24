@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import copy
+import pytest
+
 from dashboard.approved_strategy_runtime import FrozenProgramEvaluator
 from dashboard.factor_program_discovery import canonical_backtest, screen
 from dashboard.factor_strategy_program import Condition, FactorStrategyProgram, generate, validate
@@ -43,11 +46,31 @@ def test_canonical_backtest_accepts_frozen_program():
     p = program(); result = canonical_backtest(p, rows(100), "BTC-USDT", "15m", 0, 90 * 900)
     assert result["program_evidence"]["candidate_identity"] == p.identity
 
+def frozen_program_registry():
+    p=program(); definition={"program_ast":p.canonical_ast(),"factor_versions":p.factor_versions,"program_version":p.grammar_version,"parameters":{},"timeframe":"15m","runtime_adapter_version":"approved-strategy-runtime-v2.1-v1","validation_status":{"development":"PASS","walk_forward":"PASS","holdout":"PASS","oot":"PASS","cross_asset":"PASS","robustness":"PASS"},"execution_assumptions":{"initial_capital":10000.0,"risk_per_trade":.01,"trading_fee":.0005,"slippage":.0003,"stop_loss_atr_multiplier":1.0,"risk_reward_ratio":2.0,"cooldown_bars":16,"allow_long":True,"allow_short":True},"activation_scope":{"mode":"GLOBAL_CROSS_ASSET","instruments":["BTC-USDT","ETH-USDT","SOL-USDT"]}}
+    return p,{"registry_id":"asr_program","candidate_identity":p.identity,"configuration_hash":__import__("dashboard.approved_strategy_runtime",fromlist=["canonical_hash"]).canonical_hash(definition),"serialized_definition":definition,"parameters":{},"strategy_version":p.schema_version,"instrument_scope":["BTC-USDT","ETH-USDT","SOL-USDT"],"timeframe":"15m"}
+
+
 def test_canonical_registry_runtime_executes_frozen_program_ast():
-    p=program(); definition={"program_ast":p.canonical_ast(),"factor_versions":p.factor_versions,"program_version":p.grammar_version,"parameters":{},"timeframe":"15m"}
-    registry={"registry_id":"asr_program","candidate_identity":p.identity,"configuration_hash":__import__("dashboard.approved_strategy_runtime",fromlist=["canonical_hash"]).canonical_hash(definition),"serialized_definition":definition,"parameters":{},"strategy_version":p.schema_version,"instrument_scope":["BTC-USDT"]}
-    value=evaluate_frozen_candidate(registry,"BTC-USDT",rows())
+    p,registry=frozen_program_registry()
+    value=evaluate_frozen_candidate(registry,"BTC-USDT",rows(),snapshot_identity="synthetic-market-snapshot")
     assert value["candidate_identity"]==p.identity and value["configuration_hash"]==registry["configuration_hash"]
+
+
+@pytest.mark.parametrize("mutation",("hash","scope","timeframe"))
+def test_frozen_program_wrong_hash_scope_or_timeframe_fails_closed(mutation):
+    _,registry=frozen_program_registry(); registry=copy.deepcopy(registry)
+    if mutation=="hash": registry["configuration_hash"]="0"*64
+    elif mutation=="scope": registry["instrument_scope"]=["ETH-USDT","SOL-USDT"]
+    else: registry["timeframe"]="1H"
+    with pytest.raises(ValueError):
+        evaluate_frozen_candidate(registry,"BTC-USDT",rows(),snapshot_identity="synthetic-market-snapshot")
+
+
+def test_frozen_program_requires_external_market_snapshot_identity():
+    _,registry=frozen_program_registry()
+    with pytest.raises(ValueError,match="snapshot identity"):
+        evaluate_frozen_candidate(registry,"BTC-USDT",rows())
 
 def test_program_candidate_is_durable_in_existing_candidate_table(tmp_path):
     repo=ResearchRepository(tmp_path/"research.db")

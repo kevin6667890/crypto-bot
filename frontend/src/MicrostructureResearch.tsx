@@ -376,6 +376,7 @@ export default function MicrostructureResearch() {
   return (
     <div className="microstructure-workspace" id="microstructure">
       <div className="micro-disclaimer">{t("micro.disclaimer")}</div>
+      <div className="micro-provenance"><span className="eyebrow">{language === "zh" ? "派生证据 · 高级微观结构" : "DERIVED EVIDENCE · ADVANCED MICROSTRUCTURE"}</span><p>{language === "zh" ? "按产品显示来源覆盖与质量；SPOT 和 SWAP 观测不可互换。" : "Product-specific evidence is shown with its source coverage and quality. SPOT and SWAP observations are not interchangeable."}</p></div>
       <div className="micro-resource-states" aria-live="polite">
         {([
           ["Health", healthResource],

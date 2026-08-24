@@ -130,7 +130,7 @@ function phaseText(phase: AsyncPhase, errorType?: string) {
 }
 
 export default function Operations() {
-  const { t, value } = useLanguage();
+  const { language, t, value } = useLanguage();
   const resource = useAsyncResource<OperationsSummary>(
     "operations-summary",
     `${paperApiBase}/api/operations/summary`,
@@ -143,6 +143,7 @@ export default function Operations() {
 
   return (
     <main className="operations-workspace">
+      <div className="operations-provenance"><span className="eyebrow">{language === "zh" ? "运维 · 高级运行证据" : "OPERATIONS · ADVANCED RUNTIME EVIDENCE"}</span><small>{language === "zh" ? "只读服务健康和存储遥测；不代表市场、策略或 AI 事实。" : "Read-only service health and storage telemetry; this is not market, strategy, or AI truth."}</small></div>
       <section className="operations-hero">
         <div>
           <span className="eyebrow">{t("operations.description")}</span>

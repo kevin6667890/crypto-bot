@@ -59,6 +59,9 @@ services:
     environment:
       <<: [*ai-disabled, *ai-budget]
       PAPER_API_HOST: 0.0.0.0
+      LIVE_TRADING_ENABLED: "false"
+      AI_REPORT_SCHEDULER_CADENCE_SECONDS: "14400"
+      AI_REPORT_SCHEDULER_CONFIRMATION_GRACE_SECONDS: "120"
       GIT_COMMIT: ${FACTOR_PROGRAM_GIT_COMMIT:?Factor Program source commit is required}
       PAPER_DB_PATH: /var/lib/paper/paper_trades.db
       MICROSTRUCTURE_DB_PATH: /var/lib/microstructure/market_microstructure.db
@@ -73,8 +76,8 @@ services:
       - ai-report-data:/var/lib/ai-report:rw
     expose: ["8765"]
     pids_limit: 128
-    mem_limit: 640m
-    cpus: 0.55
+    mem_limit: 512m
+    cpus: 0.50
     healthcheck:
       test: [CMD, python, -c, "from urllib.request import urlopen; urlopen('http://127.0.0.1:8765/api/paper/flow/health',timeout=3)"]
       interval: 30s
@@ -92,6 +95,7 @@ services:
       PAPER_DB_PATH: /var/lib/paper/paper_trades.db
       GIT_COMMIT: ${FACTOR_PROGRAM_GIT_COMMIT:?Factor Program source commit is required}
       RESEARCH_JOB_WORKER_ENABLED: "true"
+      LIVE_TRADING_ENABLED: "false"
       AUTO_RESEARCH_ENABLED: "false"
       AUTO_RESEARCH_INTERVAL_HOURS: "168"
       AUTO_RESEARCH_LOOKBACK_DAYS: "730"
@@ -111,12 +115,13 @@ services:
       MICROSTRUCTURE_DB_PATH: /var/lib/microstructure/market_microstructure.db
       CANONICAL_MICROSTRUCTURE_HISTORY_DB_PATH: /var/lib/microstructure/canonical_microstructure_history_v1.db
       MICROSTRUCTURE_MAINTENANCE_ENABLED: "false"
+      LIVE_TRADING_ENABLED: "false"
       MICROSTRUCTURE_REALTIME_AGGREGATION_ENABLED: "true"
     volumes:
       - microstructure-data:/var/lib/microstructure:rw
     pids_limit: 128
     mem_limit: 768m
-    cpus: 0.65
+    cpus: 0.60
     healthcheck:
       test: [CMD, python, -c, "from urllib.request import urlopen; urlopen('http://127.0.0.1:8770/health',timeout=12)"]
       interval: 30s
@@ -136,7 +141,7 @@ services:
     volumes:
       - ai-report-data:/var/lib/ai-report:rw
     pids_limit: 64
-    mem_limit: 384m
+    mem_limit: 320m
     cpus: 0.30
     # Let an in-flight provider request reach its exactly-once terminal state
     # before a rolling deployment replaces the worker.
@@ -157,7 +162,7 @@ services:
     volumes:
       - ai-report-data:/var/lib/ai-report:rw
     pids_limit: 64
-    mem_limit: 256m
+    mem_limit: 192m
     cpus: 0.20
     healthcheck:
       test: [CMD, python, -c, "from dashboard.ai_market_analysis.report_audit_repository import AuditRepository; assert AuditRepository('/var/lib/ai-report/ai_market_reports.db').schema_version()"]

@@ -6,6 +6,7 @@ from dashboard.discovery_service import DiscoveryService, ENGINE_VERSION, aggreg
 from dashboard.job_queue import JobQueue
 from dashboard.research_repository import ResearchRepository
 from dashboard.strategy_registry import ACTIVE_SCOPE_POLICY_VERSION, ApprovedStrategyRegistry, StrategyRegistryAdapter, canonical_hash
+from dashboard.approved_strategy_runtime import RUNTIME_VERSION
 from dashboard.strategy_router_v2 import StrategyRouterV2
 from tests.test_strategy_router_v2 import inputs
 
@@ -17,8 +18,10 @@ def evidence(score: float, identity: str):
              "worst_maximum_drawdown":8.0,"validation_return_standard_deviation":2.0}
     definition={"schema_version":"approved-deterministic-definition-v1","template":"TREND_PULLBACK_V2_1",
                 "template_version":"trend-pullback-v2.1","parameters":{"risk_per_trade":.01},"direction":"BOTH",
+                "timeframe":"15m","runtime_adapter_version":RUNTIME_VERSION,
                 "router_family":"TREND_PULLBACK","router_parameters":{"zone_buffer_atr":.2,"trigger_score":72,"minimum_r":1.25},
                 "dataset_range":{"start":1,"end":2},"validation_status":{"development":"PASS","walk_forward":"PASS","holdout":"PASS","oot":"PASS","cross_asset":"PASS","robustness":"PASS"},
+                "execution_assumptions":{"initial_capital":10000.0,"risk_per_trade":.01,"trading_fee":.0005,"slippage":.0003,"stop_loss_atr_multiplier":1.0,"risk_reward_ratio":2.0,"cooldown_bars":16,"allow_long":True,"allow_short":True},
                 "activation_scope":{"mode":"GLOBAL_CROSS_ASSET","policy_version":ACTIVE_SCOPE_POLICY_VERSION,"instruments":["BTC-USDT","ETH-USDT","SOL-USDT"]}}
     configuration_hash=canonical_hash(definition)
     passed={"status":"PASS","metrics":{"total_trades":10,"total_return":1,"maximum_drawdown":5}}
@@ -51,11 +54,13 @@ def runtime_candles(as_of: int, count: int = 240):
              "confirmed":True} for i in range(count)]
 
 
-def test_empty_registry_is_explicit_legacy_fallback(tmp_path):
+def test_empty_registry_waits_unless_legacy_is_explicitly_requested(tmp_path):
     repo=ResearchRepository(tmp_path/"research.db"); registry=ApprovedStrategyRegistry(repo)
     value,state=inputs(); result=StrategyRegistryAdapter(registry).route(StrategyRouterV2(),value,state)
-    assert result["strategy_provenance"]["source"]=="LEGACY_BASELINE"
-    assert len(result["candidates"])==8
+    assert result["strategy_provenance"]["source"]=="NO_ACTIVE_REGISTRY"
+    assert result["execution_decision"]["action"]=="WAIT" and not result["candidates"]
+    legacy=StrategyRegistryAdapter(registry).route(StrategyRouterV2(),value,state,allow_legacy=True)
+    assert legacy["strategy_provenance"]["source"]=="LEGACY_BASELINE" and len(legacy["candidates"])==8
 
 
 def test_fixture_cycle_approves_activates_and_router_loads_without_code_change(tmp_path):
@@ -63,7 +68,7 @@ def test_fixture_cycle_approves_activates_and_router_loads_without_code_change(t
     cycle=run_cycle(auto,jobs,{"seed":1,"lookback_days":365,"trial_budget":1,"finalists":1})
     assert cycle["status"]=="COMPLETED" and cycle["result"]["approved"]==1
     active=auto.registry.active(); assert active["candidate_identity"]=="candidate-a" and active["status"]=="ACTIVE"
-    value,state=inputs(); route=StrategyRegistryAdapter(auto.registry).route(StrategyRouterV2(),value,state,candles=runtime_candles(value["as_of"]))
+    value,state=inputs(); route=StrategyRegistryAdapter(auto.registry).route(StrategyRouterV2(),value,state,candles=runtime_candles(value["as_of"]),snapshot_identity="market-snapshot-a",decision_timestamp="2026-08-24T00:00:00+00:00")
     assert route["strategy_provenance"]["source"]=="APPROVED_REGISTRY"
     assert route["strategy_provenance"]["candidate_identity"]=="candidate-a"
     assert {(item["family"],item["direction"]) for item in route["candidates"]}=={("TREND_PULLBACK","LONG"),("TREND_PULLBACK","SHORT")}
@@ -102,12 +107,12 @@ def test_router_and_paper_share_exact_frozen_runtime_semantics(tmp_path):
     from dashboard.paper_api import PaperService
     repo,jobs,auto=services(tmp_path,lambda cycle:[evidence(70,"candidate-runtime")])
     run_cycle(auto,jobs,{"seed":11,"lookback_days":365,"trial_budget":1,"finalists":1})
-    active=auto.registry.active(); value,state=inputs(); candles=runtime_candles(value["as_of"])
-    route=StrategyRegistryAdapter(auto.registry).route(StrategyRouterV2(),value,state,candles=candles)
+    active=auto.registry.active(); value,state=inputs(); candles=runtime_candles(value["as_of"]); decision_timestamp="2026-08-24T00:00:00+00:00"; snapshot_identity="market-snapshot-runtime"
+    route=StrategyRegistryAdapter(auto.registry).route(StrategyRouterV2(),value,state,candles=candles,snapshot_identity=snapshot_identity,decision_timestamp=decision_timestamp)
     paper=PaperService(tmp_path/"paper.db")
     paper_decision=paper._registry_decision(active,"BTC-USDT",candles,
         {"decision_cvd_delta":0,"decision_oi_change_pct":None,"source":"fixture","decision_quality":{}},
-        {"allowed":True,"blockers":[]},{})
+        {"allowed":True,"blockers":[]},{},decision_timestamp=decision_timestamp,snapshot_identity=snapshot_identity)
     execution=route["execution_decision"]
     assert (execution["action"],execution["candidate_identity"],execution["configuration_hash"]) == (
         paper_decision["bias"],paper_decision["candidate_identity"],paper_decision["strategy_configuration_hash"])
@@ -184,3 +189,72 @@ def test_new_paper_trade_snapshots_registry_identity_without_mutating_history(tm
     with service._connect() as connection:
         row=connection.execute("SELECT strategy_registry_id,candidate_identity,strategy_version,config_hash,strategy_configuration_hash FROM paper_trades WHERE id=?",(created["trade_id"],)).fetchone()
     assert tuple(row)==("asr_fixture","candidate-a","trend-pullback-v2.1","approved-config-a","approved-config-a")
+
+
+def test_scheduler_path_waits_without_active_registry_and_never_opens_legacy(monkeypatch, tmp_path):
+    from dashboard.paper_api import PaperService
+    service=PaperService(tmp_path/"paper.db"); opened=[]; captured={}
+    monkeypatch.setattr(service,"_active_registry_strategy",lambda:None)
+    monkeypatch.setattr(service,"_price",lambda _instrument:100.0)
+    monkeypatch.setattr(service,"monitor_positions",lambda *_:None)
+    monkeypatch.setattr(service,"_flow_metrics",lambda _instrument:{})
+    monkeypatch.setattr(service,"maybe_create_ai_brief",lambda *_:None)
+    def fake_analyze(*_args,**kwargs):
+        captured.update(kwargs); return {"instrument":"BTC-USDT","action":"WAIT","entry_allowed":False}
+    monkeypatch.setattr(service,"analyze",fake_analyze)
+    monkeypatch.setattr(service,"_open_trade",lambda value:opened.append(value))
+    result=service.cycle_instrument("BTC-USDT")
+    assert result["action"]=="WAIT" and captured["canonical_paper"] is True
+    assert captured["registry_snapshot"] is None and not opened
+
+
+def test_canonical_paper_builds_snapshot_from_its_exact_confirmed_candle(monkeypatch, tmp_path):
+    from types import SimpleNamespace
+    from dashboard.paper_api import PaperService
+    service=PaperService(tmp_path/"paper.db")
+    candles=runtime_candles(1_800_000_000)
+    close_ts=int(candles[-1]["candle_close_ts"])
+    monkeypatch.setattr(service,"_materialize_market_timeframes",lambda _instrument:{
+        "15m":candles,"1H":candles,"4H":candles,"1D":candles,
+    })
+    monkeypatch.setattr(service,"_professional_vpvr",lambda _instrument:{"ready":False})
+    observed={}
+    def snapshot(_instrument,as_of,_timeframe):
+        observed["as_of"]=as_of
+        return SimpleNamespace(
+            snapshot_identity="c"*64,version="canonical-market-snapshot-v1",
+            timeframe=lambda _value:SimpleNamespace(source_timestamp=close_ts),
+        )
+    monkeypatch.setattr("dashboard.paper_api.canonical_market_snapshot",snapshot)
+    result=service.analyze(
+        "BTC-USDT",{"decision_cvd_delta":0.0,"decision_oi_change_pct":0.0,
+        "decision_quality":{},"source":"fixture"},canonical_paper=True,
+    )
+    assert observed["as_of"]==close_ts
+    assert result["snapshot_identity"]=="c"*64
+    assert result["canonical_snapshot_version"]=="canonical-market-snapshot-v1"
+    assert result["action"]=="WAIT" and result["entry_allowed"] is False
+
+
+def test_activation_race_revalidates_snapshot_before_ledger_write(tmp_path):
+    import json
+    from dashboard.paper_api import PaperService
+    from dashboard.signal_identity import canonical_json
+    from tests.test_paper_provenance_risk_accounting import analysis, rationale
+    database=tmp_path/"paper.db"; repo,jobs,auto=services(tmp_path,lambda cycle:[evidence(70,"candidate-race")])
+    # services() uses research.db; use that exact database for the Paper ledger.
+    database=repo.db_path
+    run_cycle(auto,jobs,{"seed":21,"lookback_days":365,"trial_budget":1,"finalists":1})
+    service=PaperService(database); snapshot=auto.registry.active_snapshot(); item=analysis(service)
+    params,_=service._active_strategy(snapshot)
+    envelope={"registry_id":snapshot["registry_id"],"candidate_identity":snapshot["candidate_identity"],"configuration_hash":snapshot["configuration_hash"],"runtime_version":RUNTIME_VERSION,"registry_snapshot_identity":snapshot["registry_snapshot_identity"],"snapshot_identity":"synthetic-market-snapshot-race","decision_timestamp":item["updated_at"],"input_fingerprint":"a"*64,"factor_fingerprint":"b"*64}
+    item.update(canonical_paper=True,registry_snapshot=snapshot,execution_parameters=json.loads(canonical_json(params)),strategy_registry_id=snapshot["registry_id"],candidate_identity=snapshot["candidate_identity"],strategy_configuration_hash=snapshot["configuration_hash"],strategy_version=snapshot["strategy_version"],execution_runtime_version=RUNTIME_VERSION,registry_snapshot_identity=snapshot["registry_snapshot_identity"],snapshot_identity=envelope["snapshot_identity"],decision_timestamp=item["updated_at"],input_fingerprint=envelope["input_fingerprint"],factor_fingerprint=envelope["factor_fingerprint"],execution_envelope=envelope)
+    with service._connect() as connection:
+        connection.execute("UPDATE decision_evaluations SET strategy_registry_id=?,candidate_identity=?,strategy_configuration_hash=?,execution_runtime_version=?,registry_snapshot_identity=?,snapshot_identity=?,decision_timestamp=?,input_fingerprint=?,factor_fingerprint=? WHERE evaluation_id=?",(item["strategy_registry_id"],item["candidate_identity"],item["strategy_configuration_hash"],RUNTIME_VERSION,item["registry_snapshot_identity"],item["snapshot_identity"],item["decision_timestamp"],item["input_fingerprint"],item["factor_fingerprint"],item["evaluation_id"]))
+    frozen_rationale=rationale(service,item)
+    with repo.connect() as connection:
+        connection.execute("UPDATE approved_strategy_registry SET status='RETIRED',retired_at=? WHERE registry_id=?",("2026-08-24T00:00:00+00:00",snapshot["registry_id"]))
+    created=service.create_order(item,frozen_rationale)
+    assert created=={"ok":False,"error":"active_registry_changed_before_ledger_write"}
+    with service._connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM paper_trades").fetchone()[0]==0

@@ -20,3 +20,14 @@ def test_config_rejects_noncanonical_host(tmp_path: Path):
     config.write_text("PRODUCTION_ORIGIN_HOST=43.167.197.67\nPRODUCTION_ORIGIN_USER=root\nPRODUCTION_ORIGIN_APP_DIR=/opt/crypto-bot\n", encoding="utf-8")
     with pytest.raises(ValueError, match="PRODUCTION_ORIGIN_NOT_CANONICAL"):
         load_origin(config)
+
+
+def test_production_candidate_is_paper_only_and_uses_4h_report_cadence():
+    root = Path(__file__).resolve().parents[1]
+    compose = (root / "deploy/compose/ai6b-production-candidate.yml").read_text(
+        encoding="utf-8"
+    )
+    assert 'LIVE_TRADING_ENABLED: "false"' in compose
+    assert 'AI_REPORT_SCHEDULER_CADENCE_SECONDS: "14400"' in compose
+    assert 'AI_REPORT_SCHEDULER_CONFIRMATION_GRACE_SECONDS: "120"' in compose
+    assert "8501:80" not in compose

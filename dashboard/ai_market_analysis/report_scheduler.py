@@ -10,6 +10,10 @@ from .report_api import submit_report
 from .report_repository import ReportRepository
 
 
+CONFIRMED_4H_SECONDS = 4 * 60 * 60
+AUTOMATIC_SCHEDULER_MODE = "CONFIRMED_4H_CLOSE"
+
+
 def _enabled(name: str) -> bool:
     return os.getenv(name, "false").lower() == "true"
 
@@ -37,6 +41,9 @@ class ReportScheduler:
         self.last_queued: str | None = None
         self.last_error: str | None = None
         self.next_tick: str | None = None
+        self.last_snapshot_identity: str | None = None
+        self._attempted_boundaries: set[tuple[str, str]] = set()
+        self._retry_after: dict[tuple[str, str], datetime] = {}
 
     def _instruments(self) -> tuple[str, ...]:
         values = tuple(item.strip() for item in os.getenv(
@@ -45,18 +52,35 @@ class ReportScheduler:
         return values or ("ETH-USDT-SWAP",)
 
     def _cadence(self) -> int:
-        return max(60, int(os.getenv("AI_REPORT_SCHEDULER_CADENCE_SECONDS", "3600")))
+        # Automatic generation is intentionally tied to the confirmed 4H
+        # market boundary. A stale hourly deployment variable cannot silently
+        # restore 24 LLM reports/day.
+        return CONFIRMED_4H_SECONDS
 
-    def _last_submission(self, instrument: str) -> datetime | None:
+    def _grace_seconds(self) -> int:
+        return max(0, min(900, int(os.getenv(
+            "AI_REPORT_SCHEDULER_CONFIRMATION_GRACE_SECONDS", "120"
+        ))))
+
+    def _eligible_close(self, now: datetime) -> datetime:
+        effective = now - timedelta(seconds=self._grace_seconds())
+        epoch = int(effective.timestamp())
+        return datetime.fromtimestamp(
+            epoch - epoch % CONFIRMED_4H_SECONDS, timezone.utc
+        )
+
+    def _boundary_submitted(self, instrument: str, decision_time: str) -> bool:
         with self.repository.connect() as conn:
             row = conn.execute(
-                "SELECT MAX(created_at) FROM ai_report_requests "
-                "WHERE instrument=? AND mode='QUICK' AND language='zh-CN' "
-                "AND provider=? AND model=?",
+                "SELECT 1 FROM ai_report_requests r "
+                "JOIN ai_market_contexts c ON c.context_id=r.context_id "
+                "WHERE r.instrument=? AND r.mode='QUICK' AND r.language='zh-CN' "
+                "AND r.provider=? AND r.model=? AND c.decision_time=? LIMIT 1",
                 (instrument, os.getenv("AI_REPORT_SCHEDULER_PROVIDER", "deepseek"),
-                 os.getenv("AI_REPORT_SCHEDULER_MODEL", "deepseek-v4-flash")),
+                 os.getenv("AI_REPORT_SCHEDULER_MODEL", "deepseek-v4-flash"),
+                 decision_time),
             ).fetchone()
-        return _parse(row[0] if row else None)
+        return row is not None
 
     def _staleness(self, now: datetime) -> list[dict[str, Any]]:
         """Expose cadence-relative display freshness through the health plane.
@@ -123,12 +147,18 @@ class ReportScheduler:
             staleness = []
         return {
             "enabled": _enabled("AI_REPORT_SCHEDULER_ENABLED"),
+            "scheduler_mode": AUTOMATIC_SCHEDULER_MODE,
+            "confirmed_timeframe": "4H",
             "cadence_seconds": self._cadence(),
+            "confirmation_grace_seconds": self._grace_seconds(),
+            "estimated_automatic_reports_per_day": 6,
+            "material_transition_trigger": "DISABLED",
             "instruments": list(self._instruments()),
             "last_tick": self.last_tick,
             "next_tick": self.next_tick,
             "last_queued": self.last_queued or telemetry["last_successful_queue"],
             "last_error": self.last_error,
+            "last_snapshot_identity": self.last_snapshot_identity,
             "last_scheduler_error": self.last_error,
             "lease_required": False,
             "report_staleness": staleness,
@@ -147,27 +177,42 @@ class ReportScheduler:
             self.next_tick = (now + timedelta(seconds=60)).isoformat().replace("+00:00", "Z")
             return self.state()
         cadence = self._cadence()
-        due_at: list[datetime] = []
+        boundary = self._eligible_close(now)
+        decision_time = boundary.isoformat().replace("+00:00", "Z")
+        next_due = boundary + timedelta(seconds=cadence + self._grace_seconds())
         for instrument in self._instruments():
-            previous = self._last_submission(instrument)
-            due = previous is None or now >= previous + timedelta(seconds=cadence)
-            due_at.append((previous + timedelta(seconds=cadence)) if previous else now)
-            if not due:
+            key = (instrument, decision_time)
+            if key in self._attempted_boundaries or self._boundary_submitted(
+                instrument, decision_time
+            ):
+                continue
+            retry_after = self._retry_after.get(key)
+            if retry_after is not None and now < retry_after:
+                next_due = min(next_due, retry_after)
                 continue
             try:
                 result = submit_report({
                     "instrument": instrument,
-                    "decision_time": now.isoformat().replace("+00:00", "Z"),
+                    "decision_time": decision_time,
                     "mode": "QUICK", "language": "zh-CN", "position_source": "NONE",
                     "provider": os.getenv("AI_REPORT_SCHEDULER_PROVIDER", "deepseek"),
                     "model": os.getenv("AI_REPORT_SCHEDULER_MODEL", "deepseek-v4-flash"),
                 }, self.repository, self.paper_db, self.micro_db)
+                # ``created=False`` is also terminal for this boundary: the
+                # immutable request already exists and must not be re-queued.
+                self._attempted_boundaries.add(key)
+                self._retry_after.pop(key, None)
+                self.last_snapshot_identity = result.get("canonical_snapshot_identity")
                 if result.get("created"):
                     self.last_queued = self.last_tick
-                    due_at[-1] = now + timedelta(seconds=cadence)
                 break
             except Exception as error:  # Sanitized runtime state only.
                 self.last_error = type(error).__name__
+                cooldown = max(60, int(os.getenv(
+                    "AI_REPORT_SCHEDULER_FAILURE_COOLDOWN_SECONDS", "900"
+                )))
+                self._retry_after[key] = now + timedelta(seconds=cooldown)
+                next_due = min(next_due, self._retry_after[key])
                 break
-        self.next_tick = min(due_at, default=now + timedelta(seconds=cadence)).isoformat().replace("+00:00", "Z")
+        self.next_tick = next_due.isoformat().replace("+00:00", "Z")
         return self.state()

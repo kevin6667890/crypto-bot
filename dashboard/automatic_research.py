@@ -554,6 +554,7 @@ class AutomaticResearchService:
             definition = {
                 "schema_version":"approved-deterministic-definition-v1", "template":item["template"],
                 "template_version":item["template_version"], "parameters":item["parameters"],
+                "timeframe":timeframe,
                 "direction":item.get("direction") or "BOTH", "router_family":ROUTER_TEMPLATE_MAP.get(item["template"]),
                 "router_parameters":router_parameters, "runtime_adapter_version":RUNTIME_ADAPTER_VERSION,
                 "dataset_range":{"start":request["research_start"],"end":request["research_end"]},

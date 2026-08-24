@@ -6,6 +6,7 @@ The AI market-analysis subsystem turns frozen deterministic evidence into struct
 
 ```text
 confirmed public observations
+  -> CanonicalMarketSnapshot (cutoff, quality, provenance and identity)
   -> deterministic market facts, quality, structure, levels and scenarios
   -> immutable context and evidence registries
   -> bounded structured report request
@@ -28,6 +29,8 @@ Each report is bound to an instrument, report mode, language, confirmed decision
 
 Report, context, registry, audit and presentation identities remain persisted so the UI can reopen report history through a `report_id` deep link and preserve provenance across restarts.
 
+The canonical input adapter owns confirmed-candle and microstructure identity at the AI boundary. AI6B keeps its own tactical and temporal interpretation; it is not forced to reuse the `MarketStateV2` enum. A current Market page can therefore describe the general structure while an older report describes a tactical pullback, provided both surfaces show their own snapshot/report times and freshness.
+
 ## Deterministic safety boundary
 
 The AI layer may summarize the frozen evidence, organize supporting and conflicting observations, describe uncertainty, and explain conditional scenarios. It cannot:
@@ -46,6 +49,8 @@ Generated text is not trusted on arrival. A deterministic audit validates its sc
 Reports, requests, frozen contexts, registry snapshots, audits and lifecycle events use a separate SQLite-backed evidence store. The runtime includes bounded queues, concurrency and token/cost budgets, retry classification, retention/archive controls, health reporting, privacy checks, and a durable live-provider kill switch. Provider credentials remain server-side and are never part of a report, URL, frontend bundle, or captured portfolio asset.
 
 The public product surface exposes read-only summaries, history and eligible report details. Administrative Shadow presentation and position-detail paths remain separately gated.
+
+Automatic generation is aligned to each newly confirmed 4H close and deduplicated by canonical snapshot/fingerprint, normally producing about six reports per day per configured instrument. Manual refresh remains available. Material-transition generation is deliberately disabled until a stable, bounded event hook exists; no extra orchestration framework is hidden behind the scheduler. Historical reports remain visible and explicitly stale when their source snapshot ages.
 
 ## Document map
 

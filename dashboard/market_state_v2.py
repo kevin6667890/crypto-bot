@@ -608,7 +608,11 @@ class MarketStateEngineV2:
             semantic_type = f"{level_type} {sources}"
             support = any(token in semantic_type for token in ("LOW", "VAL"))
             resistance = any(token in semantic_type for token in ("HIGH", "VAH"))
-            confirmed = bool(level.get("confirmed")) and bool((frames.get(atr_frame) or {}).get("confirmed"))
+            frame_quality = str((frames.get(atr_frame) or {}).get("quality", {}).get(
+                "status", "MISSING"))
+            confirmed = bool(level.get("confirmed")) and bool(
+                (frames.get(atr_frame) or {}).get("confirmed"))
+            confirmation_quality = confirmed and frame_quality == "AVAILABLE"
             interaction = "APPROACHING" if abs(distance) <= touch_pct * 2 else "UNKNOWN"
             stage = "OBSERVING"
             confirmation_ts = None
@@ -625,15 +629,17 @@ class MarketStateEngineV2:
             approached = int(level.get("touches", 0)) > 0
             if confirmed and support and distance < -confirm_pct:
                 interaction = "BROKEN"; stage = "BREAKDOWN_CANDIDATE"
-                if expanded and approached:
+                if expanded and approached and confirmation_quality:
                     overlays.append("BREAKDOWN_CANDIDATE")
+                    overlays.append(f"{timeframe}:BREAKDOWN_CANDIDATE")
                 else:
                     stage = "BOUNDARY_BREACH_OBSERVED"
                 invalidation = "close back above support confirmation buffer"
             elif confirmed and resistance and distance > confirm_pct:
                 interaction = "BROKEN"; stage = "BREAKOUT_CANDIDATE"
-                if expanded and approached:
+                if expanded and approached and confirmation_quality:
                     overlays.append("BREAKOUT_CANDIDATE")
+                    overlays.append(f"{timeframe}:BREAKOUT_CANDIDATE")
                 else:
                     stage = "BOUNDARY_BREACH_OBSERVED"
                 invalidation = "close back below resistance confirmation buffer"
@@ -644,7 +650,7 @@ class MarketStateEngineV2:
                 level_type, timeframe, round(zone_low, 8), round(zone_high, 8), boundary,
                 round(distance, 6), approach, interaction, int(level.get("touches", 0)),
                 None, "NOT_RECLAIMED", (int(level.get("source_timestamp", 0)),),
-                "AVAILABLE" if confirmed else "PARTIAL", None, confirmation_ts, None,
+                frame_quality if confirmed else "PARTIAL", None, confirmation_ts, None,
                 volume_ratio, flow_quality, stage, invalidation,
             ))
         return output, overlays
@@ -753,9 +759,13 @@ class MarketStateEngineV2:
                ("MA200" in item.level_type and item.approach_direction == "FROM_BELOW")
                for item in major):
             return "MAJOR_RESISTANCE_TEST"
-        if any(item.current_stage == "BREAKOUT_CANDIDATE" for item in levels):
+        if any(item.current_stage == "BREAKOUT_CANDIDATE" and
+               self._global_boundary_support(item, states, direction="UP")
+               for item in levels):
             return "BREAKOUT_DEVELOPING"
-        if any(item.current_stage == "BREAKDOWN_CANDIDATE" for item in levels):
+        if any(item.current_stage == "BREAKDOWN_CANDIDATE" and
+               self._global_boundary_support(item, states, direction="DOWN")
+               for item in levels):
             return "BREAKDOWN_DEVELOPING"
         if alignment.state == "ALIGNED_UP":
             return "HTF_UPTREND_CONTINUATION"
@@ -770,6 +780,33 @@ class MarketStateEngineV2:
         if any("VOLATILITY_COMPRESSION" in item or "COMPRESSION_RELEASE" in item for item in volatility):
             return "VOLATILITY_TRANSITION"
         return "NO_CLEAR_STATE"
+
+    @staticmethod
+    def _global_boundary_support(level: LevelInteractionV2,
+                                 states: dict[str, TimeframeStateV2], *,
+                                 direction: str) -> bool:
+        """Keep a local boundary event local unless higher frames corroborate it.
+
+        A 4H/daily/weekly or multi-timeframe boundary is globally meaningful by
+        construction.  A 15m/1H candidate needs a supportive 4H environment and
+        at least one supportive 1D/1W frame, with no available higher timeframe
+        pointing the other way.  This prevents a trigger-frame breach from
+        erasing mixed or adverse canonical structure.
+        """
+        if level.quality != "AVAILABLE":
+            return False
+        if level.timeframe in {"1W", "1D", "4H", "MULTI", "GLOBAL"}:
+            return True
+        supportive = ({"TREND_UP", "TRANSITION_UP"} if direction == "UP" else
+                      {"TREND_DOWN", "TRANSITION_DOWN"})
+        adverse = ({"TREND_DOWN", "TRANSITION_DOWN"} if direction == "UP" else
+                   {"TREND_UP", "TRANSITION_UP"})
+        if states["4H"].primary_state not in supportive:
+            return False
+        higher = [states[timeframe].primary_state for timeframe in ("1W", "1D")
+                  if states[timeframe].primary_state != "UNKNOWN"]
+        return bool(higher) and any(item in supportive for item in higher) and not any(
+            item in adverse for item in higher)
 
     def _limitations(self, context: dict[str, Any], states: dict[str, TimeframeStateV2]) -> list[str]:
         quality = context.get("quality") or {}

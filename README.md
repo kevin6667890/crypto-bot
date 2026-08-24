@@ -39,35 +39,42 @@ Crypto-Bot combines real OKX market data, deterministic decision logic, causal h
 
 ```mermaid
 flowchart TD
-    OKX[OKX public market data] --> DATA[Collection, confirmation, quality and cache]
-    DATA --> ENGINE[Deterministic facts and decision engines]
-    ENGINE --> STATE[Market state and Decision Trace]
-    ENGINE --> RESEARCH[Causal research and strategy discovery]
-    ENGINE --> PAPER[Paper execution and risk controls]
+    OKX[OKX public observations] --> DATA[Confirmed price plus dedicated microstructure collection]
+    DATA --> SNAP[CanonicalMarketSnapshot: versioned causal evidence]
+    SNAP --> STATE[MarketStateV2: general regime lens]
+    SNAP --> AI[AI6B: independent tactical interpretation]
+    SNAP --> RESEARCH[Factor Program hybrid search plane]
+    RESEARCH --> VALIDATE[Development, walk-forward, holdout, OOT, cross-asset, robustness]
+    VALIDATE --> REGISTRY[Approved Strategy Registry]
+    REGISTRY --> RUNTIME[Exact frozen ACTIVE runtime]
+    SNAP --> RUNTIME
+    RUNTIME --> RISK[Risk gate]
+    RISK --> PAPER[Paper-only ledger]
     STATE --> STORE[(Persisted evidence and lineage)]
-    RESEARCH --> STORE
+    AI --> STORE
+    VALIDATE --> STORE
     PAPER --> STORE
     STORE --> API[Python API]
     API --> UI[React and TypeScript product UI]
-    STORE --> CONTEXT[Read-only AI evidence compiler]
-    CONTEXT --> REPORT[Structured AI report]
-    REPORT --> AUDIT[Deterministic report audit and persistence]
-    AUDIT --> API
 ```
 
-The AI path has no control edge back into signals, research ranking, risk rules, strategy activation, or paper execution. Deterministic engines and persisted evidence remain the source of truth.
+In one sentence: OKX observations become canonical versioned evidence; deterministic, AI, and strategy lenses interpret that evidence independently; only an ACTIVE validated frozen strategy may pass through the risk gate into Paper. AI, MarketStateV2, Research, and StrategyRouterV2 have no execution-control edge. `LIVE_TRADING_ENABLED=false` is a non-negotiable deployment invariant.
+
+`CanonicalMarketSnapshot` is not a regime or strategy God Object. It freezes identity, causal cutoff, confirmed OHLCV, product-qualified CVD/OI/funding/basis evidence, explicit quality/missing reasons, and a deterministic hash. `MarketContextV2` derives evidence with provenance; `MarketStateV2` and AI6B remain separate interpretation lenses. Exact trade-price VPVR and confirmed-OHLCV approximate VPVR are intentionally different, versioned contracts.
 
 ## Research lifecycle
 
 ```mermaid
 flowchart LR
-    D[Development evidence] --> W[Walk-forward validation]
-    W --> R[Optimization ranking]
-    R -->|freeze candidate| H[Primary holdout]
+    D[Factor Program search plus Template V2.1 controls] --> W[Development folds and walk-forward]
+    W -->|freeze candidate| H[Primary holdout]
     H --> O[Final OOT]
     O --> X[Cross-asset transfer]
-    X --> S[Shadow]
-    S --> P[Manual paper promotion]
+    X --> B[Robustness]
+    B --> A[Approval decision]
+    A --> G[Approved Registry]
+    G --> F[Singleton ACTIVE frozen runtime]
+    F --> P[Paper risk gate]
     H --> E[(Persisted evidence lineage)]
     O --> E
     X --> E
@@ -76,7 +83,7 @@ flowchart LR
     N -.-> X
 ```
 
-Only development and walk-forward evidence can affect optimization ranking. Holdout, final OOT, and transfer results test a frozen candidate; they cannot feed back into ranking and remain evidence for a manual lifecycle decision.
+Only development evidence can affect search/ranking. Holdout and OOT never tune or rank a candidate. Factor Program is the extensible representation; Template V2.1 remains a benchmark, regression oracle, grammar seed, and safe baseline. Phase6 temporal ideas are inputs to Factor Program evolution, not a parallel product. The Registry may legitimately have no ACTIVE strategy; canonical Paper then returns `WAIT` and never falls back to the legacy engine.
 
 ## Product tour
 
@@ -126,7 +133,7 @@ AI can summarize evidence, surface uncertainty and counterevidence, and explain 
 - Fees and adverse slippage are applied; a same-bar stop/target collision records the stop first.
 - Historical cumulative volume delta (CVD) and open interest (OI) are never fabricated. Missing or partial coverage remains visible and cannot silently become zero.
 - Primary holdouts stay hidden until an explicit, durable reveal. Final OOT and cross-asset evidence never affect ranking.
-- Strategy promotion is manual. There is no AI parameter search, online self-learning, automatic activation, or live exchange order path.
+- Strategy activation is an audited Registry lifecycle operation. Discovery never controls Paper, an empty Registry means `WAIT`, and there is no online self-learning or live exchange order path.
 
 ## Quick start
 

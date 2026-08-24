@@ -28,9 +28,15 @@ describe("AI6B production presentation wiring", () => {
     expect(component).toContain("暂无当前有效 AI 分析");
     expect(component).not.toContain("ai_brief");
   });
-  it("renders generated and market snapshot timestamps separately", () => {
+  it("renders generated, facts-as-of, and next-evaluation timestamps separately", () => {
     expect(component).toContain("<dt>{copy.updated}</dt><dd>{when(brief.generated_at)}</dd>");
     expect(component).toContain("<dt>{copy.dataTime}</dt><dd>{when(brief.market_snapshot_at)}</dd>");
+    expect(component).toContain("<dt>{copy.next}</dt><dd>{when(brief.scheduler?.next_tick)}</dd>");
+  });
+  it("keeps the previous audited report visible after a no-material-change evaluation", () => {
+    expect(component).toContain("SKIPPED_NO_MATERIAL_CHANGE");
+    expect(component).toContain("No material facts changed at the latest evaluation");
+    expect(component).toContain("displayAuditedReport");
   });
   it("adds audited AI6B history to Research", () => {
     expect(research).toContain("AiReportResearch instrument={instrument}");

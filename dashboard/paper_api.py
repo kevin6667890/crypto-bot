@@ -1578,7 +1578,10 @@ class Handler(BaseHTTPRequestHandler):
                         brief=latest_workspace_brief(AI_REPORT_REPOSITORY,requested,mode,language)
                         state=AI_REPORT_SCHEDULER.state()
                         brief["scheduler"]={key:state.get(key) for key in (
-                            "enabled","cadence_seconds","next_tick","last_tick","last_queued","last_error")}
+                            "enabled","scheduler_mode","cadence_seconds","next_tick","next_evaluation",
+                            "last_tick","last_queued","last_error","event_trigger","material_gate_enabled",
+                            "material_fingerprint_version","last_material_fingerprint",
+                            "last_evaluation_outcome","last_evaluation_at","facts_as_of")}
                         self._send(brief);return
                     if parsed.path == "/api/ai-market-analysis/v1/research-reports":
                         self._send(research_history(AI_REPORT_REPOSITORY,requested,language));return

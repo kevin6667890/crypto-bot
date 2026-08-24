@@ -44,12 +44,15 @@ def build_base_context_from_stores(payload:dict[str,Any],paper_db:str|Path,micro
         paper_db=paper_db, micro_db=micro_db,
     )
 
-def submit_report(payload:dict[str,Any],repository:ReportRepository,paper_db:str|Path,micro_db:str|Path|None)->dict[str,Any]:
+def submit_report(payload:dict[str,Any],repository:ReportRepository,paper_db:str|Path,
+                  micro_db:str|Path|None,*,base_context:dict[str,Any]|None=None)->dict[str,Any]:
     value=validate_report_body(payload);position=value.get("inline_position_plan")
     if value.get("position_plan_id"):position=repository.load_position_plan(value["position_plan_id"])
     macro=value.get("inline_macro_evidence") or []
     if value.get("macro_evidence_set_id"):macro=repository.load_macro_set(value["macro_evidence_set_id"])["items"]
-    base=build_base_context_from_stores(value,paper_db,micro_db)
+    base=base_context if base_context is not None else build_base_context_from_stores(value,paper_db,micro_db)
+    if base.get("instrument")!=value["instrument"] or base.get("decision_time")!=value["decision_time"]:
+        raise ValueError("prepared base context mismatch")
     return ReportService(repository,str(paper_db)).submit(base,mode=value.get("mode","FULL"),language=value.get("language","zh-CN"),position_source=value.get("position_source","NONE"),position_plan=position,macro_evidence=macro,provider=value.get("provider","fake"),model=value.get("model","fake-ai4"))
 
 def save_position_plan(payload:dict[str,Any],repository:ReportRepository)->dict[str,Any]:

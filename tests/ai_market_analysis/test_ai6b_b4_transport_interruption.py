@@ -181,6 +181,7 @@ def test_interrupted_live_request_records_unknown_charge_and_trips_kill_switch(r
     item = ReportService(repo).submit(base_context(), mode="FULL", provider="deepseek", model="deepseek-v4-flash")
     worker = ReportWorker(repo, lambda request: FakeAIReportProvider(request["model"]))
     repo.event(item["request_id"], "RUNNING", {"attempt": 1})
+    worker._record_attempt_start(repo.status(item["request_id"]), 1)
     assert worker.recover() == 1
     assert repo.status(item["request_id"])["status"] == "INTERRUPTED"
     assert worker.run_once() is True
@@ -205,6 +206,6 @@ def test_migration_adds_lifecycle_and_charge_state_columns(tmp_path):
     migrate_database(path)
     migrate_database(path)
     with sqlite3.connect(path) as connection:
-        assert connection.execute("SELECT COUNT(*) FROM ai_report_migrations").fetchone()[0] == 6
+        assert connection.execute("SELECT COUNT(*) FROM ai_report_migrations").fetchone()[0] == 7
         columns = {row[1] for row in connection.execute("PRAGMA table_info(ai_report_attempts)")}
     assert {"lifecycle_state", "charge_state"} <= columns

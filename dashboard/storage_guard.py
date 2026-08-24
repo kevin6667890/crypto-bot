@@ -25,9 +25,15 @@ def _integer(name: str, default: int) -> int:
 
 @dataclass(frozen=True)
 class DiskGuardConfig:
-    warning_free_percent: float = _percent("STORAGE_WARNING_FREE_PERCENT", 20)
-    critical_free_percent: float = _percent("STORAGE_CRITICAL_FREE_PERCENT", 12)
+    warning_free_percent: float = _percent("STORAGE_WARNING_FREE_PERCENT", 15)
+    critical_free_percent: float = _percent("STORAGE_CRITICAL_FREE_PERCENT", 8)
     emergency_free_percent: float = _percent("STORAGE_EMERGENCY_FREE_PERCENT", 5)
+    warning_free_bytes: int = _integer(
+        "STORAGE_WARNING_FREE_BYTES", 20 * 1024**3
+    )
+    critical_free_bytes: int = _integer(
+        "STORAGE_CRITICAL_FREE_BYTES", 10 * 1024**3
+    )
     emergency_free_bytes: int = _integer(
         "STORAGE_EMERGENCY_FREE_BYTES", 2 * 1024**3
     )
@@ -65,6 +71,7 @@ def evaluate_disk_guard(
         reasons.append("free space is below the emergency budget")
     elif (
         free_percent < config.critical_free_percent
+        or free_bytes < config.critical_free_bytes
         or (
             projected_days_to_90 is not None
             and projected_days_to_90 < config.critical_days_to_90
@@ -74,6 +81,7 @@ def evaluate_disk_guard(
         reasons.append("free space or days-to-90 is below the critical budget")
     elif (
         free_percent < config.warning_free_percent
+        or free_bytes < config.warning_free_bytes
         or (
             projected_days_to_85 is not None
             and projected_days_to_85 < config.warning_days_to_85

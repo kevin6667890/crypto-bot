@@ -23,6 +23,7 @@ import { shadowText } from "./aiMarketAnalysis/i18n";
 import {
   demoSnapshot,
   fetchEthSnapshot,
+  fetchBrowserOkxSnapshot,
   fetchSignalAnalysis,
   REAL_BACKTEST_TRADES,
   generateDemoTrades,
@@ -43,6 +44,7 @@ import {
   strategyEvolution,
 } from "./data";
 import { WorkspaceAiBrief } from "./AiReportPresentation";
+import { marketProvenancePresentation } from "./marketProvenance";
 
 const StrategyResearchRoute = lazy(() => import("./routes/StrategyResearchRoute"));
 const MicrostructureResearch = lazy(() => import("./MicrostructureResearch"));
@@ -701,6 +703,7 @@ function Workspace() {
   const [snapshot, setSnapshot] = useState<MarketSnapshot>(() =>
     demoSnapshot()
   );
+  const [browserFallbackActive, setBrowserFallbackActive] = useState(false);
   const [signal, setSignal] = useState<SignalAnalysis>(demoSignal);
   const [instrument, setInstrument] = useState("ETH-USDT");
   const [interval, setInterval] = useState("15m");
@@ -747,16 +750,37 @@ function Workspace() {
     const request = ++paperRequest.current;
     setLoading(true);
     try {
-      const [market, analysis] = await Promise.all([
-        fetchEthSnapshot(instrument),
-        fetchSignalAnalysis(instrument),
-      ]);
-      setSnapshot(market);
-      setSignal(analysis);
+      const market = await fetchEthSnapshot(instrument);
+      if (request === paperRequest.current) {
+        setSnapshot(market);
+        setBrowserFallbackActive(false);
+      }
+    } catch (error) {
+      const fallbackReason = error instanceof Error && error.message.includes("unavailable or unconfirmed")
+        ? "Canonical snapshot unavailable or unconfirmed"
+        : "Canonical backend unavailable";
+      try {
+        const market = await fetchBrowserOkxSnapshot(instrument);
+        if (request === paperRequest.current) {
+          setSnapshot({ ...market, fallbackReason });
+          setBrowserFallbackActive(true);
+        }
+      } catch {
+        if (request === paperRequest.current) {
+          setSnapshot({ ...demoSnapshot(), fallbackReason });
+          setBrowserFallbackActive(false);
+        }
+      }
+    }
+    try {
+      const analysis = await fetchSignalAnalysis(instrument);
+      if (request === paperRequest.current) setSignal(analysis);
     } catch {
-      setSnapshot(demoSnapshot());
+      // Provenance fallback for the market headline must not prevent the
+      // independent Paper/flow refresh from completing.
+      if (request === paperRequest.current) setSignal(demoSignal);
     } finally {
-      setLoading(false);
+      if (request === paperRequest.current) setLoading(false);
     }
     if (engineInstruments.includes(instrument)) {
       try {
@@ -810,6 +834,7 @@ function Workspace() {
   }, [instrument]);
 
   useEffect(() => {
+    if (!browserFallbackActive) return;
     let socket: WebSocket | null = null;
     let retry: number | undefined;
     let closed = false;
@@ -821,7 +846,12 @@ function Workspace() {
           const row = JSON.parse(event.data)?.data?.[0];
           const price = Number(row?.last), open = Number(row?.open24h);
           if (!Number.isFinite(price)) return;
-          setSnapshot((current) => ({ ...current, price, changePct: open > 0 ? (price - open) / open * 100 : current.changePct, high24: Number(row.high24h) || current.high24, low24: Number(row.low24h) || current.low24, volume: Number(row.vol24h) || current.volume, updatedAt: new Date(Number(row.ts) || Date.now()).toLocaleTimeString(), source: "OKX" }));
+          setSnapshot((current) => current.provenance !== "BROWSER_FALLBACK" ? current : ({
+            ...current, price, changePct: open > 0 ? (price - open) / open * 100 : current.changePct,
+            high24: Number(row.high24h) || current.high24, low24: Number(row.low24h) || current.low24,
+            volume: Number(row.vol24h) || current.volume,
+            updatedAt: new Date(Number(row.ts) || Date.now()).toLocaleTimeString(), source: "OKX",
+          }));
         } catch { /* Preserve the last confirmed HTTP snapshot on malformed frames. */ }
       };
       socket.onclose = () => { if (!closed) retry = window.setTimeout(connect, 3000); };
@@ -829,7 +859,7 @@ function Workspace() {
     };
     connect();
     return () => { closed = true; window.clearTimeout(retry); socket?.close(); };
-  }, [instrument]);
+  }, [instrument, browserFallbackActive]);
 
   useEffect(() => {
     let cancelled = false;
@@ -848,7 +878,9 @@ function Workspace() {
   const flowState = paper?.flow?.professional;
   const flowStatus = flowState?.collector_status || "OFFLINE";
   const flowCoverage = flowState ? `${Math.round(flowState.coverage_seconds / 60)} / ${Math.round(flowState.window_seconds / 3600)}h` : "--";
-  const browserObservation = snapshot.source === "Demo" ? "DEMO / BROWSER FALLBACK — not production truth" : `Browser ${snapshot.source} observation — not canonical production truth`;
+  const marketProvenance = marketProvenancePresentation({
+    provenance: snapshot.provenance, asOf: snapshot.updatedAt, fallbackReason: snapshot.fallbackReason, language,
+  });
   const action = runtimeAnalysis?.action || "WAIT";
   const decisionScore = runtimeAnalysis?.score ?? 0;
   const decisionConditions =
@@ -925,9 +957,9 @@ function Workspace() {
           </div>
         </div>
         <div className="market-controls">
-          <span className={`live-dot ${snapshot.source === "Demo" ? "degraded" : ""}`} />{" "}
-          <strong>{language === "zh" ? "原始 / 浏览器观测" : "Raw / Browser Observation"}</strong>
-          <small className="browser-observation" data-market-provenance={snapshot.source}>{browserObservation}</small>
+          <span className={`live-dot ${marketProvenance.tone === "degraded" ? "degraded" : ""}`} />{" "}
+          <strong>{marketProvenance.label}</strong>
+          <small className={`market-provenance ${marketProvenance.tone}`} data-market-provenance={snapshot.provenance}>{marketProvenance.detail}</small>
           <select
             value={instrument}
             onChange={(event) => setInstrument(event.target.value)}
@@ -1002,13 +1034,9 @@ function Workspace() {
                       maximumFractionDigits: 2,
                     })}
                   </strong>
-                  <b
-                    className={
-                      snapshot.changePct >= 0 ? "positive" : "negative"
-                    }
-                  >
+                  {snapshot.changePct !== null && <b className={snapshot.changePct >= 0 ? "positive" : "negative"}>
                     {formatSigned(snapshot.changePct, "%")}
-                  </b>
+                  </b>}
                 </div>
                 <small>
                   {t("market.updatedAt", { time: snapshot.updatedAt })}
@@ -1017,11 +1045,11 @@ function Workspace() {
               <div className="summary-stats">
                 <span>
                   <small>{t("market.high24")}</small>
-                  <b>{snapshot.high24.toFixed(2)}</b>
+                  <b>{snapshot.high24?.toFixed(2) ?? "--"}</b>
                 </span>
                 <span>
                   <small>{t("market.low24")}</small>
-                  <b>{snapshot.low24.toFixed(2)}</b>
+                  <b>{snapshot.low24?.toFixed(2) ?? "--"}</b>
                 </span>
                 <span>
                   <small>EMA20</small>
@@ -1033,7 +1061,7 @@ function Workspace() {
             <section className="chart-workspace">
               <div className="chart-toolbar">
                 <div>
-                  <span className="eyebrow">{language === "zh" ? "原始观测 · 浏览器视图" : "RAW OBSERVATION · BROWSER VIEW"}</span>
+                  <span className="eyebrow">{language === "zh" ? "原始观测 · 浏览器直连 OKX" : "RAW OBSERVATION · BROWSER DIRECT OKX"}</span>
                   <h2>{t("market.priceStructure")}</h2>
                 </div>
                 <div className="chart-actions">

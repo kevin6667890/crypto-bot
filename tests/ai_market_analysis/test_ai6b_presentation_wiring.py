@@ -95,9 +95,23 @@ def test_scheduler_queues_once_per_cadence(tmp_path, monkeypatch):
     monkeypatch.setenv("AI_REPORT_SCHEDULER_ENABLED", "true")
     monkeypatch.setenv("AI_MARKET_REPORTS_ENABLED", "true")
     monkeypatch.setenv("AI_REPORT_LIVE_PROVIDER_ENABLED", "true")
-    def submit(payload, *_):
-        queued.append(payload); return {"created": True, "canonical_snapshot_identity": "b" * 64}
+    def submit(payload, *_, **__):
+        queued.append(payload); return {"created": True, "request_id": "scheduled-request",
+                                        "canonical_snapshot_identity": "b" * 64}
     monkeypatch.setattr("dashboard.ai_market_analysis.report_scheduler.submit_report", submit)
+    monkeypatch.setattr(
+        "dashboard.ai_market_analysis.report_scheduler.build_base_context_from_stores",
+        lambda payload, *_: {
+            "instrument": payload["instrument"], "decision_time": payload["decision_time"],
+            "latest_confirmed_market_time": payload["decision_time"],
+            "canonical_market_snapshot": {"snapshot_identity": "b" * 64},
+            "timeframe_structures": [], "timeframe_coverage": {},
+            "multi_timeframe_summary": {}, "market_timeline": {},
+            "order_flow_phases": [], "key_levels": [],
+            "scenario_tree": {"status": "NOT_IMPLEMENTED", "scenarios": []},
+            "data_quality": {"overall": "MISSING"},
+        },
+    )
     scheduler = ReportScheduler(reports, tmp_path / "paper.db", None)
     first = scheduler.tick(); second = scheduler.tick()
     assert len(queued) == 1

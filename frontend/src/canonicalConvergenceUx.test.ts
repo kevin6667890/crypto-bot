@@ -15,9 +15,13 @@ describe("canonical convergence UX contracts", () => {
     }
   });
 
-  it("does not elevate browser fallback or a legacy strategy into production truth", () => {
-    expect(app).toContain("BROWSER FALLBACK — not production truth");
-    expect(app).toContain("Browser ${snapshot.source} observation — not canonical production truth");
+  it("shows canonical provenance normally and browser data only as an explicit fallback", () => {
+    expect(app).toContain("fetchEthSnapshot(instrument)");
+    expect(app).toContain("fetchBrowserOkxSnapshot(instrument)");
+    expect(app).toContain("marketProvenancePresentation");
+    expect(app).toContain('current.provenance !== "BROWSER_FALLBACK" ? current');
+    expect(app).toContain("RAW OBSERVATION · BROWSER DIRECT OKX");
+    expect(app).not.toContain("Browser ${snapshot.source} observation — not canonical production truth");
     expect(app).toContain('const action = runtimeAnalysis?.action || "WAIT"');
     expect(app).toContain("ACTIVE NONE · WAIT");
     expect(app).not.toContain('runtimeAnalysis?.action || (signal.score >= 70 ? "WATCH" : "WAIT")');

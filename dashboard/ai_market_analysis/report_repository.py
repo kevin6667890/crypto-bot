@@ -2,7 +2,7 @@
 from __future__ import annotations
 import json, sqlite3
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Iterator
 from .canonical import canonical_json, stable_hash
@@ -22,6 +22,10 @@ MAX_GENERATED_TEXT_BYTES=250_000
 MAX_ATTEMPT_DIAGNOSTIC_BYTES=1_000_000
 
 def utc_now()->str: return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00","Z")
+
+def _future_utc(seconds:int)->str:
+    return (datetime.now(timezone.utc)+timedelta(seconds=max(1,int(seconds)))).replace(
+        microsecond=0).isoformat().replace("+00:00","Z")
 
 def migrate_database(path: str|Path)->dict[str,Any]:
     return apply_migrations(path)
@@ -70,6 +74,7 @@ class ReportRepository:
         return json.loads(r[0])
     def create_request(self,value:dict[str,Any])->tuple[dict[str,Any],bool]:
         with self.connect() as c:
+            c.execute("BEGIN IMMEDIATE")
             row=c.execute("SELECT * FROM ai_report_requests WHERE request_identity=?",(value["request_identity"],)).fetchone()
             if row:return dict(row),False
             active=c.execute("SELECT COUNT(*) FROM ai_report_requests r WHERE (SELECT event_type FROM ai_report_request_events e WHERE e.request_id=r.request_id ORDER BY event_id DESC LIMIT 1) IN ('QUEUED','RUNNING','RETRY_SCHEDULED','INTERRUPTED')").fetchone()[0]
@@ -89,10 +94,158 @@ class ReportRepository:
         with self.connect() as c:
             rows=c.execute("SELECT r.* FROM ai_report_requests r JOIN ai_report_request_events e ON e.event_id=(SELECT MAX(e2.event_id) FROM ai_report_request_events e2 WHERE e2.request_id=r.request_id) WHERE e.event_type IN ('QUEUED','RETRY_SCHEDULED','INTERRUPTED') ORDER BY r.created_at LIMIT ?",(limit,)).fetchall()
         return [dict(x) for x in rows]
+    def claim_queued(self,owner:str,*,lease_seconds:int=3600,global_limit:int=1)->dict[str,Any]|None:
+        """Atomically claim one request across worker processes.
+
+        The provider send boundary remains separately fenced by the unique
+        ``(request_id, attempt_number)`` constraint.
+        """
+        now,until=utc_now(),_future_utc(lease_seconds)
+        with self.connect() as c:
+            c.execute("BEGIN IMMEDIATE")
+            active=c.execute(
+                "SELECT instrument FROM ai_report_requests WHERE worker_claim_until>?",
+                (now,),
+            ).fetchall()
+            if len(active)>=max(1,int(global_limit)):return None
+            active_instruments={str(row[0]) for row in active}
+            rows=c.execute(
+                "SELECT r.* FROM ai_report_requests r JOIN ai_report_request_events e "
+                "ON e.event_id=(SELECT MAX(e2.event_id) FROM ai_report_request_events e2 WHERE e2.request_id=r.request_id) "
+                "WHERE e.event_type IN ('QUEUED','RETRY_SCHEDULED','INTERRUPTED') "
+                "AND (r.worker_claim_until IS NULL OR r.worker_claim_until<=?) ORDER BY r.created_at,r.request_id",
+                (now,),
+            ).fetchall()
+            selected=next((row for row in rows if str(row["instrument"]) not in active_instruments),None)
+            if selected is None:return None
+            changed=c.execute(
+                "UPDATE ai_report_requests SET worker_claim_owner=?,worker_claim_until=? "
+                "WHERE request_id=? AND (worker_claim_until IS NULL OR worker_claim_until<=?)",
+                (owner,until,selected["request_id"],now),
+            ).rowcount
+            if changed!=1:return None
+            return dict(selected)|{"worker_claim_owner":owner,"worker_claim_until":until}
+    def renew_claim(self,request_id:str,owner:str,*,lease_seconds:int=3600)->bool:
+        with self.connect() as c:
+            changed=c.execute(
+                "UPDATE ai_report_requests SET worker_claim_until=? WHERE request_id=? AND worker_claim_owner=?",
+                (_future_utc(lease_seconds),request_id,owner),
+            ).rowcount
+        return changed==1
+    def release_claim(self,request_id:str,owner:str)->bool:
+        with self.connect() as c:
+            changed=c.execute(
+                "UPDATE ai_report_requests SET worker_claim_owner=NULL,worker_claim_until=NULL "
+                "WHERE request_id=? AND worker_claim_owner=?",(request_id,owner),
+            ).rowcount
+        return changed==1
+    def interrupt_expired_running(self)->int:
+        """Recover only ownerless/expired RUNNING work; active peers stay untouched."""
+        now=utc_now()
+        with self.connect() as c:
+            c.execute("BEGIN IMMEDIATE")
+            rows=c.execute(
+                "SELECT r.request_id FROM ai_report_requests r JOIN ai_report_request_events e "
+                "ON e.event_id=(SELECT MAX(e2.event_id) FROM ai_report_request_events e2 WHERE e2.request_id=r.request_id) "
+                "WHERE e.event_type='RUNNING' AND (r.worker_claim_until IS NULL OR r.worker_claim_until<=?)",
+                (now,),
+            ).fetchall()
+            for row in rows:
+                c.execute(
+                    "INSERT INTO ai_report_request_events(request_id,event_type,payload_json,created_at) VALUES(?,?,?,?)",
+                    (row[0],"INTERRUPTED",canonical_json({"reason":"expired_worker_lease"}),now),
+                )
+                c.execute(
+                    "UPDATE ai_report_requests SET worker_claim_owner=NULL,worker_claim_until=NULL WHERE request_id=?",
+                    (row[0],),
+                )
+        return len(rows)
     def interrupt_running(self)->int:
         with self.connect() as c:rows=c.execute("SELECT DISTINCT request_id FROM ai_report_request_events e WHERE event_type='RUNNING' AND event_id=(SELECT MAX(e2.event_id) FROM ai_report_request_events e2 WHERE e2.request_id=e.request_id)").fetchall()
         for r in rows:self.event(r[0],"INTERRUPTED",{"reason":"worker_restart"})
         return len(rows)
+    def attempt_count(self,request_id:str)->int:
+        with self.connect() as c:
+            return int(c.execute("SELECT COUNT(*) FROM ai_report_attempts WHERE request_id=?",(request_id,)).fetchone()[0])
+
+    def claim_generation_decision(self,*,instrument:str,confirmed_4h_close:str,
+                                  material_fingerprint:str,fingerprint_version:str,
+                                  canonical_snapshot_identity:str|None,facts_as_of:str,
+                                  projection:dict[str,Any],owner:str,
+                                  lease_seconds:int=600)->dict[str,Any]:
+        """Persist and single-flight one automatic boundary evaluation."""
+        now,until=utc_now(),_future_utc(lease_seconds)
+        decision_id="generation_"+stable_hash({"instrument":instrument,"confirmed_4h_close":confirmed_4h_close})
+        with self.connect() as c:
+            c.execute("BEGIN IMMEDIATE")
+            existing=c.execute(
+                "SELECT * FROM ai_report_generation_decisions WHERE instrument=? AND confirmed_4h_close=?",
+                (instrument,confirmed_4h_close),
+            ).fetchone()
+            if existing:
+                value=dict(existing)
+                reclaimable=value["outcome"] in {"EVALUATING","ERROR"} and (
+                    not value.get("claim_until") or value["claim_until"]<=now)
+                if reclaimable:
+                    c.execute(
+                        "UPDATE ai_report_generation_decisions SET outcome='EVALUATING',claim_owner=?,claim_until=?,updated_at=? "
+                        "WHERE decision_id=? AND outcome IN ('EVALUATING','ERROR') AND (claim_until IS NULL OR claim_until<=?)",
+                        (owner,until,now,value["decision_id"],now),
+                    )
+                    value.update({"outcome":"EVALUATING","claim_owner":owner,"claim_until":until,
+                                  "updated_at":now,"claimed":True,"should_generate":True})
+                    return value
+                return value|{"claimed":False,"should_generate":value["outcome"]=="EVALUATING"}
+            previous=c.execute(
+                "SELECT material_fingerprint,confirmed_4h_close,outcome FROM ai_report_generation_decisions "
+                "WHERE instrument=? AND outcome IN ('EVALUATING','QUEUED','ERROR') "
+                "ORDER BY confirmed_4h_close DESC LIMIT 1",(instrument,),
+            ).fetchone()
+            previous_fingerprint=str(previous[0]) if previous else None
+            changed=previous_fingerprint is None or previous_fingerprint!=material_fingerprint
+            outcome="EVALUATING" if changed else "SKIPPED_NO_MATERIAL_CHANGE"
+            detail={"previous_material_fingerprint":previous_fingerprint,"material_projection":projection}
+            c.execute(
+                "INSERT INTO ai_report_generation_decisions VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (decision_id,instrument,confirmed_4h_close,material_fingerprint,fingerprint_version,
+                 canonical_snapshot_identity,facts_as_of,outcome,None,owner if changed else None,
+                 until if changed else None,canonical_json(detail),now,now),
+            )
+        return {"decision_id":decision_id,"instrument":instrument,
+                "confirmed_4h_close":confirmed_4h_close,"material_fingerprint":material_fingerprint,
+                "material_fingerprint_version":fingerprint_version,
+                "canonical_snapshot_identity":canonical_snapshot_identity,"facts_as_of":facts_as_of,
+                "outcome":outcome,"request_id":None,"claim_owner":owner if changed else None,
+                "claim_until":until if changed else None,"detail_json":canonical_json(detail),
+                "created_at":now,"updated_at":now,"claimed":changed,"should_generate":changed}
+    def complete_generation_decision(self,decision_id:str,owner:str,*,outcome:str,
+                                     request_id:str|None=None,detail:dict[str,Any]|None=None,
+                                     retry_seconds:int|None=None)->bool:
+        if outcome not in {"QUEUED","ERROR"}:raise ValueError("invalid generation decision outcome")
+        until=_future_utc(retry_seconds) if retry_seconds else None
+        with self.connect() as c:
+            row=c.execute(
+                "SELECT detail_json FROM ai_report_generation_decisions WHERE decision_id=? AND claim_owner=?",
+                (decision_id,owner),
+            ).fetchone()
+            merged=json.loads(row[0] or "{}") if row else {}
+            merged.update(detail or {})
+            changed=c.execute(
+                "UPDATE ai_report_generation_decisions SET outcome=?,request_id=?,claim_owner=NULL,claim_until=?,"
+                "detail_json=?,updated_at=? WHERE decision_id=? AND outcome='EVALUATING' AND claim_owner=?",
+                (outcome,request_id,until,canonical_json(merged),utc_now(),decision_id,owner),
+            ).rowcount
+        return changed==1
+    def latest_generation_decision(self,instrument:str|None=None)->dict[str,Any]|None:
+        query="SELECT * FROM ai_report_generation_decisions"
+        args:list[Any]=[]
+        if instrument:
+            query+=" WHERE instrument=?";args.append(instrument)
+        query+=" ORDER BY confirmed_4h_close DESC,instrument LIMIT 1"
+        with self.connect() as c:row=c.execute(query,args).fetchone()
+        if not row:return None
+        value=dict(row);value["detail"]=json.loads(value.pop("detail_json") or "{}")
+        return value
     def cancel(self,request_id:str)->str:
         status=self.status(request_id)["status"]
         if status in {"COMPLETED","FAILED_FINAL","CANCELLED"}:return status

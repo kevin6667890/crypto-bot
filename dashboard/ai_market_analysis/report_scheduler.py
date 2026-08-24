@@ -2,11 +2,16 @@
 from __future__ import annotations
 
 import os
+import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
-from .report_api import submit_report
+from .report_api import build_base_context_from_stores, submit_report
+from .report_material_gate import (
+    AI_REPORT_MATERIAL_FINGERPRINT_VERSION,
+    material_fingerprint,
+)
 from .report_repository import ReportRepository
 
 
@@ -42,6 +47,11 @@ class ReportScheduler:
         self.last_error: str | None = None
         self.next_tick: str | None = None
         self.last_snapshot_identity: str | None = None
+        self.last_material_fingerprint: str | None = None
+        self.last_evaluation_outcome: str | None = None
+        self.last_evaluation_at: str | None = None
+        self.facts_as_of: str | None = None
+        self._owner = f"scheduler-{uuid.uuid4()}"
         self._attempted_boundaries: set[tuple[str, str]] = set()
         self._retry_after: dict[tuple[str, str], datetime] = {}
 
@@ -145,6 +155,15 @@ class ReportScheduler:
             staleness = self._staleness(now)
         except Exception:
             staleness = []
+        latest = None
+        try:
+            latest = self.repository.latest_generation_decision()
+        except Exception:
+            pass
+        last_outcome = self.last_evaluation_outcome or (latest or {}).get("outcome")
+        last_fingerprint = self.last_material_fingerprint or (latest or {}).get("material_fingerprint")
+        facts_as_of = self.facts_as_of or (latest or {}).get("facts_as_of")
+        last_evaluation_at = self.last_evaluation_at or (latest or {}).get("updated_at")
         return {
             "enabled": _enabled("AI_REPORT_SCHEDULER_ENABLED"),
             "scheduler_mode": AUTOMATIC_SCHEDULER_MODE,
@@ -152,10 +171,18 @@ class ReportScheduler:
             "cadence_seconds": self._cadence(),
             "confirmation_grace_seconds": self._grace_seconds(),
             "estimated_automatic_reports_per_day": 6,
-            "material_transition_trigger": "DISABLED",
+            "material_transition_trigger": "DETERMINISTIC_GATE_V1",
+            "event_trigger": "DISABLED",
+            "material_gate_enabled": True,
+            "material_fingerprint_version": AI_REPORT_MATERIAL_FINGERPRINT_VERSION,
+            "last_material_fingerprint": last_fingerprint,
+            "last_evaluation_outcome": last_outcome,
+            "last_evaluation_at": last_evaluation_at,
+            "facts_as_of": facts_as_of,
             "instruments": list(self._instruments()),
             "last_tick": self.last_tick,
             "next_tick": self.next_tick,
+            "next_evaluation": self.next_tick,
             "last_queued": self.last_queued or telemetry["last_successful_queue"],
             "last_error": self.last_error,
             "last_snapshot_identity": self.last_snapshot_identity,
@@ -181,28 +208,59 @@ class ReportScheduler:
         decision_time = boundary.isoformat().replace("+00:00", "Z")
         next_due = boundary + timedelta(seconds=cadence + self._grace_seconds())
         for instrument in self._instruments():
+            decision = None
             key = (instrument, decision_time)
-            if key in self._attempted_boundaries or self._boundary_submitted(
-                instrument, decision_time
-            ):
+            if key in self._attempted_boundaries:
                 continue
             retry_after = self._retry_after.get(key)
             if retry_after is not None and now < retry_after:
                 next_due = min(next_due, retry_after)
                 continue
             try:
-                result = submit_report({
+                payload = {
                     "instrument": instrument,
                     "decision_time": decision_time,
                     "mode": "QUICK", "language": "zh-CN", "position_source": "NONE",
                     "provider": os.getenv("AI_REPORT_SCHEDULER_PROVIDER", "deepseek"),
                     "model": os.getenv("AI_REPORT_SCHEDULER_MODEL", "deepseek-v4-flash"),
-                }, self.repository, self.paper_db, self.micro_db)
+                }
+                base = build_base_context_from_stores(payload, self.paper_db, self.micro_db)
+                material = material_fingerprint(base)
+                canonical = base.get("canonical_market_snapshot") or {}
+                facts_as_of = str(base.get("latest_confirmed_market_time") or decision_time)
+                decision = self.repository.claim_generation_decision(
+                    instrument=instrument, confirmed_4h_close=decision_time,
+                    material_fingerprint=material["fingerprint"],
+                    fingerprint_version=material["version"],
+                    canonical_snapshot_identity=canonical.get("snapshot_identity"),
+                    facts_as_of=facts_as_of, projection=material["projection"], owner=self._owner,
+                    lease_seconds=max(120, int(os.getenv("AI_REPORT_SCHEDULER_CLAIM_SECONDS", "600"))),
+                )
                 # ``created=False`` is also terminal for this boundary: the
                 # immutable request already exists and must not be re-queued.
-                self._attempted_boundaries.add(key)
                 self._retry_after.pop(key, None)
-                self.last_snapshot_identity = result.get("canonical_snapshot_identity")
+                self.last_snapshot_identity = canonical.get("snapshot_identity")
+                self.last_material_fingerprint = material["fingerprint"]
+                self.last_evaluation_outcome = decision["outcome"]
+                self.last_evaluation_at = decision.get("updated_at")
+                self.facts_as_of = facts_as_of
+                if not decision.get("claimed") or not decision.get("should_generate"):
+                    if decision.get("outcome") in {"QUEUED","SKIPPED_NO_MATERIAL_CHANGE"}:
+                        self._attempted_boundaries.add(key)
+                    continue
+                result = submit_report(
+                    payload, self.repository, self.paper_db, self.micro_db, base_context=base,
+                )
+                detail = {"created": bool(result.get("created")),
+                          "canonical_snapshot_identity": result.get("canonical_snapshot_identity")}
+                if not self.repository.complete_generation_decision(
+                    decision["decision_id"], self._owner, outcome="QUEUED",
+                    request_id=result["request_id"], detail=detail,
+                ):
+                    raise RuntimeError("GENERATION_DECISION_CLAIM_LOST")
+                self.last_evaluation_outcome = "QUEUED"
+                self.last_evaluation_at = self.last_tick
+                self._attempted_boundaries.add(key)
                 if result.get("created"):
                     self.last_queued = self.last_tick
                 break
@@ -212,6 +270,14 @@ class ReportScheduler:
                     "AI_REPORT_SCHEDULER_FAILURE_COOLDOWN_SECONDS", "900"
                 )))
                 self._retry_after[key] = now + timedelta(seconds=cooldown)
+                if decision and decision.get("claimed"):
+                    try:
+                        self.repository.complete_generation_decision(
+                            decision["decision_id"], self._owner, outcome="ERROR",
+                            detail={"error_type":type(error).__name__}, retry_seconds=cooldown,
+                        )
+                    except Exception:
+                        pass
                 next_due = min(next_due, self._retry_after[key])
                 break
         self.next_tick = next_due.isoformat().replace("+00:00", "Z")

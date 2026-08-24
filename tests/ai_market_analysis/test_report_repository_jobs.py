@@ -14,7 +14,7 @@ def repo(tmp_path):
 def submit(repo,mode="FULL"):return ReportService(repo).submit(base_context(),mode=mode)
 
 def test_migration_empty_and_idempotent(tmp_path):
-    path=tmp_path/"r.db";migrate_database(path);migrate_database(path);connection=sqlite3.connect(path);assert connection.execute("select count(*) from ai_report_migrations").fetchone()[0]==6
+    path=tmp_path/"r.db";migrate_database(path);migrate_database(path);connection=sqlite3.connect(path);assert connection.execute("select count(*) from ai_report_migrations").fetchone()[0]==7
 
 def test_import_does_not_migrate(tmp_path):
     repository=ReportRepository(tmp_path/"missing.db");assert repository.schema_version() is None and not repository.path.exists()
@@ -25,6 +25,8 @@ def test_context_immutable_and_conflict(repo):
 
 def test_request_idempotent_and_completed_reuse(repo):
     a=submit(repo);b=submit(repo);assert a["request_id"]==b["request_id"] and b["created"] is False
+    with repo.connect() as connection:
+        assert connection.execute("SELECT COUNT(*) FROM ai_report_generation_decisions").fetchone()[0]==0
     ReportWorker(repo,lambda r:FakeAIReportProvider(r["model"])).run_once();assert submit(repo)["status_code"]==200
 
 def test_events_attempts_report_pending(repo):
@@ -66,7 +68,7 @@ def test_fake_tokens_are_telemetry_but_not_paid_budget(repo,monkeypatch):
 
 def test_paid_budget_classification_needs_no_history_migration(repo):
     with repo.connect() as connection:
-        assert connection.execute("SELECT COUNT(*) FROM ai_report_migrations").fetchone()[0]==6
+        assert connection.execute("SELECT COUNT(*) FROM ai_report_migrations").fetchone()[0]==7
         columns={row[1] for row in connection.execute("PRAGMA table_info(ai_report_attempts)")}
     assert "budget_chargeable" not in columns
     assert repo.daily_tokens(chargeable_only=True)=={"input":0,"output":0,"total":0}
@@ -133,3 +135,42 @@ def test_complete_json_below_new_quick_cap_still_completes(repo):
     assert ReportWorker(repo,lambda _request:provider).run_once() is True
     assert repo.status(item["request_id"])["status"]=="COMPLETED"
     assert provider.calls==1
+
+def test_persistent_worker_claim_is_shared_across_repository_instances(repo):
+    item=submit(repo)
+    first=repo.claim_queued("worker-a",lease_seconds=600,global_limit=1)
+    second=ReportRepository(repo.path).claim_queued("worker-b",lease_seconds=600,global_limit=1)
+    assert first and first["request_id"]==item["request_id"]
+    assert second is None
+
+def test_restart_does_not_interrupt_an_active_peer_lease(repo):
+    item=submit(repo)
+    assert repo.claim_queued("worker-a",lease_seconds=600,global_limit=1)
+    repo.event(item["request_id"],"RUNNING",{"attempt":1})
+    other=ReportWorker(ReportRepository(repo.path),lambda request:FakeAIReportProvider(request["model"]))
+    assert other.recover()==0
+    assert repo.status(item["request_id"])["status"]=="RUNNING"
+
+def test_failed_automatic_attempt_is_the_next_boundary_material_baseline(repo):
+    first=repo.claim_generation_decision(
+        instrument="ETH-USDT-SWAP",confirmed_4h_close="2026-08-22T12:00:00Z",
+        material_fingerprint="same",fingerprint_version="v1",
+        canonical_snapshot_identity="a"*64,facts_as_of="2026-08-22T12:00:00Z",
+        projection={"state":"BULL"},owner="scheduler-a",
+    )
+    assert first["claimed"] is True
+    assert repo.complete_generation_decision(
+        first["decision_id"],"scheduler-a",outcome="ERROR",
+        detail={"error_type":"RuntimeError"},retry_seconds=900,
+    )
+    second=repo.claim_generation_decision(
+        instrument="ETH-USDT-SWAP",confirmed_4h_close="2026-08-22T16:00:00Z",
+        material_fingerprint="same",fingerprint_version="v1",
+        canonical_snapshot_identity="b"*64,facts_as_of="2026-08-22T16:00:00Z",
+        projection={"state":"BULL"},owner="scheduler-b",
+    )
+    assert second["outcome"]=="SKIPPED_NO_MATERIAL_CHANGE"
+    assert second["claimed"] is False
+    latest=repo.latest_generation_decision("ETH-USDT-SWAP")
+    assert latest["facts_as_of"]=="2026-08-22T16:00:00Z"
+    assert latest["detail"]["previous_material_fingerprint"]=="same"

@@ -72,7 +72,9 @@ services:
     secrets: [admin_token, legacy_deepseek_key]
     volumes:
       - paper-data:/var/lib/paper:rw
-      - microstructure-data:/var/lib/microstructure:ro
+      # SQLite WAL readers must be able to open/update the shared-memory sidecar.
+      # The application remains query_only; the collector is the sole data writer.
+      - microstructure-data:/var/lib/microstructure:rw
       - ai-report-data:/var/lib/ai-report:rw
     expose: ["8765"]
     pids_limit: 128

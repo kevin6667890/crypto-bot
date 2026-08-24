@@ -89,6 +89,21 @@ def test_read_only_app_services_have_only_bounded_runtime_tmpfs() -> None:
     compose = yaml.safe_load((ROOT / "deploy/compose/ai6b-production-candidate.yml").read_text(encoding="utf-8"))
     tmpfs = compose["x-app-security"]["tmpfs"]
     assert "/tmp:rw,noexec,nosuid,size=64m" in tmpfs
-    assert "/app/logs:rw,noexec,nosuid,size=32m" in tmpfs
+    assert (
+        "/app/logs:rw,noexec,nosuid,size=32m,uid=10001,gid=10001,mode=700"
+        in tmpfs
+    )
     frontend_tmpfs = compose["services"]["frontend"]["tmpfs"]
     assert all("uid=101,gid=101,mode=700" in mount for mount in frontend_tmpfs)
+
+
+def test_paper_sqlite_wal_reader_can_manage_shared_memory_sidecar() -> None:
+    compose = yaml.safe_load(
+        (ROOT / "deploy/compose/ai6b-production-candidate.yml").read_text(
+            encoding="utf-8"
+        )
+    )
+    services = compose["services"]
+    mount = "microstructure-data:/var/lib/microstructure:rw"
+    assert mount in services["paper-api"]["volumes"]
+    assert mount in services["microstructure-collector"]["volumes"]

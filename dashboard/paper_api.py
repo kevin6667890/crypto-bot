@@ -57,7 +57,8 @@ try:
     from storage_guard import storage_operations_summary
     from market_context_v2 import BoundedMarketDataReaderV2, MarketContextServiceV2
     from market_state_v2 import MarketStateEngineV2
-    from thesis_event_engine import ThesisTestServiceV1, ThesisValidationError
+    from thesis_event_engine import ThesisTestServiceV1, ThesisValidationError, thesis_capabilities
+    from thesis_parser import ThesisParseContractError, ThesisParserServiceV1
     from strategy_router_v2 import StrategyRouterV2
     from strategy_registry import StrategyRegistryAdapter
     from approved_strategy_runtime import evaluate_frozen_candidate
@@ -101,7 +102,8 @@ except ImportError:
     from .storage_guard import storage_operations_summary
     from .market_context_v2 import BoundedMarketDataReaderV2, MarketContextServiceV2
     from .market_state_v2 import MarketStateEngineV2
-    from .thesis_event_engine import ThesisTestServiceV1, ThesisValidationError
+    from .thesis_event_engine import ThesisTestServiceV1, ThesisValidationError, thesis_capabilities
+    from .thesis_parser import ThesisParseContractError, ThesisParserServiceV1
     from .strategy_router_v2 import StrategyRouterV2
     from .strategy_registry import StrategyRegistryAdapter
     from .approved_strategy_runtime import evaluate_frozen_candidate
@@ -1240,6 +1242,7 @@ MICROSTRUCTURE = MicrostructureStore(
 MARKET_DATA_READER_V2 = BoundedMarketDataReaderV2(DB_PATH, MICROSTRUCTURE.path)
 MARKET_CONTEXT_V2 = MarketContextServiceV2(MARKET_DATA_READER_V2)
 THESIS_TEST_SERVICE_V1 = ThesisTestServiceV1(MARKET_DATA_READER_V2)
+THESIS_PARSER_SERVICE_V1 = ThesisParserServiceV1()
 MARKET_STATE_ENGINE_V2 = MarketStateEngineV2()
 STRATEGY_ROUTER_V2 = StrategyRouterV2()
 STRATEGY_REGISTRY_ADAPTER = StrategyRegistryAdapter(RESEARCH.automatic_research.registry)
@@ -1443,6 +1446,9 @@ class Handler(BaseHTTPRequestHandler):
         self._request_started = time.monotonic()
         parsed, query = urlparse(self.path), parse_qs(urlparse(self.path).query)
         instrument = query.get("instrument", ["ETH-USDT"])[0]
+        if parsed.path == "/api/research/thesis/capabilities":
+            self._send(thesis_capabilities())
+            return
         if parsed.path.startswith("/api/ai-market-analysis/v1/"):
             if parsed.path in {"/api/ai-market-analysis/v1/workspace-brief/latest", "/api/ai-market-analysis/v1/research-reports"} or parsed.path.startswith("/api/ai-market-analysis/v1/research-reports/"):
                 if not ai_report_flag("AI_MARKET_ANALYSIS_PRESENTATION_ENABLED"):
@@ -1826,6 +1832,18 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
+        if parsed.path == "/api/research/thesis/parse":
+            if self._limited("thesis-parse-minute", 6, 60):return
+            payload = self._body()
+            if payload is None:return
+            try:
+                self._send(THESIS_PARSER_SERVICE_V1.parse(payload), HTTPStatus.OK)
+            except ThesisParseContractError as error:
+                self._send({"error":{"code":"INVALID_THESIS_PARSE_REQUEST","message":str(error)}}, HTTPStatus.BAD_REQUEST)
+            except Exception:
+                LOGGER.exception("thesis parser failed")
+                self._send({"error":{"code":"THESIS_PARSE_FAILED","message":"Your idea could not be interpreted."}}, HTTPStatus.INTERNAL_SERVER_ERROR)
+            return
         if parsed.path == "/api/research/thesis/test":
             if self._limited("thesis-test-minute", 10, 60):return
             payload = self._body()

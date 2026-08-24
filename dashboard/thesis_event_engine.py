@@ -35,6 +35,7 @@ OUTCOME_POLICY_VERSION = "post-event-outcome-exact-close-v1"
 SAMPLE_QUALITY_POLICY_VERSION = "sample-quality-v1"
 ENGINE_VERSION = "thesis-event-engine-v1"
 RESULT_VERSION = "thesis-test-result-v1"
+CAPABILITIES_VERSION = "thesis-capabilities-v1"
 
 SUPPORTED_INSTRUMENTS = {"BTC": "BTC-USDT", "ETH": "ETH-USDT", "SOL": "SOL-USDT"}
 SUPPORTED_TIMEFRAMES = ("1H", "4H")
@@ -213,6 +214,64 @@ FEATURE_REGISTRY: Mapping[str, FeatureDefinition] = {
     "CVD_CONFIRMING_PRICE": FeatureDefinition("CVD_CONFIRMING_PRICE", "canonical-cvd-native-v1", "CVD", ("eq",), "boolean", _get("cvd_confirming_price"), 30),
     "CVD_DIVERGING_PRICE": FeatureDefinition("CVD_DIVERGING_PRICE", "canonical-cvd-native-v1", "CVD", ("eq",), "boolean", _get("cvd_diverging_price"), 30),
 }
+
+# Product-facing metadata lives beside the executable registry.  Prompts and
+# clients consume the capabilities projection below; they never maintain a
+# second feature vocabulary.
+FEATURE_METADATA: Mapping[str, Mapping[str, Any]] = {
+    "PRICE_ABOVE_EMA20": {"en": "Price above EMA20", "zh": "价格高于 EMA20", "unit": "boolean", "availability": "AVAILABLE"},
+    "PRICE_BELOW_EMA20": {"en": "Price below EMA20", "zh": "价格低于 EMA20", "unit": "boolean", "availability": "AVAILABLE"},
+    "PRICE_ABOVE_MA60": {"en": "Price above MA60", "zh": "价格高于 MA60", "unit": "boolean", "availability": "AVAILABLE"},
+    "PRICE_BELOW_MA60": {"en": "Price below MA60", "zh": "价格低于 MA60", "unit": "boolean", "availability": "AVAILABLE"},
+    "PRICE_ABOVE_MA200": {"en": "Price above MA200", "zh": "价格高于 MA200", "unit": "boolean", "availability": "AVAILABLE"},
+    "PRICE_BELOW_MA200": {"en": "Price below MA200", "zh": "价格低于 MA200", "unit": "boolean", "availability": "AVAILABLE"},
+    "DISTANCE_TO_MA200_PCT": {"en": "Distance to MA200", "zh": "距 MA200 百分比", "unit": "percent", "availability": "AVAILABLE"},
+    "VOLUME_RATIO": {"en": "Volume ratio", "zh": "成交量比率", "unit": "ratio", "availability": "AVAILABLE"},
+    "VOLUME_PERCENTILE": {"en": "Volume percentile", "zh": "成交量百分位", "unit": "percentile", "availability": "AVAILABLE"},
+    "ATR_PCT": {"en": "ATR percentage", "zh": "ATR 百分比", "unit": "percent", "availability": "AVAILABLE"},
+    "VOLATILITY_COMPRESSION_PERCENTILE": {"en": "Volatility compression percentile", "zh": "波动率压缩百分位", "unit": "percentile", "availability": "AVAILABLE"},
+    "VOLATILITY_EXPANSION_PERCENTILE": {"en": "Volatility expansion percentile", "zh": "波动率扩张百分位", "unit": "percentile", "availability": "AVAILABLE"},
+    "RSI": {"en": "RSI", "zh": "RSI", "unit": "index", "availability": "AVAILABLE"},
+    "PRICE_MOMENTUM": {"en": "Price momentum", "zh": "价格动量", "unit": "percent", "availability": "AVAILABLE"},
+    "MOMENTUM_PERSISTENCE": {"en": "Momentum persistence", "zh": "动量持续性", "unit": "score", "availability": "AVAILABLE"},
+    "OI_CHANGE": {"en": "Open interest change", "zh": "持仓量变化", "unit": "percent", "availability": "NOT_CURRENTLY_TESTABLE"},
+    "OI_CHANGE_PERCENTILE": {"en": "Open interest change percentile", "zh": "持仓量变化百分位", "unit": "percentile", "availability": "NOT_CURRENTLY_TESTABLE"},
+    "CVD_CONFIRMING_PRICE": {"en": "CVD confirming price", "zh": "CVD 确认价格", "unit": "boolean", "availability": "NOT_CURRENTLY_TESTABLE"},
+    "CVD_DIVERGING_PRICE": {"en": "CVD diverging from price", "zh": "CVD 与价格背离", "unit": "boolean", "availability": "NOT_CURRENTLY_TESTABLE"},
+}
+
+
+def thesis_capabilities() -> dict[str, Any]:
+    """Return a stable public projection of the closed executable registry."""
+    if set(FEATURE_METADATA) != set(FEATURE_REGISTRY):
+        raise RuntimeError("thesis feature metadata is not aligned with the registry")
+    features = []
+    for code in sorted(FEATURE_REGISTRY):
+        definition, metadata = FEATURE_REGISTRY[code], FEATURE_METADATA[code]
+        features.append({
+            "code": code,
+            "label": {"en": metadata["en"], "zh": metadata["zh"]},
+            "value_type": definition.value_type,
+            "unit": metadata["unit"],
+            "operators": list(definition.allowed_operators),
+            "bounds": {"minimum": definition.minimum_value, "maximum": definition.maximum_value},
+            "requires_threshold": definition.value_type == "number",
+            "fixed_value": True if definition.value_type == "boolean" else None,
+            "input_scale": "percentage_points" if metadata["unit"] == "percent" else "identity",
+            "source_group": definition.source_group,
+            "availability": metadata["availability"],
+            "supported_timeframes": list(definition.supported_timeframes),
+        })
+    return {
+        "version": CAPABILITIES_VERSION,
+        "thesis_spec_version": THESIS_SPEC_VERSION,
+        "feature_registry_version": FEATURE_REGISTRY_VERSION,
+        "instruments": sorted(SUPPORTED_INSTRUMENTS),
+        "timeframes": list(SUPPORTED_TIMEFRAMES),
+        "horizons": list(SUPPORTED_HORIZONS),
+        "features": features,
+        "unsupported_concepts": ["CONFIRMED_STRUCTURE_BREAKOUT", "FAILED_BREAKOUT"],
+    }
 
 
 @dataclass(frozen=True)

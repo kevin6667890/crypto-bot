@@ -57,6 +57,7 @@ try:
     from storage_guard import storage_operations_summary
     from market_context_v2 import BoundedMarketDataReaderV2, MarketContextServiceV2
     from market_state_v2 import MarketStateEngineV2
+    from thesis_event_engine import ThesisTestServiceV1, ThesisValidationError
     from strategy_router_v2 import StrategyRouterV2
     from strategy_registry import StrategyRegistryAdapter
     from approved_strategy_runtime import evaluate_frozen_candidate
@@ -100,6 +101,7 @@ except ImportError:
     from .storage_guard import storage_operations_summary
     from .market_context_v2 import BoundedMarketDataReaderV2, MarketContextServiceV2
     from .market_state_v2 import MarketStateEngineV2
+    from .thesis_event_engine import ThesisTestServiceV1, ThesisValidationError
     from .strategy_router_v2 import StrategyRouterV2
     from .strategy_registry import StrategyRegistryAdapter
     from .approved_strategy_runtime import evaluate_frozen_candidate
@@ -1235,9 +1237,9 @@ HEALTH = HealthService(DB_PATH,SERVICE,RESEARCH.jobs,ALERTS,ROOT)
 MICROSTRUCTURE = MicrostructureStore(
     Path(os.getenv("MICROSTRUCTURE_DB_PATH", ROOT / "data_cache" / "market_microstructure.db"))
 )
-MARKET_CONTEXT_V2 = MarketContextServiceV2(
-    BoundedMarketDataReaderV2(DB_PATH, MICROSTRUCTURE.path)
-)
+MARKET_DATA_READER_V2 = BoundedMarketDataReaderV2(DB_PATH, MICROSTRUCTURE.path)
+MARKET_CONTEXT_V2 = MarketContextServiceV2(MARKET_DATA_READER_V2)
+THESIS_TEST_SERVICE_V1 = ThesisTestServiceV1(MARKET_DATA_READER_V2)
 MARKET_STATE_ENGINE_V2 = MarketStateEngineV2()
 STRATEGY_ROUTER_V2 = StrategyRouterV2()
 STRATEGY_REGISTRY_ADAPTER = StrategyRegistryAdapter(RESEARCH.automatic_research.registry)
@@ -1824,6 +1826,18 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         parsed = urlparse(self.path)
+        if parsed.path == "/api/research/thesis/test":
+            if self._limited("thesis-test-minute", 10, 60):return
+            payload = self._body()
+            if payload is None:return
+            try:
+                self._send(THESIS_TEST_SERVICE_V1.test(payload), HTTPStatus.OK)
+            except ThesisValidationError as error:
+                self._send({"error":{"code":"INVALID_THESIS_SPEC","message":str(error)}}, HTTPStatus.BAD_REQUEST)
+            except Exception:
+                LOGGER.exception("thesis event study failed")
+                self._send({"error":{"code":"THESIS_TEST_FAILED","message":"Thesis test could not be completed."}}, HTTPStatus.INTERNAL_SERVER_ERROR)
+            return
         if parsed.path == "/api/paper/risk/loss-streak/reset":
             if not self._admin():return
             if self._limited("paper-risk-reset-hour", 3, 3600, True):return

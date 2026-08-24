@@ -78,7 +78,10 @@ services:
       - ai-report-data:/var/lib/ai-report:rw
     expose: ["8765"]
     pids_limit: 128
-    mem_limit: 640m
+    # Canonical snapshot assembly and the 4 GiB Paper ledger can peak above
+    # 640 MiB while a collector cycle and public read overlap.  Keep a bounded
+    # cgroup, with enough headroom to avoid killing the scheduler/API process.
+    mem_limit: 896m
     cpus: 0.50
     healthcheck:
       test: [CMD, python, -c, "from urllib.request import urlopen; urlopen('http://127.0.0.1:8765/api/paper/flow/health',timeout=3)"]

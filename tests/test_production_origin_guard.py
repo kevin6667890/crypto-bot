@@ -31,4 +31,5 @@ def test_production_candidate_is_paper_only_and_uses_4h_report_cadence():
     assert 'AI_REPORT_SCHEDULER_CADENCE_SECONDS: "14400"' in compose
     assert 'AI_REPORT_SCHEDULER_CONFIRMATION_GRACE_SECONDS: "120"' in compose
     assert "/app/logs:rw,noexec,nosuid,size=32m,uid=10001,gid=10001,mode=700" in compose
+    assert "mem_limit: 640m" in compose
     assert "8501:80" not in compose

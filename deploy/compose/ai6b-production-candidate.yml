@@ -76,7 +76,7 @@ services:
       - ai-report-data:/var/lib/ai-report:rw
     expose: ["8765"]
     pids_limit: 128
-    mem_limit: 512m
+    mem_limit: 640m
     cpus: 0.50
     healthcheck:
       test: [CMD, python, -c, "from urllib.request import urlopen; urlopen('http://127.0.0.1:8765/api/paper/flow/health',timeout=3)"]
@@ -141,7 +141,7 @@ services:
     volumes:
       - ai-report-data:/var/lib/ai-report:rw
     pids_limit: 64
-    mem_limit: 320m
+    mem_limit: 384m
     cpus: 0.30
     # Let an in-flight provider request reach its exactly-once terminal state
     # before a rolling deployment replaces the worker.
@@ -162,7 +162,7 @@ services:
     volumes:
       - ai-report-data:/var/lib/ai-report:rw
     pids_limit: 64
-    mem_limit: 192m
+    mem_limit: 256m
     cpus: 0.20
     healthcheck:
       test: [CMD, python, -c, "from dashboard.ai_market_analysis.report_audit_repository import AuditRepository; assert AuditRepository('/var/lib/ai-report/ai_market_reports.db').schema_version()"]

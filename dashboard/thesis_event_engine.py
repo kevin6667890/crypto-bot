@@ -12,6 +12,8 @@ import hashlib
 import json
 import math
 import time
+from collections import OrderedDict
+from threading import RLock
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
 try:
@@ -19,11 +21,15 @@ try:
     from market_context_v2 import (INDICATOR_REGISTRY_VERSION, TIMEFRAME_SECONDS,
                                    _percentile_rank, confirmed_candles_as_of)
     from signal_identity import canonical_json
+    from thesis_historical_data import (HistoricalDataSelectionError,
+        HistoricalDataSelectionPolicyV1, SelectedHistoricalDatasetV1)
 except ImportError:
     from .discovery_features import FEATURE_VERSION as DISCOVERY_FEATURE_VERSION, build_features
     from .market_context_v2 import (INDICATOR_REGISTRY_VERSION, TIMEFRAME_SECONDS,
                                     _percentile_rank, confirmed_candles_as_of)
     from .signal_identity import canonical_json
+    from .thesis_historical_data import (HistoricalDataSelectionError,
+        HistoricalDataSelectionPolicyV1, SelectedHistoricalDatasetV1)
 
 
 THESIS_SPEC_VERSION = "thesis-spec-v1"
@@ -36,12 +42,18 @@ SAMPLE_QUALITY_POLICY_VERSION = "sample-quality-v1"
 ENGINE_VERSION = "thesis-event-engine-v1"
 RESULT_VERSION = "thesis-test-result-v1"
 CAPABILITIES_VERSION = "thesis-capabilities-v1"
+EVENT_CONTEXT_VERSION = "thesis-event-context-v1"
+EVENT_CONTEXT_REQUEST_VERSION = "thesis-event-context-request-v1"
+EVENT_CONTEXT_POLICY_VERSION = "thesis-event-context-window-v1"
 
 SUPPORTED_INSTRUMENTS = {"BTC": "BTC-USDT", "ETH": "ETH-USDT", "SOL": "SOL-USDT"}
 SUPPORTED_TIMEFRAMES = ("1H", "4H")
 SUPPORTED_HORIZONS = ("4H", "12H", "24H")
 HORIZON_SECONDS = {"4H": 14_400, "12H": 43_200, "24H": 86_400}
 MAX_SOURCE_ROWS = 20_000
+EVENT_CONTEXT_BEFORE_ROWS = 40
+EVENT_CONTEXT_PADDING_ROWS = 4
+EVENT_CONTEXT_HARD_LIMIT = 96
 
 
 class ThesisValidationError(ValueError):
@@ -533,11 +545,15 @@ def _dataset_identity(rows: Sequence[Mapping[str, Any]], instrument: str, timefr
 
 class ThesisEventEngineV1:
     def run(self, spec: ThesisSpecV1, source_rows: Iterable[Mapping[str, Any]],
-            *, source_quality: Mapping[str, str] | None = None) -> dict[str, Any]:
+            *, source_quality: Mapping[str, str] | None = None,
+            effective_as_of: int | None = None,
+            historical_data_selection: Mapping[str, Any] | None = None) -> dict[str, Any]:
         definition = compile_thesis(spec)
         if spec.requested_as_of is None:  # Defensive for direct dataclass construction.
             raise ThesisValidationError("requested_as_of is required")
-        as_of = spec.requested_as_of
+        as_of = int(effective_as_of if effective_as_of is not None else spec.requested_as_of)
+        if as_of > spec.requested_as_of:
+            raise ThesisValidationError("effective_as_of must not exceed requested_as_of")
         raw_rows = [dict(row) for row in source_rows]
         resolved_quality = {"OHLCV": "VALID", **dict(source_quality or {})}
         allowed_quality = {"VALID", "MISSING", "PARTIAL", "STALE", "GAP", "UNAVAILABLE"}
@@ -606,6 +622,54 @@ class ThesisEventEngineV1:
         warnings = [f"OPTIONAL_FEATURE_UNAVAILABLE:{item['feature']}:{item['source_quality']}"
                     for item in optional_coverage if item["status"] == "UNAVAILABLE"]
         data_identity = _dataset_identity(rows, definition.canonical_instrument, definition.timeframe, identity_quality)
+        if historical_data_selection is not None:
+            data_identity = {**data_identity,
+                             "selection_policy_version": historical_data_selection.get("policy_version"),
+                             "selected_dataset_id": historical_data_selection.get("dataset_id")}
+        raw_start = (int(historical_data_selection["raw_start"])
+                     if historical_data_selection and historical_data_selection.get("raw_start") is not None
+                     else (int(rows[0]["candle_close_ts"]) if rows else None))
+        raw_end = (int(historical_data_selection["raw_end"])
+                   if historical_data_selection and historical_data_selection.get("raw_end") is not None
+                   else (int(rows[-1]["candle_close_ts"]) if rows else None))
+        warmup_rows = max((FEATURE_REGISTRY[item.feature].minimum_history
+                           for item in definition.required_conditions), default=1)
+        reduction_reasons: list[str] = []
+        if coverage.common_start is not None and raw_start is not None and coverage.common_start > raw_start:
+            warmup_features = sorted({item.feature for item in definition.required_conditions
+                                      if FEATURE_REGISTRY[item.feature].minimum_history == warmup_rows})
+            reduction_reasons.append(f"FEATURE_WARMUP:{'+'.join(warmup_features)}:{warmup_rows}_CANDLES")
+        if coverage.features and any(item.gaps for item in coverage.features):
+            reduction_reasons.append("SOURCE_GAP")
+        minimum_span_seconds = int((historical_data_selection or {}).get("minimum_research_span_seconds", 0))
+        evaluable_span_seconds = (int(coverage.common_end) - int(coverage.common_start)
+                                  if coverage.common_start is not None and coverage.common_end is not None else 0)
+        breadth = ("SUFFICIENT_SPAN" if minimum_span_seconds and evaluable_span_seconds >= minimum_span_seconds
+                   else "LIMITED_HISTORICAL_SPAN" if minimum_span_seconds else "UNKNOWN")
+        if breadth == "LIMITED_HISTORICAL_SPAN":
+            warnings.append("LIMITED_HISTORICAL_SPAN")
+        history = {
+            "source_label": (historical_data_selection or {}).get("source_label", "Canonical OHLCV"),
+            "source_type": (historical_data_selection or {}).get("source_type", "CANONICAL_STORE"),
+            "source_version": (historical_data_selection or {}).get("source_version"),
+            "selection_policy_version": (historical_data_selection or {}).get("policy_version"),
+            "dataset_id": (historical_data_selection or {}).get("dataset_id", data_identity["content_sha256"]),
+            "partition_content_sha256": (historical_data_selection or {}).get("content_sha256", data_identity["content_sha256"]),
+            "immutable_store_sha256": (historical_data_selection or {}).get("immutable_store_sha256"),
+            "immutable_store_verification": (historical_data_selection or {}).get("immutable_store_verification"),
+            "declared_dataset_id": (historical_data_selection or {}).get("declared_dataset_id"),
+            "raw_range": {"start": raw_start, "end": raw_end},
+            "evaluable_range": {"start": coverage.common_start, "end": coverage.common_end},
+            "reduction_reasons": reduction_reasons,
+            "warmup_candles": warmup_rows,
+            "continuity": (historical_data_selection or {}).get("continuity", "VALIDATED_BY_COVERAGE_GATE"),
+            "gap_count": (historical_data_selection or {}).get("gap_count", sum(len(item.gaps) for item in coverage.features)),
+            "raw_span_days": (historical_data_selection or {}).get("span_days"),
+            "span_days": evaluable_span_seconds // 86_400,
+            "breadth_qualification": breadth,
+            "minimum_research_span_days": ((historical_data_selection or {}).get("minimum_research_span_seconds", 0) // 86_400),
+            "minimum_research_span_policy_version": (historical_data_selection or {}).get("minimum_research_span_policy_version"),
+        }
         base = {"result_version": RESULT_VERSION, "status": coverage.qualification,
                 "thesis_spec": spec.to_dict(), "compiled_definition": definition.to_dict(),
                 "definition_hash": definition.definition_hash, "engine_version": ENGINE_VERSION,
@@ -615,6 +679,7 @@ class ThesisEventEngineV1:
                 "requested_as_of": spec.requested_as_of, "effective_as_of": as_of,
                 "coverage": asdict(coverage), "optional_coverage": optional_coverage,
                 "data_identity": data_identity,
+                "historical_data": history,
                 "source_identity": data_identity["sources"],
                 "limitations": ["Historical conditional evidence; not causal proof, a trading signal, or a forward probability guarantee."],
                 "warnings": warnings}
@@ -711,6 +776,7 @@ class ThesisEventEngineV1:
             "result_version", "status", "compiled_definition", "definition_hash",
             "engine_version", "feature_versions", "instrument", "canonical_instrument",
             "timeframe", "tested_range", "effective_as_of", "coverage", "data_identity",
+            "historical_data",
             "source_identity", "raw_candidate_count", "independent_event_count",
             "excluded_overlap_count", "excluded_events_summary", "event_records", "aggregates")}
         deterministic["outcome_policy_version"] = OUTCOME_POLICY_VERSION
@@ -720,18 +786,152 @@ class ThesisEventEngineV1:
 class ThesisTestServiceV1:
     """Thin service boundary around a bounded, read-only candle reader."""
 
-    def __init__(self, reader: Any, engine: ThesisEventEngineV1 | None = None) -> None:
+    def __init__(self, reader: Any, engine: ThesisEventEngineV1 | None = None,
+                 selection_policy: HistoricalDataSelectionPolicyV1 | None = None,
+                 artifact_cache_size: int = 32) -> None:
         self.reader = reader
         self.engine = engine or ThesisEventEngineV1()
+        self.selection_policy = selection_policy
+        self.artifact_cache_size = max(1, int(artifact_cache_size))
+        self._artifacts: OrderedDict[str, tuple[dict[str, Any], tuple[Mapping[str, Any], ...]]] = OrderedDict()
+        self._artifact_lock = RLock()
 
     def test(self, payload: Mapping[str, Any]) -> dict[str, Any]:
         spec = ThesisSpecV1.from_dict(payload)
         as_of = spec.requested_as_of
         if as_of is None:
             raise ThesisValidationError("requested_as_of is required")
-        rows = self.reader.candles(SUPPORTED_INSTRUMENTS[spec.instrument], spec.timeframe,
-                                   as_of, MAX_SOURCE_ROWS)
-        return self.engine.run(spec, rows)
+        definition = compile_thesis(spec)
+        selection: SelectedHistoricalDatasetV1 | None = None
+        if self.selection_policy is not None:
+            try:
+                selection = self.selection_policy.select(
+                    definition.canonical_instrument, spec.timeframe, as_of,
+                    tuple(sorted({FEATURE_REGISTRY[item.feature].source_group
+                                  for item in definition.required_conditions})),
+                )
+            except HistoricalDataSelectionError as error:
+                raise ThesisValidationError(str(error)) from error
+            rows = selection.rows
+            result = self.engine.run(
+                spec, rows, effective_as_of=selection.selection.effective_as_of,
+                historical_data_selection=selection.selection.public_dict(),
+            )
+        else:
+            rows = tuple(self.reader.candles(
+                definition.canonical_instrument, spec.timeframe, as_of, MAX_SOURCE_ROWS
+            ))
+            result = self.engine.run(spec, rows)
+        with self._artifact_lock:
+            self._artifacts[result["result_hash"]] = (result, tuple(rows))
+            self._artifacts.move_to_end(result["result_hash"])
+            while len(self._artifacts) > self.artifact_cache_size:
+                self._artifacts.popitem(last=False)
+        return result
+
+    def verified_result(self, payload: Mapping[str, Any], result_hash: str) -> tuple[dict[str, Any], tuple[Mapping[str, Any], ...]]:
+        if not isinstance(result_hash, str) or len(result_hash) != 64:
+            raise ThesisValidationError("result_hash must be a 64-character SHA-256 identity")
+        requested_spec = ThesisSpecV1.from_dict(payload)
+        requested_definition = compile_thesis(requested_spec)
+        with self._artifact_lock:
+            cached = self._artifacts.get(result_hash)
+            if cached is not None:
+                if cached[0]["definition_hash"] != requested_definition.definition_hash:
+                    raise ThesisValidationError("result identity does not match the requested thesis definition")
+                self._artifacts.move_to_end(result_hash)
+                return cached
+        result = self.test(payload)
+        if not _constant_time_equal(result["result_hash"], result_hash):
+            raise ThesisValidationError("result identity no longer matches the selected historical dataset")
+        with self._artifact_lock:
+            return self._artifacts[result_hash]
+
+    def event_context(self, payload: Mapping[str, Any]) -> dict[str, Any]:
+        allowed = {"version", "result_hash", "thesis_spec", "instrument", "timeframe",
+                   "event_id", "event_timestamp"}
+        if not isinstance(payload, Mapping) or set(payload) != allowed:
+            raise ThesisValidationError("event-context request contains unsupported or missing fields")
+        if payload.get("version") != EVENT_CONTEXT_REQUEST_VERSION:
+            raise ThesisValidationError(f"version must be {EVENT_CONTEXT_REQUEST_VERSION}")
+        thesis_spec = payload.get("thesis_spec")
+        if not isinstance(thesis_spec, Mapping):
+            raise ThesisValidationError("thesis_spec must be an object")
+        result_hash = str(payload.get("result_hash", ""))
+        result, rows = self.verified_result(thesis_spec, result_hash)
+        if payload.get("instrument") != result["instrument"]:
+            raise ThesisValidationError("event instrument does not match result")
+        if payload.get("timeframe") != result["timeframe"]:
+            raise ThesisValidationError("event timeframe does not match result")
+        event_id, event_timestamp = payload.get("event_id"), payload.get("event_timestamp")
+        if not isinstance(event_id, str) or isinstance(event_timestamp, bool) or not isinstance(event_timestamp, int):
+            raise ThesisValidationError("event identity is invalid")
+        event = next((item for item in result["event_records"]
+                      if item["event_id"] == event_id and item["timestamp"] == event_timestamp), None)
+        if event is None or event.get("exclusion_status") != "INCLUDED":
+            raise ThesisValidationError("event is not an included member of this result")
+        close_times = [int(row["candle_close_ts"]) for row in rows]
+        try:
+            source_event_index = close_times.index(event_timestamp)
+        except ValueError as error:
+            raise ThesisValidationError("event candle is absent from the result dataset") from error
+        width = TIMEFRAME_SECONDS[result["timeframe"]]
+        max_bars = max(HORIZON_SECONDS[item] for item in result["thesis_spec"]["forward_horizons"]) // width
+        start = max(0, source_event_index - EVENT_CONTEXT_BEFORE_ROWS)
+        stop = min(len(rows), source_event_index + max_bars + EVENT_CONTEXT_PADDING_ROWS + 1)
+        if stop - start > EVENT_CONTEXT_HARD_LIMIT:
+            # Preserve the event and its bounded forward evidence when a future
+            # policy increases the pre-event allowance beyond the hard cap.
+            start = max(0, stop - EVENT_CONTEXT_HARD_LIMIT)
+        context_rows = rows[start:stop]
+        context_by_close = {int(row["candle_close_ts"]): index
+                            for index, row in enumerate(context_rows)}
+        horizons = []
+        for horizon in result["thesis_spec"]["forward_horizons"]:
+            outcome = event["outcomes"].get(horizon) or {}
+            target = event_timestamp + HORIZON_SECONDS[horizon]
+            absolute_index = close_times.index(target) if target in close_times else None
+            outcome_close = (float(rows[absolute_index]["close"])
+                             if outcome.get("available") and absolute_index is not None else None)
+            horizons.append({"horizon": horizon, "target_timestamp": target,
+                             "candle_index": context_by_close.get(target),
+                             "outcome_close": outcome_close, **outcome})
+        conditions = []
+        expected_by_feature = {item["feature"]: item for item in
+                               result["compiled_definition"]["required_conditions"]}
+        for feature, actual in event["matched_conditions"].items():
+            expected = expected_by_feature[feature]
+            conditions.append({"feature": feature, "operator": expected["operator"],
+                               "expected": expected["value"], "actual": actual, "matched": True})
+        selection_id = result["data_identity"].get("selected_dataset_id")
+        return {
+            "version": EVENT_CONTEXT_VERSION,
+            "context_policy_version": EVENT_CONTEXT_POLICY_VERSION,
+            "result_hash": result_hash,
+            "definition_hash": result["definition_hash"],
+            "engine_version": result["engine_version"],
+            "dataset_identity": {"version": result["data_identity"]["version"],
+                                 "content_sha256": result["data_identity"]["content_sha256"],
+                                 "selected_dataset_id": selection_id,
+                                 "source_version": result["historical_data"].get("source_version")},
+            "instrument": result["instrument"],
+            "canonical_instrument": result["canonical_instrument"],
+            "timeframe": result["timeframe"],
+            "event": {"event_id": event_id, "timestamp": event_timestamp,
+                      "candle_index": source_event_index - start,
+                      "reference_close": event["reference_close"], "conditions": conditions},
+            "candles": [{"open_timestamp": int(row["ts"]),
+                         "close_timestamp": int(row["candle_close_ts"]),
+                         **{key: float(row[key]) for key in ("open", "high", "low", "close", "volume")}}
+                        for row in context_rows],
+            "horizons": horizons,
+            "row_limit": EVENT_CONTEXT_HARD_LIMIT,
+        }
+
+
+def _constant_time_equal(left: str, right: str) -> bool:
+    import hmac
+    return hmac.compare_digest(left.encode(), right.encode())
 
 
 def utc_iso(timestamp: int | None) -> str | None:

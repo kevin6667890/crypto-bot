@@ -6,6 +6,7 @@ from http import HTTPStatus
 
 from dashboard import paper_api
 from dashboard.thesis_event_engine import THESIS_SPEC_VERSION, ThesisValidationError
+from dashboard.thesis_evidence_explanation import EvidenceExplanationError, EvidenceIdentityMismatch
 
 
 class StubService:
@@ -111,3 +112,59 @@ def test_ai_parser_failure_does_not_change_deterministic_test_endpoint(monkeypat
     test_instance.do_POST()
     assert parse_sent[0][0]["status"] == "ERROR"
     assert test_sent[0][0]["status"] == "COMPLETED"
+
+
+def test_event_context_endpoint_is_thin_rate_limited_and_structured(monkeypatch):
+    calls = []
+    service = type("Context", (), {"event_context": lambda self, payload: calls.append(payload) or {
+        "version": "thesis-event-context-v1", "candles": []}})()
+    monkeypatch.setattr(paper_api, "THESIS_TEST_SERVICE_V1", service)
+    body = {"version": "thesis-event-context-request-v1"}
+    instance, sent = handler(body, "/api/research/thesis/event-context")
+    buckets = []; instance._limited = lambda *args: buckets.append(args) or False
+    instance.do_POST()
+    assert calls == [body]
+    assert buckets == [("thesis-event-context-minute", 20, 60)]
+    assert sent[0][0]["version"] == "thesis-event-context-v1"
+
+
+def test_event_context_validation_is_public_safe(monkeypatch):
+    service = type("Context", (), {"event_context": lambda *_: (_ for _ in ()).throw(
+        ThesisValidationError("event is not an included member of this result"))})()
+    monkeypatch.setattr(paper_api, "THESIS_TEST_SERVICE_V1", service)
+    instance, sent = handler({}, "/api/research/thesis/event-context")
+    instance.do_POST()
+    assert sent[0][1] == HTTPStatus.BAD_REQUEST
+    assert sent[0][0]["error"]["code"] == "INVALID_THESIS_EVENT_CONTEXT"
+
+
+def test_explanation_endpoint_returns_fallback_as_success(monkeypatch):
+    calls = []
+    response = {"version": "thesis-evidence-explanation-v1", "status": "FALLBACK", "blocks": [{"text": "grounded"}]}
+    service = type("Explain", (), {"explain": lambda self, payload: calls.append(payload) or response})()
+    monkeypatch.setattr(paper_api, "THESIS_EXPLANATION_SERVICE_V1", service)
+    body = {"version": "thesis-evidence-explain-request-v1"}
+    instance, sent = handler(body, "/api/research/thesis/explain")
+    instance.do_POST()
+    assert calls == [body]
+    assert sent == [(response, HTTPStatus.OK)]
+
+
+def test_explanation_identity_mismatch_is_conflict(monkeypatch):
+    service = type("Explain", (), {"explain": lambda *_: (_ for _ in ()).throw(
+        EvidenceIdentityMismatch("result identity no longer matches"))})()
+    monkeypatch.setattr(paper_api, "THESIS_EXPLANATION_SERVICE_V1", service)
+    instance, sent = handler({}, "/api/research/thesis/explain")
+    instance.do_POST()
+    assert sent[0][1] == HTTPStatus.CONFLICT
+    assert sent[0][0]["error"]["code"] == "THESIS_RESULT_IDENTITY_MISMATCH"
+
+
+def test_explanation_rejects_arbitrary_client_statistics(monkeypatch):
+    service = type("Explain", (), {"explain": lambda *_: (_ for _ in ()).throw(
+        EvidenceExplanationError("unsupported fields"))})()
+    monkeypatch.setattr(paper_api, "THESIS_EXPLANATION_SERVICE_V1", service)
+    instance, sent = handler({"positive_rate": .99}, "/api/research/thesis/explain")
+    instance.do_POST()
+    assert sent[0][1] == HTTPStatus.BAD_REQUEST
+    assert sent[0][0]["error"]["code"] == "INVALID_THESIS_EXPLANATION_REQUEST"

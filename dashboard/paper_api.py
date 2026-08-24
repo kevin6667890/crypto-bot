@@ -58,7 +58,10 @@ try:
     from market_context_v2 import BoundedMarketDataReaderV2, MarketContextServiceV2
     from market_state_v2 import MarketStateEngineV2
     from thesis_event_engine import ThesisTestServiceV1, ThesisValidationError, thesis_capabilities
-    from thesis_parser import ThesisParseContractError, ThesisParserServiceV1
+    from thesis_historical_data import HistoricalDataSelectionPolicyV1, HistoricalStoreV1
+    from thesis_evidence_explanation import (EvidenceExplanationError, EvidenceIdentityMismatch,
+        ThesisEvidenceExplanationServiceV1)
+    from thesis_parser import DeepSeekThesisParserProvider, ThesisParseContractError, ThesisParserServiceV1
     from strategy_router_v2 import StrategyRouterV2
     from strategy_registry import StrategyRegistryAdapter
     from approved_strategy_runtime import evaluate_frozen_candidate
@@ -103,7 +106,10 @@ except ImportError:
     from .market_context_v2 import BoundedMarketDataReaderV2, MarketContextServiceV2
     from .market_state_v2 import MarketStateEngineV2
     from .thesis_event_engine import ThesisTestServiceV1, ThesisValidationError, thesis_capabilities
-    from .thesis_parser import ThesisParseContractError, ThesisParserServiceV1
+    from .thesis_historical_data import HistoricalDataSelectionPolicyV1, HistoricalStoreV1
+    from .thesis_evidence_explanation import (EvidenceExplanationError, EvidenceIdentityMismatch,
+        ThesisEvidenceExplanationServiceV1)
+    from .thesis_parser import DeepSeekThesisParserProvider, ThesisParseContractError, ThesisParserServiceV1
     from .strategy_router_v2 import StrategyRouterV2
     from .strategy_registry import StrategyRegistryAdapter
     from .approved_strategy_runtime import evaluate_frozen_candidate
@@ -1241,8 +1247,31 @@ MICROSTRUCTURE = MicrostructureStore(
 )
 MARKET_DATA_READER_V2 = BoundedMarketDataReaderV2(DB_PATH, MICROSTRUCTURE.path)
 MARKET_CONTEXT_V2 = MarketContextServiceV2(MARKET_DATA_READER_V2)
-THESIS_TEST_SERVICE_V1 = ThesisTestServiceV1(MARKET_DATA_READER_V2)
+_thesis_stores = []
+if os.getenv("THESIS_HISTORICAL_DB_PATH"):
+    _thesis_stores.append(HistoricalStoreV1(
+        Path(os.environ["THESIS_HISTORICAL_DB_PATH"]), "frozen_research", 0,
+        os.getenv("THESIS_HISTORICAL_DB_SHA256") or None,
+        os.getenv("THESIS_HISTORICAL_DATASET_ID") or None,
+    ))
+_thesis_stores.append(HistoricalStoreV1(DB_PATH, "current_canonical", 100))
+THESIS_HISTORICAL_DATA_POLICY_V1 = HistoricalDataSelectionPolicyV1(_thesis_stores)
+THESIS_TEST_SERVICE_V1 = ThesisTestServiceV1(
+    MARKET_DATA_READER_V2, selection_policy=THESIS_HISTORICAL_DATA_POLICY_V1)
 THESIS_PARSER_SERVICE_V1 = ThesisParserServiceV1()
+_thesis_explanation_provider = None
+if os.getenv("THESIS_EXPLANATION_ENABLED", "false").lower() == "true":
+    try:
+        _thesis_explanation_provider = DeepSeekThesisParserProvider(
+            model=os.getenv("THESIS_EXPLANATION_MODEL") or "deepseek-chat",
+            timeout=int(os.getenv("THESIS_EXPLANATION_TIMEOUT_SECONDS", "8")),
+            api_key_file=os.getenv("THESIS_EXPLANATION_API_KEY_FILE") or os.getenv("THESIS_PARSER_API_KEY_FILE") or os.getenv("AI_REPORT_API_KEY_FILE") or None,
+            api_key=os.getenv("THESIS_EXPLANATION_API_KEY") or os.getenv("THESIS_PARSER_API_KEY") or os.getenv("DEEPSEEK_API_KEY") or None,
+        )
+    except (ValueError, OSError):
+        _thesis_explanation_provider = None
+THESIS_EXPLANATION_SERVICE_V1 = ThesisEvidenceExplanationServiceV1(
+    THESIS_TEST_SERVICE_V1, _thesis_explanation_provider)
 MARKET_STATE_ENGINE_V2 = MarketStateEngineV2()
 STRATEGY_ROUTER_V2 = StrategyRouterV2()
 STRATEGY_REGISTRY_ADAPTER = StrategyRegistryAdapter(RESEARCH.automatic_research.registry)
@@ -1855,6 +1884,32 @@ class Handler(BaseHTTPRequestHandler):
             except Exception:
                 LOGGER.exception("thesis event study failed")
                 self._send({"error":{"code":"THESIS_TEST_FAILED","message":"Thesis test could not be completed."}}, HTTPStatus.INTERNAL_SERVER_ERROR)
+            return
+        if parsed.path == "/api/research/thesis/event-context":
+            if self._limited("thesis-event-context-minute", 20, 60):return
+            payload = self._body()
+            if payload is None:return
+            try:
+                self._send(THESIS_TEST_SERVICE_V1.event_context(payload), HTTPStatus.OK)
+            except ThesisValidationError as error:
+                self._send({"error":{"code":"INVALID_THESIS_EVENT_CONTEXT","message":str(error)}}, HTTPStatus.BAD_REQUEST)
+            except Exception:
+                LOGGER.exception("thesis event context failed")
+                self._send({"error":{"code":"THESIS_EVENT_CONTEXT_FAILED","message":"Historical event context could not be completed."}}, HTTPStatus.INTERNAL_SERVER_ERROR)
+            return
+        if parsed.path == "/api/research/thesis/explain":
+            if self._limited("thesis-explain-minute", 10, 60):return
+            payload = self._body()
+            if payload is None:return
+            try:
+                self._send(THESIS_EXPLANATION_SERVICE_V1.explain(payload), HTTPStatus.OK)
+            except EvidenceIdentityMismatch as error:
+                self._send({"error":{"code":"THESIS_RESULT_IDENTITY_MISMATCH","message":str(error)}}, HTTPStatus.CONFLICT)
+            except EvidenceExplanationError as error:
+                self._send({"error":{"code":"INVALID_THESIS_EXPLANATION_REQUEST","message":str(error)}}, HTTPStatus.BAD_REQUEST)
+            except Exception:
+                LOGGER.exception("thesis evidence explanation failed")
+                self._send({"error":{"code":"THESIS_EXPLANATION_FAILED","message":"Evidence explanation could not be completed."}}, HTTPStatus.INTERNAL_SERVER_ERROR)
             return
         if parsed.path == "/api/paper/risk/loss-streak/reset":
             if not self._admin():return

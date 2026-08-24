@@ -1372,6 +1372,40 @@ def canonical_market_snapshot(instrument: str, as_of: int,
         instrument, as_of=int(as_of), execution_timeframe=execution_timeframe,
         microstructure_evidence=evidence,
     )
+
+
+PUBLIC_MARKET_SNAPSHOT_CACHE_SECONDS = 30
+_PUBLIC_MARKET_SNAPSHOT_LOCK = threading.Lock()
+_PUBLIC_MARKET_SNAPSHOT_CACHE: dict[tuple[str, str], tuple[float, dict[str, Any]]] = {}
+
+
+def public_canonical_market_snapshot(instrument: str,
+                                     execution_timeframe: str = "15m") -> dict[str, Any]:
+    """Single-flight the bounded public headline read.
+
+    Explicit historical cutoffs and Paper decisions continue to call
+    ``canonical_market_snapshot`` directly.  This small cache only prevents
+    concurrent public clients from materializing the same large read model in
+    parallel inside the bounded Paper API cgroup.
+    """
+    key = (instrument, execution_timeframe)
+    with _PUBLIC_MARKET_SNAPSHOT_LOCK:
+        now = time.monotonic()
+        cached = _PUBLIC_MARKET_SNAPSHOT_CACHE.get(key)
+        if cached and now - cached[0] <= PUBLIC_MARKET_SNAPSHOT_CACHE_SECONDS:
+            return cached[1]
+        payload = canonical_market_snapshot(
+            instrument, int(time.time()), execution_timeframe,
+        ).to_dict()
+        _PUBLIC_MARKET_SNAPSHOT_CACHE[key] = (now, payload)
+        if len(_PUBLIC_MARKET_SNAPSHOT_CACHE) > 16:
+            oldest = min(
+                _PUBLIC_MARKET_SNAPSHOT_CACHE,
+                key=lambda item: _PUBLIC_MARKET_SNAPSHOT_CACHE[item][0],
+            )
+            if oldest != key:
+                _PUBLIC_MARKET_SNAPSHOT_CACHE.pop(oldest, None)
+        return payload
 LIMITER = RateLimiter()
 LOGGER = configure_logging(ROOT)
 
@@ -1649,12 +1683,16 @@ class Handler(BaseHTTPRequestHandler):
                 if "instrument" not in query:
                     raise ValueError("instrument is required")
                 raw_as_of = query.get("as_of", [None])[0]
-                resolved_as_of = int(raw_as_of) if raw_as_of is not None else int(time.time())
-                snapshot = canonical_market_snapshot(
-                    instrument, resolved_as_of,
-                    query.get("execution_timeframe", ["15m"])[0],
-                )
-                self._send(snapshot.to_dict())
+                execution_timeframe = query.get("execution_timeframe", ["15m"])[0]
+                if raw_as_of is None:
+                    payload = public_canonical_market_snapshot(
+                        instrument, execution_timeframe,
+                    )
+                else:
+                    payload = canonical_market_snapshot(
+                        instrument, int(raw_as_of), execution_timeframe,
+                    ).to_dict()
+                self._send(payload)
             except (TypeError, ValueError) as error:
                 self._send({"error": str(error)}, HTTPStatus.BAD_REQUEST)
         elif parsed.path == "/api/market/context":

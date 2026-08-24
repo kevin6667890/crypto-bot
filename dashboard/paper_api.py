@@ -62,6 +62,8 @@ try:
     from thesis_evidence_explanation import (EvidenceExplanationError, EvidenceIdentityMismatch,
         ThesisEvidenceExplanationServiceV1)
     from thesis_parser import DeepSeekThesisParserProvider, ThesisParseContractError, ThesisParserServiceV1
+    from thesis_tracking import (CurrentFeatureEvaluatorV1, ThesisTrackingRepositoryV1,
+        ThesisTrackingSchedulerV1, ThesisTrackingServiceV1, TrackingError)
     from strategy_router_v2 import StrategyRouterV2
     from strategy_registry import StrategyRegistryAdapter
     from approved_strategy_runtime import evaluate_frozen_candidate
@@ -110,6 +112,8 @@ except ImportError:
     from .thesis_evidence_explanation import (EvidenceExplanationError, EvidenceIdentityMismatch,
         ThesisEvidenceExplanationServiceV1)
     from .thesis_parser import DeepSeekThesisParserProvider, ThesisParseContractError, ThesisParserServiceV1
+    from .thesis_tracking import (CurrentFeatureEvaluatorV1, ThesisTrackingRepositoryV1,
+        ThesisTrackingSchedulerV1, ThesisTrackingServiceV1, TrackingError)
     from .strategy_router_v2 import StrategyRouterV2
     from .strategy_registry import StrategyRegistryAdapter
     from .approved_strategy_runtime import evaluate_frozen_candidate
@@ -1272,6 +1276,16 @@ if os.getenv("THESIS_EXPLANATION_ENABLED", "false").lower() == "true":
         _thesis_explanation_provider = None
 THESIS_EXPLANATION_SERVICE_V1 = ThesisEvidenceExplanationServiceV1(
     THESIS_TEST_SERVICE_V1, _thesis_explanation_provider)
+THESIS_TRACKING_DB_PATH = Path(os.getenv(
+    "THESIS_TRACKING_DB_PATH", str(DB_PATH.parent / "thesis_tracking.db")))
+THESIS_TRACKING_REPOSITORY_V1 = ThesisTrackingRepositoryV1(THESIS_TRACKING_DB_PATH)
+THESIS_CURRENT_EVALUATOR_V1 = CurrentFeatureEvaluatorV1(MARKET_DATA_READER_V2)
+THESIS_TRACKING_SERVICE_V1 = ThesisTrackingServiceV1(
+    THESIS_TRACKING_REPOSITORY_V1, THESIS_TEST_SERVICE_V1, THESIS_CURRENT_EVALUATOR_V1)
+THESIS_TRACKING_SCHEDULER_V1 = ThesisTrackingSchedulerV1(
+    THESIS_TRACKING_SERVICE_V1,
+    cadence_seconds=int(os.getenv("THESIS_TRACKING_SCHEDULER_CADENCE_SECONDS", "900")),
+)
 MARKET_STATE_ENGINE_V2 = MarketStateEngineV2()
 STRATEGY_ROUTER_V2 = StrategyRouterV2()
 STRATEGY_REGISTRY_ADAPTER = StrategyRegistryAdapter(RESEARCH.automatic_research.registry)
@@ -1283,6 +1297,126 @@ CANONICAL_FLOW_HISTORY = CanonicalFlowHistoryStore(Path(os.getenv(
 )))
 LIMITER = RateLimiter()
 LOGGER = configure_logging(ROOT)
+_HISTORICAL_SHA_CACHE: dict[tuple[str, int, int], str] = {}
+
+
+def _safe_file_sha256(path: Path) -> str | None:
+    try:
+        stat = path.stat()
+        cache_key = (str(path.resolve()), int(stat.st_mtime_ns), int(stat.st_size))
+        cached = _HISTORICAL_SHA_CACHE.get(cache_key)
+        if cached is not None:
+            return cached
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        value = digest.hexdigest()
+        _HISTORICAL_SHA_CACHE.clear()
+        _HISTORICAL_SHA_CACHE[cache_key] = value
+        return value
+    except OSError:
+        return None
+
+
+def _historical_store_contract(path: Path) -> tuple[str | None, str | None]:
+    """Return manifest identity or a public reason for an unusable store."""
+    try:
+        with sqlite3.connect(f"file:{path.resolve().as_posix()}?mode=ro", uri=True, timeout=3) as connection:
+            connection.execute("PRAGMA query_only=ON")
+            tables = {str(row[0]) for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'")}
+            if not ({"historical_candles", "market_candles"} & tables):
+                return None, "HISTORICAL_CANDLE_SCHEMA_MISSING"
+            for table in ("thesis_dataset_manifest", "historical_dataset_manifest"):
+                if table in tables:
+                    columns = {str(row[1]) for row in connection.execute(f"PRAGMA table_info({table})")}
+                    identity_column = next((name for name in ("dataset_id", "identity", "dataset_identity")
+                                            if name in columns), None)
+                    if identity_column:
+                        row = connection.execute(
+                            f"SELECT {identity_column} FROM {table} ORDER BY rowid DESC LIMIT 1").fetchone()
+                        if row and row[0]:
+                            return str(row[0]), None
+            return None, "HISTORICAL_DATASET_MANIFEST_MISSING"
+    except sqlite3.Error:
+        return None, "HISTORICAL_STORE_INVALID_SQLITE"
+
+
+def thesis_product_readiness() -> dict[str, Any]:
+    """Sanitized readiness for the product loop; no paths or secrets."""
+    required = os.getenv("THESIS_HISTORICAL_REQUIRE_IMMUTABLE", "false").lower() == "true"
+    configured_path = os.getenv("THESIS_HISTORICAL_DB_PATH")
+    expected_sha = os.getenv("THESIS_HISTORICAL_DB_SHA256")
+    declared_id = os.getenv("THESIS_HISTORICAL_DATASET_ID")
+    historical_status, historical_reason = "READY", None
+    if required and not (configured_path and expected_sha and declared_id):
+        historical_status, historical_reason = "BLOCKED", "IMMUTABLE_HISTORICAL_CONFIG_INCOMPLETE"
+    elif configured_path:
+        historical_path = Path(configured_path)
+        actual_sha = _safe_file_sha256(historical_path)
+        if actual_sha is None:
+            historical_status, historical_reason = "BLOCKED", "HISTORICAL_STORE_UNREADABLE"
+        elif expected_sha and not hmac.compare_digest(actual_sha.lower(), expected_sha.lower()):
+            historical_status, historical_reason = "BLOCKED", "HISTORICAL_STORE_SHA256_MISMATCH"
+        elif required and not declared_id:
+            historical_status, historical_reason = "BLOCKED", "HISTORICAL_DATASET_ID_MISSING"
+        else:
+            manifest_id, contract_error = _historical_store_contract(historical_path)
+            if contract_error and required:
+                historical_status, historical_reason = "BLOCKED", contract_error
+            elif declared_id and manifest_id and not hmac.compare_digest(declared_id, manifest_id):
+                historical_status, historical_reason = "BLOCKED", "HISTORICAL_DATASET_ID_MISMATCH"
+    now = int(time.time())
+    current_status, current_reason, latest = "BLOCKED", "NO_CONFIRMED_CURRENT_CANDLE", None
+    try:
+        rows = MARKET_DATA_READER_V2.candles("BTC-USDT", "4H", now, 3)
+        confirmed = [row for row in rows if row.get("confirmed") and int(row.get("candle_close_ts", 0)) <= now]
+        if confirmed and confirmed[-1].get("_source_store") == "market_candles":
+            latest = int(confirmed[-1]["candle_close_ts"])
+            current_status = "STALE" if now - latest > 28_800 else "READY"
+            current_reason = "LATEST_CONFIRMED_4H_CANDLE_STALE" if current_status == "STALE" else None
+        elif confirmed:
+            current_reason = "LATEST_CANDLE_IS_NOT_FROM_CURRENT_LIVE_CANONICAL_STORE"
+    except (OSError, sqlite3.Error, ValueError, TypeError):
+        current_reason = "CURRENT_CANONICAL_READER_UNAVAILABLE"
+    parser_ready = bool(os.getenv("THESIS_PARSER_API_KEY") or os.getenv("DEEPSEEK_API_KEY") or
+                        os.getenv("THESIS_PARSER_API_KEY_FILE"))
+    explanation_enabled = os.getenv("THESIS_EXPLANATION_ENABLED", "false").lower() == "true"
+    return {
+        "version": "thesis-product-readiness-v1",
+        "historical_thesis_data": {"status": historical_status, "reason": historical_reason,
+                                   "immutable_required": required},
+        "current_market_data": {"status": current_status, "reason": current_reason,
+                                "latest_confirmed_candle": latest},
+        "tracking_database": THESIS_TRACKING_REPOSITORY_V1.readiness(),
+        "parser_ai": {"status": "READY" if parser_ready else "OPTIONAL_UNAVAILABLE"},
+        "explanation_ai": {"status": ("READY" if _thesis_explanation_provider is not None
+                                        else "OPTIONAL_UNAVAILABLE"),
+                           "enabled": explanation_enabled},
+        "tracking_scheduler": {
+            "status": ("ENABLED" if os.getenv("THESIS_TRACKING_SCHEDULER_ENABLED", "false").lower() == "true"
+                       else "DISABLED"),
+            "cadence_seconds": THESIS_TRACKING_SCHEDULER_V1.cadence_seconds,
+        },
+    }
+
+
+def recent_market_state_changes() -> list[dict[str, Any]]:
+    """Reuse the existing semantic compare engine for one bounded current flow."""
+    now = int(time.time())
+    rows = MARKET_DATA_READER_V2.candles("BTC-USDT", "4H", now, 3)
+    if len(rows) < 2:
+        return []
+    previous_as_of = int(rows[-2]["candle_close_ts"])
+    current_as_of = int(rows[-1]["candle_close_ts"])
+    previous = MARKET_CONTEXT_V2.context("BTC-USDT", as_of=previous_as_of, execution_timeframe="4H")
+    current = MARKET_CONTEXT_V2.context("BTC-USDT", as_of=current_as_of, execution_timeframe="4H")
+    compared = MARKET_STATE_ENGINE_V2.compare(previous, current)
+    transitions = compared.get("transitions", []) if isinstance(compared, dict) else []
+    return [{"source": "MARKET_STATE_V2", "instrument": "BTC", "timeframe": "4H",
+             "previous_as_of": previous_as_of, "current_as_of": current_as_of,
+             "transition": item} for item in transitions]
 
 def public_operations_summary() -> dict[str, Any]:
     """Small, read-only and deliberately non-sensitive public status payload."""
@@ -1477,6 +1611,32 @@ class Handler(BaseHTTPRequestHandler):
         instrument = query.get("instrument", ["ETH-USDT"])[0]
         if parsed.path == "/api/research/thesis/capabilities":
             self._send(thesis_capabilities())
+            return
+        if parsed.path == "/api/research/thesis/readiness":
+            self._send(thesis_product_readiness())
+            return
+        if parsed.path == "/api/research/thesis/tracks":
+            self._send({"version": "tracked-thesis-list-v1",
+                        "tracks": THESIS_TRACKING_REPOSITORY_V1.list(limit=100)})
+            return
+        if parsed.path == "/api/research/thesis/changes":
+            hours = max(1, min(int(query.get("hours", ["72"])[0]), 168))
+            limit = max(1, min(int(query.get("limit", ["50"])[0]), 100))
+            changes = THESIS_TRACKING_REPOSITORY_V1.changes(
+                since_epoch=int(time.time()) - hours * 3600, limit=limit)
+            try:
+                market_changes = recent_market_state_changes()
+            except (OSError, sqlite3.Error, TypeError, ValueError, KeyError):
+                market_changes = []
+            self._send({"version": "evidence-changes-feed-v1", "hours": hours,
+                        "changes": changes, "market_state_changes": market_changes})
+            return
+        track_prefix = "/api/research/thesis/tracks/"
+        if parsed.path.startswith(track_prefix) and "/" not in parsed.path[len(track_prefix):]:
+            track_id = parsed.path[len(track_prefix):]
+            detail = THESIS_TRACKING_REPOSITORY_V1.detail(track_id)
+            self._send(detail or {"error": "Tracked thesis not found"},
+                       HTTPStatus.OK if detail else HTTPStatus.NOT_FOUND)
             return
         if parsed.path.startswith("/api/ai-market-analysis/v1/"):
             if parsed.path in {"/api/ai-market-analysis/v1/workspace-brief/latest", "/api/ai-market-analysis/v1/research-reports"} or parsed.path.startswith("/api/ai-market-analysis/v1/research-reports/"):
@@ -1707,7 +1867,8 @@ class Handler(BaseHTTPRequestHandler):
                 except (TypeError, ValueError): return None
             bins = max(18, min(42, int(query_float("bins") or 32)))
             self._send(SERVICE.vpvr_profile(instrument, query.get("interval", ["15m"])[0], bins, query_float("price_low"), query_float("price_high")))
-        elif parsed.path == "/api/health": self._send(HEALTH.payload(False))
+        elif parsed.path == "/api/health": self._send({**HEALTH.payload(False),
+                                                        "thesis_product": thesis_product_readiness()})
         elif parsed.path == "/api/operations/summary":
             self._send(public_operations_summary())
         elif parsed.path == "/api/operations/trends":
@@ -1878,6 +2039,12 @@ class Handler(BaseHTTPRequestHandler):
             payload = self._body()
             if payload is None:return
             try:
+                readiness = thesis_product_readiness()["historical_thesis_data"]
+                if readiness["status"] == "BLOCKED":
+                    self._send({"error":{"code":"HISTORICAL_THESIS_DATA_BLOCKED",
+                                          "message":"Qualified immutable historical evidence is unavailable."}},
+                               HTTPStatus.SERVICE_UNAVAILABLE)
+                    return
                 self._send(THESIS_TEST_SERVICE_V1.test(payload), HTTPStatus.OK)
             except ThesisValidationError as error:
                 self._send({"error":{"code":"INVALID_THESIS_SPEC","message":str(error)}}, HTTPStatus.BAD_REQUEST)
@@ -1885,11 +2052,65 @@ class Handler(BaseHTTPRequestHandler):
                 LOGGER.exception("thesis event study failed")
                 self._send({"error":{"code":"THESIS_TEST_FAILED","message":"Thesis test could not be completed."}}, HTTPStatus.INTERNAL_SERVER_ERROR)
             return
+        if parsed.path == "/api/research/thesis/tracks":
+            if self._limited("thesis-track-create-minute", 10, 60):return
+            payload = self._body()
+            if payload is None:return
+            try:
+                if thesis_product_readiness()["historical_thesis_data"]["status"] == "BLOCKED":
+                    self._send({"error":{"code":"HISTORICAL_THESIS_DATA_BLOCKED",
+                                          "message":"Qualified immutable historical evidence is unavailable."}},
+                               HTTPStatus.SERVICE_UNAVAILABLE)
+                    return
+                result = THESIS_TRACKING_SERVICE_V1.create(payload)
+                self._send(result, HTTPStatus.CREATED if result.get("created") else HTTPStatus.OK)
+            except TrackingError as error:
+                self._send({"error":{"code":"INVALID_TRACKED_THESIS","message":str(error)}},
+                           HTTPStatus.BAD_REQUEST)
+            except Exception:
+                LOGGER.exception("tracked thesis create failed")
+                self._send({"error":{"code":"THESIS_TRACKING_UNAVAILABLE",
+                                      "message":"Tracked thesis could not be saved."}},
+                           HTTPStatus.SERVICE_UNAVAILABLE)
+            return
+        track_prefix = "/api/research/thesis/tracks/"
+        if parsed.path.startswith(track_prefix):
+            suffix = parsed.path[len(track_prefix):]
+            parts = suffix.split("/")
+            if len(parts) == 2 and parts[1] in {"evaluate", "archive"}:
+                if self._limited("thesis-track-refresh-minute", 20, 60):return
+                payload = self._body()
+                if payload is None:return
+                try:
+                    if parts[1] == "evaluate":
+                        if payload and payload != {"version": "current-thesis-evaluate-request-v1"}:
+                            raise TrackingError("evaluate request contains unsupported fields")
+                        self._send(THESIS_TRACKING_SERVICE_V1.evaluate(parts[0]), HTTPStatus.OK)
+                    else:
+                        if payload not in ({}, {"version": "track-thesis-archive-v1"}):
+                            raise TrackingError("archive request contains unsupported fields")
+                        archived = THESIS_TRACKING_REPOSITORY_V1.archive(parts[0])
+                        self._send({"track": archived} if archived else {"error": "Tracked thesis not found"},
+                                   HTTPStatus.OK if archived else HTTPStatus.NOT_FOUND)
+                except TrackingError as error:
+                    self._send({"error":{"code":"INVALID_TRACKING_OPERATION","message":str(error)}},
+                               HTTPStatus.BAD_REQUEST)
+                except Exception:
+                    LOGGER.exception("tracked thesis operation failed")
+                    self._send({"error":{"code":"THESIS_TRACKING_UNAVAILABLE",
+                                          "message":"Tracking operation could not be completed."}},
+                               HTTPStatus.SERVICE_UNAVAILABLE)
+                return
         if parsed.path == "/api/research/thesis/event-context":
             if self._limited("thesis-event-context-minute", 20, 60):return
             payload = self._body()
             if payload is None:return
             try:
+                if thesis_product_readiness()["historical_thesis_data"]["status"] == "BLOCKED":
+                    self._send({"error":{"code":"HISTORICAL_THESIS_DATA_BLOCKED",
+                                          "message":"Qualified immutable historical evidence is unavailable."}},
+                               HTTPStatus.SERVICE_UNAVAILABLE)
+                    return
                 self._send(THESIS_TEST_SERVICE_V1.event_context(payload), HTTPStatus.OK)
             except ThesisValidationError as error:
                 self._send({"error":{"code":"INVALID_THESIS_EVENT_CONTEXT","message":str(error)}}, HTTPStatus.BAD_REQUEST)
@@ -1902,6 +2123,11 @@ class Handler(BaseHTTPRequestHandler):
             payload = self._body()
             if payload is None:return
             try:
+                if thesis_product_readiness()["historical_thesis_data"]["status"] == "BLOCKED":
+                    self._send({"error":{"code":"HISTORICAL_THESIS_DATA_BLOCKED",
+                                          "message":"Qualified immutable historical evidence is unavailable."}},
+                               HTTPStatus.SERVICE_UNAVAILABLE)
+                    return
                 self._send(THESIS_EXPLANATION_SERVICE_V1.explain(payload), HTTPStatus.OK)
             except EvidenceIdentityMismatch as error:
                 self._send({"error":{"code":"THESIS_RESULT_IDENTITY_MISMATCH","message":str(error)}}, HTTPStatus.CONFLICT)

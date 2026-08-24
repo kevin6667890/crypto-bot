@@ -40,6 +40,7 @@ services:
       GIT_COMMIT: ${GIT_COMMIT:-unknown}
       MICROSTRUCTURE_DB_PATH: /app/data_cache/market_microstructure.db
       CANONICAL_MICROSTRUCTURE_HISTORY_DB_PATH: /app/data_cache/canonical_microstructure_history_v1.db
+      THESIS_TRACKING_DB_PATH: /app/data_cache/thesis_tracking.db
       RESEARCH_JOB_WORKER_ENABLED: "false"
     volumes:
       - ./data_cache:/app/data_cache
@@ -67,6 +68,22 @@ services:
       - ./data_cache:/app/data_cache
     logging: *bounded-json-logs
     restart: unless-stopped
+
+  thesis-tracking-worker:
+    profiles:
+      - thesis-tracking
+    build: .
+    env_file: .env
+    command: python -m scripts.run_thesis_tracking_scheduler
+    environment:
+      PAPER_DB_PATH: /app/data_cache/paper_trades.db
+      THESIS_TRACKING_DB_PATH: /app/data_cache/thesis_tracking.db
+      THESIS_TRACKING_SCHEDULER_ENABLED: ${THESIS_TRACKING_SCHEDULER_ENABLED:-false}
+      THESIS_TRACKING_SCHEDULER_CADENCE_SECONDS: ${THESIS_TRACKING_SCHEDULER_CADENCE_SECONDS:-900}
+    volumes:
+      - ./data_cache:/app/data_cache
+    logging: *bounded-json-logs
+    restart: "no"
 
   microstructure-collector:
     build: .

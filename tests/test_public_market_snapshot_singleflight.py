@@ -45,4 +45,4 @@ def test_paper_cycle_publishes_the_same_canonical_payload_for_public_reads():
     cycle = source[start:source.index("def _active_strategy", start)]
     assert "_publish_public_market_snapshot(" in cycle
     assert "snapshot.to_dict()" in cycle
-    assert paper_api.PUBLIC_MARKET_SNAPSHOT_CACHE_SECONDS > 60
+    assert 120 < paper_api.PUBLIC_MARKET_SNAPSHOT_CACHE_SECONDS < 15 * 60

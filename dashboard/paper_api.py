@@ -1384,7 +1384,10 @@ def canonical_market_snapshot(instrument: str, as_of: int,
         )
 
 
-PUBLIC_MARKET_SNAPSHOT_CACHE_SECONDS = 75
+# A low-spec production Paper cycle can take roughly two minutes.  Keep the
+# last immutable confirmed snapshot available across that cycle, while staying
+# well below the 15-minute execution timeframe represented by the payload.
+PUBLIC_MARKET_SNAPSHOT_CACHE_SECONDS = 240
 _PUBLIC_MARKET_SNAPSHOT_LOCK = threading.Lock()
 _PUBLIC_MARKET_SNAPSHOT_CACHE: dict[tuple[str, str], tuple[float, dict[str, Any]]] = {}
 

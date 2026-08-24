@@ -2239,12 +2239,35 @@ def startup_integrity_check_enabled() -> bool:
     }
 
 
+def paper_scheduler_tick() -> bool:
+    """Run one Paper cycle without allowing transient storage contention to kill the scheduler."""
+    try:
+        SERVICE.cycle()
+    except Exception as error:
+        log_event(
+            LOGGER,
+            "ERROR",
+            "paper_scheduler",
+            "cycle_failed",
+            error_type=type(error).__name__,
+        )
+        return False
+    log_event(
+        LOGGER,
+        "INFO",
+        "paper_scheduler",
+        "cycle_completed",
+        duration_ms=SERVICE.last_cycle_duration_ms,
+    )
+    return True
+
+
 def run() -> None:
     def scheduler() -> None:
         SERVICE.scheduler_running=True
         while True:
-            SERVICE.cycle()
-            log_event(LOGGER,"INFO","paper_scheduler","cycle_completed",duration_ms=SERVICE.last_cycle_duration_ms); time.sleep(60)
+            paper_scheduler_tick()
+            time.sleep(60)
 
     def ai_report_scheduler() -> None:
         """Keep report due checks independent from a slow Paper service cycle."""

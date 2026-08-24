@@ -2,6 +2,15 @@ import { describe, expect, it } from "vitest";
 import { marketProvenancePresentation } from "./marketProvenance";
 
 describe("market provenance presentation", () => {
+  it("keeps the initial canonical request neutral in English and Chinese", () => {
+    expect(marketProvenancePresentation({ provenance: "DEMO_FALLBACK", asOf: "--", pendingCanonical: true })).toEqual({
+      tone: "loading", label: "Loading canonical data", detail: "Fetching confirmed market facts",
+    });
+    expect(marketProvenancePresentation({ provenance: "BROWSER_FALLBACK", asOf: "--", pendingCanonical: true, language: "zh" })).toEqual({
+      tone: "loading", label: "正在加载标准数据", detail: "正在获取已确认市场事实",
+    });
+  });
+
   it("keeps normal canonical provenance compact and quiet", () => {
     expect(marketProvenancePresentation({ provenance: "CANONICAL", asOf: "10:00" })).toEqual({
       tone: "canonical", label: "Canonical · Confirmed", detail: "As of 10:00",

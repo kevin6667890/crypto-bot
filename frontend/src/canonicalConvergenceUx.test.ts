@@ -19,6 +19,9 @@ describe("canonical convergence UX contracts", () => {
     expect(app).toContain("fetchEthSnapshot(instrument)");
     expect(app).toContain("fetchBrowserOkxSnapshot(instrument)");
     expect(app).toContain("marketProvenancePresentation");
+    expect(app).toContain("const [pendingCanonical, setPendingCanonical] = useState(true)");
+    expect(app).toContain("setPendingCanonical(false)");
+    expect(app).toContain('data-market-provenance={pendingCanonical ? "CANONICAL_LOADING" : snapshot.provenance}');
     expect(app).toContain('current.provenance !== "BROWSER_FALLBACK" ? current');
     expect(app).toContain("RAW OBSERVATION · BROWSER DIRECT OKX");
     expect(app).not.toContain("Browser ${snapshot.source} observation — not canonical production truth");

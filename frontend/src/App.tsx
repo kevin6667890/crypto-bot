@@ -703,6 +703,7 @@ function Workspace() {
   const [snapshot, setSnapshot] = useState<MarketSnapshot>(() =>
     demoSnapshot()
   );
+  const [pendingCanonical, setPendingCanonical] = useState(true);
   const [browserFallbackActive, setBrowserFallbackActive] = useState(false);
   const [signal, setSignal] = useState<SignalAnalysis>(demoSignal);
   const [instrument, setInstrument] = useState("ETH-USDT");
@@ -771,6 +772,8 @@ function Workspace() {
           setBrowserFallbackActive(false);
         }
       }
+    } finally {
+      if (request === paperRequest.current) setPendingCanonical(false);
     }
     try {
       const analysis = await fetchSignalAnalysis(instrument);
@@ -879,7 +882,7 @@ function Workspace() {
   const flowStatus = flowState?.collector_status || "OFFLINE";
   const flowCoverage = flowState ? `${Math.round(flowState.coverage_seconds / 60)} / ${Math.round(flowState.window_seconds / 3600)}h` : "--";
   const marketProvenance = marketProvenancePresentation({
-    provenance: snapshot.provenance, asOf: snapshot.updatedAt, fallbackReason: snapshot.fallbackReason, language,
+    provenance: snapshot.provenance, asOf: snapshot.updatedAt, fallbackReason: snapshot.fallbackReason, language, pendingCanonical,
   });
   const action = runtimeAnalysis?.action || "WAIT";
   const decisionScore = runtimeAnalysis?.score ?? 0;
@@ -957,9 +960,9 @@ function Workspace() {
           </div>
         </div>
         <div className="market-controls">
-          <span className={`live-dot ${marketProvenance.tone === "degraded" ? "degraded" : ""}`} />{" "}
+          <span className={`live-dot ${marketProvenance.tone === "degraded" ? "degraded" : marketProvenance.tone === "loading" ? "loading" : ""}`} />{" "}
           <strong>{marketProvenance.label}</strong>
-          <small className={`market-provenance ${marketProvenance.tone}`} data-market-provenance={snapshot.provenance}>{marketProvenance.detail}</small>
+          <small className={`market-provenance ${marketProvenance.tone}`} data-market-provenance={pendingCanonical ? "CANONICAL_LOADING" : snapshot.provenance}>{marketProvenance.detail}</small>
           <select
             value={instrument}
             onChange={(event) => setInstrument(event.target.value)}

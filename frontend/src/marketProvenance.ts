@@ -5,10 +5,18 @@ export type MarketProvenanceInput = {
   asOf: string;
   fallbackReason?: string;
   language?: "zh" | "en";
+  pendingCanonical?: boolean;
 };
 
 export function marketProvenancePresentation(input: MarketProvenanceInput) {
   const zh = input.language === "zh";
+  if (input.pendingCanonical) {
+    return {
+      tone: "loading" as const,
+      label: zh ? "正在加载标准数据" : "Loading canonical data",
+      detail: zh ? "正在获取已确认市场事实" : "Fetching confirmed market facts",
+    };
+  }
   if (input.provenance === "CANONICAL") {
     return {
       tone: "canonical" as const,

@@ -84,4 +84,38 @@ describe("test-an-idea deterministic UI state", () => {
     for (const value of ["Test an idea", "测试一个想法", "Historical evidence", "历史证据", "AI interpretation is unavailable", "AI 解析暂不可用"]) expect(copy).toContain(value);
     expect(readFileSync(new URL("./TestAnIdeaPage.tsx", import.meta.url), "utf8")).toContain("startManual");
   });
+
+  it("renders raw and evaluable lineage, limited-span warning and audit identities", () => {
+    const source = readFileSync(new URL("./TestAnIdeaPage.tsx", import.meta.url), "utf8");
+    for (const field of ["historical_data.raw_range", "historical_data.evaluable_range", "breadth_qualification",
+      "result_hash.slice", "definition_hash.slice", "feature_versions", "independence_policy.version"]) expect(source).toContain(field);
+    const copy = readFileSync(new URL("./i18n.ts", import.meta.url), "utf8");
+    for (const label of ["Limited historical span", "历史跨度有限", "Evidence details", "证据详情"]) expect(copy).toContain(label);
+  });
+
+  it("loads only the selected event and cancels an older event-context request", () => {
+    const source = readFileSync(new URL("./TestAnIdeaPage.tsx", import.meta.url), "utf8");
+    expect(source).toContain("async function viewEvent(event");
+    expect(source).toContain("eventContextController.current?.abort()");
+    expect(source).toContain("eventContextSequence.current");
+    expect(source).not.toMatch(/useEffect\([\s\S]{0,300}fetchThesisEventContext\(/);
+  });
+
+  it("uses backend marker timestamps and never derives horizon timestamps or returns", () => {
+    const chart = readFileSync(new URL("./EvidenceCandlestickChart.tsx", import.meta.url), "utf8");
+    expect(chart).toContain("context.event.timestamp");
+    expect(chart).toContain("horizon.target_timestamp");
+    expect(chart).toContain("candle.close_timestamp");
+    expect(chart).toContain("createSeriesMarkers");
+    expect(chart).not.toMatch(/event\.timestamp\s*\+/);
+    const page = readFileSync(new URL("./TestAnIdeaPage.tsx", import.meta.url), "utf8");
+    expect(page).not.toContain("outcome_close / eventContext.event.reference_close");
+  });
+
+  it("requests explanation after a result without rerunning the historical test", () => {
+    const source = readFileSync(new URL("./TestAnIdeaPage.tsx", import.meta.url), "utf8");
+    expect(source).toContain("explainThesis(result, language");
+    expect(source).toContain("explanation.status === \"FALLBACK\"");
+    expect(source).not.toMatch(/useEffect\([\s\S]{0,400}testThesis\(/);
+  });
 });

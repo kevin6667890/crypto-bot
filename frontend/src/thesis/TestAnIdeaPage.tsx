@@ -1,10 +1,11 @@
 import { ArrowLeft, BrainCircuit, CheckCircle2, FlaskConical, Plus, ShieldAlert, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLanguage } from "../i18n";
-import { fetchThesisCapabilities, parseThesis, testThesis } from "./api";
+import { explainThesis, fetchThesisCapabilities, fetchThesisEventContext, parseThesis, testThesis } from "./api";
+import EvidenceCandlestickChart from "./EvidenceCandlestickChart";
 import { thesisText } from "./i18n";
 import { canRunDefinition, executableSpec, formatFraction, formatTimestamp, type EditableDefinition } from "./state";
-import type { PartialThesisCondition, ThesisCapabilities, ThesisParseResult, ThesisTestResult } from "./types";
+import type { EvidenceExplanation, PartialThesisCondition, ThesisCapabilities, ThesisEventContext, ThesisEventRecord, ThesisParseResult, ThesisTestResult } from "./types";
 
 const examples = {
   en: [
@@ -57,6 +58,14 @@ export default function TestAnIdeaPage() {
   const [manual, setManual] = useState(false);
   const [removed, setRemoved] = useState(false);
   const sequence = useRef(0);
+  const [selectedEvent, setSelectedEvent] = useState<ThesisEventRecord | null>(null);
+  const [eventContext, setEventContext] = useState<ThesisEventContext | null>(null);
+  const [eventContextState, setEventContextState] = useState<"idle" | "loading" | "error">("idle");
+  const eventContextController = useRef<AbortController | null>(null);
+  const eventContextSequence = useRef(0);
+  const [explanation, setExplanation] = useState<EvidenceExplanation | null>(null);
+  const [explanationLoading, setExplanationLoading] = useState(false);
+  const explanationSequence = useRef(0);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -65,6 +74,22 @@ export default function TestAnIdeaPage() {
     });
     return () => controller.abort();
   }, []);
+
+  useEffect(() => {
+    if (!result) { ++explanationSequence.current; setExplanation(null); setExplanationLoading(false); return; }
+    const controller = new AbortController();
+    const current = ++explanationSequence.current;
+    const currentHash = result.result_hash;
+    setExplanation(null); setExplanationLoading(true);
+    explainThesis(result, language, controller.signal).then((value) => {
+      if (current === explanationSequence.current && value.result_hash === currentHash) setExplanation(value);
+    }).catch((reason) => {
+      if ((reason as Error).name !== "AbortError") setExplanation(null);
+    }).finally(() => { if (!controller.signal.aborted && current === explanationSequence.current) setExplanationLoading(false); });
+    return () => controller.abort();
+  }, [result, language]);
+
+  useEffect(() => () => eventContextController.current?.abort(), []);
 
   const availableFeatures = useMemo(() => capabilities?.features.filter((item) => item.availability === "AVAILABLE") || [], [capabilities]);
   const runnable = canRunDefinition(definition, capabilities) && parseResult?.status !== "UNSUPPORTED" && phase === "idle";
@@ -112,6 +137,8 @@ export default function TestAnIdeaPage() {
 
   async function runTest() {
     if (!capabilities || !runnable) return;
+    eventContextController.current?.abort();
+    setSelectedEvent(null); setEventContext(null); setEventContextState("idle");
     setPhase("testing"); setError(""); setResult(null);
     try {
       const submitted = executableSpec(definition, capabilities);
@@ -125,6 +152,23 @@ export default function TestAnIdeaPage() {
       setResult(tested);
     } catch { setError(labels.apiError); }
     finally { setPhase("idle"); }
+  }
+
+  async function viewEvent(event: ThesisEventRecord) {
+    if (!result || event.exclusion_status !== "INCLUDED") return;
+    eventContextController.current?.abort();
+    const controller = new AbortController();
+    const current = ++eventContextSequence.current;
+    eventContextController.current = controller;
+    setSelectedEvent(event); setEventContext(null); setEventContextState("loading");
+    try {
+      const value = await fetchThesisEventContext(result, event, controller.signal);
+      if (current === eventContextSequence.current && value.event.event_id === event.event_id) {
+        setEventContext(value); setEventContextState("idle");
+      }
+    } catch (reason) {
+      if ((reason as Error).name !== "AbortError" && current === eventContextSequence.current) setEventContextState("error");
+    }
   }
 
   const topQuality = result?.aggregates["24H"]?.sample_quality || result && Object.values(result.aggregates)[0]?.sample_quality;
@@ -229,9 +273,21 @@ export default function TestAnIdeaPage() {
         <td>{formatFraction(aggregate.median_mfe_fraction, language)}</td><td>{formatFraction(aggregate.median_mae_fraction, language)}</td><td>{aggregate.sample_quality}</td>
       </tr> : null; })}</tbody></table></div></section>
 
+      <section className="thesis-card thesis-explanation" aria-live="polite"><h2>{labels.whatEvidenceSays}</h2>
+        {explanationLoading && <p className="thesis-muted">{labels.explanationLoading}</p>}
+        {explanation ? <>{explanation.blocks.map((block) => <p key={block.template_id}>{block.text}</p>)}
+          {explanation.status === "FALLBACK" && <small>{labels.deterministicFallback}</small>}</>
+          : !explanationLoading && <p>{labels.explanationUnavailable}</p>}
+      </section>
+
       <div className="thesis-result-grid"><section className="thesis-card"><h2>{labels.coverage}</h2>
         <div className={`thesis-coverage-status ${result.coverage.testable ? "ok" : "blocked"}`}><strong>{result.coverage.qualification}</strong><span>{result.coverage.testable ? "✓" : "—"}</span></div>
         {result.coverage.reason && <p>{result.coverage.reason}</p>}
+        <dl className="thesis-history-lineage"><div><dt>{labels.source}</dt><dd>{result.historical_data.source_label}</dd></div>
+          <div><dt>{labels.rawHistory}</dt><dd>{formatTimestamp(result.historical_data.raw_range.start, language)} → {formatTimestamp(result.historical_data.raw_range.end, language)}</dd></div>
+          <div><dt>{labels.evaluableHistory}</dt><dd>{formatTimestamp(result.historical_data.evaluable_range.start, language)} → {formatTimestamp(result.historical_data.evaluable_range.end, language)}</dd></div>
+          <div><dt>{labels.reductionReason}</dt><dd>{result.historical_data.reduction_reasons.length ? result.historical_data.reduction_reasons.join(" · ").replace(/_/g, " ") : labels.none}</dd></div></dl>
+        {result.historical_data.breadth_qualification === "LIMITED_HISTORICAL_SPAN" && <div className="thesis-alert warning"><strong>{labels.limitedSpan}</strong><br />{labels.limitedSpanBody.replace("{days}", String(result.historical_data.span_days || 0))}</div>}
         <ul className="thesis-coverage-list">{result.coverage.features.map((item) => <li key={item.feature}><div><strong>{item.feature}</strong><small>{item.reason}</small></div><span>{item.qualification}</span></li>)}</ul>
       </section><section className="thesis-card"><h2>{labels.limitations}</h2><ul>{result.limitations.map((item) => <li key={item}>{item}</li>)}{result.warnings.map((item) => <li key={item}>{item.replace(/_/g, " ")}</li>)}</ul></section></div>
 
@@ -242,8 +298,34 @@ export default function TestAnIdeaPage() {
             : <div>{result.thesis_spec.forward_horizons.map((horizon) => { const outcome = event.outcomes[horizon]; return <span key={horizon}><b>{horizon}</b> {outcome?.available
               ? <>{formatFraction(outcome.forward_return_fraction, language)} · MFE {formatFraction(outcome.mfe_fraction, language)} · MAE {formatFraction(outcome.mae_fraction, language)}</>
               : `${labels.censored}: ${outcome?.censor_reason || "—"}`}</span>; })}</div>}
+          {event.exclusion_status === "INCLUDED" && <button className="secondary-btn thesis-view-event" onClick={() => void viewEvent(event)}>{labels.viewEvent}</button>}
         </article>)}</div>
+        {selectedEvent && <section className="thesis-selected-event" aria-label={labels.eventEvidence}>
+          <header><div><span className="thesis-eyebrow">{labels.historicalEvent}</span><h3>{formatTimestamp(selectedEvent.timestamp, language)}</h3></div>
+            <button className="icon-button" aria-label={labels.close} onClick={() => { eventContextController.current?.abort(); setSelectedEvent(null); setEventContext(null); setEventContextState("idle"); }}>×</button></header>
+          {eventContextState === "loading" && <div className="thesis-loading" role="status"><span className="thesis-spinner" />{labels.loadingEvent}</div>}
+          {eventContextState === "error" && <div className="thesis-alert error">{labels.eventError}</div>}
+          {eventContext && <div className="thesis-event-evidence-grid"><div className="thesis-event-facts">
+            <p><span>{labels.reference}</span><strong>{eventContext.event.reference_close.toLocaleString()}</strong></p>
+            <h4>{labels.conditions}</h4>{eventContext.event.conditions.map((condition) => <p key={condition.feature}><span>{capabilities?.features.find((item) => item.code === condition.feature)?.label[language] || condition.feature}</span><strong>{labels.actual} {String(condition.actual)} · {condition.operator} {String(condition.expected)}</strong></p>)}
+            {eventContext.horizons.map((horizon) => <p key={horizon.horizon}><span>{horizon.horizon}</span><strong>{horizon.available
+              ? <>{formatFraction(horizon.forward_return_fraction, language)}<small>{labels.outcomeClose} {horizon.outcome_close?.toLocaleString()} · MFE {formatFraction(horizon.mfe_fraction, language)} · MAE {formatFraction(horizon.mae_fraction, language)}</small></>
+              : horizon.censor_reason || "—"}</strong></p>)}
+          </div><EvidenceCandlestickChart context={eventContext} accessibleLabel={labels.eventChart} /></div>}
+        </section>}
       </section>
+
+      <details className="thesis-card thesis-audit"><summary>{labels.evidenceDetails}</summary><dl>
+        <div><dt>{labels.resultId}</dt><dd><code>{result.result_hash.slice(0, 12)}…</code></dd></div>
+        <div><dt>{labels.definitionHash}</dt><dd><code>{result.definition_hash.slice(0, 12)}…</code></dd></div>
+        <div><dt>{labels.dataset}</dt><dd><code>{result.historical_data.dataset_id.slice(0, 12)}…</code></dd></div>
+        <div><dt>{labels.sourceVersion}</dt><dd>{result.historical_data.source_version || result.historical_data.immutable_store_verification || "—"}</dd></div>
+        <div><dt>{labels.selectionPolicy}</dt><dd>{result.historical_data.selection_policy_version || "—"}</dd></div>
+        <div><dt>{labels.engine}</dt><dd>{result.engine_version}</dd></div>
+        <div><dt>{labels.coveragePolicy}</dt><dd>{result.coverage.version}</dd></div>
+        <div><dt>{labels.independencePolicy}</dt><dd>{result.compiled_definition.independence_policy.version}</dd></div>
+        <div><dt>{labels.featureVersions}</dt><dd>{Object.entries(result.feature_versions).map(([feature, version]) => `${feature}: ${version}`).join(" · ")}</dd></div>
+      </dl></details>
     </section>}
   </main>;
 }

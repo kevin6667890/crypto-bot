@@ -20,7 +20,7 @@ const conditions = [
 ];
 
 test("natural language definition runs one historical evidence request and renders API statistics", async ({ page }) => {
-  let testCalls = 0;
+  let testCalls = 0, contextCalls = 0, explanationCalls = 0;
   await page.route("**/api/research/thesis/capabilities", (route) => route.fulfill({ json: capabilities }));
   await page.route("**/api/research/thesis/parse", async (route) => {
     const body = route.request().postDataJSON();
@@ -53,8 +53,38 @@ test("natural language definition runs one historical evidence request and rende
         outcomes: { "4H": { available: true, censor_reason: null, forward_return_fraction: .01234, mfe_fraction: .03, mae_fraction: -.02 },
           "12H": { available: true, censor_reason: null, forward_return_fraction: -.004, mfe_fraction: .04, mae_fraction: -.03 },
           "24H": { available: false, censor_reason: "TERMINAL_HISTORY", forward_return_fraction: null, mfe_fraction: null, mae_fraction: null } } }],
-      limitations: ["Historical conditional evidence; not causal proof, a trading signal, or a forward probability guarantee."], warnings: [], definition_hash: "definition", result_hash: "result",
+      limitations: ["Historical conditional evidence; not causal proof, a trading signal, or a forward probability guarantee."], warnings: [],
+      definition_hash: "d".repeat(64), result_hash: "r".repeat(64), engine_version: "thesis-event-engine-v1",
+      feature_versions: { VOLUME_RATIO: "feature-v1", PRICE_ABOVE_MA200: "feature-v1" },
+      compiled_definition: { event_transition_semantics: "FALSE_TO_TRUE", independence_policy: { version: "event-independence-max-horizon-v1" } },
+      data_identity: { version: "bounded-ohlcv-dataset-identity-v1", content_sha256: "c".repeat(64), selected_dataset_id: "s".repeat(64), selection_policy_version: "historical-data-selection-policy-v1" },
+      historical_data: { source_label: "Canonical OKX OHLCV", source_type: "FROZEN_CANONICAL", source_version: "okx-v5",
+        selection_policy_version: "historical-data-selection-policy-v1", dataset_id: "s".repeat(64),
+        raw_range: { start: 1_670_000_000, end: 1_700_000_000 }, evaluable_range: { start: 1_680_000_000, end: 1_700_000_000 },
+        reduction_reasons: ["FEATURE_WARMUP:PRICE_ABOVE_MA200:200_CANDLES"], warmup_candles: 200, continuity: "CONTINUOUS", gap_count: 0,
+        span_days: 17, breadth_qualification: "LIMITED_HISTORICAL_SPAN", minimum_research_span_days: 180, minimum_research_span_policy_version: "thesis-minimum-research-span-v1" },
     } });
+  });
+  await page.route("**/api/research/thesis/explain", async (route) => {
+    explanationCalls += 1;
+    await route.fulfill({ json: { version: "thesis-evidence-explanation-v1", status: "FALLBACK", language: "en",
+      result_hash: "r".repeat(64), definition_hash: "d".repeat(64), dataset_id: "s".repeat(64), facts_version: "facts-v1", facts_hash: "f".repeat(64),
+      plan_version: "plan-v1", renderer_version: "renderer-v1", blocks: [{ template_id: "OUTCOME", text: "Seven eligible historical events were measured from canonical facts.", fact_refs: ["N"] },
+        { template_id: "LIMIT", text: "This is historical conditional evidence, not a forecast or trading recommendation.", fact_refs: ["QUALITY"] }],
+      provider: null, fallback_reason: "AI_UNAVAILABLE", cache_status: "MISS" } });
+  });
+  await page.route("**/api/research/thesis/event-context", async (route) => {
+    contextCalls += 1;
+    await route.fulfill({ json: { version: "thesis-event-context-v1", context_policy_version: "window-v1", result_hash: "r".repeat(64),
+      definition_hash: "d".repeat(64), engine_version: "thesis-event-engine-v1", instrument: "BTC", canonical_instrument: "BTC-USDT", timeframe: "4H",
+      dataset_identity: { version: "dataset-v1", content_sha256: "c".repeat(64), selected_dataset_id: "s".repeat(64), source_version: "okx-v5" },
+      event: { event_id: "event-1", timestamp: 1_690_000_000, candle_index: 1, reference_close: 27123.45,
+        conditions: conditions.map(item => ({ feature: item.feature, operator: item.operator, expected: item.value, actual: item.value, matched: true })) },
+      candles: [1_689_985_600, 1_690_000_000, 1_690_014_400, 1_690_043_200, 1_690_086_400].map((close_timestamp, index) => ({
+        open_timestamp: close_timestamp - 14_400, close_timestamp, open: 100 + index, high: 102 + index, low: 99 + index, close: 101 + index, volume: 1000 })),
+      horizons: [{ horizon: "4H", target_timestamp: 1_690_014_400, candle_index: 2, outcome_close: 103, available: true, censor_reason: null, forward_return_fraction: .01234, mfe_fraction: .03, mae_fraction: -.02 },
+        { horizon: "12H", target_timestamp: 1_690_043_200, candle_index: 3, outcome_close: 104, available: true, censor_reason: null, forward_return_fraction: -.004, mfe_fraction: .04, mae_fraction: -.03 },
+        { horizon: "24H", target_timestamp: 1_690_086_400, candle_index: 4, outcome_close: 105, available: true, censor_reason: null, forward_return_fraction: .01, mfe_fraction: .05, mae_fraction: -.04 }], row_limit: 96 } });
   });
 
   await page.goto("/test-an-idea");
@@ -72,7 +102,24 @@ test("natural language definition runs one historical evidence request and rende
   await expect(page.getByText("INSUFFICIENT", { exact: true }).first()).toBeVisible();
   await expect(page.getByRole("heading", { name: "Coverage" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Limitations" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "What this evidence says" })).toBeVisible();
+  await expect(page.getByText("Canonical OKX OHLCV")).toBeVisible();
+  await expect(page.getByText("Limited historical span")).toBeVisible();
+  await page.getByRole("button", { name: "View event" }).click();
+  const chart = page.getByRole("img", { name: "Historical event candlestick evidence" });
+  await expect(chart).toBeVisible();
+  await expect(chart).toHaveAttribute("data-event-marker-timestamp", "1690000000");
+  await expect(chart).toHaveAttribute("data-horizon-marker-timestamps", "4H:1690014400,12H:1690043200,24H:1690086400");
+  await expect(page.getByLabel("Event evidence").getByText("Price above MA200")).toBeVisible();
+  await page.getByText("Evidence details", { exact: true }).click();
+  await expect(page.getByText("Result ID", { exact: true })).toBeVisible();
+  await page.setViewportSize({ width: 390, height: 844 });
+  await expect(page.locator(".thesis-event-evidence-grid")).toBeVisible();
+  expect(await page.locator(".thesis-event-evidence-grid").evaluate((element) =>
+    getComputedStyle(element).gridTemplateColumns.split(" ").length)).toBe(1);
   expect(testCalls).toBe(1);
+  expect(contextCalls).toBe(1);
+  expect(explanationCalls).toBe(1);
 });
 
 test("unsupported breakout and OI are shown without any historical test call", async ({ page }) => {

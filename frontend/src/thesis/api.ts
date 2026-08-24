@@ -1,4 +1,4 @@
-import type { ThesisCapabilities, ThesisParseResult, ThesisSpecV1, ThesisTestResult } from "./types";
+import type { EvidenceExplanation, ThesisCapabilities, ThesisEventContext, ThesisEventRecord, ThesisParseResult, ThesisSpecV1, ThesisTestResult } from "./types";
 
 const base = (window.__PAPER_API_URL__ || import.meta.env.VITE_PAPER_API_URL || "").replace(/\/$/, "");
 
@@ -41,3 +41,16 @@ export function testThesis(spec: ThesisSpecV1, signal?: AbortSignal) {
   return request<ThesisTestResult>("/api/research/thesis/test", { method: "POST", signal, body: JSON.stringify(spec) }, 12_000);
 }
 
+export function fetchThesisEventContext(result: ThesisTestResult, event: ThesisEventRecord, signal?: AbortSignal) {
+  return request<ThesisEventContext>("/api/research/thesis/event-context", { method: "POST", signal, body: JSON.stringify({
+    version: "thesis-event-context-request-v1", result_hash: result.result_hash, thesis_spec: result.thesis_spec,
+    instrument: result.instrument, timeframe: result.timeframe, event_id: event.event_id, event_timestamp: event.timestamp,
+  }) }, 8_000);
+}
+
+export function explainThesis(result: ThesisTestResult, language: "en" | "zh", signal?: AbortSignal) {
+  return request<EvidenceExplanation>("/api/research/thesis/explain", { method: "POST", signal, body: JSON.stringify({
+    version: "thesis-evidence-explain-request-v1", thesis_spec: result.thesis_spec,
+    result_hash: result.result_hash, language,
+  }) }, 12_000);
+}

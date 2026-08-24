@@ -70,6 +70,7 @@ export type HorizonAggregate = {
 
 export type ThesisEventRecord = {
   event_id: string; timestamp: number; reference_close: number;
+  matched_conditions?: Record<string, number | boolean | null>;
   exclusion_status: "INCLUDED" | "EXCLUDED"; exclusion_reason: string | null;
   outcomes: Record<string, { available: boolean; censor_reason: string | null;
     forward_return_fraction: number | null; mfe_fraction: number | null; mae_fraction: number | null }>;
@@ -86,5 +87,36 @@ export type ThesisTestResult = {
   raw_candidate_count: number; independent_event_count: number; excluded_overlap_count: number;
   event_records: ThesisEventRecord[]; aggregates: Record<string, HorizonAggregate>;
   limitations: string[]; warnings: string[]; definition_hash: string; result_hash: string;
+  engine_version: string; feature_versions: Record<string, string>;
+  compiled_definition: { event_transition_semantics: string; independence_policy: { version: string } };
+  data_identity: { version: string; content_sha256: string; selected_dataset_id?: string; selection_policy_version?: string };
+  historical_data: { source_label: string; source_type: string; source_version: string | null;
+    selection_policy_version: string | null; dataset_id: string;
+    partition_content_sha256: string; immutable_store_sha256: string | null;
+    immutable_store_verification: string | null; declared_dataset_id: string | null;
+    raw_range: { start: number | null; end: number | null };
+    evaluable_range: { start: number | null; end: number | null };
+    reduction_reasons: string[]; warmup_candles: number; continuity: string; gap_count: number;
+    raw_span_days: number | null; span_days: number | null; breadth_qualification: "SUFFICIENT_SPAN" | "LIMITED_HISTORICAL_SPAN" | "UNKNOWN";
+    minimum_research_span_days: number; minimum_research_span_policy_version: string | null };
 };
 
+export type ThesisEventContext = {
+  version: "thesis-event-context-v1"; context_policy_version: string; result_hash: string;
+  definition_hash: string; engine_version: string; instrument: string; canonical_instrument: string; timeframe: string;
+  dataset_identity: { version: string; content_sha256: string; selected_dataset_id: string | null; source_version: string | null };
+  event: { event_id: string; timestamp: number; candle_index: number; reference_close: number;
+    conditions: Array<{ feature: string; operator: string; expected: number | boolean; actual: number | boolean | null; matched: boolean }> };
+  candles: Array<{ open_timestamp: number; close_timestamp: number; open: number; high: number; low: number; close: number; volume: number }>;
+  horizons: Array<{ horizon: string; target_timestamp: number; candle_index: number | null; outcome_close: number | null;
+    available: boolean; censor_reason: string | null; forward_return_fraction: number | null; mfe_fraction: number | null; mae_fraction: number | null }>;
+  row_limit: number;
+};
+
+export type EvidenceExplanation = {
+  version: "thesis-evidence-explanation-v1"; status: "GENERATED" | "FALLBACK"; language: "en" | "zh";
+  result_hash: string; definition_hash: string; dataset_id: string; facts_version: string; facts_hash: string;
+  plan_version: string; renderer_version: string;
+  blocks: Array<{ template_id: string; text: string; fact_refs: string[] }>;
+  provider: { model: string; latency_ms: number | null } | null; fallback_reason: string | null; cache_status: "HIT" | "MISS";
+};

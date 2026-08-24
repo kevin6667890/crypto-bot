@@ -767,6 +767,9 @@ class PaperService:
                 raise ValueError("canonical snapshot does not match Paper execution candle")
             snapshot_identity = snapshot.snapshot_identity
             snapshot_version = snapshot.version
+            _publish_public_market_snapshot(
+                instrument, "15m", snapshot.to_dict(),
+            )
         params,active_version=self._active_strategy(active_registry, allow_legacy=not canonical_paper); ind15=calculate_indicators(c15,params)[-1]
         frames={}
         for frame in ("1H","4H","1D"):
@@ -1362,21 +1365,37 @@ MICROSTRUCTURE_EVIDENCE = CanonicalMicrostructureEvidenceAdapter(
 )
 
 
+_CANONICAL_MARKET_SNAPSHOT_BUILD_LOCK = threading.Lock()
+
+
 def canonical_market_snapshot(instrument: str, as_of: int,
                               execution_timeframe: str = "15m") -> Any:
     """One read-only market evidence boundary for API, Paper, and replay."""
-    evidence = canonical_market_evidence_set(
-        MICROSTRUCTURE_EVIDENCE, instrument, int(as_of),
-    )
-    return MARKET_CONTEXT_V2.canonical_snapshot(
-        instrument, as_of=int(as_of), execution_timeframe=execution_timeframe,
-        microstructure_evidence=evidence,
-    )
+    # A snapshot materializes several bounded read models.  Serializing that
+    # work keeps a Paper cycle and public/API reads from holding duplicate
+    # large payloads in memory inside the same process.
+    with _CANONICAL_MARKET_SNAPSHOT_BUILD_LOCK:
+        evidence = canonical_market_evidence_set(
+            MICROSTRUCTURE_EVIDENCE, instrument, int(as_of),
+        )
+        return MARKET_CONTEXT_V2.canonical_snapshot(
+            instrument, as_of=int(as_of), execution_timeframe=execution_timeframe,
+            microstructure_evidence=evidence,
+        )
 
 
-PUBLIC_MARKET_SNAPSHOT_CACHE_SECONDS = 30
+PUBLIC_MARKET_SNAPSHOT_CACHE_SECONDS = 75
 _PUBLIC_MARKET_SNAPSHOT_LOCK = threading.Lock()
 _PUBLIC_MARKET_SNAPSHOT_CACHE: dict[tuple[str, str], tuple[float, dict[str, Any]]] = {}
+
+
+def _publish_public_market_snapshot(instrument: str, execution_timeframe: str,
+                                    payload: dict[str, Any]) -> None:
+    canonical = instrument if instrument.endswith("-SWAP") else f"{instrument}-SWAP"
+    with _PUBLIC_MARKET_SNAPSHOT_LOCK:
+        _PUBLIC_MARKET_SNAPSHOT_CACHE[(canonical, execution_timeframe)] = (
+            time.monotonic(), payload,
+        )
 
 
 def public_canonical_market_snapshot(instrument: str,

@@ -1,0 +1,94 @@
+services:
+  paper-api:
+    environment:
+      POLYMARKET_DB_PATH: /var/lib/polymarket/polymarket_research.sqlite
+    volumes:
+      # SQLite WAL readers need access to the shm sidecar. The API remains a
+      # read interface and never receives the provider secret.
+      - polymarket-data:/var/lib/polymarket:rw
+
+  polymarket-collector:
+    image: ${AI6B_APP_IMAGE:?AI6B_APP_IMAGE digest is required}
+    profiles: [polymarket-ops]
+    user: "10001:10001"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m,uid=10001,gid=10001,mode=700
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    restart: "no"
+    command:
+      - python
+      - -m
+      - scripts.run_polymarket_collector_with_secret
+      - --db
+      - /var/lib/polymarket/polymarket_research.sqlite
+      - collect
+      - --incremental
+      - --max-forecasts
+      - "5"
+    environment:
+      GIT_COMMIT: ${POLYMARKET_GIT_COMMIT:?Polymarket release commit is required}
+      POLYMARKET_BUILD_TIMESTAMP: ${POLYMARKET_BUILD_TIMESTAMP:?Polymarket build timestamp is required}
+      POLYMARKET_LLM_API_KEY_FILE: /run/secrets/polymarket_llm_api_key
+      PYTHONUNBUFFERED: "1"
+      LIVE_TRADING_ENABLED: "false"
+      REAL_TRADING_ENABLED: "false"
+    secrets: [polymarket_llm_api_key]
+    volumes:
+      - polymarket-data:/var/lib/polymarket:rw
+    pids_limit: 128
+    mem_limit: 1024m
+    cpus: 0.50
+    logging:
+      driver: json-file
+      options: {max-size: "20m", max-file: "5"}
+    stop_grace_period: 60s
+
+  polymarket-backup:
+    image: ${AI6B_APP_IMAGE:?AI6B_APP_IMAGE digest is required}
+    profiles: [polymarket-ops]
+    user: "10001:10001"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=32m,uid=10001,gid=10001,mode=700
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    restart: "no"
+    command:
+      - python
+      - -m
+      - scripts.run_polymarket_backup
+      - --db
+      - /var/lib/polymarket/polymarket_research.sqlite
+      - --backup-directory
+      - /var/lib/polymarket/backups
+      - --manifest-directory
+      - /var/lib/polymarket/manifests
+      - --retain-daily
+      - "3"
+      - --retain-weekly
+      - "2"
+    environment:
+      GIT_COMMIT: ${POLYMARKET_GIT_COMMIT:?Polymarket release commit is required}
+      PYTHONUNBUFFERED: "1"
+    volumes:
+      - polymarket-data:/var/lib/polymarket:rw
+    pids_limit: 64
+    mem_limit: 512m
+    cpus: 0.25
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
+
+volumes:
+  polymarket-data:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ${POLYMARKET_DATA_DIR:?POLYMARKET_DATA_DIR is required}
+
+secrets:
+  polymarket_llm_api_key:
+    file: ${POLYMARKET_LLM_API_KEY_FILE:?POLYMARKET_LLM_API_KEY_FILE is required}

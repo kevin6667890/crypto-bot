@@ -32,11 +32,13 @@ class PolymarketReadModel:
 
     def __init__(self, path: Path | str | None = None) -> None:
         self.path = Path(path or os.getenv("POLYMARKET_DB_PATH", DEFAULT_DB_PATH))
+        # Initialize schema/index compatibility once at process startup. Doing
+        # DDL on every read request creates avoidable writer-lock contention
+        # when the production UI loads several panels concurrently.
+        self._repository = PolymarketRepository(self.path)
 
     def _repo(self) -> PolymarketRepository:
-        # Repository initialization is backward-compatible and only creates
-        # schema/indexes; endpoints never collect, forecast, or resolve.
-        return PolymarketRepository(self.path)
+        return self._repository
 
     def overview(self) -> dict[str, Any]:
         repo = self._repo()

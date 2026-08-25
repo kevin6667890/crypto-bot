@@ -63,12 +63,12 @@ export default function OperationsTrends() {
   const copy = zh ? {
     eyebrow: "本地 · 只读", title: "运维趋势", window: "趋势时间窗", loading: "正在加载本地趋势",
     unavailable: "趋势查询暂不可用", disabled: "尚未启用历史采集", empty: "已启用采集，但所选时间段尚无样本",
-    noData: "暂无数据", anomalies: "异常点", samples: "分钟样本", trend: "趋势", bytes: "字节",
+    noData: "暂无数据", anomalies: "异常点", samples: "分钟样本", trend: "趋势", bytes: "字节", wal: "WAL 日志",
     maintenance: "维护耗时", queue: "队列深度", lag: "实时延迟", gap: "关键缺口", checkpoint: "检查点耗时",
   } : {
     eyebrow: "Local · Read only", title: "Operations trends", window: "Trend window", loading: "Loading local trends",
     unavailable: "Trend query is unavailable", disabled: "Historical capture is not enabled", empty: "Capture is enabled, but the selected window has no samples",
-    noData: "No data", anomalies: "Anomalies", samples: "Minute samples", trend: "trend", bytes: "bytes",
+    noData: "No data", anomalies: "Anomalies", samples: "Minute samples", trend: "trend", bytes: "bytes", wal: "WAL",
     maintenance: "Maintenance", queue: "Queue", lag: "Live lag", gap: "Critical gap", checkpoint: "Checkpoint",
   };
   const [selectedWindow, setSelectedWindow] = useState<Window>("24h");
@@ -103,7 +103,7 @@ export default function OperationsTrends() {
           <span>{copy.samples} <b>{points.length}</b></span>
         </div>
         <div className="trends-grid">
-          <MetricTrend title="WAL" unit={copy.bytes} field="wal_size_bytes" points={points} noData={copy.noData} trendLabel={copy.trend} />
+          <MetricTrend title={copy.wal} unit={copy.bytes} field="wal_size_bytes" points={points} noData={copy.noData} trendLabel={copy.trend} />
           <MetricTrend title={copy.maintenance} unit="ms" field="maintenance_duration_ms" points={points} noData={copy.noData} trendLabel={copy.trend} />
           <MetricTrend title={copy.queue} unit="" field="queue_depth" points={points} noData={copy.noData} trendLabel={copy.trend} />
           <MetricTrend title={copy.lag} unit="s" field="live_lag_seconds" points={points} noData={copy.noData} trendLabel={copy.trend} />

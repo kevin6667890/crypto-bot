@@ -50,6 +50,14 @@ export function requiredConditionSummary(evaluation: CurrentEvaluation | null | 
       ? `${evaluation.required_condition_count} 项必要条件当前无法评估`
       : `${evaluation.required_condition_count} required conditions currently unavailable`;
   }
+  if (evaluation.tree_result) {
+    const leaves = evaluation.leaf_results || evaluation.conditions;
+    const trueCount = leaves.filter((condition) => condition.state === "TRUE").length;
+    const unknown = leaves.filter((condition) => condition.state === "UNKNOWN").length;
+    return language === "zh"
+      ? `表达式为 ${evaluation.expression_state || "UNKNOWN"}；${trueCount} 项为真，${unknown} 项未知（共 ${leaves.length} 项）`
+      : `Expression is ${evaluation.expression_state || "UNKNOWN"}; ${trueCount} true, ${unknown} unknown of ${leaves.length} leaves`;
+  }
   const required = evaluation.conditions.filter((condition) => condition.requirement === "REQUIRED");
   const unknown = required.filter((condition) => condition.state === "UNKNOWN").length;
   if (unknown) {

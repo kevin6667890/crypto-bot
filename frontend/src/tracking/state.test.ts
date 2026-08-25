@@ -62,4 +62,15 @@ describe("tracked thesis presentation semantics", () => {
     expect(changes).toContain("transition.trigger_evidence");
     expect(changes).not.toMatch(/\bAI\b.*changed/i);
   });
+
+  it("renders V2 leaf, group and overall changes while retaining the V1 path", () => {
+    const tree = readFileSync(new URL("./TrackingExpression.tsx", import.meta.url), "utf8");
+    const detail = readFileSync(new URL("./TrackDetailPage.tsx", import.meta.url), "utf8");
+    const changes = readFileSync(new URL("./WhatChangedPage.tsx", import.meta.url), "utf8");
+    for (const node of ["CONDITION", "ALL", "ANY", "NOT"]) expect(tree).toContain(node);
+    for (const delta of ["overall_change", "leaf_changes", "group_changes"]) expect(tree).toContain(delta);
+    expect(detail).toContain("evaluation?.tree_result");
+    expect(detail).toContain("track.thesis_spec.version === \"thesis-spec-v2\"");
+    expect(changes).toContain("<V2Delta");
+  });
 });

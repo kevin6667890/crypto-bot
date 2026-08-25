@@ -24,10 +24,19 @@ export default function EvidenceCandlestickChart({ context, accessibleLabel }: {
       time: candle.close_timestamp as UTCTimestamp, open: candle.open, high: candle.high,
       low: candle.low, close: candle.close,
     })));
+    const structure = context.event.structure_context?.[0];
+    if (structure) series.createPriceLine({
+      price: structure.reference_level, color: "#9d8cff", lineWidth: 1,
+      lineStyle: 2, axisLabelVisible: true, title: "Reference",
+    });
     const markers: SeriesMarker<UTCTimestamp>[] = [{
       time: context.event.timestamp as UTCTimestamp, position: "belowBar", color: "#5de0c8",
-      shape: "arrowUp", text: "Event",
+      shape: "arrowUp", text: structure?.failure_confirmation_timestamp ? "Failure confirmed" : "Event",
     }];
+    if (structure?.failure_confirmation_timestamp && structure.original_breakout_timestamp !== context.event.timestamp) markers.push({
+      time: structure.original_breakout_timestamp as UTCTimestamp, position: "aboveBar", color: "#9d8cff",
+      shape: "circle", text: "Original breakout",
+    });
     for (const horizon of context.horizons) if (horizon.available && horizon.candle_index !== null) markers.push({
       time: horizon.target_timestamp as UTCTimestamp, position: "aboveBar", color: "#f2bd62",
       shape: "square", text: horizon.horizon,
@@ -42,6 +51,8 @@ export default function EvidenceCandlestickChart({ context, accessibleLabel }: {
 
   return <div className="thesis-evidence-chart" ref={containerRef} role="img" aria-label={accessibleLabel}
     data-event-marker-timestamp={context.event.timestamp}
+    data-reference-level={context.event.structure_context?.[0]?.reference_level}
+    data-original-breakout-timestamp={context.event.structure_context?.[0]?.original_breakout_timestamp}
     data-horizon-marker-timestamps={context.horizons.filter((item) => item.available && item.candle_index !== null)
       .map((item) => `${item.horizon}:${item.target_timestamp}`).join(",")} />;
 }

@@ -1,0 +1,34 @@
+services:
+  paper-api:
+    environment:
+      THESIS_HISTORICAL_REQUIRE_IMMUTABLE: "true"
+      THESIS_HISTORICAL_DB_PATH: /var/lib/thesis-data/thesis_historical_v2.sqlite
+      THESIS_HISTORICAL_DB_SHA256: ${THESIS_HISTORICAL_DB_SHA256:?Historical V2 SHA-256 is required}
+      THESIS_HISTORICAL_DATASET_ID: ${THESIS_HISTORICAL_DATASET_ID:?Historical V2 dataset ID is required}
+      THESIS_DERIVATIVES_DB_PATH: /var/lib/thesis-data/thesis_derivatives_v1.sqlite
+      THESIS_DERIVATIVES_DB_SHA256: ${THESIS_DERIVATIVES_DB_SHA256:?Derivatives SHA-256 is required}
+      THESIS_DERIVATIVES_DATASET_ID: ${THESIS_DERIVATIVES_DATASET_ID:?Derivatives dataset ID is required}
+      THESIS_DERIVATIVES_MANIFEST_PATH: /var/lib/thesis-data/thesis_derivatives_v1.manifest.json
+      THESIS_TRACKING_DB_PATH: /var/lib/paper/thesis_tracking.db
+      THESIS_TRACKING_SCHEDULER_ENABLED: "true"
+    volumes:
+      - ${THESIS_HISTORICAL_HOST_PATH:?Historical V2 host path is required}:/var/lib/thesis-data/thesis_historical_v2.sqlite:ro
+      - ${THESIS_DERIVATIVES_HOST_PATH:?Derivatives host path is required}:/var/lib/thesis-data/thesis_derivatives_v1.sqlite:ro
+      - ${THESIS_DERIVATIVES_MANIFEST_HOST_PATH:?Derivatives manifest host path is required}:/var/lib/thesis-data/thesis_derivatives_v1.manifest.json:ro
+
+  thesis-tracking-worker:
+    environment:
+      THESIS_HISTORICAL_REQUIRE_IMMUTABLE: "true"
+      THESIS_HISTORICAL_DB_PATH: /var/lib/thesis-data/thesis_historical_v2.sqlite
+      THESIS_HISTORICAL_DB_SHA256: ${THESIS_HISTORICAL_DB_SHA256:?Historical V2 SHA-256 is required}
+      THESIS_HISTORICAL_DATASET_ID: ${THESIS_HISTORICAL_DATASET_ID:?Historical V2 dataset ID is required}
+      THESIS_DERIVATIVES_DB_PATH: /var/lib/thesis-data/thesis_derivatives_v1.sqlite
+      THESIS_DERIVATIVES_DB_SHA256: ${THESIS_DERIVATIVES_DB_SHA256:?Derivatives SHA-256 is required}
+      THESIS_DERIVATIVES_DATASET_ID: ${THESIS_DERIVATIVES_DATASET_ID:?Derivatives dataset ID is required}
+      THESIS_DERIVATIVES_MANIFEST_PATH: /var/lib/thesis-data/thesis_derivatives_v1.manifest.json
+      THESIS_TRACKING_DB_PATH: /var/lib/paper/thesis_tracking.db
+      THESIS_TRACKING_SCHEDULER_ENABLED: "true"
+    volumes:
+      - ${THESIS_HISTORICAL_HOST_PATH:?Historical V2 host path is required}:/var/lib/thesis-data/thesis_historical_v2.sqlite:ro
+      - ${THESIS_DERIVATIVES_HOST_PATH:?Derivatives host path is required}:/var/lib/thesis-data/thesis_derivatives_v1.sqlite:ro
+      - ${THESIS_DERIVATIVES_MANIFEST_HOST_PATH:?Derivatives manifest host path is required}:/var/lib/thesis-data/thesis_derivatives_v1.manifest.json:ro

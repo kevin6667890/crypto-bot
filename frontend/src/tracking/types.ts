@@ -1,4 +1,4 @@
-import type { ThesisCondition, ThesisSpecV1 } from "../thesis/types";
+import type { ThesisCondition, ThesisSpec } from "../thesis/types";
 
 export type ConditionState = "TRUE" | "FALSE" | "UNKNOWN";
 export type EvaluationStatus = "WATCHING" | "MATCHING" | "NOT_MATCHING" | "PARTIAL" | "STALE" | "BLOCKED" | "BLOCKED_VERSION_MISMATCH";
@@ -13,7 +13,7 @@ export type HistoricalBaseline = {
 
 export type TrackedThesis = {
   schema_version: string; track_id: string; original_text: string | null; language: "en" | "zh";
-  thesis_spec: ThesisSpecV1; compiled_definition: Record<string, unknown>; definition_hash: string;
+  thesis_spec: ThesisSpec; compiled_definition: Record<string, unknown>; definition_hash: string;
   historical_result_hash: string; historical_dataset_identity: string; historical_engine_version: string;
   historical_tested_range: { start: number | null; end: number | null }; historical_baseline: HistoricalBaseline;
   current_evaluation_policy_version: string; is_active: boolean; status: EvaluationStatus;
@@ -21,7 +21,7 @@ export type TrackedThesis = {
 };
 
 export type CurrentCondition = ThesisCondition & {
-  feature_version: string; requirement: "REQUIRED" | "OPTIONAL"; observed_value: number | boolean | null;
+  node_id?: string; feature_version: string; requirement?: "REQUIRED" | "OPTIONAL"; observed_value: number | boolean | null;
   state: ConditionState; source_timestamp: number | null; quality: "AVAILABLE" | "STALE" | "PARTIAL" | string;
   limitation: string | null;
 };
@@ -34,8 +34,17 @@ export type EvaluationDelta = {
     operator: string; configured_value: number | boolean }>;
   quality_changes: Array<{ feature: string; from: string; to: string }>;
   source_changes: Array<{ field: string; from: unknown; to: unknown }>;
+  overall_change?: { from: EvaluationStatus; to: EvaluationStatus } | null;
+  leaf_changes?: Array<{ node_id: string; node_type: "CONDITION"; feature: string; from: ConditionState; to: ConditionState }>;
+  group_changes?: Array<{ node_id: string; node_type: "ALL" | "ANY" | "NOT"; feature?: null; from: ConditionState; to: ConditionState }>;
   material_change: boolean;
 };
+
+export type EvaluationTreeNode = ({ node_id: string; state: ConditionState } & (
+  | { node_type: "CONDITION"; feature: string; operator: string; value: number | boolean; parameters?: Record<string, unknown>;
+      observed_value: number | boolean | null; quality: string; limitation: string | null }
+  | { node_type: "ALL" | "ANY" | "NOT"; children: EvaluationTreeNode[] }
+));
 
 export type CurrentEvaluation = {
   version: string; evaluation_id: string; evaluation_version: string; evaluation_policy_version: string;
@@ -44,6 +53,7 @@ export type CurrentEvaluation = {
   current_dataset_identity: { version: string; dataset_id: string; content_sha256: string; latest_confirmed_candle: number; row_count: number } | null;
   current_source_version: string[] | null; overall_status: EvaluationStatus;
   required_match_count: number; required_condition_count: number; conditions: CurrentCondition[];
+  expression_state?: ConditionState; tree_result?: EvaluationTreeNode | null; leaf_results?: CurrentCondition[];
   freshness: { state: string; age_seconds: number | null; threshold_seconds?: number }; limitations: string[];
   delta?: EvaluationDelta;
 };

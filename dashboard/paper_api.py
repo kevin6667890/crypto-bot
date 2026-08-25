@@ -21,7 +21,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from collections import deque
 from collections.abc import Iterator
-from typing import Any
+from typing import Any, Mapping
 from urllib.parse import parse_qs, urlparse
 from urllib.request import Request, urlopen
 
@@ -62,12 +62,16 @@ try:
         MarketContextServiceV2, confirmed_candles_as_of)
     from market_state_v2 import MarketStateEngineV2
     from thesis_event_engine import ThesisTestServiceV1, ThesisValidationError, thesis_capabilities
+    from thesis_event_engine_v2 import ThesisTestServiceV2, thesis_capabilities_v2
+    from thesis_derivatives import CurrentDerivativeReaderV1, DerivativeSnapshotReaderV1
     from thesis_historical_data import HistoricalDataSelectionPolicyV1, HistoricalStoreV1
     from thesis_evidence_explanation import (EvidenceExplanationError, EvidenceIdentityMismatch,
         ThesisEvidenceExplanationServiceV1)
     from thesis_parser import DeepSeekThesisParserProvider, ThesisParseContractError, ThesisParserServiceV1
+    from thesis_parser_v3 import ThesisParserServiceV3, ThesisParserV3Error
     from thesis_tracking import (CurrentFeatureEvaluatorV1, ThesisTrackingRepositoryV1,
         ThesisTrackingSchedulerV1, ThesisTrackingServiceV1, TrackingError)
+    from thesis_tracking_v2 import CurrentExpressionEvaluatorV2, ThesisTrackingServiceV2
     from strategy_router_v2 import StrategyRouterV2
     from polymarket.api import PolymarketReadModel
     from strategy_registry import StrategyRegistryAdapter, active_snapshot_matches
@@ -117,12 +121,16 @@ except ImportError:
         MarketContextServiceV2, confirmed_candles_as_of)
     from .market_state_v2 import MarketStateEngineV2
     from .thesis_event_engine import ThesisTestServiceV1, ThesisValidationError, thesis_capabilities
+    from .thesis_event_engine_v2 import ThesisTestServiceV2, thesis_capabilities_v2
+    from .thesis_derivatives import CurrentDerivativeReaderV1, DerivativeSnapshotReaderV1
     from .thesis_historical_data import HistoricalDataSelectionPolicyV1, HistoricalStoreV1
     from .thesis_evidence_explanation import (EvidenceExplanationError, EvidenceIdentityMismatch,
         ThesisEvidenceExplanationServiceV1)
     from .thesis_parser import DeepSeekThesisParserProvider, ThesisParseContractError, ThesisParserServiceV1
+    from .thesis_parser_v3 import ThesisParserServiceV3, ThesisParserV3Error
     from .thesis_tracking import (CurrentFeatureEvaluatorV1, ThesisTrackingRepositoryV1,
         ThesisTrackingSchedulerV1, ThesisTrackingServiceV1, TrackingError)
+    from .thesis_tracking_v2 import CurrentExpressionEvaluatorV2, ThesisTrackingServiceV2
     from .strategy_router_v2 import StrategyRouterV2
     from .polymarket.api import PolymarketReadModel
     from .strategy_registry import StrategyRegistryAdapter, active_snapshot_matches
@@ -1375,6 +1383,111 @@ THESIS_HISTORICAL_DATA_POLICY_V1 = HistoricalDataSelectionPolicyV1(_thesis_store
 THESIS_TEST_SERVICE_V1 = ThesisTestServiceV1(
     MARKET_DATA_READER_V2, selection_policy=THESIS_HISTORICAL_DATA_POLICY_V1)
 THESIS_PARSER_SERVICE_V1 = ThesisParserServiceV1()
+
+
+def _qualified_derivative_coverage(group: str, item: Mapping[str, Any] | None) -> bool:
+    expected_instruments = {"BTC-USDT-SWAP", "ETH-USDT-SWAP", "SOL-USDT-SWAP"}
+    minimum_rows = {"OI": 180, "FUNDING": 540, "BASIS": 4_320}
+    maximum_average_cadence = {"OI": 90_000_000, "FUNDING": 30_000_000,
+                               "BASIS": 3_900_000}
+    maximum_gap = {"OI": 2 * 86_400_000, "FUNDING": 16 * 3_600_000,
+                   "BASIS": 2 * 3_600_000}
+    if group not in minimum_rows or not isinstance(item, Mapping):
+        return False
+    start, end = item.get("start_ms"), item.get("end_ms")
+    if not isinstance(start, int) or not isinstance(end, int) or end <= start:
+        return False
+    partitions = item.get("instruments", [])
+    instruments = {part.get("instrument") for part in partitions if isinstance(part, Mapping)}
+    rows, cadence = int(item.get("rows") or 0), int(item.get("cadence_ms") or 0)
+    max_gap_ms = int(item.get("max_gap_ms") or 0)
+    return ((end - start) // 86_400_000 >= 180 and instruments == expected_instruments
+            and rows >= minimum_rows[group]
+            and 0 < cadence <= maximum_average_cadence[group]
+            and 0 < max_gap_ms <= maximum_gap[group])
+
+
+def _derivative_runtime() -> tuple[Any | None, dict[str, dict[str, Any]]]:
+    """Build optional derivative capability without affecting OHLCV readiness."""
+    path = os.getenv("THESIS_DERIVATIVES_DB_PATH")
+    expected_sha = os.getenv("THESIS_DERIVATIVES_DB_SHA256")
+    dataset_id = os.getenv("THESIS_DERIVATIVES_DATASET_ID")
+    if not (path and expected_sha and dataset_id):
+        limited = {"status": "LIMITED", "reason": "QUALIFIED_DERIVATIVE_SNAPSHOT_NOT_CONFIGURED"}
+        return None, {group: dict(limited) for group in ("OI", "FUNDING", "BASIS")}
+    manifest_path = os.getenv("THESIS_DERIVATIVES_MANIFEST_PATH")
+    if not manifest_path:
+        return None, {group: {"status": "BLOCKED", "reason": "DERIVATIVE_MANIFEST_REQUIRED"}
+                      for group in ("OI", "FUNDING", "BASIS")}
+    try:
+        loaded = json.loads(Path(manifest_path).read_text(encoding="utf-8"))
+        manifest = loaded if isinstance(loaded, dict) else None
+    except (OSError, json.JSONDecodeError):
+        manifest = None
+    if (not manifest or manifest.get("version") != "thesis-derivatives-snapshot-manifest-v1"
+            or manifest.get("source") != "OKX_OFFICIAL" or manifest.get("synthetic_rows") != 0
+            or not isinstance(manifest.get("coverage"), list)):
+        return None, {group: {"status": "BLOCKED", "reason": "DERIVATIVE_MANIFEST_INVALID"}
+                      for group in ("OI", "FUNDING", "BASIS")}
+    reader = DerivativeSnapshotReaderV1(Path(path), expected_sha256=expected_sha,
+                                        dataset_id=dataset_id, manifest=manifest)
+    state = reader.readiness()
+    if state.get("status") != "READY":
+        return None, {group: {"status": "BLOCKED", "reason": state.get("reason")}
+                      for group in ("OI", "FUNDING", "BASIS")}
+    coverage = state.get("coverage", {})
+    mapping = {"OI": "OPEN_INTEREST_USD", "FUNDING": "FUNDING_RATE", "BASIS": "BASIS_PCT"}
+    output: dict[str, dict[str, Any]] = {}
+    for group, data_type in mapping.items():
+        item = coverage.get(data_type) if isinstance(coverage, dict) else None
+        start, end = ((item or {}).get("start_ms"), (item or {}).get("end_ms"))
+        span_days = ((int(end) - int(start)) // 86_400_000
+                     if isinstance(start, int) and isinstance(end, int) else 0)
+        rows = int((item or {}).get("rows") or 0) if isinstance(item, dict) else 0
+        ready = _qualified_derivative_coverage(group, item)
+        supported = (["1D"] if group == "OI" and item and int(item.get("cadence_ms") or 0) >= 86_400_000
+                     else list(("15m", "1H", "4H", "1D")))
+        output[group] = {
+            "status": "READY" if ready else "LIMITED",
+            "reason": None if ready else "DERIVATIVE_COVERAGE_OR_DENSITY_NOT_QUALIFIED",
+            "historical_range": {"start_ms": start, "end_ms": end},
+            "span_days": span_days, "rows": rows, "supported_timeframes": supported,
+        }
+    return reader, output
+
+
+THESIS_DERIVATIVE_READER_V1, THESIS_DERIVATIVE_READINESS = _derivative_runtime()
+THESIS_CURRENT_DERIVATIVE_READER_V1 = (CurrentDerivativeReaderV1(
+    MICROSTRUCTURE.path, THESIS_DERIVATIVE_READER_V1)
+    if THESIS_DERIVATIVE_READER_V1 is not None else None)
+THESIS_CURRENT_DERIVATIVE_READINESS = (
+    THESIS_CURRENT_DERIVATIVE_READER_V1.readiness()
+    if THESIS_CURRENT_DERIVATIVE_READER_V1 is not None
+    else {"status": "BLOCKED", "reason": "CURRENT_DERIVATIVE_ADAPTER_NOT_CONFIGURED",
+          "supported_timeframes": ["1D"]})
+THESIS_CAPABILITIES_V2 = thesis_capabilities_v2({
+    **THESIS_DERIVATIVE_READINESS,
+    "OI_CURRENT": THESIS_CURRENT_DERIVATIVE_READINESS,
+    **{f"{group}_CURRENT": {"status": "BLOCKED", "reason": "CURRENT_DERIVATIVE_ADAPTER_NOT_CONFIGURED"}
+       for group in ("FUNDING", "BASIS")},
+})
+THESIS_TEST_SERVICE_V2 = ThesisTestServiceV2(
+    MARKET_DATA_READER_V2, selection_policy=THESIS_HISTORICAL_DATA_POLICY_V1,
+    derivative_reader=THESIS_DERIVATIVE_READER_V1, capabilities=THESIS_CAPABILITIES_V2)
+
+
+class _LazyThesisParserProviderV3:
+    def generate(self, request: dict[str, Any]) -> Any:
+        provider = DeepSeekThesisParserProvider(
+            model=os.getenv("THESIS_PARSER_MODEL") or "deepseek-chat",
+            timeout=int(os.getenv("THESIS_PARSER_TIMEOUT_SECONDS", "8")),
+            api_key_file=os.getenv("THESIS_PARSER_API_KEY_FILE") or os.getenv("AI_REPORT_API_KEY_FILE") or None,
+            api_key=os.getenv("THESIS_PARSER_API_KEY") or os.getenv("DEEPSEEK_API_KEY") or None,
+        )
+        return provider.generate(request)
+
+
+THESIS_PARSER_SERVICE_V3 = ThesisParserServiceV3(_LazyThesisParserProviderV3(), THESIS_CAPABILITIES_V2)
 _thesis_explanation_provider = None
 if os.getenv("THESIS_EXPLANATION_ENABLED", "false").lower() == "true":
     try:
@@ -1386,16 +1499,51 @@ if os.getenv("THESIS_EXPLANATION_ENABLED", "false").lower() == "true":
         )
     except (ValueError, OSError):
         _thesis_explanation_provider = None
+class _CombinedThesisTestService:
+    def verified_result(self, payload: dict[str, Any], result_hash: str) -> Any:
+        service = THESIS_TEST_SERVICE_V2 if payload.get("version") == "thesis-spec-v2" else THESIS_TEST_SERVICE_V1
+        return service.verified_result(payload, result_hash)
+
+
 THESIS_EXPLANATION_SERVICE_V1 = ThesisEvidenceExplanationServiceV1(
-    THESIS_TEST_SERVICE_V1, _thesis_explanation_provider)
+    _CombinedThesisTestService(), _thesis_explanation_provider)
 THESIS_TRACKING_DB_PATH = Path(os.getenv(
     "THESIS_TRACKING_DB_PATH", str(DB_PATH.parent / "thesis_tracking.db")))
 THESIS_TRACKING_REPOSITORY_V1 = ThesisTrackingRepositoryV1(THESIS_TRACKING_DB_PATH)
 THESIS_CURRENT_EVALUATOR_V1 = CurrentFeatureEvaluatorV1(MARKET_DATA_READER_V2)
 THESIS_TRACKING_SERVICE_V1 = ThesisTrackingServiceV1(
     THESIS_TRACKING_REPOSITORY_V1, THESIS_TEST_SERVICE_V1, THESIS_CURRENT_EVALUATOR_V1)
+THESIS_CURRENT_EVALUATOR_V2 = CurrentExpressionEvaluatorV2(
+    MARKET_DATA_READER_V2, THESIS_TEST_SERVICE_V2.registry,
+    derivative_reader=THESIS_CURRENT_DERIVATIVE_READER_V1)
+THESIS_TRACKING_SERVICE_V2 = ThesisTrackingServiceV2(
+    THESIS_TRACKING_REPOSITORY_V1, THESIS_CURRENT_EVALUATOR_V2, THESIS_TEST_SERVICE_V2,
+    trackable_features=[item["code"] for item in THESIS_CAPABILITIES_V2["features"]
+                        if item.get("current_availability") == "AVAILABLE"])
+
+
+class _CombinedThesisTrackingService:
+    def evaluate(self, track_id: str, *, now: int | None = None) -> dict[str, Any]:
+        track = THESIS_TRACKING_REPOSITORY_V1.get(track_id)
+        if track and track.get("schema_version") == "tracked-thesis-v2":
+            return THESIS_TRACKING_SERVICE_V2.evaluate(track_id, now=now)
+        return (THESIS_TRACKING_SERVICE_V1.evaluate(track_id)
+                if now is None else THESIS_TRACKING_SERVICE_V1.evaluate(track_id, now=now))
+
+    def evaluate_active(self, *, now: int | None = None) -> dict[str, int]:
+        summary = {"evaluated": 0, "no_change": 0, "failed": 0}
+        for bundle in THESIS_TRACKING_REPOSITORY_V1.list(limit=100):
+            try:
+                result = self.evaluate(bundle["track"]["track_id"], now=now)
+                summary["evaluated" if result["evaluation_created"] else "no_change"] += 1
+            except (TrackingError, sqlite3.Error, OSError):
+                summary["failed"] += 1
+        return summary
+
+
+THESIS_TRACKING_SERVICE = _CombinedThesisTrackingService()
 THESIS_TRACKING_SCHEDULER_V1 = ThesisTrackingSchedulerV1(
-    THESIS_TRACKING_SERVICE_V1,
+    THESIS_TRACKING_SERVICE,
     cadence_seconds=int(os.getenv("THESIS_TRACKING_SCHEDULER_CADENCE_SECONDS", "900")),
 )
 MARKET_STATE_ENGINE_V2 = MarketStateEngineV2()
@@ -1564,14 +1712,30 @@ def thesis_product_readiness() -> dict[str, Any]:
     parser_ready = bool(os.getenv("THESIS_PARSER_API_KEY") or os.getenv("DEEPSEEK_API_KEY") or
                         os.getenv("THESIS_PARSER_API_KEY_FILE"))
     explanation_enabled = os.getenv("THESIS_EXPLANATION_ENABLED", "false").lower() == "true"
+    derivatives = {
+        group: {"status": state.get("status", "LIMITED"),
+                "reason": state.get("reason"),
+                "historical_range": state.get("historical_range"),
+                "span_days": state.get("span_days"),
+                "current": (THESIS_CURRENT_DERIVATIVE_READINESS
+                            if group == "OI" else {"status": "BLOCKED",
+                                "reason": "CURRENT_DERIVATIVE_ADAPTER_NOT_CONFIGURED"})}
+        for group, state in THESIS_DERIVATIVE_READINESS.items()
+    }
+    derivatives["CVD"] = {"status": "OPTIONAL_UNAVAILABLE",
+                          "reason": "CVD_HISTORICAL_NATIVE_SOURCE_UNAVAILABLE"}
     return {
-        "version": "thesis-product-readiness-v1",
+        "version": "thesis-product-readiness-v2",
         "historical_thesis_data": {"status": historical_status, "reason": historical_reason,
                                    "immutable_required": required},
+        "ohlcv_historical": {"status": historical_status, "reason": historical_reason,
+                             "immutable_required": required},
+        "derivatives": derivatives,
         "current_market_data": {"status": current_status, "reason": current_reason,
                                 "latest_confirmed_candle": latest},
         "tracking_database": THESIS_TRACKING_REPOSITORY_V1.readiness(),
-        "parser_ai": {"status": "READY" if parser_ready else "OPTIONAL_UNAVAILABLE"},
+        "parser_ai": {"status": "READY" if parser_ready else "OPTIONAL_UNAVAILABLE",
+                      "parser_version": "thesis-natural-language-parser-v3"},
         "explanation_ai": {"status": ("READY" if _thesis_explanation_provider is not None
                                         else "OPTIONAL_UNAVAILABLE"),
                            "enabled": explanation_enabled},
@@ -1845,7 +2009,7 @@ class Handler(BaseHTTPRequestHandler):
             self._send(POLYMARKET_READ_MODEL.health())
             return
         if parsed.path == "/api/research/thesis/capabilities":
-            self._send(thesis_capabilities())
+            self._send(THESIS_CAPABILITIES_V2)
             return
         if parsed.path == "/api/research/thesis/readiness":
             self._send(thesis_product_readiness())
@@ -2295,8 +2459,17 @@ class Handler(BaseHTTPRequestHandler):
             payload = self._body()
             if payload is None:return
             try:
-                self._send(THESIS_PARSER_SERVICE_V1.parse(payload), HTTPStatus.OK)
+                if payload.get("version") == "thesis-parse-request-v2":
+                    allowed = {"version", "text", "language", "requested_instrument", "requested_timeframe"}
+                    if set(payload) - allowed or not isinstance(payload.get("text"), str):
+                        raise ThesisParserV3Error("invalid ThesisParseRequestV2")
+                    self._send(THESIS_PARSER_SERVICE_V3.parse(
+                        str(payload["text"]), requested_as_of=int(time.time())).to_dict(), HTTPStatus.OK)
+                else:
+                    self._send(THESIS_PARSER_SERVICE_V1.parse(payload), HTTPStatus.OK)
             except ThesisParseContractError as error:
+                self._send({"error":{"code":"INVALID_THESIS_PARSE_REQUEST","message":str(error)}}, HTTPStatus.BAD_REQUEST)
+            except ThesisParserV3Error as error:
                 self._send({"error":{"code":"INVALID_THESIS_PARSE_REQUEST","message":str(error)}}, HTTPStatus.BAD_REQUEST)
             except Exception:
                 LOGGER.exception("thesis parser failed")
@@ -2313,7 +2486,8 @@ class Handler(BaseHTTPRequestHandler):
                                           "message":"Qualified immutable historical evidence is unavailable."}},
                                HTTPStatus.SERVICE_UNAVAILABLE)
                     return
-                self._send(THESIS_TEST_SERVICE_V1.test(payload), HTTPStatus.OK)
+                service = THESIS_TEST_SERVICE_V2 if payload.get("version") == "thesis-spec-v2" else THESIS_TEST_SERVICE_V1
+                self._send(service.test(payload), HTTPStatus.OK)
             except ThesisValidationError as error:
                 self._send({"error":{"code":"INVALID_THESIS_SPEC","message":str(error)}}, HTTPStatus.BAD_REQUEST)
             except Exception:
@@ -2330,7 +2504,9 @@ class Handler(BaseHTTPRequestHandler):
                                           "message":"Qualified immutable historical evidence is unavailable."}},
                                HTTPStatus.SERVICE_UNAVAILABLE)
                     return
-                result = THESIS_TRACKING_SERVICE_V1.create(payload)
+                result = (THESIS_TRACKING_SERVICE_V2.create(payload)
+                          if payload.get("version") == "track-thesis-request-v2"
+                          else THESIS_TRACKING_SERVICE_V1.create(payload))
                 self._send(result, HTTPStatus.CREATED if result.get("created") else HTTPStatus.OK)
             except TrackingError as error:
                 self._send({"error":{"code":"INVALID_TRACKED_THESIS","message":str(error)}},
@@ -2351,9 +2527,17 @@ class Handler(BaseHTTPRequestHandler):
                 if payload is None:return
                 try:
                     if parts[1] == "evaluate":
-                        if payload and payload != {"version": "current-thesis-evaluate-request-v1"}:
+                        track = (THESIS_TRACKING_REPOSITORY_V1.get(parts[0])
+                                 if hasattr(THESIS_TRACKING_REPOSITORY_V1, "get") else None)
+                        expected = ({"version": "current-thesis-evaluate-request-v2"}
+                                    if track and track.get("schema_version") == "tracked-thesis-v2"
+                                    else {"version": "current-thesis-evaluate-request-v1"})
+                        if payload and payload != expected:
                             raise TrackingError("evaluate request contains unsupported fields")
-                        self._send(THESIS_TRACKING_SERVICE_V1.evaluate(parts[0]), HTTPStatus.OK)
+                        service = (THESIS_TRACKING_SERVICE_V2 if track and
+                                   track.get("schema_version") == "tracked-thesis-v2"
+                                   else THESIS_TRACKING_SERVICE_V1)
+                        self._send(service.evaluate(parts[0]), HTTPStatus.OK)
                     else:
                         if payload not in ({}, {"version": "track-thesis-archive-v1"}):
                             raise TrackingError("archive request contains unsupported fields")
@@ -2379,7 +2563,10 @@ class Handler(BaseHTTPRequestHandler):
                                           "message":"Qualified immutable historical evidence is unavailable."}},
                                HTTPStatus.SERVICE_UNAVAILABLE)
                     return
-                self._send(THESIS_TEST_SERVICE_V1.event_context(payload), HTTPStatus.OK)
+                spec = payload.get("thesis_spec") if isinstance(payload, dict) else None
+                service = (THESIS_TEST_SERVICE_V2 if isinstance(spec, dict) and
+                           spec.get("version") == "thesis-spec-v2" else THESIS_TEST_SERVICE_V1)
+                self._send(service.event_context(payload), HTTPStatus.OK)
             except ThesisValidationError as error:
                 self._send({"error":{"code":"INVALID_THESIS_EVENT_CONTEXT","message":str(error)}}, HTTPStatus.BAD_REQUEST)
             except Exception:

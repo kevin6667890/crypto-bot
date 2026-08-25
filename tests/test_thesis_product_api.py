@@ -68,6 +68,52 @@ def test_track_api_create_evaluate_archive_and_rate_limits(monkeypatch: pytest.M
                      ("evaluate", "t-1"), ("archive", "t-1")]
 
 
+def test_v2_test_track_and_evaluate_routes_dispatch_without_touching_v1(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    calls = []
+    v1 = type("V1", (), {"test": lambda *_: (_ for _ in ()).throw(AssertionError("V1 test called")),
+                          "create": lambda *_: (_ for _ in ()).throw(AssertionError("V1 track called")),
+                          "evaluate": lambda *_: (_ for _ in ()).throw(AssertionError("V1 evaluate called"))})()
+    v2 = type("V2", (), {
+        "test": lambda self, payload: calls.append(("test", payload["version"])) or {"status": "COMPLETED"},
+        "create": lambda self, payload: calls.append(("create", payload["version"])) or {"created": True},
+        "evaluate": lambda self, track_id: calls.append(("evaluate", track_id)) or {"outcome": "NO_CHANGE"},
+    })()
+    repository = type("Repository", (), {
+        "get": lambda self, _track_id: {"schema_version": "tracked-thesis-v2"},
+    })()
+    monkeypatch.setattr(paper_api, "THESIS_TEST_SERVICE_V1", v1)
+    monkeypatch.setattr(paper_api, "THESIS_TRACKING_SERVICE_V1", v1)
+    monkeypatch.setattr(paper_api, "THESIS_TEST_SERVICE_V2", v2)
+    monkeypatch.setattr(paper_api, "THESIS_TRACKING_SERVICE_V2", v2)
+    monkeypatch.setattr(paper_api, "THESIS_TRACKING_REPOSITORY_V1", repository)
+    monkeypatch.setattr(paper_api, "thesis_product_readiness", ready)
+
+    instance, sent = post_handler("/api/research/thesis/test", {"version": "thesis-spec-v2"})
+    instance.do_POST()
+    assert sent == [({"status": "COMPLETED"}, HTTPStatus.OK)]
+    instance, sent = post_handler("/api/research/thesis/tracks", {"version": "track-thesis-request-v2"})
+    instance.do_POST()
+    assert sent[0][1] == HTTPStatus.CREATED
+    instance, sent = post_handler("/api/research/thesis/tracks/v2/evaluate",
+                                  {"version": "current-thesis-evaluate-request-v2"})
+    instance.do_POST()
+    assert sent == [({"outcome": "NO_CHANGE"}, HTTPStatus.OK)]
+    assert calls == [("test", "thesis-spec-v2"), ("create", "track-thesis-request-v2"),
+                     ("evaluate", "v2")]
+
+
+def test_capabilities_endpoint_is_v2_and_exposes_visible_presets() -> None:
+    instance, sent = get_handler("/api/research/thesis/capabilities")
+    instance.do_GET()
+    payload = sent[0][0]
+    assert payload["version"] == "thesis-capabilities-v2"
+    assert {"ALL", "ANY", "NOT"} <= set(payload["expression"]["node_types"])
+    assert payload["semantic_presets"]["version"] == "semantic-preset-registry-v1"
+    assert next(item for item in payload["features"]
+                if item["code"] == "ROLLING_HIGH_BREAKOUT_CONFIRMED")["parameters"]["lookback_bars"]["maximum"] == 500
+
+
 def test_track_create_rejects_client_statistics_before_verification(tmp_path: Path) -> None:
     repository = paper_api.ThesisTrackingRepositoryV1(tmp_path / "tracking.db")
     evaluator = paper_api.CurrentFeatureEvaluatorV1(type("Reader", (), {})())
@@ -193,3 +239,15 @@ def test_market_state_changes_use_only_recent_confirmed_live_candles(
     rows[-3].update({"ts": now - width * 21, "candle_close_ts": now - width * 20})
     rows.pop()
     assert paper_api.recent_market_state_changes(hours=24) == []
+def test_sparse_or_incomplete_derivative_coverage_never_becomes_ready():
+    sparse = {"start_ms": 1, "end_ms": 181 * 86_400_000, "rows": 2,
+              "cadence_ms": 181 * 86_400_000,
+              "max_gap_ms": 181 * 86_400_000,
+              "instruments": [{"instrument": "BTC-USDT-SWAP", "rows": 2}]}
+    assert paper_api._qualified_derivative_coverage("OI", sparse) is False
+    qualified = {"start_ms": 1, "end_ms": 365 * 86_400_000, "rows": 365,
+                 "cadence_ms": 86_400_000,
+                 "max_gap_ms": 86_400_000,
+                 "instruments": [{"instrument": item, "rows": 365} for item in (
+                     "BTC-USDT-SWAP", "ETH-USDT-SWAP", "SOL-USDT-SWAP")]}
+    assert paper_api._qualified_derivative_coverage("OI", qualified) is True

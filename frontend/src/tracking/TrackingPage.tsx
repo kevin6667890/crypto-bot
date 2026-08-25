@@ -1,6 +1,7 @@
 import { ArrowRight, FlaskConical } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useLanguage } from "../i18n";
+import { expressionLabel } from "../thesis/expressionV2";
 import { fetchTrackedTheses } from "./api";
 import { conditionExpression, formatStatus, formatUtc, requiredConditionSummary, statusTone } from "./state";
 import type { TrackBundle } from "./types";
@@ -25,7 +26,9 @@ export default function TrackingPage() {
       const baseline = track.historical_baseline.historical_summary;
       return <a className="tracking-card" href={`/tracking/${encodeURIComponent(track.track_id)}`} key={track.track_id}>
         <header><div><span>{track.thesis_spec.instrument} · {track.thesis_spec.timeframe}</span><small>{zh ? "创建于" : "Created"} {formatUtc(track.created_at, language)}</small></div><ArrowRight /></header>
-        <div className="tracking-definitions">{track.thesis_spec.required_conditions.map((condition, index) => <span key={`${condition.feature}-${index}`}>{conditionExpression(condition, language)}</span>)}</div>
+        <div className="tracking-definitions">{track.thesis_spec.version === "thesis-spec-v2"
+          ? <span>{expressionLabel(track.thesis_spec.expression, null, language)}</span>
+          : track.thesis_spec.required_conditions.map((condition, index) => <span key={`${condition.feature}-${index}`}>{conditionExpression(condition, language)}</span>)}</div>
         <section className="evidence-current"><span>{zh ? "当前证据" : "CURRENT EVIDENCE"}</span><strong className={`status-badge ${statusTone(evaluation?.overall_status)}`}>{formatStatus(evaluation?.overall_status, language)}</strong>
           <p>{requiredConditionSummary(evaluation, language)}</p>
           <small>{zh ? "最新已确认证据" : "Latest confirmed evidence"}: {formatUtc(evaluation?.as_of, language)}</small></section>

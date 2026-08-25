@@ -1,5 +1,24 @@
-export type ThesisCondition = { feature: string; operator: string; value: number | boolean };
-export type PartialThesisCondition = { feature: string; operator: string | null; value: number | boolean | null };
+export type ThesisCondition = { feature: string; operator: string; value: number | boolean; parameters?: Record<string, number | boolean | string> };
+export type PartialThesisCondition = { feature: string; operator: string | null; value: number | boolean | null; parameters?: Record<string, number | boolean | string> };
+
+export type ThesisExpressionV2 =
+  | ({ node_type: "CONDITION" } & ThesisCondition)
+  | { node_type: "ALL"; children: ThesisExpressionV2[] }
+  | { node_type: "ANY"; children: ThesisExpressionV2[] }
+  | { node_type: "NOT"; child: ThesisExpressionV2 };
+
+export type ThesisPresetAssumption = {
+  preset_id: string; preset_version: string; source_text: string; feature: string;
+  applied: { operator: string; value: number | boolean; parameters: Record<string, number | boolean | string> };
+  label: { en: string; zh: string };
+};
+
+export type ThesisSpecV2 = {
+  version: "thesis-spec-v2"; instrument: string; timeframe: string; expression: ThesisExpressionV2;
+  forward_horizons: string[]; requested_as_of: number; assumptions: ThesisPresetAssumption[];
+  metadata?: Record<string, unknown>;
+};
+export type ThesisSpec = ThesisSpecV1 | ThesisSpecV2;
 
 export type ThesisSpecV1 = {
   version: "thesis-spec-v1";
@@ -23,23 +42,32 @@ export type ThesisFeatureCapability = {
   requires_threshold: boolean;
   fixed_value: true | null;
   input_scale: "percentage_points" | "identity";
-  source_group: "OHLCV" | "OI" | "CVD";
-  availability: "AVAILABLE" | "NOT_CURRENTLY_TESTABLE";
+  source_group: "OHLCV" | "OI" | "FUNDING" | "BASIS" | "CVD" | string;
+  availability?: "AVAILABLE" | "NOT_CURRENTLY_TESTABLE" | string;
+  historical_availability?: "AVAILABLE" | "LIMITED" | "UNAVAILABLE" | string;
+  current_availability?: "AVAILABLE" | "LIMITED" | "UNAVAILABLE" | string;
+  availability_reason?: string | null;
+  historical_availability_reason?: string | null;
+  current_availability_reason?: string | null;
+  parameters?: Record<string, { value_type: "integer" | "number" | "boolean" | "string"; required?: boolean;
+    minimum?: number | null; maximum?: number | null; allowed_values?: string[]; default?: number | boolean | string }>;
   supported_timeframes: string[];
 };
 
 export type ThesisCapabilities = {
   version: string;
-  thesis_spec_version: "thesis-spec-v1";
+  thesis_spec_version: "thesis-spec-v1" | "thesis-spec-v2";
   feature_registry_version: string;
   instruments: string[];
   timeframes: string[];
   horizons: string[];
   features: ThesisFeatureCapability[];
   unsupported_concepts: string[];
+  semantic_presets?: { version: string; presets: Array<{ preset_id: string; feature: string; operator: string;
+    value: number | boolean; parameters: Record<string, number | boolean | string>; label: { en: string; zh: string } }> };
 };
 
-export type ThesisParseResult = {
+export type ThesisParseResultV1 = {
   version: "thesis-parse-result-v1";
   status: "READY" | "NEEDS_INPUT" | "UNSUPPORTED" | "ERROR";
   original_text: string;
@@ -57,6 +85,16 @@ export type ThesisParseResult = {
   parser_version: string;
   assumption_policy_version: string;
 };
+
+export type ThesisParseResultV2 = {
+  version: "thesis-parse-result-v2"; status: "READY" | "READY_WITH_ASSUMPTIONS" | "NEEDS_INPUT" | "PARTIALLY_SUPPORTED" | "UNSUPPORTED" | "ERROR";
+  detected_language: "en" | "zh"; expression: ThesisExpressionV2 | null; thesis_spec: ThesisSpecV2 | null;
+  recognized_clauses: string[]; assumptions: ThesisPresetAssumption[];
+  unsupported_clauses: Array<{ source_text: string; reason_code: string; category: string; suggestions?: string[] }>;
+  missing_parameters: Array<{ source_text: string; parameter: string; feature: string }>;
+  warnings: string[]; parser_version: string; capability_registry_version?: string;
+};
+export type ThesisParseResult = ThesisParseResultV1 | ThesisParseResultV2;
 
 export type HorizonAggregate = {
   eligible_n: number; censored_n: number; positive_n: number; zero_n: number; negative_n: number;
@@ -76,8 +114,14 @@ export type ThesisEventRecord = {
     forward_return_fraction: number | null; mfe_fraction: number | null; mae_fraction: number | null }>;
 };
 
+export type ThesisExpressionResult = {
+  node_type: "CONDITION" | "ALL" | "ANY" | "NOT"; state: "TRUE" | "FALSE" | "UNKNOWN";
+  feature?: string; operator?: string; value?: number | boolean; observed_value?: number | boolean | null;
+  children?: ThesisExpressionResult[]; child?: ThesisExpressionResult;
+};
+
 export type ThesisTestResult = {
-  result_version: "thesis-test-result-v1"; status: string; thesis_spec: ThesisSpecV1;
+  result_version: "thesis-test-result-v1" | "thesis-test-result-v2"; status: string; thesis_spec: ThesisSpec;
   instrument: string; canonical_instrument: string; timeframe: string;
   tested_range: { start: number | null; end: number | null };
   coverage: { version: string; qualification: string; testable: boolean;
@@ -102,11 +146,14 @@ export type ThesisTestResult = {
 };
 
 export type ThesisEventContext = {
-  version: "thesis-event-context-v1"; context_policy_version: string; result_hash: string;
+  version: "thesis-event-context-v1" | "thesis-event-context-v2"; context_policy_version: string; result_hash: string;
   definition_hash: string; engine_version: string; instrument: string; canonical_instrument: string; timeframe: string;
-  dataset_identity: { version: string; content_sha256: string; selected_dataset_id: string | null; source_version: string | null };
+  dataset_identity: { version: string; content_sha256?: string; selected_dataset_id?: string | null; source_version?: string | null };
   event: { event_id: string; timestamp: number; candle_index: number; reference_close: number;
-    conditions: Array<{ feature: string; operator: string; expected: number | boolean; actual: number | boolean | null; matched: boolean }> };
+    conditions?: Array<{ feature: string; operator: string; expected: number | boolean; actual: number | boolean | null; matched: boolean }>;
+    expression_result?: ThesisExpressionResult;
+    structure_context?: Array<{ feature: string; event_timestamp: number; original_breakout_timestamp: number;
+      failure_confirmation_timestamp: number | null; reference_level: number }> };
   candles: Array<{ open_timestamp: number; close_timestamp: number; open: number; high: number; low: number; close: number; volume: number }>;
   horizons: Array<{ horizon: string; target_timestamp: number; candle_index: number | null; outcome_close: number | null;
     available: boolean; censor_reason: string | null; forward_return_fraction: number | null; mfe_fraction: number | null; mae_fraction: number | null }>;

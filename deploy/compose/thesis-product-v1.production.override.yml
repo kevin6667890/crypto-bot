@@ -6,7 +6,9 @@ services:
       THESIS_HISTORICAL_DB_SHA256: ${THESIS_HISTORICAL_DB_SHA256:?Immutable thesis database SHA-256 is required}
       THESIS_HISTORICAL_DATASET_ID: ${THESIS_HISTORICAL_DATASET_ID:?Immutable thesis dataset identity is required}
       THESIS_TRACKING_DB_PATH: /var/lib/paper/thesis_tracking.db
-      THESIS_TRACKING_SCHEDULER_ENABLED: "false"
+      # The API exposes scheduler configuration in readiness; the dedicated
+      # worker below remains the only process that executes scheduler cycles.
+      THESIS_TRACKING_SCHEDULER_ENABLED: "true"
       THESIS_EXPLANATION_ENABLED: ${THESIS_EXPLANATION_ENABLED:-true}
       THESIS_EXPLANATION_MODEL: ${THESIS_EXPLANATION_MODEL:-deepseek-v4-flash}
     # The previous 896 MiB cgroup was OOM-killed while reading the 4 GiB
@@ -44,4 +46,3 @@ services:
     logging:
       driver: json-file
       options: {max-size: "10m", max-file: "3"}
-

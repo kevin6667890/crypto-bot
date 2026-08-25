@@ -38,6 +38,7 @@ def test_compose_keeps_provider_secret_out_of_web_services() -> None:
     assert "polymarket_llm_api_key" in collector
     assert "polymarket_llm_api_key" not in backup.split("volumes:", 1)[0]
     assert "POLYMARKET_DB_PATH: /var/lib/polymarket/polymarket_research.sqlite" in paper
+    assert "mem_limit: 1536m" in collector
 
 
 def test_systemd_schedule_does_not_backfill_or_overlap() -> None:

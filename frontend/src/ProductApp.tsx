@@ -12,7 +12,7 @@ const TrackDetailPage = lazy(() => import("./tracking/TrackDetailPage"));
 const WhatChangedPage = lazy(() => import("./tracking/WhatChangedPage"));
 const AdvancedLanding = lazy(() => import("./product/AdvancedLanding"));
 const PredictionMarkets = lazy(() => import("./PredictionMarkets"));
-const FRONTEND_BUILD_ID = "2026-08-25T08:42:00Z";
+const FRONTEND_BUILD_ID = "thesis-capability-v2-production-rc-20260825";
 
 type PredictionMarketsView = "overview" | "markets" | "forecasts" | "scoreboard";
 

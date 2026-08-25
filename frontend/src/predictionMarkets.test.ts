@@ -1,0 +1,44 @@
+// @ts-expect-error Vitest runs this source contract in Node; the app bundle has no Node types.
+import { readFileSync } from "node:fs";
+import { describe, expect, it } from "vitest";
+
+const app = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+const page = readFileSync(new URL("./PredictionMarkets.tsx", import.meta.url), "utf8");
+
+describe("prediction markets research vertical", () => {
+  it("provides the four read-only research destinations and product navigation", () => {
+    expect(app).toContain("Prediction Markets");
+    expect(app).toContain('data-route="prediction-markets"');
+    for (const route of ["/overview", "/markets", "/forecasts", "/scoreboard"]) expect(page).toContain(route);
+    expect(page).toContain('className="pm-nav"');
+    expect(page).toContain('aria-current={view === destination ? "page" : undefined}');
+  });
+
+  it("keeps unresolved performance honest and handles unavailable API data", () => {
+    expect(page).toContain("Awaiting resolutions");
+    expect(page).toContain("No forecasts have resolved yet.");
+    expect(page).toContain("Prediction Markets API unavailable");
+    expect(page).not.toContain("AI beats market");
+    expect(page).toContain("Performance is unavailable until forecasts resolve.");
+  });
+
+  it("uses paged projections rather than shipping raw collection payloads", () => {
+    expect(page).toContain("/markets?limit=50");
+    expect(page).toContain("/forecasts?limit=50");
+    expect(page).not.toContain("raw_payload");
+  });
+
+  it("loads immutable detail projections and avoids stale search responses", () => {
+    expect(page).toContain("/markets/${encodeURIComponent(selected)}");
+    expect(page).toContain("/forecasts/${encodeURIComponent(selected)}");
+    expect(page).toContain("AbortController");
+    expect(page).toContain("useDebounced(query)");
+  });
+
+  it("uses the same-origin production API by default and contains no provider secret", () => {
+    expect(page).toContain('/api/polymarket');
+    expect(page).not.toContain("localhost");
+    expect(page).not.toContain("127.0.0.1");
+    expect(page).not.toContain("DEEPSEEK_API_KEY");
+  });
+});

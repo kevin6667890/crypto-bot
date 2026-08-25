@@ -32,11 +32,13 @@ class PolymarketReadModel:
 
     def __init__(self, path: Path | str | None = None) -> None:
         self.path = Path(path or os.getenv("POLYMARKET_DB_PATH", DEFAULT_DB_PATH))
+        # Initialize schema/index compatibility once at process startup. Doing
+        # DDL on every read request creates avoidable writer-lock contention
+        # when the production UI loads several panels concurrently.
+        self._repository = PolymarketRepository(self.path)
 
     def _repo(self) -> PolymarketRepository:
-        # Repository initialization is backward-compatible and only creates
-        # schema/indexes; endpoints never collect, forecast, or resolve.
-        return PolymarketRepository(self.path)
+        return self._repository
 
     def overview(self) -> dict[str, Any]:
         repo = self._repo()
@@ -76,20 +78,50 @@ class PolymarketReadModel:
         if search:
             clauses.append("(m.question LIKE ? OR m.slug LIKE ?)"); params.extend([f"%{search}%", f"%{search}%"])
         where = " AND ".join(clauses)
+        # Correlated latest-row lookups use the lineage indexes and avoid
+        # materializing four full-universe GROUP BY CTEs.  The latter can
+        # exhaust a deliberately small read-container /tmp on a 150k-market
+        # production database even though the result page is tiny.
         sql = f"""
-          WITH latest_s AS (SELECT s.* FROM market_snapshots s JOIN (SELECT market_id,MAX(captured_at) captured_at FROM market_snapshots GROUP BY market_id) x ON x.market_id=s.market_id AND x.captured_at=s.captured_at),
-          latest_d AS (SELECT d.* FROM eligibility_decisions d JOIN (SELECT market_id,MAX(evaluated_at) evaluated_at FROM eligibility_decisions GROUP BY market_id) x ON x.market_id=d.market_id AND x.evaluated_at=d.evaluated_at),
-          latest_f AS (SELECT f.* FROM forecasts f JOIN (SELECT market_id,MAX(committed_at) committed_at FROM forecasts WHERE producer_kind='LLM' GROUP BY market_id) x ON x.market_id=f.market_id AND x.committed_at=f.committed_at),
-          latest_r AS (SELECT r.* FROM resolutions r JOIN (SELECT market_id,MAX(revision) revision FROM resolutions GROUP BY market_id) x ON x.market_id=r.market_id AND x.revision=r.revision)
           SELECT m.market_id,m.question,m.slug,s.event_id,s.event_slug,s.end_date,s.neg_risk,s.yes_midpoint,s.yes_best_bid,s.yes_best_ask,s.statistical_cluster_id,
                  d.eligible,d.policy_version,f.forecast_id,f.probability,f.committed_at,r.classification,r.outcome_value
-          FROM markets m LEFT JOIN latest_s s ON s.market_id=m.market_id LEFT JOIN latest_d d ON d.market_id=m.market_id
-          LEFT JOIN latest_f f ON f.market_id=m.market_id LEFT JOIN latest_r r ON r.market_id=m.market_id WHERE {where}
+          FROM markets m
+          LEFT JOIN market_snapshots s ON s.snapshot_id=(SELECT sx.snapshot_id FROM market_snapshots sx WHERE sx.market_id=m.market_id ORDER BY sx.captured_at DESC,sx.snapshot_id DESC LIMIT 1)
+          LEFT JOIN eligibility_decisions d ON d.decision_id=(SELECT dx.decision_id FROM eligibility_decisions dx WHERE dx.market_id=m.market_id ORDER BY dx.evaluated_at DESC,dx.decision_id DESC LIMIT 1)
+          LEFT JOIN forecasts f ON f.forecast_id=(SELECT fx.forecast_id FROM forecasts fx WHERE fx.market_id=m.market_id AND fx.producer_kind='LLM' ORDER BY fx.committed_at DESC,fx.forecast_id DESC LIMIT 1)
+          LEFT JOIN resolutions r ON r.resolution_id=(SELECT rx.resolution_id FROM resolutions rx WHERE rx.market_id=m.market_id ORDER BY rx.revision DESC,rx.resolution_id DESC LIMIT 1)
+          WHERE {where}
         """
         repo = self._repo()
         with repo.connect() as c:
-            total = int(c.execute(f"SELECT COUNT(*) FROM ({sql})", params).fetchone()[0])
-            rows = c.execute(sql + " ORDER BY COALESCE(f.committed_at,s.captured_at,m.first_seen_at) DESC, m.market_id LIMIT ? OFFSET ?", [*params, page_size, (page - 1) * page_size]).fetchall()
+            if all(value is None for value in (eligible, forecasted, unresolved, resolved, event)):
+                # The initial product page (and text search) can paginate the
+                # immutable market registry before doing latest-lineage
+                # lookups. This bounds those lookups to one page.
+                market_where = "1=1"
+                market_params: list[Any] = []
+                if search:
+                    market_where += " AND (question LIKE ? OR slug LIKE ?)"
+                    market_params.extend([f"%{search}%", f"%{search}%"])
+                total = int(c.execute(f"SELECT COUNT(*) FROM markets WHERE {market_where}", market_params).fetchone()[0])
+                page_sql = f"""
+                  WITH market_page AS (
+                    SELECT * FROM markets WHERE {market_where}
+                    ORDER BY first_seen_at DESC,market_id LIMIT ? OFFSET ?
+                  )
+                  SELECT m.market_id,m.question,m.slug,s.event_id,s.event_slug,s.end_date,s.neg_risk,s.yes_midpoint,s.yes_best_bid,s.yes_best_ask,s.statistical_cluster_id,
+                         d.eligible,d.policy_version,f.forecast_id,f.probability,f.committed_at,r.classification,r.outcome_value
+                  FROM market_page m
+                  LEFT JOIN market_snapshots s ON s.snapshot_id=(SELECT sx.snapshot_id FROM market_snapshots sx WHERE sx.market_id=m.market_id ORDER BY sx.captured_at DESC,sx.snapshot_id DESC LIMIT 1)
+                  LEFT JOIN eligibility_decisions d ON d.decision_id=(SELECT dx.decision_id FROM eligibility_decisions dx WHERE dx.market_id=m.market_id ORDER BY dx.evaluated_at DESC,dx.decision_id DESC LIMIT 1)
+                  LEFT JOIN forecasts f ON f.forecast_id=(SELECT fx.forecast_id FROM forecasts fx WHERE fx.market_id=m.market_id AND fx.producer_kind='LLM' ORDER BY fx.committed_at DESC,fx.forecast_id DESC LIMIT 1)
+                  LEFT JOIN resolutions r ON r.resolution_id=(SELECT rx.resolution_id FROM resolutions rx WHERE rx.market_id=m.market_id ORDER BY rx.revision DESC,rx.resolution_id DESC LIMIT 1)
+                  ORDER BY m.first_seen_at DESC,m.market_id
+                """
+                rows = c.execute(page_sql, [*market_params, page_size, (page - 1) * page_size]).fetchall()
+            else:
+                total = int(c.execute(f"SELECT COUNT(*) FROM ({sql})", params).fetchone()[0])
+                rows = c.execute(sql + " ORDER BY COALESCE(f.committed_at,s.captured_at,m.first_seen_at) DESC, m.market_id LIMIT ? OFFSET ?", [*params, page_size, (page - 1) * page_size]).fetchall()
         items = []
         for row in rows:
             d = dict(row); midpoint, bid, ask = _number(d.pop("yes_midpoint")), _number(d.pop("yes_best_bid")), _number(d.pop("yes_best_ask"))

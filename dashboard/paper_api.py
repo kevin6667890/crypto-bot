@@ -69,6 +69,7 @@ try:
     from thesis_tracking import (CurrentFeatureEvaluatorV1, ThesisTrackingRepositoryV1,
         ThesisTrackingSchedulerV1, ThesisTrackingServiceV1, TrackingError)
     from strategy_router_v2 import StrategyRouterV2
+    from polymarket.api import PolymarketReadModel
     from strategy_registry import StrategyRegistryAdapter, active_snapshot_matches
     from approved_strategy_runtime import RUNTIME_VERSION, evaluate_frozen_candidate
     from ai_market_analysis.report_api import submit_report, save_position_plan
@@ -123,6 +124,7 @@ except ImportError:
     from .thesis_tracking import (CurrentFeatureEvaluatorV1, ThesisTrackingRepositoryV1,
         ThesisTrackingSchedulerV1, ThesisTrackingServiceV1, TrackingError)
     from .strategy_router_v2 import StrategyRouterV2
+    from .polymarket.api import PolymarketReadModel
     from .strategy_registry import StrategyRegistryAdapter, active_snapshot_matches
     from .approved_strategy_runtime import RUNTIME_VERSION, evaluate_frozen_candidate
     from .ai_market_analysis.report_api import submit_report, save_position_plan
@@ -1471,6 +1473,9 @@ def public_canonical_market_snapshot(instrument: str,
         return payload
 LIMITER = RateLimiter()
 LOGGER = configure_logging(ROOT)
+POLYMARKET_READ_MODEL = PolymarketReadModel(
+    Path(os.getenv("POLYMARKET_DB_PATH", ROOT / "data_cache" / "polymarket_research.sqlite"))
+)
 _HISTORICAL_SHA_CACHE: dict[tuple[str, int, int], str] = {}
 
 
@@ -1793,6 +1798,52 @@ class Handler(BaseHTTPRequestHandler):
         self._request_started = time.monotonic()
         parsed, query = urlparse(self.path), parse_qs(urlparse(self.path).query)
         instrument = query.get("instrument", ["ETH-USDT"])[0]
+        if parsed.path == "/api/polymarket/overview":
+            self._send(POLYMARKET_READ_MODEL.overview())
+            return
+        if parsed.path == "/api/polymarket/markets":
+            try:
+                self._send(POLYMARKET_READ_MODEL.markets(
+                    page=int(query.get("page", ["1"])[0]),
+                    page_size=int(query.get("page_size", query.get("limit", ["50"]))[0]),
+                    eligible=query.get("eligible", [None])[0],
+                    forecasted=query.get("forecasted", [None])[0],
+                    unresolved=query.get("unresolved", [None])[0],
+                    resolved=query.get("resolved", [None])[0],
+                    event=query.get("event", [None])[0],
+                    search=query.get("search", [None])[0],
+                ))
+            except ValueError as error:
+                self._send({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+            return
+        if parsed.path.startswith("/api/polymarket/markets/"):
+            item = POLYMARKET_READ_MODEL.market_detail(parsed.path.rsplit("/", 1)[1])
+            self._send(item or {"error": "Polymarket market not found"},
+                       HTTPStatus.OK if item else HTTPStatus.NOT_FOUND)
+            return
+        if parsed.path == "/api/polymarket/forecasts":
+            try:
+                self._send(POLYMARKET_READ_MODEL.forecasts(
+                    page=int(query.get("page", ["1"])[0]),
+                    page_size=int(query.get("page_size", query.get("limit", ["50"]))[0]),
+                ))
+            except ValueError as error:
+                self._send({"error": str(error)}, HTTPStatus.BAD_REQUEST)
+            return
+        if parsed.path.startswith("/api/polymarket/forecasts/"):
+            item = POLYMARKET_READ_MODEL.forecast_detail(parsed.path.rsplit("/", 1)[1])
+            self._send(item or {"error": "Polymarket forecast not found"},
+                       HTTPStatus.OK if item else HTTPStatus.NOT_FOUND)
+            return
+        if parsed.path == "/api/polymarket/scoreboard":
+            self._send(POLYMARKET_READ_MODEL.scoreboard())
+            return
+        if parsed.path == "/api/polymarket/cohorts":
+            self._send(POLYMARKET_READ_MODEL.cohorts())
+            return
+        if parsed.path == "/api/polymarket/health":
+            self._send(POLYMARKET_READ_MODEL.health())
+            return
         if parsed.path == "/api/research/thesis/capabilities":
             self._send(thesis_capabilities())
             return

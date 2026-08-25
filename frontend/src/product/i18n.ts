@@ -2,6 +2,7 @@ import type { Language } from "../i18n";
 
 const copy = {
   en: {
+    crypto: "Crypto", predictionMarkets: "Prediction Markets",
     brand: "Evidence workspace", navigation: "Product navigation", language: "Language",
     routeUnavailable: "This page is temporarily unavailable.", loadingEvidence: "Loading evidence…",
     home: "Home", test: "Test an idea", tracking: "Tracking", changed: "What changed", advanced: "Advanced",
@@ -22,6 +23,7 @@ const copy = {
     advancedOperations: "Operations", advancedOperationsBody: "Review local read-only service health and data continuity.",
   },
   zh: {
+    crypto: "Crypto", predictionMarkets: "Prediction Markets",
     brand: "证据研究", navigation: "产品导航", language: "语言",
     routeUnavailable: "页面暂时不可用。", loadingEvidence: "正在加载证据…",
     home: "首页", test: "测试想法", tracking: "跟踪", changed: "发生了什么变化", advanced: "高级功能",

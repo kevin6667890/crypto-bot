@@ -11,6 +11,9 @@ const TrackingPage = lazy(() => import("./tracking/TrackingPage"));
 const TrackDetailPage = lazy(() => import("./tracking/TrackDetailPage"));
 const WhatChangedPage = lazy(() => import("./tracking/WhatChangedPage"));
 const AdvancedLanding = lazy(() => import("./product/AdvancedLanding"));
+const PredictionMarkets = lazy(() => import("./PredictionMarkets"));
+
+type PredictionMarketsView = "overview" | "markets" | "forecasts" | "scoreboard";
 
 export type ProductRoute =
   | { kind: "home" }
@@ -19,11 +22,17 @@ export type ProductRoute =
   | { kind: "track-detail"; trackId: string }
   | { kind: "changes" }
   | { kind: "advanced" }
+  | { kind: "prediction-markets"; view: PredictionMarketsView }
   | { kind: "legacy" };
 
 export function resolveProductRoute(pathname: string, hash = ""): ProductRoute {
   const path = (pathname.replace(/\/+$/, "") || "/").toLowerCase();
   const legacyHash = hash.toLowerCase();
+  const predictionMarkets = path.match(/^\/prediction-markets(?:\/(markets|forecasts|scoreboard))?$/);
+  if (predictionMarkets) return {
+    kind: "prediction-markets",
+    view: (predictionMarkets[1] || "overview") as PredictionMarketsView,
+  };
   if (path === "/test-an-idea") return { kind: "test" };
   if (path === "/tracking") return { kind: "tracking" };
   const detail = path.match(/^\/tracking\/([^/]+)$/);
@@ -59,6 +68,14 @@ export default function ProductApp() {
   }, []);
   const route = resolveProductRoute(window.location.pathname, window.location.hash);
   if (route.kind === "legacy") return <ProductShell active="advanced"><Deferred><LegacyApplication /></Deferred></ProductShell>;
+  if (route.kind === "prediction-markets") {
+    const navigate = (view: PredictionMarketsView) => {
+      const path = `/prediction-markets${view === "overview" ? "" : `/${view}`}`;
+      window.history.pushState({}, "", path);
+      setLocationVersion((value) => value + 1);
+    };
+    return <ProductShell active="prediction-markets"><Deferred><PredictionMarkets view={route.view} navigate={navigate} /></Deferred></ProductShell>;
+  }
   const content = route.kind === "home" ? <ProductHome />
     : route.kind === "test" ? <TestAnIdeaPage />
       : route.kind === "tracking" ? <TrackingPage />

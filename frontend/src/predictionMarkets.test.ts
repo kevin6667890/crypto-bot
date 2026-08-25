@@ -2,13 +2,16 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
-const app = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+const app = readFileSync(new URL("./ProductApp.tsx", import.meta.url), "utf8");
+const shell = readFileSync(new URL("./product/ProductShell.tsx", import.meta.url), "utf8");
+const productI18n = readFileSync(new URL("./product/i18n.ts", import.meta.url), "utf8");
 const page = readFileSync(new URL("./PredictionMarkets.tsx", import.meta.url), "utf8");
 
 describe("prediction markets research vertical", () => {
   it("provides the four read-only research destinations and product navigation", () => {
-    expect(app).toContain("Prediction Markets");
-    expect(app).toContain('data-route="prediction-markets"');
+    expect(app).toContain('kind: "prediction-markets"');
+    expect(shell).toContain('href="/prediction-markets"');
+    expect(productI18n).toContain('predictionMarkets: "Prediction Markets"');
     for (const route of ["/overview", "/markets", "/forecasts", "/scoreboard"]) expect(page).toContain(route);
     expect(page).toContain('className="pm-nav"');
     expect(page).toContain('aria-current={view === destination ? "page" : undefined}');

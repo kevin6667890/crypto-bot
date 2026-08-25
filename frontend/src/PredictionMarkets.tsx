@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { RefreshCw } from "lucide-react";
+import "./PredictionMarkets.css";
 
 const apiBase = (window.__PAPER_API_URL__ || import.meta.env.VITE_PAPER_API_URL || "").replace(/\/$/, "");
 const copy = { research: "Prediction Markets Research", markets: "Markets", marketDetail: "Market detail", forecasts: "Forecasts", forecastDetail: "Forecast audit detail", scoreboard: "Scoreboard", searchMarkets: "Search prediction markets", search: "Search markets", filter: "Market filter", close: "Close detail" };

@@ -9,7 +9,8 @@ export default function ProductShell({ active, children }: { active: string; chi
     <header className="product-header">
       <a className="product-brand" href="/"><FlaskConical size={18} /><strong>Crypto-Bot</strong><span>{text.brand}</span></a>
       <nav aria-label={text.navigation}>
-        <a className={active === "home" ? "active" : ""} href="/">{text.home}</a>
+        <a className={active !== "prediction-markets" ? "active" : ""} href="/">{text.crypto}</a>
+        <a className={active === "prediction-markets" ? "active" : ""} aria-current={active === "prediction-markets" ? "page" : undefined} href="/prediction-markets">{text.predictionMarkets}</a>
         <a className={`primary ${active === "test" ? "active" : ""}`} href="/test-an-idea">{text.test}</a>
         <a className={active.startsWith("track") ? "active" : ""} href="/tracking">{text.tracking}</a>
         <a className={active === "changes" ? "active" : ""} href="/what-changed">{text.changed}</a>

@@ -24,6 +24,7 @@ except ImportError:
 
 
 EVIDENCE_FACT_SET_VERSION = "thesis-evidence-fact-set-v1"
+EVIDENCE_FACT_SET_VERSION_V2 = "thesis-evidence-fact-set-v2"
 EVIDENCE_PLAN_INPUT_VERSION = "thesis-evidence-plan-input-v1"
 EVIDENCE_PLAN_VERSION = "thesis-evidence-narrative-plan-v1"
 EVIDENCE_EXPLANATION_VERSION = "thesis-evidence-explanation-v1"
@@ -63,7 +64,8 @@ def _relation(value: float | None) -> str:
 
 
 def build_evidence_fact_set(result: Mapping[str, Any]) -> dict[str, Any]:
-    if result.get("result_version") != "thesis-test-result-v1" or not result.get("result_hash"):
+    result_version = result.get("result_version")
+    if result_version not in {"thesis-test-result-v1", "thesis-test-result-v2"} or not result.get("result_hash"):
         raise EvidenceExplanationError("validated thesis result is required")
     horizons: dict[str, Any] = {}
     for horizon in result.get("thesis_spec", {}).get("forward_horizons", []):
@@ -89,7 +91,8 @@ def build_evidence_fact_set(result: Mapping[str, Any]) -> dict[str, Any]:
                              else "BELOW_ZERO" if p75 is not None and p75 < 0 else "UNAVAILABLE"),
         }
     facts = {
-        "version": EVIDENCE_FACT_SET_VERSION,
+        "version": (EVIDENCE_FACT_SET_VERSION_V2
+                    if result_version == "thesis-test-result-v2" else EVIDENCE_FACT_SET_VERSION),
         "result_hash": result["result_hash"],
         "definition_hash": result["definition_hash"],
         "dataset_id": result.get("historical_data", {}).get("dataset_id"),
@@ -103,6 +106,11 @@ def build_evidence_fact_set(result: Mapping[str, Any]) -> dict[str, Any]:
         "coverage_qualification": result.get("coverage", {}).get("qualification"),
         "warnings": sorted(result.get("warnings", [])),
         "horizons": horizons,
+        "logic_summary": (result.get("compiled_definition", {}).get("expression")
+                          if result_version == "thesis-test-result-v2" else None),
+        "source_requirements": result.get("compiled_definition", {}).get("source_requirements", []),
+        "derivative_limitations": [item for item in result.get("warnings", [])
+                                   if any(group in str(item) for group in ("OI", "FUNDING", "BASIS", "CVD"))],
     }
     facts["facts_hash"] = _hash(facts)
     return facts
@@ -181,6 +189,13 @@ def render_explanation(facts: Mapping[str, Any], plan: Mapping[str, str], langua
         raise EvidenceExplanationError("language must be en or zh")
     chosen = _chosen_horizon(facts, plan["primary"])
     blocks: list[dict[str, Any]] = []
+    if facts.get("logic_summary"):
+        sources = ", ".join(map(str, facts.get("source_requirements", []))) or "OHLCV"
+        logic_text = (f"该事件使用服务端确定性布尔表达式评估；所需数据源为 {sources}。"
+                      if language == "zh" else
+                      f"The event used a server-evaluated deterministic Boolean expression; required sources: {sources}.")
+        blocks.append({"template_id": "V2_LOGIC_SUMMARY", "text": logic_text,
+                       "fact_refs": ["DEFINITION.EXPRESSION", "DEFINITION.SOURCE_REQUIREMENTS"]})
     if chosen is not None:
         horizon, aggregate = chosen
         if language == "zh":
@@ -230,7 +245,7 @@ def render_explanation(facts: Mapping[str, Any], plan: Mapping[str, str], langua
                    "fact_refs": ["SAMPLE.QUALITY", "COVERAGE.RAW_RANGE", "COVERAGE.BREADTH"]})
     return {"version": EVIDENCE_EXPLANATION_VERSION, "status": status, "language": language,
             "result_hash": facts["result_hash"], "definition_hash": facts["definition_hash"],
-            "dataset_id": facts.get("dataset_id"), "facts_version": EVIDENCE_FACT_SET_VERSION,
+            "dataset_id": facts.get("dataset_id"), "facts_version": facts.get("version", EVIDENCE_FACT_SET_VERSION),
             "facts_hash": facts["facts_hash"], "plan_version": EVIDENCE_PLAN_VERSION,
             "renderer_version": EVIDENCE_RENDERER_VERSION, "blocks": blocks,
             "provider": dict(provider_meta) if provider_meta else None,

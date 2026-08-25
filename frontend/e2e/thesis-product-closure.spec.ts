@@ -97,7 +97,9 @@ test("A: Home to historical evidence to persistent tracking detail and no-op ref
     if (path.endsWith("/capabilities")) return fulfill(route, capabilities);
     if (path.endsWith("/parse")) return fulfill(route, { version: "thesis-parse-result-v1", status: "READY", original_text: "BTC thesis", detected_language: "en", draft_spec: spec, partial_spec: spec,
       recognized_clauses: spec.required_conditions.map((item) => ({ ...item, source_text: item.feature, required: true })), unsupported_clauses: [], missing_parameters: [], assumptions: [], warnings: [], parser_version: "parser-v1", assumption_policy_version: "assumption-v1" });
-    if (path.endsWith("/test")) return fulfill(route, historicalResult);
+    if (path.endsWith("/test")) return fulfill(route, {
+      ...historicalResult, thesis_spec: request.postDataJSON(),
+    });
     if (path.endsWith("/explain")) return fulfill(route, { version: "thesis-evidence-explanation-v1", status: "FALLBACK", language: "en",
       result_hash: historicalResult.result_hash, definition_hash: historicalResult.definition_hash, dataset_id: historicalId, facts_version: "facts-v1", facts_hash: "facts-hash",
       plan_version: "plan-v1", renderer_version: "renderer-v1", blocks: [{ template_id: "FACT", text: "Historical evidence measured 346 independent events.", fact_refs: ["N"] }], provider: null, fallback_reason: "AI_OPTIONAL", cache_status: "MISS" });

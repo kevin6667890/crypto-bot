@@ -105,7 +105,9 @@ def test_thesis_parse_endpoint_sanitizes_internal_failure(monkeypatch):
 def test_capabilities_endpoint_uses_registry_projection():
     instance, sent = get_handler("/api/research/thesis/capabilities")
     instance.do_GET()
-    assert sent[0][0]["version"] == "thesis-capabilities-v1"
+    assert sent[0][0]["version"] == "thesis-capabilities-v2"
+    assert sent[0][0]["thesis_spec_versions"] == ["thesis-spec-v1", "thesis-spec-v2"]
+    assert sent[0][0]["expression"]["node_types"] == ["CONDITION", "ALL", "ANY", "NOT"]
     assert {item["code"] for item in sent[0][0]["features"]}
 
 

@@ -19,6 +19,40 @@
   font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
 }
 
+/* Thesis Expression V2: deliberately scoped so the released V1 layout is unchanged. */
+.thesis-capability-browser { margin-top: 1rem; text-align: left; }
+.thesis-capability-browser summary { cursor: pointer; font-weight: 700; }
+.thesis-capability-browser > div { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: .75rem; padding-top: .75rem; }
+.thesis-capability-browser section { padding: .75rem; border: 1px solid var(--border, #283544); border-radius: 10px; }
+.thesis-capability-browser h3 { margin: 0 0 .5rem; font-size: .78rem; letter-spacing: .08em; }
+.thesis-capability-browser ul { list-style: none; padding: 0; margin: 0; }
+.thesis-capability-browser li { display: flex; justify-content: space-between; gap: .5rem; padding: .3rem 0; }
+.thesis-capability-browser li small { opacity: .72; white-space: nowrap; }
+.expression-group { margin: .75rem 0; padding: .75rem; border: 1px solid var(--border, #283544); border-left: 3px solid #6d86ff; border-radius: 10px; }
+.expression-group.any { border-left-color: #bd78ff; }
+.expression-group.not { border-left-color: #ef9a56; }
+.expression-group > header, .tracking-expression-group > header { display: flex; align-items: center; justify-content: space-between; gap: .75rem; margin-bottom: .55rem; }
+.expression-condition, .tracking-expression-condition { display: flex; align-items: center; flex-wrap: wrap; gap: .55rem; margin: .4rem 0; padding: .65rem; background: color-mix(in srgb, currentColor 4%, transparent); border-radius: 8px; }
+.expression-condition input, .expression-condition select, .standardized-assumptions input { min-height: 36px; }
+.expression-parameter { display: flex; gap: .35rem; align-items: center; }
+.expression-parameter input { width: 88px; }
+.expression-add-actions, .expression-root-actions { display: flex; gap: .5rem; margin-top: .65rem; }
+.secondary-btn.compact { min-height: 34px; padding: .35rem .6rem; }
+.standardized-assumptions { margin: 1rem 0; padding: 1rem; border: 1px solid #b37b24; border-radius: 10px; background: rgba(179,123,36,.08); }
+.standardized-assumptions > div { display: flex; justify-content: space-between; gap: 1rem; padding: .65rem 0; border-top: 1px solid rgba(179,123,36,.28); }
+.standardized-assumptions label { display: inline-flex; gap: .4rem; align-items: center; margin-left: .6rem; }
+.standardized-assumptions input { width: 88px; }
+.tracking-expression-group { margin-top: .75rem; padding: .7rem; border: 1px solid var(--border, #283544); border-left: 3px solid #6d86ff; border-radius: 9px; }
+.tracking-expression-group.any { border-left-color: #bd78ff; }
+.tracking-expression-group.not { border-left-color: #ef9a56; }
+.tracking-expression-condition > strong { margin-left: auto; }
+@media (max-width: 680px) {
+  .standardized-assumptions > div { display: block; }
+  .standardized-assumptions label { margin: .5rem .5rem 0 0; }
+  .expression-condition > select, .expression-condition > input { flex: 1 1 42%; min-width: 0; }
+  .thesis-capability-browser > div { grid-template-columns: 1fr; }
+}
+
 /* Test an idea — intentionally isolated from the dense terminal workspace. */
 .test-idea-nav { background: linear-gradient(135deg, rgba(46, 211, 183, .2), rgba(77, 126, 255, .18)) !important; border-color: rgba(46, 211, 183, .45) !important; color: #dffdf7 !important; }
 .thesis-page { min-height: 100vh; color: #e8eef8; background: radial-gradient(circle at 15% 0%, rgba(38, 117, 157, .19), transparent 34rem), #081018; padding-bottom: 5rem; }

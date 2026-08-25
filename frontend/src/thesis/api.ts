@@ -1,4 +1,4 @@
-import type { EvidenceExplanation, ThesisCapabilities, ThesisEventContext, ThesisEventRecord, ThesisParseResult, ThesisSpecV1, ThesisTestResult } from "./types";
+import type { EvidenceExplanation, ThesisCapabilities, ThesisEventContext, ThesisEventRecord, ThesisParseResult, ThesisSpec, ThesisTestResult } from "./types";
 
 const base = (window.__PAPER_API_URL__ || import.meta.env.VITE_PAPER_API_URL || "").replace(/\/$/, "");
 
@@ -32,12 +32,13 @@ export function fetchThesisCapabilities(signal?: AbortSignal) {
   return request<ThesisCapabilities>("/api/research/thesis/capabilities", { signal }, 8_000);
 }
 
-export function parseThesis(input: { text: string; language?: "en" | "zh"; requested_instrument?: string; requested_timeframe?: string }, signal?: AbortSignal) {
+export function parseThesis(input: { version?: "thesis-parse-request-v1" | "thesis-parse-request-v2"; text: string; language?: "en" | "zh"; requested_instrument?: string; requested_timeframe?: string }, signal?: AbortSignal) {
+  const { version = "thesis-parse-request-v1", ...payload } = input;
   return request<ThesisParseResult>("/api/research/thesis/parse", { method: "POST", signal,
-    body: JSON.stringify({ version: "thesis-parse-request-v1", ...input }) }, 15_000);
+    body: JSON.stringify({ version, ...payload }) }, 15_000);
 }
 
-export function testThesis(spec: ThesisSpecV1, signal?: AbortSignal) {
+export function testThesis(spec: ThesisSpec, signal?: AbortSignal) {
   return request<ThesisTestResult>("/api/research/thesis/test", { method: "POST", signal, body: JSON.stringify(spec) }, 45_000);
 }
 

@@ -516,6 +516,12 @@ class ThesisTrackingRepositoryV1:
         if source_marker is None:
             source_marker = {"missing_source_status": evaluation.get("overall_status"),
                              "limitations": evaluation.get("limitations", [])}
+        is_v2 = evaluation.get("evaluation_version") == "current-thesis-evaluation-v2"
+        v2_component_marker = None
+        if is_v2:
+            identity = evaluation.get("current_dataset_identity")
+            if isinstance(identity, Mapping):
+                v2_component_marker = identity.get("dataset_id")
         idempotency_key = _hash({
             "track_id": evaluation["track_id"], "definition_hash": evaluation["definition_hash"],
             "source_candle_timestamp": source_marker,
@@ -525,6 +531,10 @@ class ThesisTrackingRepositoryV1:
             # quality transition once, while repeated refreshes in either
             # freshness state remain no-ops.
             "freshness_state": freshness_state,
+            # A V2 expression may include immutable derivative components.
+            # Their PIT identity is part of current evidence and cannot share
+            # a candle-only idempotency key with a different component set.
+            "v2_component_marker": v2_component_marker,
         })
         with closing(self._connect()) as connection:
             connection.execute("BEGIN IMMEDIATE")
@@ -539,6 +549,8 @@ class ThesisTrackingRepositoryV1:
                     raise TrackingError("current canonical dataset identity changed for an already evaluated candle")
                 stable_fields = ("overall_status", "conditions", "source_candle_timestamp",
                                  "definition_hash", "evaluation_policy_version")
+                if is_v2:
+                    stable_fields += ("tree_result", "leaf_results", "expression_state")
                 if any(existing_value.get(key) != evaluation.get(key) for key in stable_fields):
                     connection.rollback()
                     raise TrackingError("current evaluation semantics changed for an idempotent source candle")
@@ -548,7 +560,14 @@ class ThesisTrackingRepositoryV1:
                 "SELECT * FROM thesis_current_snapshots WHERE track_id=?", (evaluation["track_id"],)
             ).fetchone()
             previous = self._evaluation(previous_row)
-            delta = evaluation_delta(previous, evaluation)
+            if is_v2:
+                try:
+                    from thesis_tracking_v2 import expression_evaluation_delta
+                except ImportError:
+                    from .thesis_tracking_v2 import expression_evaluation_delta
+                delta = expression_evaluation_delta(previous, evaluation)
+            else:
+                delta = evaluation_delta(previous, evaluation)
             evaluation_id = _hash({"idempotency_key": idempotency_key, "evaluation": evaluation})
             current_identity = evaluation.get("current_dataset_identity")
             current_dataset_id = current_identity.get("dataset_id") if isinstance(current_identity, Mapping) else None

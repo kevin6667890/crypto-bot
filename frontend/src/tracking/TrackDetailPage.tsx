@@ -1,9 +1,11 @@
 import { Archive, RefreshCw } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useLanguage } from "../i18n";
+import { friendlyReason } from "../thesis/expressionV2";
 import { archiveTrackedThesis, evaluateTrackedThesis, fetchTrackedThesis } from "./api";
 import { conditionExpression, conditionTone, formatObserved, formatStatus, formatUtc, requiredConditionSummary, statusTone } from "./state";
 import type { CurrentEvaluation, TrackDetail } from "./types";
+import { EvaluationTree, V2Delta } from "./TrackingExpression";
 
 function Identity({ label, value }: { label: string; value: string | null | undefined }) {
   return <div><dt>{label}</dt><dd><code>{value || "—"}</code></dd></div>;
@@ -19,7 +21,7 @@ export default function TrackDetailPage({ trackId }: { trackId: string }) {
   async function refresh() {
     if (mutationPending.current) return; mutationPending.current = true; setMessage("");
     try {
-      const result = await evaluateTrackedThesis(trackId);
+      const result = await evaluateTrackedThesis(trackId, detail?.track.schema_version);
       setDetail((current) => current ? { ...current, track: result.track, latest_evaluation: result.latest_evaluation,
         evaluation_history: result.evaluation_created ? [result.latest_evaluation!, ...current.evaluation_history.filter((item) => item.evaluation_id !== result.latest_evaluation?.evaluation_id)] : current.evaluation_history } : current);
       setMessage(result.outcome === "NO_CHANGE" ? (zh ? "已检查最新确认的证据；没有新增实质变化记录。" : "Latest confirmed evidence checked. No material change record was added.") : (zh ? "当前证据已更新。" : "Current evidence updated."));
@@ -34,12 +36,15 @@ export default function TrackDetailPage({ trackId }: { trackId: string }) {
   if (state === "error" || !detail) return <main className="product-message" role="alert">{zh ? "无法读取这个跟踪项目。" : "This tracked thesis could not be loaded."}</main>;
   const { track, latest_evaluation: evaluation, evaluation_history: history } = detail;
   const baseline = track.historical_baseline;
+  const definitionTitle = track.thesis_spec.version === "thesis-spec-v2"
+    ? (zh ? "结构化逻辑研究" : "Structured logic thesis")
+    : track.thesis_spec.required_conditions.map(conditionExpression).join(" · ");
   return <main className="track-detail-page">
-    <header className="track-detail-header"><a href="/tracking">← {zh ? "返回跟踪" : "Back to tracking"}</a><span className="product-eyebrow">{track.thesis_spec.instrument} · {track.thesis_spec.timeframe}</span><h1>{track.original_text || track.thesis_spec.required_conditions.map(conditionExpression).join(" · ")}</h1><div><button className="product-button" onClick={refresh}><RefreshCw size={16} />{zh ? "刷新" : "Refresh"}</button><button className="product-button subtle" onClick={archive}><Archive size={16} />{zh ? "归档" : "Archive"}</button></div>{message && <p className="track-action-message" role="status">{message}</p>}</header>
+    <header className="track-detail-header"><a href="/tracking">← {zh ? "返回跟踪" : "Back to tracking"}</a><span className="product-eyebrow">{track.thesis_spec.instrument} · {track.thesis_spec.timeframe}</span><h1>{track.original_text || definitionTitle}</h1><div><button className="product-button" onClick={refresh}><RefreshCw size={16} />{zh ? "刷新" : "Refresh"}</button><button className="product-button subtle" onClick={archive}><Archive size={16} />{zh ? "归档" : "Archive"}</button></div>{message && <p className="track-action-message" role="status">{message}</p>}</header>
     <section className="track-evidence-columns">
       <article className="track-evidence-panel current"><span className="product-eyebrow">{zh ? "当前证据" : "CURRENT EVIDENCE"}</span><h2 className={`status-text ${statusTone(evaluation?.overall_status)}`}>{formatStatus(evaluation?.overall_status)}</h2><p>{requiredConditionSummary(evaluation, language)}</p><small>{zh ? "截至最新已确认 K 线" : "As of latest confirmed candle"}: {formatUtc(evaluation?.as_of, language)}</small>
-        <div className="condition-evidence">{evaluation?.conditions.map((condition, index) => <div className={condition.requirement === "OPTIONAL" ? "optional" : ""} key={`${condition.feature}-${index}`}><span>{condition.feature.replace(/_/g, " ")}<small>{condition.requirement}</small></span><strong>{formatObserved(condition.observed_value)}</strong><b className={`condition-badge ${conditionTone(condition.state)}`}>{condition.state}</b>{condition.limitation && <small>{condition.limitation.replace(/_/g, " ")}</small>}</div>)}</div>
-        {evaluation?.limitations.length ? <ul className="evidence-limitations">{evaluation.limitations.map((item) => <li key={item}>{item.replace(/_/g, " ")}</li>)}</ul> : null}
+        {evaluation?.tree_result ? <EvaluationTree node={evaluation.tree_result} zh={zh} /> : <div className="condition-evidence">{evaluation?.conditions.map((condition, index) => <div className={condition.requirement === "OPTIONAL" ? "optional" : ""} key={`${condition.feature}-${index}`}><span>{condition.feature.replace(/_/g, " ")}<small>{condition.requirement}</small></span><strong>{formatObserved(condition.observed_value)}</strong><b className={`condition-badge ${conditionTone(condition.state)}`}>{condition.state}</b>{condition.limitation && <small>{zh ? "当前数据不足或已过期" : "Current data is unavailable or stale"}</small>}</div>)}</div>}
+        {evaluation?.limitations.length ? <ul className="evidence-limitations">{evaluation.limitations.map((item) => <li key={item}>{friendlyReason(item, undefined, language)}</li>)}</ul> : null}
       </article>
       <article className="track-evidence-panel historical"><span className="product-eyebrow">{zh ? "历史证据 · 保存时基线" : "HISTORICAL EVIDENCE · SAVED BASELINE"}</span><h2>{baseline.historical_summary.independent_event_count.toLocaleString()} <small>{zh ? "个独立事件" : "independent events"}</small></h2><p>{baseline.historical_summary.sample_quality} {zh ? "样本" : "sample"}</p><small>{formatUtc(baseline.historical_tested_range.start, language)} → {formatUtc(baseline.historical_tested_range.end, language)}</small><p className="baseline-note">{zh ? "这份历史基线在保存后不会自动重算。" : "This historical baseline is not silently recalculated after saving."}</p></article>
     </section>
@@ -52,5 +57,6 @@ export default function TrackDetailPage({ trackId }: { trackId: string }) {
 function Delta({ evaluation, zh }: { evaluation: CurrentEvaluation; zh: boolean }) {
   const delta = evaluation.delta;
   if (!delta) return null;
+  if (delta.overall_change || delta.leaf_changes?.length || delta.group_changes?.length) return <V2Delta delta={delta} zh={zh} />;
   return <div className="delta-list">{delta.status_changed && <p><b>{zh ? "整体" : "OVERALL"}</b><span>{formatStatus(delta.previous_status)} → {formatStatus(delta.current_status)}</span></p>}{delta.condition_changes.map((item) => <p key={`${item.feature}-${item.from}-${item.to}`}><b>{item.feature.replace(/_/g, " ")}</b><span>{item.from} → {item.to}</span><small>{formatObserved(item.previous_observed_value)} → {formatObserved(item.current_observed_value)}</small></p>)}{delta.quality_changes.map((item) => <p key={`${item.feature}-quality`}><b>{item.feature.replace(/_/g, " ")}</b><span>{item.from} → {item.to}</span></p>)}</div>;
 }

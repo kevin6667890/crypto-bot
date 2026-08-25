@@ -1,4 +1,4 @@
-import type { ThesisSpecV1 } from "../thesis/types";
+import type { ThesisSpec } from "../thesis/types";
 import type { ChangeBundle, MarketStateChange, TrackBundle, TrackDetail, TrackMutation, TrackedThesis } from "./types";
 
 const base = (window.__PAPER_API_URL__ || import.meta.env.VITE_PAPER_API_URL || "").replace(/\/$/, "");
@@ -28,8 +28,9 @@ async function request<T>(path: string, options: RequestInit = {}, timeoutMs = 8
   }
 }
 
-export function createTrackedThesis(input: { result_hash: string; thesis_spec: ThesisSpecV1; language: "en" | "zh"; original_text?: string }, signal?: AbortSignal) {
-  return request<TrackMutation>("/api/research/thesis/tracks", { method: "POST", signal, body: JSON.stringify({ version: "track-thesis-request-v1", ...input }) }, 15_000);
+export function createTrackedThesis(input: { result_hash: string; thesis_spec: ThesisSpec; language: "en" | "zh"; original_text?: string }, signal?: AbortSignal) {
+  const version = input.thesis_spec.version === "thesis-spec-v2" ? "track-thesis-request-v2" : "track-thesis-request-v1";
+  return request<TrackMutation>("/api/research/thesis/tracks", { method: "POST", signal, body: JSON.stringify({ version, ...input }) }, 15_000);
 }
 export function fetchTrackedTheses(signal?: AbortSignal) {
   return request<{ tracks: TrackBundle[] }>("/api/research/thesis/tracks", { signal });
@@ -37,8 +38,11 @@ export function fetchTrackedTheses(signal?: AbortSignal) {
 export function fetchTrackedThesis(trackId: string, signal?: AbortSignal) {
   return request<TrackDetail>(`/api/research/thesis/tracks/${encodeURIComponent(trackId)}`, { signal });
 }
-export function evaluateTrackedThesis(trackId: string, signal?: AbortSignal) {
-  return request<TrackMutation>(`/api/research/thesis/tracks/${encodeURIComponent(trackId)}/evaluate`, { method: "POST", signal, body: JSON.stringify({ version: "current-thesis-evaluate-request-v1" }) }, 15_000);
+export function evaluateTrackedThesis(trackId: string, schemaVersion = "tracked-thesis-v1", signal?: AbortSignal) {
+  const payload = schemaVersion === "tracked-thesis-v2"
+    ? { version: "current-thesis-evaluate-request-v2" }
+    : { version: "current-thesis-evaluate-request-v1" };
+  return request<TrackMutation>(`/api/research/thesis/tracks/${encodeURIComponent(trackId)}/evaluate`, { method: "POST", signal, body: JSON.stringify(payload) }, 15_000);
 }
 export function archiveTrackedThesis(trackId: string, signal?: AbortSignal) {
   return request<{ track: TrackedThesis }>(`/api/research/thesis/tracks/${encodeURIComponent(trackId)}/archive`, { method: "POST", signal, body: JSON.stringify({ version: "track-thesis-archive-v1" }) });

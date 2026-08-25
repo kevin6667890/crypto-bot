@@ -5,9 +5,10 @@ import { createTrackedThesis } from "../tracking/api";
 import type { TrackMutation } from "../tracking/types";
 import { explainThesis, fetchThesisCapabilities, fetchThesisEventContext, parseThesis, testThesis } from "./api";
 import EvidenceCandlestickChart from "./EvidenceCandlestickChart";
+import { AssumptionEditor, CapabilityBrowser, defaultCondition, ExpressionTree, expressionIsTrackable, expressionIsValid, featureAvailable, friendlyReason, friendlyStatus } from "./expressionV2";
 import { thesisText } from "./i18n";
 import { canRunDefinition, executableSpec, formatFraction, formatTimestamp, type EditableDefinition } from "./state";
-import type { EvidenceExplanation, PartialThesisCondition, ThesisCapabilities, ThesisEventContext, ThesisEventRecord, ThesisParseResult, ThesisTestResult } from "./types";
+import type { EvidenceExplanation, PartialThesisCondition, ThesisCapabilities, ThesisEventContext, ThesisEventRecord, ThesisExpressionV2, ThesisParseResult, ThesisParseResultV1, ThesisParseResultV2, ThesisSpecV2, ThesisTestResult } from "./types";
 
 const examples = {
   en: [
@@ -22,6 +23,17 @@ const examples = {
   ],
 };
 
+function capabilityExamples(capabilities: ThesisCapabilities | null, language: "en" | "zh") {
+  if (!capabilities || capabilities.thesis_spec_version === "thesis-spec-v1") return examples[language];
+  const instrument = capabilities.instruments[0] || "BTC"; const timeframe = capabilities.timeframes.includes("4H") ? "4H" : capabilities.timeframes[0];
+  const horizon = capabilities.horizons.includes("24H") ? "24H" : capabilities.horizons[0];
+  const presets = capabilities.semantic_presets?.presets.filter((preset) => capabilities.features.some((feature) => feature.code === preset.feature && featureAvailable(feature, "historical"))) || [];
+  const phrases = presets.slice(0, 3).map((preset) => `${instrument} ${timeframe} ${preset.label[language]}${language === "zh" ? `，之后 ${horizon} 历史上怎么样？` : `. What happened over the next ${horizon} historically?`}`);
+  if (phrases.length) return phrases;
+  return capabilities.features.filter((feature) => feature.value_type === "boolean" && featureAvailable(feature, "historical")).slice(0, 3)
+    .map((feature) => `${instrument} ${timeframe} ${feature.label[language]} = true${language === "zh" ? `，之后 ${horizon} 历史上怎么样？` : `. What happened over the next ${horizon} historically?`}`);
+}
+
 const emptyDefinition: EditableDefinition = { instrument: "", timeframe: "", required: [], optional: [], horizons: ["4H", "12H", "24H"] };
 
 function sampleExplanation(quality: string, language: "en" | "zh") {
@@ -35,7 +47,9 @@ function sampleExplanation(quality: string, language: "en" | "zh") {
   return values[quality as keyof typeof values] || quality;
 }
 
-function definitionFromParse(value: ThesisParseResult): EditableDefinition {
+function isV2Parse(value: ThesisParseResult): value is ThesisParseResultV2 { return value.version === "thesis-parse-result-v2"; }
+
+function definitionFromParse(value: ThesisParseResultV1): EditableDefinition {
   const partial = value.partial_spec;
   if (!partial) return emptyDefinition;
   return {
@@ -46,6 +60,14 @@ function definitionFromParse(value: ThesisParseResult): EditableDefinition {
   };
 }
 
+function applyAssumption(expression: ThesisExpressionV2, assumption: ThesisSpecV2["assumptions"][number]): ThesisExpressionV2 {
+  if (expression.node_type === "CONDITION") return expression.feature === assumption.feature
+    ? { ...expression, operator: assumption.applied.operator, value: assumption.applied.value, parameters: assumption.applied.parameters }
+    : expression;
+  if (expression.node_type === "NOT") return { ...expression, child: applyAssumption(expression.child, assumption) };
+  return { ...expression, children: expression.children.map((child) => applyAssumption(child, assumption)) };
+}
+
 export default function TestAnIdeaPage() {
   const { language } = useLanguage();
   const labels = thesisText(language);
@@ -54,6 +76,7 @@ export default function TestAnIdeaPage() {
   const [text, setText] = useState("");
   const [parseResult, setParseResult] = useState<ThesisParseResult | null>(null);
   const [definition, setDefinition] = useState<EditableDefinition>(emptyDefinition);
+  const [v2Spec, setV2Spec] = useState<ThesisSpecV2 | null>(null);
   const [result, setResult] = useState<ThesisTestResult | null>(null);
   const [phase, setPhase] = useState<"idle" | "parsing" | "testing">("idle");
   const [error, setError] = useState("");
@@ -97,8 +120,14 @@ export default function TestAnIdeaPage() {
 
   useEffect(() => () => eventContextController.current?.abort(), []);
 
-  const availableFeatures = useMemo(() => capabilities?.features.filter((item) => item.availability === "AVAILABLE") || [], [capabilities]);
-  const runnable = canRunDefinition(definition, capabilities) && parseResult?.status !== "UNSUPPORTED" && phase === "idle";
+  const availableFeatures = useMemo(() => capabilities?.features.filter((item) => featureAvailable(item, "historical")) || [], [capabilities]);
+  const v2Blocked = parseResult?.status === "UNSUPPORTED" || parseResult?.status === "PARTIALLY_SUPPORTED" || parseResult?.status === "NEEDS_INPUT";
+  const resultTrackable = !!result && !!capabilities && (result.thesis_spec.version !== "thesis-spec-v2"
+    || expressionIsTrackable(result.thesis_spec.expression, capabilities));
+  const runnable = phase === "idle" && (v2Spec && capabilities
+    ? !v2Blocked && capabilities.instruments.includes(v2Spec.instrument) && capabilities.timeframes.includes(v2Spec.timeframe)
+      && v2Spec.forward_horizons.length > 0 && expressionIsValid(v2Spec.expression, capabilities, v2Spec.timeframe)
+    : canRunDefinition(definition, capabilities) && parseResult?.status !== "UNSUPPORTED");
 
   async function interpret() {
     if (!text.trim() || phase !== "idle") return;
@@ -106,10 +135,11 @@ export default function TestAnIdeaPage() {
     setPhase("parsing"); setError(""); setResult(null); setTracked(null); setTrackError(false); setRemoved(false); setManual(false);
     const controller = new AbortController();
     try {
-      const parsed = await parseThesis({ text: text.trim(), language }, controller.signal);
+      const parsed = await parseThesis({ version: capabilities?.thesis_spec_version === "thesis-spec-v2" ? "thesis-parse-request-v2" : "thesis-parse-request-v1", text: text.trim(), language }, controller.signal);
       if (current !== sequence.current) return;
       setParseResult(parsed);
-      setDefinition(definitionFromParse(parsed));
+      if (isV2Parse(parsed)) setV2Spec(parsed.thesis_spec);
+      else { setV2Spec(null); setDefinition(definitionFromParse(parsed)); }
       if (parsed.status === "ERROR") setManual(true);
     } catch {
       if (current !== sequence.current) return;
@@ -121,7 +151,14 @@ export default function TestAnIdeaPage() {
 
   function startManual() {
     setManual(true); setParseResult(null); setResult(null); setTracked(null); setTrackError(false); setError("");
-    setDefinition((current) => ({ ...current,
+    if (capabilities?.thesis_spec_version === "thesis-spec-v2") {
+      const timeframe = capabilities.timeframes[0] || "4H";
+      setV2Spec({ version: "thesis-spec-v2", instrument: capabilities.instruments[0] || "", timeframe,
+        expression: defaultCondition(capabilities.features, timeframe), forward_horizons: capabilities.horizons.slice(0, 3),
+        requested_as_of: Math.floor(Date.now() / 1000), assumptions: [], metadata: { source: "test-an-idea-manual-v2" } });
+      return;
+    }
+    setV2Spec(null); setDefinition((current) => ({ ...current,
       instrument: current.instrument || capabilities?.instruments[0] || "",
       timeframe: current.timeframe || capabilities?.timeframes[0] || "",
       horizons: current.horizons.length ? current.horizons : [...(capabilities?.horizons || [])],
@@ -147,12 +184,11 @@ export default function TestAnIdeaPage() {
     setSelectedEvent(null); setEventContext(null); setEventContextState("idle");
     setPhase("testing"); setError(""); setResult(null); setTracked(null); setTrackError(false);
     try {
-      const submitted = executableSpec(definition, capabilities);
+      const submitted = v2Spec ? { ...v2Spec, requested_as_of: Math.floor(Date.now() / 1000) } : executableSpec(definition, capabilities);
       const tested = await testThesis(submitted);
       if (tested.thesis_spec.instrument !== submitted.instrument || tested.thesis_spec.timeframe !== submitted.timeframe
-          || JSON.stringify(tested.thesis_spec.required_conditions) !== JSON.stringify(submitted.required_conditions)
-          || JSON.stringify(tested.thesis_spec.optional_conditions) !== JSON.stringify(submitted.optional_conditions)
-          || JSON.stringify(tested.thesis_spec.forward_horizons) !== JSON.stringify(submitted.forward_horizons)) {
+          || tested.thesis_spec.version !== submitted.version
+          || JSON.stringify(tested.thesis_spec) !== JSON.stringify(submitted)) {
         throw new Error("THESIS_RESULT_DEFINITION_MISMATCH");
       }
       setResult(tested);
@@ -178,7 +214,7 @@ export default function TestAnIdeaPage() {
   }
 
   async function trackThesis() {
-    if (!result || result.status !== "COMPLETED" || !result.coverage.testable || trackPendingRef.current) return;
+    if (!result || !resultTrackable || result.status !== "COMPLETED" || !result.coverage.testable || trackPendingRef.current) return;
     trackPendingRef.current = true; setTrackPending(true); setTrackError(false);
     try {
       setTracked(await createTrackedThesis({ result_hash: result.result_hash, thesis_spec: result.thesis_spec,
@@ -202,21 +238,48 @@ export default function TestAnIdeaPage() {
         <button className="secondary-btn" disabled={!capabilities || phase !== "idle"} onClick={startManual}>{labels.manual}</button>
       </div>
       <div className="thesis-examples"><small>{labels.examples}</small>
-        {examples[language].map((example) => <button key={example} disabled={phase === "parsing"} onClick={() => setText(example)}>{example}</button>)}
+        {capabilityExamples(capabilities, language).map((example) => <button key={example} disabled={phase === "parsing"} onClick={() => setText(example)}>{example}</button>)}
       </div>
+      {capabilities && <CapabilityBrowser capabilities={capabilities} language={language} />}
       {capabilityError && <div className="thesis-alert error" role="alert">{labels.apiError}</div>}
     </section>
 
     {phase === "parsing" && <section className="thesis-card thesis-loading" role="status"><span className="thesis-spinner" />{labels.interpreting}</section>}
     {error && <section className="thesis-alert error" role="alert">{error} <button onClick={() => setError("")}>{labels.retry}</button></section>}
 
-    {parseResult?.status === "UNSUPPORTED" && <section className="thesis-card thesis-unsupported" data-state="unsupported">
+    {(parseResult?.status === "UNSUPPORTED" || parseResult?.status === "PARTIALLY_SUPPORTED") && <section className="thesis-card thesis-unsupported" data-state="unsupported">
       <ShieldAlert size={23} /><div><h2>{labels.unsupported}</h2><h3>{labels.unsupportedList}</h3>
-      <ul>{parseResult.unsupported_clauses.map((item, index) => <li key={`${item.reason_code}-${index}`}><strong>{item.source_text}</strong><span>{item.reason_code.replace(/_/g, " ")}</span></li>)}</ul>
+      <ul>{parseResult.unsupported_clauses.map((item, index) => <li key={index}><strong>{item.source_text}</strong><span>{friendlyReason(item.reason_code, "category" in item ? item.category : undefined, language)}</span>{"suggestions" in item && item.suggestions?.length ? <small>{language === "zh" ? "可选择的相关条件：" : "Related testable conditions: "}{item.suggestions.join(" · ")}</small> : null}</li>)}</ul>
       <p>{labels.noResult}</p></div>
     </section>}
+    {parseResult?.status === "NEEDS_INPUT" && !v2Spec && <section className="thesis-card thesis-unsupported" data-state="needs-input"><ShieldAlert size={23} /><div><h2>{labels.needs}</h2>
+      <ul>{parseResult.missing_parameters.map((item, index) => <li key={index}><strong>{"source_text" in item ? item.source_text : item.feature}</strong><span>{friendlyReason("NEEDS_PARAMETER", "NEEDS_PARAMETER", language)} ({"parameter" in item ? item.parameter : item.field})</span></li>)}</ul></div></section>}
 
-    {(parseResult && parseResult.status !== "UNSUPPORTED" || manual) && capabilities && <section className="thesis-card thesis-definition" data-state={parseResult?.status || "MANUAL"}>
+    {v2Spec && capabilities && <section className="thesis-card thesis-definition thesis-definition-v2" data-state={parseResult?.status || "MANUAL_V2"}>
+      <div className="thesis-card-heading"><div><span className="thesis-eyebrow">{labels.definition} · V2</span><h2>{parseResult ? labels.understood : labels.manual}</h2></div>
+        {(parseResult?.status === "READY" || parseResult?.status === "READY_WITH_ASSUMPTIONS") && <CheckCircle2 className="positive" />}</div>
+      {parseResult?.status === "NEEDS_INPUT" && <div className="thesis-alert warning">{labels.needs}</div>}
+      <div className="thesis-definition-meta"><label>Instrument<select value={v2Spec.instrument} onChange={(event) => setV2Spec({ ...v2Spec, instrument: event.target.value })}>{capabilities.instruments.map((item) => <option key={item}>{item}</option>)}</select></label>
+        <label>Timeframe<select value={v2Spec.timeframe} onChange={(event) => setV2Spec({ ...v2Spec, timeframe: event.target.value })}>{capabilities.timeframes.map((item) => <option key={item}>{item}</option>)}</select></label></div>
+      <ExpressionTree node={v2Spec.expression} capabilities={capabilities} language={language} timeframe={v2Spec.timeframe} editable onChange={(expression) => setV2Spec({ ...v2Spec, expression })} />
+      <div className="expression-root-actions"><button className="secondary-btn compact" disabled={v2Spec.expression.node_type !== "CONDITION"} onClick={() => setV2Spec({ ...v2Spec, expression: { node_type: "ALL", children: [v2Spec.expression, defaultCondition(capabilities.features, v2Spec.timeframe)] } })}><Plus size={14} />AND</button>
+        <button className="secondary-btn compact" disabled={v2Spec.expression.node_type !== "CONDITION"} onClick={() => setV2Spec({ ...v2Spec, expression: { node_type: "ANY", children: [v2Spec.expression, defaultCondition(capabilities.features, v2Spec.timeframe)] } })}><Plus size={14} />OR</button></div>
+      <AssumptionEditor assumptions={v2Spec.assumptions} language={language} onChange={(assumptions) => {
+        let expression = v2Spec.expression;
+        const unchanged = assumptions.filter((assumption, index) => {
+          const edited = JSON.stringify(assumption) !== JSON.stringify(v2Spec.assumptions[index]);
+          if (edited) expression = applyAssumption(expression, assumption);
+          return !edited;
+        });
+        // An edited preset becomes an explicit user value. Keeping the old preset
+        // assertion would be false and the backend correctly rejects altered presets.
+        setV2Spec({ ...v2Spec, assumptions: unchanged, expression });
+      }} />
+      <h3>{labels.outcomes}</h3><div className="thesis-horizons">{capabilities.horizons.map((horizon) => <label key={horizon}><input type="checkbox" checked={v2Spec.forward_horizons.includes(horizon)} onChange={(event) => setV2Spec({ ...v2Spec, forward_horizons: event.target.checked ? [...v2Spec.forward_horizons, horizon] : v2Spec.forward_horizons.filter((item) => item !== horizon) })} />{horizon}</label>)}</div>
+      <button className="primary-btn thesis-run" disabled={!runnable} onClick={runTest}>{phase === "testing" ? labels.testing : labels.run}</button>
+    </section>}
+
+    {!v2Spec && (parseResult && !isV2Parse(parseResult) && parseResult.status !== "UNSUPPORTED" || manual && capabilities?.thesis_spec_version !== "thesis-spec-v2") && capabilities && <section className="thesis-card thesis-definition" data-state={parseResult?.status || "MANUAL"}>
       <div className="thesis-card-heading"><div><span className="thesis-eyebrow">{labels.definition}</span><h2>{parseResult ? labels.understood : labels.manual}</h2></div>
         {parseResult?.status === "READY" && <CheckCircle2 className="positive" />}</div>
       {parseResult?.status === "ERROR" && <div className="thesis-alert warning">{labels.aiUnavailable}</div>}
@@ -266,11 +329,12 @@ export default function TestAnIdeaPage() {
         <div className="thesis-result-metrics"><div><strong>{result.independent_event_count.toLocaleString()}</strong><span>{labels.independent}</span></div>
           <div><strong>{topQuality || "—"}</strong><span>{labels.sample}</span></div></div>
         <p>{labels.tested}: {formatTimestamp(result.tested_range.start, language)} → {formatTimestamp(result.tested_range.end, language)}</p>
-        {!result.coverage.testable && <div className="thesis-alert error" role="alert">{labels.notTestable}{result.coverage.reason ? ` ${result.coverage.reason}` : ""}</div>}
+        {!result.coverage.testable && <div className="thesis-alert error" role="alert">{labels.notTestable}{result.coverage.reason ? ` ${friendlyReason(result.coverage.reason, "INSUFFICIENT_HISTORY", language)}` : ""}</div>}
         {result.independent_event_count === 0 && result.status === "COMPLETED" && <div className="thesis-alert warning">{labels.noMatches}</div>}
         {topQuality && <div className="thesis-sample-note"><strong>{topQuality}</strong> · {sampleExplanation(topQuality, language)}</div>}
         <div className="thesis-track-action">
-          <button className="primary-btn" disabled={trackPending || !!tracked || result.status !== "COMPLETED" || !result.coverage.testable} onClick={trackThesis}>{trackPending ? labels.tracking : tracked ? labels.trackingStarted : labels.track}</button>
+          <button className="primary-btn" disabled={trackPending || !!tracked || !resultTrackable || result.status !== "COMPLETED" || !result.coverage.testable} onClick={trackThesis}>{trackPending ? labels.tracking : tracked ? labels.trackingStarted : labels.track}</button>
+          {!resultTrackable && <span role="status">{friendlyReason("HISTORICAL_ONLY", "HISTORICAL_ONLY", language)}</span>}
           {tracked && <a href={`/tracking/${encodeURIComponent(tracked.track.track_id)}`}>{labels.viewTracking}</a>}
           {trackError && <span role="alert">{labels.trackError}</span>}
         </div>
@@ -293,23 +357,23 @@ export default function TestAnIdeaPage() {
       </section>
 
       <div className="thesis-result-grid"><section className="thesis-card"><h2>{labels.coverage}</h2>
-        <div className={`thesis-coverage-status ${result.coverage.testable ? "ok" : "blocked"}`}><strong>{result.coverage.qualification}</strong><span>{result.coverage.testable ? "✓" : "—"}</span></div>
-        {result.coverage.reason && <p>{result.coverage.reason}</p>}
+        <div className={`thesis-coverage-status ${result.coverage.testable ? "ok" : "blocked"}`}><strong>{friendlyStatus(result.coverage.qualification, language)}</strong><span>{result.coverage.testable ? "✓" : "—"}</span></div>
+        {result.coverage.reason && <p>{friendlyReason(result.coverage.reason, undefined, language)}</p>}
         <dl className="thesis-history-lineage"><div><dt>{labels.source}</dt><dd>{result.historical_data.source_label}</dd></div>
           <div><dt>{labels.rawHistory}</dt><dd>{formatTimestamp(result.historical_data.raw_range.start, language)} → {formatTimestamp(result.historical_data.raw_range.end, language)}</dd></div>
           <div><dt>{labels.evaluableHistory}</dt><dd>{formatTimestamp(result.historical_data.evaluable_range.start, language)} → {formatTimestamp(result.historical_data.evaluable_range.end, language)}</dd></div>
-          <div><dt>{labels.reductionReason}</dt><dd>{result.historical_data.reduction_reasons.length ? result.historical_data.reduction_reasons.join(" · ").replace(/_/g, " ") : labels.none}</dd></div></dl>
+          <div><dt>{labels.reductionReason}</dt><dd>{result.historical_data.reduction_reasons.length ? result.historical_data.reduction_reasons.map((item) => friendlyReason(item, undefined, language)).join(" · ") : labels.none}</dd></div></dl>
         {result.historical_data.breadth_qualification === "LIMITED_HISTORICAL_SPAN" && <div className="thesis-alert warning"><strong>{labels.limitedSpan}</strong><br />{labels.limitedSpanBody.replace("{days}", String(result.historical_data.span_days || 0))}</div>}
-        <ul className="thesis-coverage-list">{result.coverage.features.map((item) => <li key={item.feature}><div><strong>{item.feature}</strong><small>{item.reason}</small></div><span>{item.qualification}</span></li>)}</ul>
-      </section><section className="thesis-card"><h2>{labels.limitations}</h2><ul>{result.limitations.map((item) => <li key={item}>{item}</li>)}{result.warnings.map((item) => <li key={item}>{item.replace(/_/g, " ")}</li>)}</ul></section></div>
+        <ul className="thesis-coverage-list">{result.coverage.features.map((item) => <li key={item.feature}><div><strong>{capabilities?.features.find((feature) => feature.code === item.feature)?.label[language] || item.feature}</strong><small>{friendlyReason(item.reason, undefined, language)}</small></div><span>{friendlyStatus(item.qualification, language)}</span></li>)}</ul>
+      </section><section className="thesis-card"><h2>{labels.limitations}</h2><ul>{result.limitations.map((item) => <li key={item}>{friendlyReason(item, undefined, language)}</li>)}{result.warnings.map((item) => <li key={item}>{friendlyReason(item, undefined, language)}</li>)}</ul></section></div>
 
       <section className="thesis-card"><h2>{labels.matches}</h2><p>{labels.showing.replace("{shown}", String(recentEvents.length)).replace("{total}", String(result.event_records.length))}</p>
         <div className="thesis-events">{recentEvents.map((event) => <article key={event.event_id} className={event.exclusion_status === "EXCLUDED" ? "excluded" : ""}>
-          <header><time>{formatTimestamp(event.timestamp, language)}</time><span>{event.exclusion_status}</span></header><strong>{labels.reference}: {event.reference_close.toLocaleString()}</strong>
-          {event.exclusion_status === "EXCLUDED" ? <div><span>{event.exclusion_reason?.replace(/_/g, " ") || "EXCLUDED"}</span></div>
+          <header><time>{formatTimestamp(event.timestamp, language)}</time><span>{friendlyStatus(event.exclusion_status, language)}</span></header><strong>{labels.reference}: {event.reference_close.toLocaleString()}</strong>
+          {event.exclusion_status === "EXCLUDED" ? <div><span>{friendlyReason(event.exclusion_reason || "OVERLAPPING_FORWARD_WINDOW", undefined, language)}</span></div>
             : <div>{result.thesis_spec.forward_horizons.map((horizon) => { const outcome = event.outcomes[horizon]; return <span key={horizon}><b>{horizon}</b> {outcome?.available
               ? <>{formatFraction(outcome.forward_return_fraction, language)} · MFE {formatFraction(outcome.mfe_fraction, language)} · MAE {formatFraction(outcome.mae_fraction, language)}</>
-              : `${labels.censored}: ${outcome?.censor_reason || "—"}`}</span>; })}</div>}
+              : `${labels.censored}: ${friendlyReason(outcome?.censor_reason || "FUTURE_OUTCOME_CENSORED", undefined, language)}`}</span>; })}</div>}
           {event.exclusion_status === "INCLUDED" && <button className="secondary-btn thesis-view-event" onClick={() => void viewEvent(event)}>{labels.viewEvent}</button>}
         </article>)}</div>
         {selectedEvent && <section className="thesis-selected-event" aria-label={labels.eventEvidence}>
@@ -319,10 +383,11 @@ export default function TestAnIdeaPage() {
           {eventContextState === "error" && <div className="thesis-alert error">{labels.eventError}</div>}
           {eventContext && <div className="thesis-event-evidence-grid"><div className="thesis-event-facts">
             <p><span>{labels.reference}</span><strong>{eventContext.event.reference_close.toLocaleString()}</strong></p>
-            <h4>{labels.conditions}</h4>{eventContext.event.conditions.map((condition) => <p key={condition.feature}><span>{capabilities?.features.find((item) => item.code === condition.feature)?.label[language] || condition.feature}</span><strong>{labels.actual} {String(condition.actual)} · {condition.operator} {String(condition.expected)}</strong></p>)}
+            <h4>{labels.conditions}</h4>{(eventContext.event.conditions || []).map((condition) => <p key={condition.feature}><span>{capabilities?.features.find((item) => item.code === condition.feature)?.label[language] || condition.feature}</span><strong>{labels.actual} {String(condition.actual)} · {condition.operator} {String(condition.expected)}</strong></p>)}
+            {eventContext.event.structure_context?.map((structure) => <p key={`${structure.feature}-${structure.event_timestamp}`}><span>{capabilities?.features.find((item) => item.code === structure.feature)?.label[language] || structure.feature}</span><strong>{labels.reference} {structure.reference_level.toLocaleString()}</strong></p>)}
             {eventContext.horizons.map((horizon) => <p key={horizon.horizon}><span>{horizon.horizon}</span><strong>{horizon.available
               ? <>{formatFraction(horizon.forward_return_fraction, language)}<small>{labels.outcomeClose} {horizon.outcome_close?.toLocaleString()} · MFE {formatFraction(horizon.mfe_fraction, language)} · MAE {formatFraction(horizon.mae_fraction, language)}</small></>
-              : horizon.censor_reason || "—"}</strong></p>)}
+              : friendlyReason(horizon.censor_reason || "FUTURE_OUTCOME_CENSORED", undefined, language)}</strong></p>)}
           </div><EvidenceCandlestickChart context={eventContext} accessibleLabel={labels.eventChart} /></div>}
         </section>}
       </section>

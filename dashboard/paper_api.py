@@ -1481,7 +1481,13 @@ class _LazyThesisParserProviderV3:
         provider = DeepSeekThesisParserProvider(
             model=os.getenv("THESIS_PARSER_MODEL") or "deepseek-chat",
             timeout=int(os.getenv("THESIS_PARSER_TIMEOUT_SECONDS", "8")),
-            api_key_file=os.getenv("THESIS_PARSER_API_KEY_FILE") or os.getenv("AI_REPORT_API_KEY_FILE") or None,
+            # Production mounts the shared provider secret under this legacy name.
+            # Keep the parser-specific settings first, but accept that audited mount
+            # so V3 parsing is available without duplicating a secret.
+            api_key_file=(os.getenv("THESIS_PARSER_API_KEY_FILE")
+                          or os.getenv("AI_REPORT_API_KEY_FILE")
+                          or os.getenv("DEEPSEEK_API_KEY_FILE")
+                          or None),
             api_key=os.getenv("THESIS_PARSER_API_KEY") or os.getenv("DEEPSEEK_API_KEY") or None,
         )
         return provider.generate(request)

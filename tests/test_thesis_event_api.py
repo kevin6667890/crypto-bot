@@ -124,6 +124,27 @@ def test_ai_parser_failure_does_not_change_deterministic_test_endpoint(monkeypat
     assert test_sent[0][0]["status"] == "COMPLETED"
 
 
+def test_v3_lazy_parser_accepts_shared_deepseek_secret_mount(monkeypatch):
+    captured = {}
+
+    class Provider:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+        def generate(self, request):
+            return request
+
+    monkeypatch.delenv("THESIS_PARSER_API_KEY_FILE", raising=False)
+    monkeypatch.delenv("AI_REPORT_API_KEY_FILE", raising=False)
+    monkeypatch.delenv("THESIS_PARSER_API_KEY", raising=False)
+    monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
+    monkeypatch.setenv("DEEPSEEK_API_KEY_FILE", "/run/secrets/legacy_deepseek_key")
+    monkeypatch.setattr(paper_api, "DeepSeekThesisParserProvider", Provider)
+    request = {"messages": [], "max_output_tokens": 1}
+    assert paper_api._LazyThesisParserProviderV3().generate(request) == request
+    assert captured["api_key_file"] == "/run/secrets/legacy_deepseek_key"
+
+
 def test_event_context_endpoint_is_thin_rate_limited_and_structured(monkeypatch):
     calls = []
     service = type("Context", (), {"event_context": lambda self, payload: calls.append(payload) or {

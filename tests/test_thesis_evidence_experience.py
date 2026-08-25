@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 from types import SimpleNamespace
@@ -7,6 +8,7 @@ from types import SimpleNamespace
 import pytest
 
 import dashboard.thesis_event_engine as thesis_event_engine
+import dashboard.thesis_historical_data as thesis_historical_data
 from dashboard.market_context_v2 import BoundedMarketDataReaderV2
 from dashboard.thesis_evidence_explanation import (
     EVIDENCE_PLAN_VERSION, EvidenceExplanationError,
@@ -109,6 +111,25 @@ def test_selection_is_deterministic_and_policy_version_changes_identity(tmp_path
         HistoricalDataSelectionPolicyV1([
             HistoricalStoreV1(frozen, "frozen_research", 0, "0" * 64)
         ]).select("BTC-USDT", "4H", BASE + 80 * WIDTH, ["OHLCV"])
+
+
+def test_sha_verified_frozen_store_uses_sqlite_immutable_mode(tmp_path, monkeypatch):
+    frozen = tmp_path / "frozen.db"
+    make_db(frozen, 80)
+    digest = hashlib.sha256(frozen.read_bytes()).hexdigest()
+    real_connect = sqlite3.connect
+    opened = []
+
+    def capture(database_uri, *args, **kwargs):
+        opened.append(str(database_uri))
+        return real_connect(database_uri, *args, **kwargs)
+
+    monkeypatch.setattr(thesis_historical_data.sqlite3, "connect", capture)
+    selected = HistoricalDataSelectionPolicyV1([
+        HistoricalStoreV1(frozen, "frozen_research", 0, digest)
+    ]).select("BTC-USDT", "4H", BASE + 80 * WIDTH, ["OHLCV"])
+    assert selected.selection.row_count == 80
+    assert opened and all("mode=ro&immutable=1" in uri for uri in opened)
 
 
 def test_short_history_is_valid_but_explicitly_warned(tmp_path):

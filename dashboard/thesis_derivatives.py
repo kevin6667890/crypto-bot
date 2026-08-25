@@ -157,7 +157,9 @@ class DerivativeSnapshotReaderV1:
     def readiness(self) -> dict[str, Any]:
         try:
             digest = self._verified_sha()
-            with sqlite3.connect(f"file:{self.path.resolve().as_posix()}?mode=ro", uri=True) as connection:
+            with sqlite3.connect(
+                    f"file:{self.path.resolve().as_posix()}?mode=ro&immutable=1", uri=True
+            ) as connection:
                 connection.execute("PRAGMA query_only=ON")
                 rows = connection.execute(
                     """SELECT data_type,instrument,COUNT(*),MIN(source_ts_ms),MAX(source_ts_ms)
@@ -208,7 +210,9 @@ class DerivativeSnapshotReaderV1:
 
     def _observations(self, instrument: str, data_type: str,
                       start_ms: int, end_ms: int) -> list[dict[str, Any]]:
-        with sqlite3.connect(f"file:{self.path.resolve().as_posix()}?mode=ro", uri=True) as connection:
+        with sqlite3.connect(
+                f"file:{self.path.resolve().as_posix()}?mode=ro&immutable=1", uri=True
+        ) as connection:
             connection.row_factory = sqlite3.Row
             connection.execute("PRAGMA query_only=ON")
             rows = connection.execute(

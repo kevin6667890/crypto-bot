@@ -1649,7 +1649,10 @@ def _safe_file_sha256(path: Path) -> str | None:
 def _historical_store_contract(path: Path) -> tuple[str | None, str | None]:
     """Return manifest identity or a public reason for an unusable store."""
     try:
-        with sqlite3.connect(f"file:{path.resolve().as_posix()}?mode=ro", uri=True, timeout=3) as connection:
+        with sqlite3.connect(
+                f"file:{path.resolve().as_posix()}?mode=ro&immutable=1",
+                uri=True, timeout=3,
+        ) as connection:
             connection.execute("PRAGMA query_only=ON")
             tables = {str(row[0]) for row in connection.execute(
                 "SELECT name FROM sqlite_master WHERE type='table'")}

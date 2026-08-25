@@ -188,7 +188,8 @@ class HistoricalDataSelectionPolicyV1:
     def _store_candidates(self, store: HistoricalStoreV1, instrument: str,
                           timeframe: str, requested_as_of: int, file_sha256: str
                           ) -> tuple[list[SelectedHistoricalDatasetV1], int]:
-        uri = f"file:{store.path.as_posix()}?mode=ro"
+        immutable = "&immutable=1" if store.expected_file_sha256 else ""
+        uri = f"file:{store.path.as_posix()}?mode=ro{immutable}"
         output: list[SelectedHistoricalDatasetV1] = []
         rejected_gaps = 0
         with closing(sqlite3.connect(uri, uri=True, timeout=3)) as connection:

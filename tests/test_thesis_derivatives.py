@@ -5,6 +5,7 @@ import sqlite3
 
 import pytest
 
+import dashboard.thesis_derivatives as thesis_derivatives
 from dashboard.thesis_derivatives import (
     CurrentDerivativeReaderV1, DerivativeSnapshotReaderV1, asof_fact, causal_percentile,
     composite_dataset_identity, verify_snapshot_file,
@@ -121,6 +122,32 @@ def test_snapshot_reader_wrong_sha_blocks_only_derivative_adapter(tmp_path: Path
                      required_groups=("OI",), as_of=1)
 
 
+def test_verified_snapshot_connections_use_sqlite_immutable_mode(
+        tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    database = tmp_path / "snapshot.sqlite"
+    with connect(database) as connection:
+        connection.execute(
+            "INSERT INTO derivative_observations VALUES(?,?,?,?,?,?,?,?,?,?)",
+            ("OPEN_INTEREST_USD", "BTC-USDT-SWAP", 100, 1.0, "USD", "{}",
+             "OKX_OFFICIAL", "v1", 101, "a" * 64),
+        )
+        connection.commit()
+        connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    digest = hashlib.sha256(database.read_bytes()).hexdigest()
+    real_connect = sqlite3.connect
+    opened: list[str] = []
+
+    def capture(database_uri, *args, **kwargs):
+        opened.append(str(database_uri))
+        return real_connect(database_uri, *args, **kwargs)
+
+    monkeypatch.setattr(thesis_derivatives.sqlite3, "connect", capture)
+    reader = DerivativeSnapshotReaderV1(
+        database, expected_sha256=digest, dataset_id="derivatives-test")
+    assert reader.readiness()["status"] == "READY"
+    assert opened and all("mode=ro&immutable=1" in uri for uri in opened)
+
+
 def test_snapshot_manifest_sha_is_stable_after_connection_close(tmp_path: Path) -> None:
     database = tmp_path / "snapshot.sqlite"
     manifest = tmp_path / "snapshot.json"
@@ -154,7 +181,8 @@ def test_current_oi_uses_daily_live_publication_and_frozen_causal_history(tmp_pa
                     ("OPEN_INTEREST_USD", instrument, anchor + index * day,
                      1_000.0 + index, "USD", "{}", "OKX_OFFICIAL", "v1",
                      anchor + 40 * day, "a" * 64))
-        connection.commit()
+            connection.commit()
+            connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
     digest = hashlib.sha256(database.read_bytes()).hexdigest()
     historical = DerivativeSnapshotReaderV1(
         database, expected_sha256=digest, dataset_id="derivatives-test")
@@ -192,7 +220,8 @@ def test_current_oi_rejects_future_publication_wrong_cadence_and_insufficient_sa
                     ("OPEN_INTEREST_USD", instrument, anchor + index * day,
                      1_000.0 + index, "USD", "{}", "OKX_OFFICIAL", "v1",
                      anchor + 40 * day, "a" * 64))
-        connection.commit()
+            connection.commit()
+            connection.execute("PRAGMA wal_checkpoint(TRUNCATE)")
     digest = hashlib.sha256(database.read_bytes()).hexdigest()
     historical = DerivativeSnapshotReaderV1(
         database, expected_sha256=digest, dataset_id="derivatives-test")

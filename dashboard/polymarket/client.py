@@ -4,7 +4,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from decimal import Decimal
 import time
-from typing import Any
+from typing import Any, Iterator
 
 import requests
 
@@ -52,17 +52,18 @@ class PolymarketClient:
         response.raise_for_status()
         raise AssertionError("unreachable")
 
-    def fetch_active_markets(self, limit: int | None = None, *, page_size: int = 500, as_of: str | None = None) -> list[dict[str, Any]]:
-        """Fetch the complete active universe using Gamma keyset pagination."""
+    def iter_active_market_pages(self, limit: int | None = None, *, page_size: int = 500,
+                                 as_of: str | None = None) -> Iterator[list[dict[str, Any]]]:
+        """Yield validated Gamma pages without retaining the full universe."""
         page_size = min(max(int(page_size), 1), GAMMA_MAX_PAGE_SIZE)
         wanted = None if limit is None else max(int(limit), 0)
         prospective_as_of = as_of or datetime.now(timezone.utc).replace(microsecond=0).isoformat()
         cursor: str | None = None
-        page_number, seen_ids, seen_cursors, result = 0, set(), set(), []
-        while wanted is None or len(result) < wanted:
+        page_number, seen_ids, seen_cursors, returned = 0, set(), set(), 0
+        while wanted is None or returned < wanted:
             if page_number >= GAMMA_MAX_PAGES:
                 raise ValueError("Gamma pagination exceeded the fail-closed page limit")
-            size = page_size if wanted is None else min(page_size, wanted - len(result))
+            size = page_size if wanted is None else min(page_size, wanted - returned)
             params: dict[str, Any] = {
                 "active": "true", "closed": "false", "limit": size,
                 # endDate plus id is a stable total order and avoids Gamma's
@@ -89,8 +90,10 @@ class PolymarketClient:
                     raise ValueError("Gamma active-markets payload has missing/invalid market id")
                 if market_id in seen_ids:
                     raise ValueError(f"Gamma pagination returned duplicate market id {market_id}")
-                seen_ids.add(market_id); result.append(item)
-            if wanted is not None and len(result) >= wanted:
+                seen_ids.add(market_id)
+            returned += len(page)
+            yield page
+            if wanted is not None and returned >= wanted:
                 break
             next_cursor = payload.get("next_cursor")
             if next_cursor in (None, ""):
@@ -107,6 +110,11 @@ class PolymarketClient:
             # relying on burst retries after a long cursor chain.
             if isinstance(self.session, requests.Session):
                 time.sleep(GAMMA_PAGE_INTERVAL_SECONDS)
+
+    def fetch_active_markets(self, limit: int | None = None, *, page_size: int = 500, as_of: str | None = None) -> list[dict[str, Any]]:
+        """Compatibility materialization for bounded/local callers."""
+        result = [market for page in self.iter_active_market_pages(limit, page_size=page_size, as_of=as_of)
+                  for market in page]
         # Gamma ordering is not a causal selection rule; canonical ordering is.
         return sorted(result, key=lambda item: str(item["id"]))
 

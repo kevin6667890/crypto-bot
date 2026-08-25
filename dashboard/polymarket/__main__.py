@@ -131,73 +131,66 @@ def sync_universe(repo: PolymarketRepository, client: PolymarketClient, limit: i
 def sync_universe_v2(repo: PolymarketRepository, client: PolymarketClient, limit: int | None, page_size: int, *, clob_workers: int = DEFAULT_CLOB_WORKERS, mode: str = "FULL_BOOTSTRAP", collection_run_id: str | None = None) -> tuple[str, list[dict[str, Any]], dict[str, Any]]:
     """Freeze full Gamma universe; make CLOB calls only after cheap eligibility."""
     captured = utc_now()
-    universe = client.fetch_active_markets(limit, page_size=page_size, as_of=captured)
     policy = {**UNIVERSE_SELECTION_POLICY, "eligibility": "polymarket-eligibility-v2", "two_stage": "gamma_metadata_then_clob_candidates"}
     pagination_metadata = {"version": GAMMA_PAGINATION_POLICY_VERSION, "page_size": min(page_size, GAMMA_MAX_PAGE_SIZE),
-                           "ordering": "id_ascending", "limit": limit, "prospective_as_of": captured,
+                           "ordering": "endDate_id_ascending_then_canonical_id", "limit": limit, "prospective_as_of": captured,
                            "closed": False, "end_date_min": captured, "complete_active_universe": limit is None}
-    # Keep full raw hashes in the universe ledger, but use the semantic
-    # fingerprint below for incremental IO decisions.
-    market_payload_hashes = {str(market["id"]): stable_hash(market) for market in universe}
-    universe_id = repo.persist_universe(universe, "polymarket-universe-selection-v2", stable_hash({"version": "polymarket-universe-selection-v2", "config": policy}), captured, pagination_metadata=pagination_metadata, market_payload_hashes=market_payload_hashes)
+    # Gamma payloads are large enough that retaining 170k of them at once
+    # exhausts a small production collector. Stream pages, retaining only the
+    # compact ID/hash manifest and small deterministic projections.
+    manifest_markets: list[dict[str, str]] = []
+    market_payload_hashes: dict[str, str] = {}
     results: list[dict[str, Any]] = []
-    classified = [(market, metadata_prefilter(market, captured_at=captured)) for market in universe]
-    # Incremental mode still discovers the complete Gamma universe (the API has
-    # no trustworthy changed-since cursor), but does not re-persist/re-CLOB an
-    # unchanged known market.  Formal forecast candidates are refreshed later,
-    # immediately before their frozen commit, preserving existing methodology.
-    prior = {str(m['id']): repo.latest_metadata_state(str(m['id'])) for m, _ in classified} if mode == 'INCREMENTAL' else {}
-    fingerprints = {str(m['id']): _market_metadata_fingerprint(m) for m, _ in classified}
-    candidates = [market for market, reasons in classified if not reasons and (
-        mode != 'INCREMENTAL' or prior[str(market['id'])] is None or _market_metadata_fingerprint(prior[str(market['id'])]['gamma_payload']) != fingerprints[str(market['id'])]
-    )]
-    candidate_snapshots: dict[str, dict[str, Any]] = {}
     workers = max(1, min(int(clob_workers), 32))
-    if candidates:
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            # executor.map preserves input order; persistence below is canonical
-            # regardless of network completion order.
-            frozen = list(pool.map(lambda market: freeze_market(client, market, fetch_clob=True), candidates))
-        candidate_snapshots = {str(item["market"]["id"]): item for item in frozen}
-    frozen_decisions: list[tuple[dict[str, Any], dict[str, Any]]] = []
-    market_ids: list[str] = []
+    full_universe_count = metadata_candidate_count = candidate_count = clob_requests = 0
     unchanged_observation_count = 0
-    for market, prefilter_reasons in classified:
-        market_id = str(market["id"])
-        previous = prior.get(market_id)
-        if mode == 'INCREMENTAL' and previous and _market_metadata_fingerprint(previous['gamma_payload']) == fingerprints[market_id]:
-            # The storage-v2 universe manifest already proves that this run
-            # saw this exact market payload hash.  A second UUID/JSON row per
-            # unchanged market adds no lineage and was the largest recurring
-            # write after the verbose universe refs.
-            unchanged_observation_count += 1
-            results.append({'market_id': market_id, 'snapshot_id': previous['snapshot_id'], 'decision_id': previous['decision_id'],
-                            'eligible': bool(previous['eligible']), 'reasons': previous['reasons'],
-                            'policy_version': POLICY_V2_VERSION, 'policy_hash': policy_v2_hash()})
-            continue
-        snapshot = candidate_snapshots.get(market_id) or freeze_market(client, market, fetch_clob=False)
-        snapshot["captured_at"] = captured
-        snapshot["gamma_payload_hash_override"] = market_payload_hashes[market_id]
-        decision = evaluate_v2(snapshot)
-        decision["reasons"] = sorted(set([*prefilter_reasons, *decision["reasons"]]))
-        decision["eligible"] = not decision["reasons"]
-        # The universe ledger plus this projection preserves every input to the
-        # deterministic decision without duplicating enormous nested Gamma
-        # event payloads for 140k markets. A selected forecast candidate is
-        # refreshed and receives a full raw Gamma/CLOB snapshot before commit.
-        snapshot["gamma_payload"] = _metadata_audit_projection(market, market_payload_hashes[market_id])
-        market_ids.append(market_id)
-        frozen_decisions.append((snapshot, decision))
-    persisted = repo.persist_snapshots(frozen_decisions)
-    for market_id, (_, decision), (snapshot_id, decision_id) in zip(market_ids, frozen_decisions, persisted):
-        results.append({"market_id": market_id, "snapshot_id": snapshot_id, "decision_id": decision_id, **decision})
+    pages = (client.iter_active_market_pages(limit, page_size=page_size, as_of=captured)
+             if hasattr(client, 'iter_active_market_pages')
+             else [client.fetch_active_markets(limit, page_size=page_size, as_of=captured)])
+    for page in pages:
+        classified = [(market, metadata_prefilter(market, captured_at=captured)) for market in page]
+        full_universe_count += len(classified)
+        metadata_candidate_count += sum(1 for _, reasons in classified if not reasons)
+        page_hashes = {str(market['id']): stable_hash(market) for market, _ in classified}
+        market_payload_hashes.update(page_hashes)
+        manifest_markets.extend({'id': market_id} for market_id in page_hashes)
+        prior = {str(m['id']): repo.latest_metadata_state(str(m['id'])) for m, _ in classified} if mode == 'INCREMENTAL' else {}
+        fingerprints = {str(m['id']): _market_metadata_fingerprint(m) for m, _ in classified}
+        candidates = [market for market, reasons in classified if not reasons and (
+            mode != 'INCREMENTAL' or prior[str(market['id'])] is None or _market_metadata_fingerprint(prior[str(market['id'])]['gamma_payload']) != fingerprints[str(market['id'])]
+        )]
+        candidate_count += len(candidates)
+        candidate_snapshots: dict[str, dict[str, Any]] = {}
+        if candidates:
+            with ThreadPoolExecutor(max_workers=workers) as pool:
+                frozen = list(pool.map(lambda market: freeze_market(client, market, fetch_clob=True), candidates))
+            candidate_snapshots = {str(item['market']['id']): item for item in frozen}
+            clob_requests += sum(int(snapshot.get('clob_requests_attempted', 0)) for snapshot in candidate_snapshots.values())
+        frozen_decisions: list[tuple[dict[str, Any], dict[str, Any]]] = []
+        market_ids: list[str] = []
+        for market, prefilter_reasons in classified:
+            market_id = str(market['id'])
+            previous = prior.get(market_id)
+            if mode == 'INCREMENTAL' and previous and _market_metadata_fingerprint(previous['gamma_payload']) == fingerprints[market_id]:
+                unchanged_observation_count += 1
+                results.append({'market_id': market_id, 'snapshot_id': previous['snapshot_id'], 'decision_id': previous['decision_id'],
+                                'eligible': bool(previous['eligible']), 'reasons': previous['reasons'], 'policy_version': POLICY_V2_VERSION, 'policy_hash': policy_v2_hash()})
+                continue
+            snapshot = candidate_snapshots.get(market_id) or freeze_market(client, market, fetch_clob=False)
+            snapshot['captured_at'] = captured; snapshot['gamma_payload_hash_override'] = page_hashes[market_id]
+            decision = evaluate_v2(snapshot)
+            decision['reasons'] = sorted(set([*prefilter_reasons, *decision['reasons']]))
+            decision['eligible'] = not decision['reasons']
+            snapshot['gamma_payload'] = _metadata_audit_projection(market, page_hashes[market_id])
+            market_ids.append(market_id); frozen_decisions.append((snapshot, decision))
+        persisted = repo.persist_snapshots(frozen_decisions)
+        for market_id, (_, decision), (snapshot_id, decision_id) in zip(market_ids, frozen_decisions, persisted):
+            results.append({'market_id': market_id, 'snapshot_id': snapshot_id, 'decision_id': decision_id, **decision})
+    universe_id = repo.persist_universe(manifest_markets, 'polymarket-universe-selection-v2', stable_hash({'version': 'polymarket-universe-selection-v2', 'config': policy}), captured, pagination_metadata=pagination_metadata, market_payload_hashes=market_payload_hashes)
     results.sort(key=lambda row: row["market_id"])
-    metadata_candidate_count = sum(1 for _, reasons in classified if not reasons)
-    candidate_count = len(candidates)
-    naive_clob_requests = 2 * len(universe)
-    clob_requests = sum(int(snapshot.get("clob_requests_attempted", 0)) for snapshot in candidate_snapshots.values())
-    return universe_id, results, {"full_universe_count": len(universe), "metadata_candidate_count": metadata_candidate_count,
-        "metadata_rejected_count": len(universe) - metadata_candidate_count, "clob_candidate_markets": candidate_count,
+    naive_clob_requests = 2 * full_universe_count
+    return universe_id, results, {"full_universe_count": full_universe_count, "metadata_candidate_count": metadata_candidate_count,
+        "metadata_rejected_count": full_universe_count - metadata_candidate_count, "clob_candidate_markets": candidate_count,
         "clob_request_count": clob_requests, "clob_request_reduction_pct": (100.0 * (naive_clob_requests - clob_requests) / naive_clob_requests) if naive_clob_requests else 0.0,
         "eligible_count": sum(bool(row["eligible"]) for row in results), "clob_workers": workers, "mode": mode,
         "unchanged_metadata_observations": unchanged_observation_count, "unchanged_observation_rows_written": 0,

@@ -150,6 +150,16 @@ def test_production_container_defaults_historical_evidence_to_fail_closed() -> N
     assert "THESIS_HISTORICAL_REQUIRE_IMMUTABLE=true" in example
 
 
+def test_backend_itself_defaults_historical_evidence_to_fail_closed(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    for name in ("THESIS_HISTORICAL_REQUIRE_IMMUTABLE", "THESIS_HISTORICAL_DB_PATH",
+                 "THESIS_HISTORICAL_DB_SHA256", "THESIS_HISTORICAL_DATASET_ID"):
+        monkeypatch.delenv(name, raising=False)
+    readiness = paper_api.thesis_product_readiness()["historical_thesis_data"]
+    assert readiness["status"] == "BLOCKED"
+    assert readiness["immutable_required"] is True
+
+
 def test_market_state_changes_use_only_recent_confirmed_live_candles(
         monkeypatch: pytest.MonkeyPatch) -> None:
     now, width = 1_800_000_000, 14_400

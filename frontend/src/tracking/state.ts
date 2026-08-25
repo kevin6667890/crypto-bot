@@ -25,6 +25,11 @@ export function conditionTone(state: CurrentCondition["state"]) {
 }
 export function requiredConditionSummary(evaluation: CurrentEvaluation | null | undefined, language: Language) {
   if (!evaluation) return language === "zh" ? "等待首次合格评估" : "Awaiting the first qualified evaluation";
+  if (evaluation.overall_status?.startsWith("BLOCKED")) {
+    return language === "zh"
+      ? `${evaluation.required_condition_count} 项必要条件当前无法评估`
+      : `${evaluation.required_condition_count} required conditions currently unavailable`;
+  }
   const required = evaluation.conditions.filter((condition) => condition.requirement === "REQUIRED");
   const unknown = required.filter((condition) => condition.state === "UNKNOWN").length;
   if (unknown) {

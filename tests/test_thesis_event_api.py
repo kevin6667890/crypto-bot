@@ -3,10 +3,18 @@ from __future__ import annotations
 from io import BytesIO
 import json
 from http import HTTPStatus
+import pytest
 
 from dashboard import paper_api
 from dashboard.thesis_event_engine import THESIS_SPEC_VERSION, ThesisValidationError
 from dashboard.thesis_evidence_explanation import EvidenceExplanationError, EvidenceIdentityMismatch
+
+
+@pytest.fixture(autouse=True)
+def _mutable_historical_fixture_is_explicit(monkeypatch):
+    monkeypatch.setattr(paper_api, "thesis_product_readiness", lambda: {
+        "historical_thesis_data": {"status": "READY"}
+    })
 
 
 class StubService:

@@ -1347,7 +1347,9 @@ def _historical_store_contract(path: Path) -> tuple[str | None, str | None]:
 
 def thesis_product_readiness() -> dict[str, Any]:
     """Sanitized readiness for the product loop; no paths or secrets."""
-    required = os.getenv("THESIS_HISTORICAL_REQUIRE_IMMUTABLE", "false").lower() == "true"
+    # Fail closed even outside the supported Compose path. Development and tests
+    # that intentionally use mutable fixtures must opt out explicitly.
+    required = os.getenv("THESIS_HISTORICAL_REQUIRE_IMMUTABLE", "true").lower() == "true"
     configured_path = os.getenv("THESIS_HISTORICAL_DB_PATH")
     expected_sha = os.getenv("THESIS_HISTORICAL_DB_SHA256")
     declared_id = os.getenv("THESIS_HISTORICAL_DATASET_ID")

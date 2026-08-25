@@ -29,6 +29,17 @@ describe("tracked thesis presentation semantics", () => {
     expect(requiredConditionSummary(evaluation, "en")).not.toContain("0 / 2");
   });
 
+  it("presents a blocked empty condition set as unavailable, never as non-matching", () => {
+    const evaluation = {
+      overall_status: "BLOCKED_VERSION_MISMATCH",
+      required_match_count: 0,
+      required_condition_count: 2,
+      conditions: [],
+    } as any;
+    expect(requiredConditionSummary(evaluation, "en")).toBe("2 required conditions currently unavailable");
+    expect(requiredConditionSummary(evaluation, "en")).not.toContain("0 / 2");
+  });
+
   it("does not call a non-match an invalidation or create a score", () => {
     expect(formatStatus("NOT_MATCHING")).toBe("NOT MATCHING");
     expect(statusTone("STALE")).toBe("warning");

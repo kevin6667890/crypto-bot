@@ -1,0 +1,47 @@
+services:
+  paper-api:
+    environment:
+      THESIS_HISTORICAL_REQUIRE_IMMUTABLE: "true"
+      THESIS_HISTORICAL_DB_PATH: /var/lib/paper/thesis_historical.db
+      THESIS_HISTORICAL_DB_SHA256: ${THESIS_HISTORICAL_DB_SHA256:?Immutable thesis database SHA-256 is required}
+      THESIS_HISTORICAL_DATASET_ID: ${THESIS_HISTORICAL_DATASET_ID:?Immutable thesis dataset identity is required}
+      THESIS_TRACKING_DB_PATH: /var/lib/paper/thesis_tracking.db
+      THESIS_TRACKING_SCHEDULER_ENABLED: "false"
+      THESIS_EXPLANATION_ENABLED: ${THESIS_EXPLANATION_ENABLED:-true}
+      THESIS_EXPLANATION_MODEL: ${THESIS_EXPLANATION_MODEL:-deepseek-v4-flash}
+    # The previous 896 MiB cgroup was OOM-killed while reading the 4 GiB
+    # production Paper ledger. Keep a bounded limit with measured headroom.
+    mem_limit: 1152m
+
+  thesis-tracking-worker:
+    image: ${AI6B_APP_IMAGE:?AI6B_APP_IMAGE digest is required}
+    profiles: [ai6b-candidate]
+    user: "10001:10001"
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=64m,uid=10001,gid=10001,mode=700
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    restart: "on-failure:3"
+    command: [python, -m, scripts.run_thesis_tracking_scheduler]
+    environment:
+      GIT_COMMIT: ${FACTOR_PROGRAM_GIT_COMMIT:?Factor Program source commit is required}
+      LIVE_TRADING_ENABLED: "false"
+      REAL_TRADING_ENABLED: "false"
+      PAPER_DB_PATH: /var/lib/paper/paper_trades.db
+      THESIS_HISTORICAL_REQUIRE_IMMUTABLE: "true"
+      THESIS_HISTORICAL_DB_PATH: /var/lib/paper/thesis_historical.db
+      THESIS_HISTORICAL_DB_SHA256: ${THESIS_HISTORICAL_DB_SHA256:?Immutable thesis database SHA-256 is required}
+      THESIS_HISTORICAL_DATASET_ID: ${THESIS_HISTORICAL_DATASET_ID:?Immutable thesis dataset identity is required}
+      THESIS_TRACKING_DB_PATH: /var/lib/paper/thesis_tracking.db
+      THESIS_TRACKING_SCHEDULER_ENABLED: "true"
+      THESIS_TRACKING_SCHEDULER_CADENCE_SECONDS: ${THESIS_TRACKING_SCHEDULER_CADENCE_SECONDS:-900}
+    volumes:
+      - paper-data:/var/lib/paper:rw
+    pids_limit: 64
+    mem_limit: 256m
+    cpus: 0.15
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
+

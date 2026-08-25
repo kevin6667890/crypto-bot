@@ -1,0 +1,16 @@
+[Unit]
+Description=Crypto Bot Polymarket verified online backup
+Requires=docker.service
+After=docker.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/crypto-bot/polymarket-runtime.env
+ExecStart=/usr/bin/flock --nonblock /run/lock/crypto-bot-polymarket-backup.lock /usr/local/libexec/crypto-bot-polymarket-job backup
+TimeoutStartSec=3h
+Restart=no
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target

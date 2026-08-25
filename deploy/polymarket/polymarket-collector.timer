@@ -1,0 +1,11 @@
+[Unit]
+Description=Run the Crypto Bot Polymarket collector every three hours
+
+[Timer]
+OnCalendar=*-*-* 00/3:15:00
+Persistent=false
+AccuracySec=1min
+Unit=polymarket-collector.service
+
+[Install]
+WantedBy=timers.target

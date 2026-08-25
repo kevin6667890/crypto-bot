@@ -1,0 +1,11 @@
+[Unit]
+Description=Run the Crypto Bot Polymarket backup daily
+
+[Timer]
+OnCalendar=*-*-* 02:30:00
+Persistent=false
+AccuracySec=5min
+Unit=polymarket-backup.service
+
+[Install]
+WantedBy=timers.target

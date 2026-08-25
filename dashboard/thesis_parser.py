@@ -178,7 +178,7 @@ class DeepSeekResponsesThesisParserProvider(DeepSeekThesisParserProvider):
                 "name": "thesis_parse_result",
                 "schema": request["response_schema"],
             }},
-            "temperature": 0.1,
+            "temperature": 0.0,
             "max_output_tokens": int(request["max_output_tokens"]),
             "stream": False,
         }

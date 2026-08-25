@@ -90,6 +90,7 @@ def test_responses_provider_uses_json_schema_and_extracts_only_output_text(monke
     assert sent["url"] == "https://api.deepseek.com/responses"
     assert sent["timeout"] == 9
     assert sent["body"]["reasoning"] == {"effort": "none"}
+    assert sent["body"]["temperature"] == 0.0
     assert sent["body"]["text"]["format"]["type"] == "json_schema"
     assert sent["body"]["text"]["format"]["schema"]["additionalProperties"] is False
 

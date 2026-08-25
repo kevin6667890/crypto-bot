@@ -40,10 +40,10 @@ describe("AI6B production presentation wiring", () => {
   });
   it("adds audited AI6B history to Research", () => {
     expect(research).toContain("AiReportResearch instrument={instrument}");
-    expect(component).toContain("QUICK · FULL · POSITION（可用时）");
+    expect(component).toContain("copy.modes");
   });
   it("keeps historical reports visibly historical", () => {
-    expect(component).toContain("AI 深度中心 · 审计报告");
-    expect(component).toContain("不可展示");
+    expect(component).toContain("copy.eyebrow");
+    expect(component).toContain("copy.auditHidden");
   });
 });

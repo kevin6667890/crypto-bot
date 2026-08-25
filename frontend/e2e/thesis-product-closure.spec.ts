@@ -148,13 +148,13 @@ test("B: a new confirmed candle creates deterministic NOT_MATCHING to MATCHING c
     return route.abort();
   });
   await page.goto("/tracking/track-phase4");
-  await expect(page.getByText("NOT MATCHING", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("不匹配", { exact: true }).first()).toBeVisible();
   await page.getByRole("button", { name: "刷新" }).click();
-  await expect(page.getByText("MATCHING", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("匹配", { exact: true }).first()).toBeVisible();
   await page.getByRole("link", { name: "发生了什么变化" }).click();
   await expect(page.getByRole("heading", { name: "发生了什么变化？" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "NOT MATCHING → MATCHING" })).toBeVisible();
-  await expect(page.getByText("FALSE → TRUE")).toBeVisible();
+  await expect(page.getByRole("heading", { name: "不匹配 → 匹配" })).toBeVisible();
+  await expect(page.getByText("不满足 → 满足")).toBeVisible();
   await expect(page.getByText("0.94 → 1.31")).toBeVisible();
 });
 
@@ -166,11 +166,12 @@ test("C: Home enters Advanced and preserves legacy Market and Research routes", 
   await page.goto("/");
   await expect(page.getByRole("heading", { name: "Evidence, not predictions." })).toBeVisible();
   await page.getByRole("link", { name: "Advanced" }).click();
-  await expect(page.getByRole("button", { name: "Market", exact: true })).toBeVisible();
-  await page.getByRole("button", { name: "Market", exact: true }).click();
+  const marketEntry = page.locator('a[href="/advanced#market"]');
+  await expect(marketEntry).toBeVisible();
+  await marketEntry.click();
   await expect(page).toHaveURL(/#market$/);
   await expect(page.locator('[data-route="market"]')).toBeAttached();
-  await page.getByRole("button", { name: "Research", exact: true }).click();
+  await page.getByRole("link", { name: "Research", exact: true }).click();
   await expect(page).toHaveURL(/#research$/);
   await expect(page.locator('[data-route="research"]')).toBeAttached();
   await page.goto("/market-state-v2");

@@ -7,7 +7,8 @@ const route = readFileSync(new URL("./routes/StrategyResearchRoute.tsx", import.
 
 describe("research UI simplification", () => {
   it("prioritizes automatic research evidence and explicit empty states", () => {
-    for (const token of ["automatic-research-summary", "Latest Validation", "Approved / Active", "Recent Research", "ACTIVE NONE · Paper WAIT", "No candidate passed Development eligibility", "dataset fingerprint"]) expect(source).toContain(token);
+    for (const token of ["automatic-research-summary", "autoResearch.latestCycle", "autoResearch.activeStrategy", "local.recent", "autoResearch.noEligibilityTitle", "autoResearch.datasetFingerprint"]) expect(source).toContain(token);
+    expect(source).toContain("useLanguage");
   });
 
   it("keeps the manual workspace available but collapsed by default", () => {

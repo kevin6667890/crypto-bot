@@ -1,6 +1,7 @@
 import { useMemo, useState } from "react";
 import type { components } from "./api/generated";
 import { useAsyncResource } from "./asyncResource";
+import { useLanguage } from "./i18n";
 
 type Trends = components["schemas"]["OperationsTrends"] & {
   latency?: { p50_ms: number | null; p95_ms: number | null };
@@ -25,19 +26,23 @@ function MetricTrend({
   unit,
   field,
   points,
+  noData,
+  trendLabel,
 }: {
   title: string;
   unit: string;
   field: keyof TrendPoint;
   points: TrendPoint[];
+  noData: string;
+  trendLabel: string;
 }) {
   const values = points.map((point) => point[field]).filter((value): value is number => typeof value === "number");
   const maximum = Math.max(...values, 1);
   const sampled = points.filter((_, index) => index % Math.max(1, Math.ceil(points.length / 48)) === 0);
   return (
     <section className="trend-card">
-      <div><span>{title}</span><b>{latest(points, field)?.toLocaleString() ?? "NO_DATA"} {values.length ? unit : ""}</b></div>
-      <div className="trend-bars" aria-label={`${title} trend`}>
+      <div><span>{title}</span><b>{latest(points, field)?.toLocaleString() ?? noData} {values.length ? unit : ""}</b></div>
+      <div className="trend-bars" aria-label={`${title} ${trendLabel}`}>
         {sampled.map((point) => {
           const value = point[field];
           return <i
@@ -53,6 +58,19 @@ function MetricTrend({
 }
 
 export default function OperationsTrends() {
+  const { language } = useLanguage();
+  const zh = language === "zh";
+  const copy = zh ? {
+    eyebrow: "本地 · 只读", title: "运维趋势", window: "趋势时间窗", loading: "正在加载本地趋势",
+    unavailable: "趋势查询暂不可用", disabled: "尚未启用历史采集", empty: "已启用采集，但所选时间段尚无样本",
+    noData: "暂无数据", anomalies: "异常点", samples: "分钟样本", trend: "趋势", bytes: "字节",
+    maintenance: "维护耗时", queue: "队列深度", lag: "实时延迟", gap: "关键缺口", checkpoint: "检查点耗时",
+  } : {
+    eyebrow: "Local · Read only", title: "Operations trends", window: "Trend window", loading: "Loading local trends",
+    unavailable: "Trend query is unavailable", disabled: "Historical capture is not enabled", empty: "Capture is enabled, but the selected window has no samples",
+    noData: "No data", anomalies: "Anomalies", samples: "Minute samples", trend: "trend", bytes: "bytes",
+    maintenance: "Maintenance", queue: "Queue", lag: "Live lag", gap: "Critical gap", checkpoint: "Checkpoint",
+  };
   const [selectedWindow, setSelectedWindow] = useState<Window>("24h");
   const resource = useAsyncResource<Trends>(
     `operations-trends-${selectedWindow}`,
@@ -64,8 +82,8 @@ export default function OperationsTrends() {
   return (
     <section className="operations-trends">
       <div className="section-title">
-        <div><span className="eyebrow">Local · Read only</span><h2>Operations Trends / 运维趋势</h2></div>
-        <div className="trend-window" role="group" aria-label={"trend window"}>
+        <div><span className="eyebrow">{copy.eyebrow}</span><h2>{copy.title}</h2></div>
+        <div className="trend-window" role="group" aria-label={copy.window}>
           {(["1h", "6h", "24h"] as const).map((windowValue) => (
             <button key={windowValue} className={selectedWindow === windowValue ? "active" : ""} onClick={() => setSelectedWindow(windowValue)}>
               {windowValue.toUpperCase()}
@@ -73,24 +91,24 @@ export default function OperationsTrends() {
           ))}
         </div>
       </div>
-      {resource.phase === "LOADING" && <div className="research-alert" data-state="LOADING">LOADING · 正在加载本地趋势</div>}
-      {resource.phase === "UNAVAILABLE" && <div className="research-alert error" data-state="UNAVAILABLE">UNAVAILABLE · 趋势查询暂不可用</div>}
-      {resource.data && !resource.data.enabled && <div className="trend-disabled" data-state="NOT_ENABLED">尚未启用历史采集 · Historical capture is not enabled</div>}
-      {resource.data?.enabled && !points.length && <div className="trend-disabled" data-state="NO_DATA">NO_DATA · 已启用采集，但所选时间段尚无样本</div>}
+      {resource.phase === "LOADING" && <div className="research-alert" data-state="LOADING">{copy.loading}</div>}
+      {resource.phase === "UNAVAILABLE" && <div className="research-alert error" data-state="UNAVAILABLE">{copy.unavailable}</div>}
+      {resource.data && !resource.data.enabled && <div className="trend-disabled" data-state="NOT_ENABLED">{copy.disabled}</div>}
+      {resource.data?.enabled && !points.length && <div className="trend-disabled" data-state="NO_DATA">{copy.empty}</div>}
       {points.length > 0 && <>
         <div className="trend-summary">
-          <span>API p50 <b>{resource.data?.latency?.p50_ms ?? "NO_DATA"} ms</b></span>
-          <span>API p95 <b>{resource.data?.latency?.p95_ms ?? "NO_DATA"} ms</b></span>
-          <span>Anomalies / 异常点 <b>{points.filter((point) => point.anomaly).length}</b></span>
-          <span>Samples / 分钟样本 <b>{points.length}</b></span>
+          <span>API p50 <b>{resource.data?.latency?.p50_ms ?? copy.noData} ms</b></span>
+          <span>API p95 <b>{resource.data?.latency?.p95_ms ?? copy.noData} ms</b></span>
+          <span>{copy.anomalies} <b>{points.filter((point) => point.anomaly).length}</b></span>
+          <span>{copy.samples} <b>{points.length}</b></span>
         </div>
         <div className="trends-grid">
-          <MetricTrend title={"WAL"} unit="bytes" field="wal_size_bytes" points={points} />
-          <MetricTrend title={"Maintenance"} unit="ms" field="maintenance_duration_ms" points={points} />
-          <MetricTrend title={"Queue"} unit="" field="queue_depth" points={points} />
-          <MetricTrend title={"Live lag"} unit="s" field="live_lag_seconds" points={points} />
-          <MetricTrend title={"Critical gap"} unit="" field="critical_gap_count" points={points} />
-          <MetricTrend title={"Checkpoint"} unit="ms" field="checkpoint_duration_ms" points={points} />
+          <MetricTrend title="WAL" unit={copy.bytes} field="wal_size_bytes" points={points} noData={copy.noData} trendLabel={copy.trend} />
+          <MetricTrend title={copy.maintenance} unit="ms" field="maintenance_duration_ms" points={points} noData={copy.noData} trendLabel={copy.trend} />
+          <MetricTrend title={copy.queue} unit="" field="queue_depth" points={points} noData={copy.noData} trendLabel={copy.trend} />
+          <MetricTrend title={copy.lag} unit="s" field="live_lag_seconds" points={points} noData={copy.noData} trendLabel={copy.trend} />
+          <MetricTrend title={copy.gap} unit="" field="critical_gap_count" points={points} noData={copy.noData} trendLabel={copy.trend} />
+          <MetricTrend title={copy.checkpoint} unit="ms" field="checkpoint_duration_ms" points={points} noData={copy.noData} trendLabel={copy.trend} />
         </div>
       </>}
     </section>

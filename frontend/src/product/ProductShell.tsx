@@ -13,7 +13,7 @@ export default function ProductShell({ active, children }: { active: string; chi
         <a className={`primary ${active === "test" ? "active" : ""}`} href="/test-an-idea">{text.test}</a>
         <a className={active.startsWith("track") ? "active" : ""} href="/tracking">{text.tracking}</a>
         <a className={active === "changes" ? "active" : ""} href="/what-changed">{text.changed}</a>
-        <a href="/advanced">{text.advanced}</a>
+        <a className={`advanced-nav-accent ${active === "advanced" ? "active" : ""}`} aria-current={active === "advanced" ? "page" : undefined} href="/advanced">{text.advanced}</a>
       </nav>
       <div className="product-language" role="group" aria-label={text.language}>
         <button className={language === "en" ? "active" : ""} onClick={() => setLanguage("en")}>EN</button>

@@ -24,6 +24,6 @@ describe("market state research page", () => {
     }
     expect(source).toContain("state-diagnostics");
     expect(source).toContain("reason_codes");
-    expect(source).toContain("title={`${technical}");
+    expect(source).toContain("title={`${statusLabel(technical");
   });
 });

@@ -45,6 +45,7 @@ import {
 } from "./data";
 import { WorkspaceAiBrief } from "./AiReportPresentation";
 import { marketProvenancePresentation } from "./marketProvenance";
+import AdvancedSecondaryNav from "./AdvancedSecondaryNav";
 
 const StrategyResearchRoute = lazy(() => import("./routes/StrategyResearchRoute"));
 const MicrostructureResearch = lazy(() => import("./MicrostructureResearch"));
@@ -67,8 +68,8 @@ function routeFromLocation(): { page: PrimaryPage; researchView: ResearchView } 
 }
 
 const canonicalRoute: Record<PrimaryPage, string> = {
-  workspace: "#workspace", market: "#market", research: "#research",
-  microstructure: "#microstructure", operations: "#operations",
+  workspace: "/advanced#workspace", market: "/advanced#market", research: "/advanced#research",
+  microstructure: "/advanced#microstructure", operations: "/advanced#operations",
 };
 
 type RouteErrorBoundaryProps = { name: string; children: React.ReactNode };
@@ -83,16 +84,17 @@ export class RouteErrorBoundary extends Component<RouteErrorBoundaryProps, Route
 
   render() {
     if (this.state.failed) {
-      return <div className="route-error" role="alert">UNAVAILABLE · {this.props.name}</div>;
+      return <div className="route-error" role="alert">{this.props.name}</div>;
     }
     return this.props.children;
   }
 }
 
 function DeferredRoute({ name, children }: { name: string; children: React.ReactNode }) {
+  const { t } = useLanguage();
   return (
-    <RouteErrorBoundary name={name}>
-      <Suspense fallback={<div className="route-loading" role="status">LOADING · {name}</div>}>
+    <RouteErrorBoundary name={`${t("common.notAvailable")} · ${name}`}>
+      <Suspense fallback={<div className="route-loading" role="status">{t("common.loading")} · {name}</div>}>
         {children}
       </Suspense>
     </RouteErrorBoundary>
@@ -694,7 +696,6 @@ function LegacyApp() {
 function Workspace() {
   const {
     language,
-    setLanguage,
     t,
     value: localValue,
     message,
@@ -730,7 +731,7 @@ function Workspace() {
     setVisitedPages((current) => new Set(current).add(page));
     setActivePage(page);
     if (page === "research") setResearchView(view);
-    window.history.pushState({}, "", page === "research" && view === "router" ? "#research/router" : canonicalRoute[page]);
+    window.history.pushState({}, "", page === "research" && view === "router" ? "/advanced#research/router" : canonicalRoute[page]);
   };
 
   useEffect(() => {
@@ -922,47 +923,12 @@ function Workspace() {
   }
   return (
     <div className="workspace">
+      <AdvancedSecondaryNav active={activePage} onNavigate={selectPage} />
       <header className="workspace-topbar">
         <div className="workspace-brand">
           <TerminalSquare size={19} />
-          <strong>Crypto-Bot</strong>
-          <span>{t("app.workspace")}</span>
-          <div className="page-switch">
-            <button onClick={() => window.location.assign("/")}>{language === "zh" ? "首页" : "Home"}</button>
-            <button className="test-idea-nav" onClick={() => window.location.assign("/test-an-idea")}>
-              {language === "zh" ? "测试一个想法" : "Test an idea"}
-            </button>
-            <button
-              className={activePage === "workspace" ? "active" : ""}
-              onClick={() => selectPage("workspace")}
-            >
-              {t("nav.workspace")}
-            </button>
-            <button
-              className={activePage === "market" ? "active" : ""}
-              onClick={() => selectPage("market")}
-            >
-              {t("nav.market")}
-            </button>
-            <button
-              className={activePage === "research" ? "active" : ""}
-              onClick={() => selectPage("research")}
-            >
-              {t("nav.research")}
-            </button>
-            <button
-              className={activePage === "microstructure" ? "active" : ""}
-              onClick={() => selectPage("microstructure")}
-            >
-              {t("nav.microstructure")}
-            </button>
-            <button
-              className={activePage === "operations" ? "active" : ""}
-              onClick={() => selectPage("operations")}
-            >
-              {t("nav.operations")}
-            </button>
-          </div>
+          <strong>{t(`nav.${activePage}` as never)}</strong>
+          <span>{t("advanced.title" as never)}</span>
         </div>
         <div className="market-controls">
           <span className={`live-dot ${marketProvenance.tone === "degraded" ? "degraded" : marketProvenance.tone === "loading" ? "loading" : ""}`} />{" "}
@@ -989,24 +955,6 @@ function Workspace() {
             <option>4h</option>
             <option>1D</option>
           </select>
-          <div
-            className="language-switch"
-            role="group"
-            aria-label={t("common.language")}
-          >
-            <button
-              className={language === "en" ? "active" : ""}
-              onClick={() => setLanguage("en")}
-            >
-              EN
-            </button>
-            <button
-              className={language === "zh" ? "active" : ""}
-              onClick={() => setLanguage("zh")}
-            >
-              中文
-            </button>
-          </div>
           <button
             className="icon-button"
             onClick={refresh}
@@ -1638,7 +1586,7 @@ function Workspace() {
       )}
       {visitedPages.has("research") && (
         <div hidden={activePage !== "research"} data-route="research">
-          <DeferredRoute name={t("nav.research")}><StrategyResearchRoute instrument={perpetualInstrument(instrument)} initialView={researchView} onViewChange={(view) => { setResearchView(view); window.history.replaceState({}, "", view === "router" ? "#research/router" : "#research"); }} /></DeferredRoute>
+          <DeferredRoute name={t("nav.research")}><StrategyResearchRoute instrument={perpetualInstrument(instrument)} initialView={researchView} onViewChange={(view) => { setResearchView(view); window.history.replaceState({}, "", view === "router" ? "/advanced#research/router" : "/advanced#research"); }} /></DeferredRoute>
         </div>
       )}
       {visitedPages.has("microstructure") && (

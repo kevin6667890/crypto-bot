@@ -11,7 +11,8 @@ describe("route splitting", () => {
   it("lazy loads the initial market application with a loading boundary", () => {
     expect(main).toContain('lazy(() => import("./ProductApp"))');
     expect(productApp).toContain('lazy(() => import("./App"))');
-    expect(main).toContain("LOADING · Market Analysis");
+    expect(main).toContain('t("common.loading")');
+    expect(main).toContain("<RootFallback />");
   });
 
   it("creates independent lazy chunks for research, microstructure and operations", () => {
@@ -24,7 +25,7 @@ describe("route splitting", () => {
   it("retains visited route instances and isolates route errors", () => {
     expect(app).toContain("visitedPages.has");
     expect(app).toContain("RouteErrorBoundary");
-    expect(app).toContain("UNAVAILABLE ·");
+    expect(app).toContain('t("common.notAvailable")');
   });
 
   it("shares chart and React vendors without duplicate route bundles", () => {

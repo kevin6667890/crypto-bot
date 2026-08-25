@@ -225,13 +225,13 @@ function validationHeadline(item?: ValidationInstrument) {
   return { classification, calibration, later, stability };
 }
 
-function ValidationDetails({ item }: { item?: ValidationInstrument }) {
+function ValidationDetails({ item, zh }: { item?: ValidationInstrument; zh: boolean }) {
   return (
     <div className="micro-table-scroll">
       <div className="micro-validation-table">
         <div className="micro-validation-row head">
-          <span>Feature</span><span>Horizon</span><span>Classification</span>
-          <span>Calibration</span><span>Later validation</span><span>Sign stability</span>
+          <span>{zh ? "特征" : "Feature"}</span><span>{zh ? "预测窗口" : "Horizon"}</span><span>{zh ? "分类" : "Classification"}</span>
+          <span>{zh ? "校准样本" : "Calibration"}</span><span>{zh ? "后续验证" : "Later validation"}</span><span>{zh ? "方向稳定性" : "Sign stability"}</span>
         </div>
         {Object.entries(item?.features || {}).flatMap(([feature, horizons]) =>
           Object.entries(horizons).map(([horizon, result]) => {
@@ -275,11 +275,11 @@ export default function MicrostructureResearch() {
     eligibility: zh ? "特征可用性" : "Feature availability",
     group: zh ? "特征组" : "Feature group",
     naturalDays: zh ? "自然覆盖天数" : "Natural source days",
-    usableDays: zh ? "Gap-adjusted usable days" : "Gap-adjusted usable days",
-    sourceStatus: "Source status",
-    eventStatus: "Event-study status",
-    overlap: zh ? "Label overlap / events" : "Label overlap / events",
-    next: zh ? "Next eligibility / blocker" : "Next eligibility / blocker",
+    usableDays: zh ? "扣除缺口后的可用天数" : "Gap-adjusted usable days",
+    sourceStatus: zh ? "来源状态" : "Source status",
+    eventStatus: zh ? "事件研究状态" : "Event-study status",
+    overlap: zh ? "标签重叠 / 事件数" : "Label overlap / events",
+    next: zh ? "下一资格条件 / 阻塞项" : "Next eligibility / blocker",
     validation: zh ? "研究验证" : "Research validation",
     summary: zh ? "摘要" : "Summary",
     details: zh ? "展开全部 horizon 结果" : "Show all horizon results",
@@ -560,7 +560,7 @@ export default function MicrostructureResearch() {
               ))}
               {!validationRows(fundingValidation).length && <p className="micro-muted">--</p>}
             </div>
-            <details className="micro-details nested"><summary>{copy.details}</summary><ValidationDetails item={fundingValidation} /></details>
+            <details className="micro-details nested"><summary>{copy.details}</summary><ValidationDetails item={fundingValidation} zh={zh} /></details>
           </details>
           <details className="micro-details validation" data-testid="basis-validation-details">
             <summary>
@@ -579,7 +579,7 @@ export default function MicrostructureResearch() {
               ))}
               {!validationRows(basisValidation).length && <p className="micro-muted">--</p>}
             </div>
-            <details className="micro-details nested"><summary>{copy.details}</summary><ValidationDetails item={basisValidation} /></details>
+            <details className="micro-details nested"><summary>{copy.details}</summary><ValidationDetails item={basisValidation} zh={zh} /></details>
           </details>
         </div>
       </section>

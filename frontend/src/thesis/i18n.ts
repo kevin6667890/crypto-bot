@@ -2,6 +2,7 @@ import type { Language } from "../i18n";
 
 const copy = {
   en: {
+    eyebrow: "AI interprets. The deterministic engine measures.", instrument: "Instrument", timeframe: "Timeframe",
     title: "Test an idea", subtitle: "Turn a market hypothesis into a reproducible historical test.",
     placeholder: "When BTC 4H volume ratio is at least 1.2 and price is above MA200, what happened over the next 4H, 12H and 24H historically?",
     interpret: "Interpret idea", interpreting: "Interpreting your idea…", testing: "Testing historical events…",
@@ -32,6 +33,7 @@ const copy = {
     track: "Track this thesis", tracking: "Starting tracking…", trackingStarted: "Tracking started", viewTracking: "View tracking", trackError: "Tracking could not be started.",
   },
   zh: {
+    eyebrow: "AI 负责解析，确定性引擎负责度量。", instrument: "交易标的", timeframe: "时间周期",
     title: "测试一个想法", subtitle: "把市场假设转化为可复现的历史检验。",
     placeholder: "当 BTC 4H 成交量比率至少为 1.2 且价格高于 MA200 时，之后 4H、12H、24H 历史上发生了什么？",
     interpret: "解析想法", interpreting: "正在解析你的想法…", testing: "正在检验历史事件…",

@@ -13,7 +13,8 @@ describe("intent-based product routing", () => {
   });
 
   it("preserves legacy path and hash entry points", () => {
-    for (const [path, hash] of [["/advanced", ""], ["/", "#workspace"], ["/", "#market"],
+    expect(resolveProductRoute("/advanced", "")).toEqual({ kind: "advanced" });
+    for (const [path, hash] of [["/advanced", "#workspace"], ["/advanced", "#market"], ["/", "#workspace"], ["/", "#market"],
       ["/market-state-v2", ""], ["/strategy-router-v2", ""], ["/shadow/ai-market-analysis", ""]]) {
       expect(resolveProductRoute(path, hash)).toEqual({ kind: "legacy" });
     }

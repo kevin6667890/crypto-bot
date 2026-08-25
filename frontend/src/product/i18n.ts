@@ -3,6 +3,7 @@ import type { Language } from "../i18n";
 const copy = {
   en: {
     brand: "Evidence workspace", navigation: "Product navigation", language: "Language",
+    routeUnavailable: "This page is temporarily unavailable.", loadingEvidence: "Loading evidence…",
     home: "Home", test: "Test an idea", tracking: "Tracking", changed: "What changed", advanced: "Advanced",
     eyebrow: "Reproducible crypto market research", hero: "Evidence, not predictions.",
     subtitle: "Turn a crypto market hypothesis into a reproducible historical test, then revisit it as current evidence changes.",
@@ -11,9 +12,18 @@ const copy = {
     testTitle: "Test an idea", testBody: "Turn a market hypothesis into an auditable historical event study.",
     trackingTitle: "What am I tracking?", trackingBody: "Return to saved definitions and see whether current conditions still match.",
     recent: "Recent evidence changes", noRecent: "No material evidence changes since the last confirmed update.", viewAll: "View all changes",
+    advancedEyebrow: "Advanced workspace", advancedTitle: "Advanced research workspace",
+    advancedSubtitle: "Professional market, research, microstructure, and operations tools for deeper analysis. These tools do not change the product's evidence workflow.",
+    advancedOpen: "Open module", advancedSecondaryNav: "Advanced workspace navigation",
+    advancedWorkspace: "Workspace", advancedWorkspaceBody: "Inspect current market evidence and audited AI presentation.",
+    advancedMarket: "Market", advancedMarketBody: "Review market structure, key levels, and confirmed data coverage.",
+    advancedResearch: "Research", advancedResearchBody: "Run governed validation and inspect deterministic decision traces.",
+    advancedMicrostructure: "Microstructure", advancedMicrostructureBody: "Inspect order-flow research, source coverage, and validation evidence.",
+    advancedOperations: "Operations", advancedOperationsBody: "Review local read-only service health and data continuity.",
   },
   zh: {
     brand: "证据研究", navigation: "产品导航", language: "语言",
+    routeUnavailable: "页面暂时不可用。", loadingEvidence: "正在加载证据…",
     home: "首页", test: "测试想法", tracking: "跟踪", changed: "发生了什么变化", advanced: "高级功能",
     eyebrow: "可复现的加密市场研究", hero: "用证据，而不是预测。",
     subtitle: "把市场假设变成可复现的历史检验，并在当前证据变化后回来复查。",
@@ -22,6 +32,14 @@ const copy = {
     testTitle: "测试一个想法", testBody: "把市场假设变成可审计的历史事件研究。",
     trackingTitle: "我在跟踪什么？", trackingBody: "回看已保存的定义，了解当前条件是否仍然匹配。",
     recent: "近期证据变化", noRecent: "自上次确认更新后，没有实质证据变化。", viewAll: "查看全部变化",
+    advancedEyebrow: "高级工作区", advancedTitle: "高级研究工作台",
+    advancedSubtitle: "这里保留专业市场研究、微观结构与系统运维工具，用于深入分析，不改变产品的证据研究主流程。",
+    advancedOpen: "进入模块", advancedSecondaryNav: "高级工作区导航",
+    advancedWorkspace: "工作台", advancedWorkspaceBody: "查看当前市场证据与经过审计的 AI 研判。",
+    advancedMarket: "市场", advancedMarketBody: "查看市场结构、关键位置与已确认的数据覆盖。",
+    advancedResearch: "研究", advancedResearchBody: "运行受治理的验证并检查确定性决策轨迹。",
+    advancedMicrostructure: "微观结构", advancedMicrostructureBody: "查看订单流研究、来源覆盖与验证证据。",
+    advancedOperations: "系统运维", advancedOperationsBody: "查看本地只读服务健康与数据连续性。",
   },
 } as const;
 

@@ -3,16 +3,28 @@ import type { ThesisCondition } from "../thesis/types";
 import type { CurrentCondition, CurrentEvaluation, EvaluationStatus } from "./types";
 
 const operators: Record<string, string> = { gt: ">", gte: "≥", lt: "<", lte: "≤", eq: "=" };
-export function conditionExpression(condition: ThesisCondition) {
-  return `${condition.feature.replace(/_/g, " ")} ${operators[condition.operator] || condition.operator} ${String(condition.value)}`;
+const zhLabels: Record<string, string> = {
+  VOLUME_RATIO: "成交量比率", PRICE_ABOVE_MA200: "价格高于 MA200", PRICE_BELOW_MA200: "价格低于 MA200",
+  WATCHING: "观察中", MATCHING: "匹配", NOT_MATCHING: "不匹配", PARTIAL: "部分可用", STALE: "已过期",
+  BLOCKED: "暂不可评估", BLOCKED_VERSION_MISMATCH: "版本不匹配，无法评估",
+  TRUE: "满足", FALSE: "不满足", UNKNOWN: "未知", REQUIRED: "必要", OPTIONAL: "可选",
+  AVAILABLE: "可用", MISSING: "缺失", VOLATILITY_COMPRESSION: "波动压缩", VOLATILITY_EXPANSION: "波动扩张",
+  TREND_UP: "上升趋势", TREND_DOWN: "下降趋势", RANGE: "区间震荡", CONFLICTED: "证据分歧",
+};
+export function formatCode(value: string | null | undefined, language: Language = "en") {
+  if (!value) return "—";
+  return language === "zh" ? zhLabels[value.toUpperCase()] || value.replace(/_/g, " ") : value.replace(/_/g, " ");
 }
-export function formatObserved(value: number | boolean | null) {
+export function conditionExpression(condition: ThesisCondition, language: Language = "en") {
+  return `${formatCode(condition.feature, language)} ${operators[condition.operator] || condition.operator} ${formatObserved(condition.value, language)}`;
+}
+export function formatObserved(value: number | boolean | null, language: Language = "en") {
   if (value === null) return "—";
-  if (typeof value === "boolean") return value ? "true" : "false";
+  if (typeof value === "boolean") return language === "zh" ? (value ? "是" : "否") : (value ? "true" : "false");
   return Number.isInteger(value) ? String(value) : value.toLocaleString(undefined, { maximumFractionDigits: 4 });
 }
-export function formatStatus(status: EvaluationStatus | null | undefined) { return status ? status.replace(/_/g, " ") : "WATCHING"; }
-export function formatSemanticState(state: string | null | undefined) { return state ? state.replace(/_/g, " ") : "—"; }
+export function formatStatus(status: EvaluationStatus | null | undefined, language: Language = "en") { return formatCode(status || "WATCHING", language); }
+export function formatSemanticState(state: string | null | undefined, language: Language = "en") { return formatCode(state, language); }
 export function statusTone(status: EvaluationStatus | null | undefined) {
   if (status === "MATCHING") return "matching";
   if (status === "NOT_MATCHING") return "not-matching";

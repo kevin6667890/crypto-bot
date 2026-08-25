@@ -131,6 +131,7 @@ function phaseText(phase: AsyncPhase, errorType?: string) {
 
 export default function Operations() {
   const { language, t, value } = useLanguage();
+  const zh = language === "zh";
   const resource = useAsyncResource<OperationsSummary>(
     "operations-summary",
     `${paperApiBase}/api/operations/summary`,
@@ -149,7 +150,7 @@ export default function Operations() {
           <span className="eyebrow">{t("operations.description")}</span>
           <h1>{t("operations.title")}</h1>
           <p>
-            公开只读运行摘要。采集数据面与查询服务状态独立展示，查询延迟不会被解释为采集停止。
+            {zh ? "公开只读运行摘要。采集数据面与查询服务状态独立展示，查询延迟不会被解释为采集停止。" : "A public, read-only runtime summary. Collection and query health are shown separately so query latency is not mistaken for stopped collection."}
           </p>
         </div>
         <div className="operations-actions">
@@ -159,8 +160,8 @@ export default function Operations() {
           </button>
           <small>
             {secureTransport
-              ? "管理操作需在独立认证会话中执行。"
-              : "普通 HTTP 不接收、不保存管理员令牌；管理操作已隐藏。"}
+              ? (zh ? "管理操作需在独立认证会话中执行。" : "Administrative actions require a separate authenticated session.")
+              : (zh ? "普通 HTTP 不接收、不保存管理员令牌；管理操作已隐藏。" : "Administrator tokens are never accepted or stored over plain HTTP; administrative actions are hidden.")}
           </small>
         </div>
       </section>
@@ -173,7 +174,7 @@ export default function Operations() {
           data-state={resource.phase}
         >
           {phaseMessage}
-          {resource.dataAsOf ? ` · 数据截至 ${resource.dataAsOf}` : ""}
+          {resource.dataAsOf ? ` · ${zh ? "数据截至" : "Data as of"} ${resource.dataAsOf}` : ""}
         </div>
       )}
 
@@ -187,43 +188,43 @@ export default function Operations() {
             </span>
           </div>
           <div className="ops-metrics">
-            <div><span>{t("operations.version")}</span><b>{summary?.service.version ?? "加载中"}</b></div>
-            <div><span>{t("operations.gitCommit")}</span><b>{summary?.service.git_commit ?? "加载中"}</b></div>
-            <div><span>{t("operations.paperApi")}</span><b>{summary?.paper_api.status ?? "加载中"}</b></div>
-            <div><span>Frontend</span><b>{summary?.frontend.status ?? "加载中"}</b></div>
-            <div><span>{t("operations.uptime")}</span><b>{summary ? `${summary.service.uptime_seconds}s` : "加载中"}</b></div>
-            <div><span>{t("operations.disk")}</span><b>{summary ? `${summary.system.disk_percent}%` : "加载中"}</b></div>
-            <div><span>{t("operations.memory")}</span><b>{summary?.system.memory_percent !== undefined ? `${summary.system.memory_percent}%` : "暂时无法获取"}</b></div>
+            <div><span>{t("operations.version")}</span><b>{summary?.service.version ?? t("common.loading")}</b></div>
+            <div><span>{t("operations.gitCommit")}</span><b>{summary?.service.git_commit ?? t("common.loading")}</b></div>
+            <div><span>{t("operations.paperApi")}</span><b>{summary?.paper_api.status ?? t("common.loading")}</b></div>
+            <div><span>{zh ? "前端" : "Frontend"}</span><b>{summary?.frontend.status ?? t("common.loading")}</b></div>
+            <div><span>{t("operations.uptime")}</span><b>{summary ? `${summary.service.uptime_seconds}s` : t("common.loading")}</b></div>
+            <div><span>{t("operations.disk")}</span><b>{summary ? `${summary.system.disk_percent}%` : t("common.loading")}</b></div>
+            <div><span>{t("operations.memory")}</span><b>{summary?.system.memory_percent !== undefined ? `${summary.system.memory_percent}%` : t("common.notAvailable")}</b></div>
           </div>
         </section>
 
         <section className="operations-card">
           <div className="operations-title">
             <Activity size={17} />
-            <h2>数据采集面</h2>
+            <h2>{zh ? "数据采集面" : "Collection plane"}</h2>
             <span className={`status-pill ${summary?.collector.status.toLowerCase() || ""}`}>
-              {summary?.collector.status ?? "加载中"}
+              {summary?.collector.status ?? t("common.loading")}
             </span>
           </div>
-          <p>Writer：<b>{summary?.collector.writer ?? "加载中"}</b></p>
-          <p>Aggregation：<b>{summary?.collector.aggregation ?? "加载中"}</b></p>
-          <p>Queue：<b>{summary?.collector.queue_depth ?? "加载中"}</b></p>
-          <small>上次成功数据：{summary?.collector.last_success_data_time ?? "加载中"}</small>
+          <p>{zh ? "写入器" : "Writer"}：<b>{summary?.collector.writer ?? t("common.loading")}</b></p>
+          <p>{zh ? "聚合器" : "Aggregation"}：<b>{summary?.collector.aggregation ?? t("common.loading")}</b></p>
+          <p>{zh ? "队列" : "Queue"}：<b>{summary?.collector.queue_depth ?? t("common.loading")}</b></p>
+          <small>{zh ? "上次成功数据" : "Last successful data"}：{summary?.collector.last_success_data_time ?? t("common.loading")}</small>
         </section>
 
         <section className="operations-card">
           <div className="operations-title">
             <Activity size={17} />
-            <h2>查询服务面</h2>
+            <h2>{zh ? "查询服务面" : "Query plane"}</h2>
             <span className={`status-pill ${summary?.query_plane.status.toLowerCase() || ""}`}>
-              {summary?.query_plane.status ?? "加载中"}
+              {summary?.query_plane.status ?? t("common.loading")}
             </span>
           </div>
           {summary
             ? Object.entries(summary.query_plane.components).map(([name, status]) => (
                 <p key={name}><span>{name}</span> <b>{status}</b></p>
               ))
-            : <p>加载中</p>}
+            : <p>{t("common.loading")}</p>}
         </section>
 
         <section className="operations-card">
@@ -231,8 +232,8 @@ export default function Operations() {
             <Database size={17} />
             <h2>{t("operations.databaseStatus")}</h2>
           </div>
-          <p>状态：<b>{summary?.database.status ?? "加载中"}</b></p>
-          <p>Quick check：<b>{summary?.database.quick_status ?? "加载中"}</b></p>
+          <p>{t("common.status")}：<b>{summary?.database.status ?? t("common.loading")}</b></p>
+          <p>{zh ? "快速检查" : "Quick check"}：<b>{summary?.database.quick_status ?? t("common.loading")}</b></p>
           <p>Paper DB：<b>{formatBytes(summary?.database.logical_size_bytes)}</b></p>
           <p>Microstructure DB：<b>{formatBytes(summary?.database.microstructure_logical_size_bytes)}</b></p>
           <p>WAL：<b>{formatBytes(summary?.wal_size_bytes)}</b></p>
@@ -241,27 +242,27 @@ export default function Operations() {
         <section className="operations-card storage-lifecycle-card">
           <div className="operations-title">
             <Database size={17} />
-            <h2>存储生命周期</h2>
+            <h2>{zh ? "存储生命周期" : "Storage lifecycle"}</h2>
             <span className={`status-pill ${(summary?.storage?.protection.level || "").toLowerCase()}`}>
               {summary?.storage?.protection.level ?? "INSUFFICIENT_HISTORY"}
             </span>
           </div>
-          <p>Root usage: <b>{summary?.storage ? `${summary.storage.root.usage_percent}%` : "—"}</b></p>
-          <p>Root free: <b>{formatBytes(summary?.storage?.root.free_bytes)}</b></p>
+          <p>{zh ? "根分区使用率" : "Root usage"}: <b>{summary?.storage ? `${summary.storage.root.usage_percent}%` : "—"}</b></p>
+          <p>{zh ? "根分区可用空间" : "Root free"}: <b>{formatBytes(summary?.storage?.root.free_bytes)}</b></p>
           <p>Paper DB: <b>{formatBytes(summary?.storage?.paper_database_bytes)}</b></p>
           <p>Microstructure DB: <b>{formatBytes(summary?.storage?.microstructure_database_bytes)}</b></p>
-          <p>Snapshot mode: <b>{summary?.storage?.snapshot_mode ?? "—"}</b></p>
-          <p>Snapshot growth: <b>{formatBytes(summary?.storage?.snapshot_bytes_per_day ?? undefined)}/day</b></p>
-          <p>Raw hot retention: <b>{summary?.storage?.raw_retention_status ?? "—"}</b></p>
-          <p>Archive backlog: <b>{summary?.storage?.archive_backlog ?? "—"}</b></p>
-          <p>Prune backlog: <b>{summary?.storage?.prune_backlog ?? "—"}</b></p>
-          <p>Last archive: <b>{summary?.storage?.last_archive ?? "—"}</b></p>
-          <p>Last off-host ACK: <b>{summary?.storage?.last_offhost_ack ?? "—"}</b></p>
+          <p>{zh ? "快照模式" : "Snapshot mode"}: <b>{summary?.storage?.snapshot_mode ?? "—"}</b></p>
+          <p>{zh ? "快照日增长" : "Snapshot growth"}: <b>{formatBytes(summary?.storage?.snapshot_bytes_per_day ?? undefined)}/{zh ? "天" : "day"}</b></p>
+          <p>{zh ? "原始热数据保留" : "Raw hot retention"}: <b>{summary?.storage?.raw_retention_status ?? "—"}</b></p>
+          <p>{zh ? "归档积压" : "Archive backlog"}: <b>{summary?.storage?.archive_backlog ?? "—"}</b></p>
+          <p>{zh ? "清理积压" : "Prune backlog"}: <b>{summary?.storage?.prune_backlog ?? "—"}</b></p>
+          <p>{zh ? "最近归档" : "Last archive"}: <b>{summary?.storage?.last_archive ?? "—"}</b></p>
+          <p>{zh ? "最近异机确认" : "Last off-host ACK"}: <b>{summary?.storage?.last_offhost_ack ?? "—"}</b></p>
           {summary?.storage?.projection.status === "AVAILABLE" ? (
             <>
-              <p>Projected days to 85%: <b>{summary.storage.projection.to_85_percent?.toFixed(1) ?? "—"}</b></p>
-              <p>Projected days to 90%: <b>{summary.storage.projection.to_90_percent?.toFixed(1) ?? "—"}</b></p>
-              <small>Window: {summary.storage.projection.window ?? "unspecified"} · low / median / high scenarios</small>
+              <p>{zh ? "预计达到 85% 的天数" : "Projected days to 85%"}: <b>{summary.storage.projection.to_85_percent?.toFixed(1) ?? "—"}</b></p>
+              <p>{zh ? "预计达到 90% 的天数" : "Projected days to 90%"}: <b>{summary.storage.projection.to_90_percent?.toFixed(1) ?? "—"}</b></p>
+              <small>{zh ? "窗口" : "Window"}: {summary.storage.projection.window ?? (zh ? "未指定" : "unspecified")} · {zh ? "低 / 中位 / 高情景" : "low / median / high scenarios"}</small>
             </>
           ) : (
             <p data-storage-projection="insufficient">{"INSUFFICIENT_HISTORY"}</p>

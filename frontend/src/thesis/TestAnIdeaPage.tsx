@@ -192,7 +192,7 @@ export default function TestAnIdeaPage() {
 
   return <main className="thesis-page">
     <section className="thesis-hero">
-      <div className="thesis-eyebrow"><FlaskConical size={15} /> AI interprets. The deterministic engine measures.</div>
+      <div className="thesis-eyebrow"><FlaskConical size={15} /> {labels.eyebrow}</div>
       <h1>{labels.title}</h1><p>{labels.subtitle}</p>
       <textarea aria-label={labels.title} value={text} disabled={phase === "parsing"} onChange={(event) => setText(event.target.value)} placeholder={labels.placeholder} maxLength={2000} />
       <div className="thesis-input-actions">
@@ -222,9 +222,9 @@ export default function TestAnIdeaPage() {
       {parseResult?.status === "ERROR" && <div className="thesis-alert warning">{labels.aiUnavailable}</div>}
       {parseResult?.status === "NEEDS_INPUT" && <div className="thesis-alert warning">{labels.needs}</div>}
       <fieldset className="thesis-definition-fields" disabled={phase === "testing"}><div className="thesis-definition-meta">
-        <label>Instrument<select aria-label={language === "zh" ? "交易标的" : "Instrument"} value={definition.instrument} onChange={(event) => setDefinition({ ...definition, instrument: event.target.value })}>
+        <label>{labels.instrument}<select aria-label={labels.instrument} value={definition.instrument} onChange={(event) => setDefinition({ ...definition, instrument: event.target.value })}>
           <option value="">—</option>{capabilities.instruments.map((item) => <option key={item}>{item}</option>)}</select></label>
-        <label>Timeframe<select aria-label={language === "zh" ? "时间周期" : "Timeframe"} value={definition.timeframe} onChange={(event) => setDefinition({ ...definition, timeframe: event.target.value })}>
+        <label>{labels.timeframe}<select aria-label={labels.timeframe} value={definition.timeframe} onChange={(event) => setDefinition({ ...definition, timeframe: event.target.value })}>
           <option value="">—</option>{capabilities.timeframes.map((item) => <option key={item}>{item}</option>)}</select></label>
       </div>
       <h3>{labels.conditions}</h3>

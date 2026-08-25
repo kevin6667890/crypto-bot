@@ -28,6 +28,6 @@ describe("Market + AI product closure", () => {
   });
   it("separates structural regimes from Workspace rule trend signals", () => {
     expect(market).toContain("结构状态与数据可用性分别呈现");
-    expect(market).toContain("规则趋势信号请在 Workspace 查看");
+    expect(market).toContain("规则趋势信号请在工作台查看");
   });
 });

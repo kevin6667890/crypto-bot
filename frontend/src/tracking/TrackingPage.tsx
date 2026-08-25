@@ -25,8 +25,8 @@ export default function TrackingPage() {
       const baseline = track.historical_baseline.historical_summary;
       return <a className="tracking-card" href={`/tracking/${encodeURIComponent(track.track_id)}`} key={track.track_id}>
         <header><div><span>{track.thesis_spec.instrument} · {track.thesis_spec.timeframe}</span><small>{zh ? "创建于" : "Created"} {formatUtc(track.created_at, language)}</small></div><ArrowRight /></header>
-        <div className="tracking-definitions">{track.thesis_spec.required_conditions.map((condition, index) => <span key={`${condition.feature}-${index}`}>{conditionExpression(condition)}</span>)}</div>
-        <section className="evidence-current"><span>{zh ? "当前证据" : "CURRENT EVIDENCE"}</span><strong className={`status-badge ${statusTone(evaluation?.overall_status)}`}>{formatStatus(evaluation?.overall_status)}</strong>
+        <div className="tracking-definitions">{track.thesis_spec.required_conditions.map((condition, index) => <span key={`${condition.feature}-${index}`}>{conditionExpression(condition, language)}</span>)}</div>
+        <section className="evidence-current"><span>{zh ? "当前证据" : "CURRENT EVIDENCE"}</span><strong className={`status-badge ${statusTone(evaluation?.overall_status)}`}>{formatStatus(evaluation?.overall_status, language)}</strong>
           <p>{requiredConditionSummary(evaluation, language)}</p>
           <small>{zh ? "最新已确认证据" : "Latest confirmed evidence"}: {formatUtc(evaluation?.as_of, language)}</small></section>
         <section className="evidence-historical"><span>{zh ? "历史证据" : "HISTORICAL EVIDENCE"}</span><strong>{baseline.independent_event_count.toLocaleString()} {zh ? "个独立事件" : "independent events"}</strong><small>{baseline.sample_quality} · {formatUtc(track.historical_tested_range.end, language)}</small></section>

@@ -178,7 +178,9 @@ def test_service_uses_capability_context_and_separates_untrusted_text():
     result = ThesisParserServiceV3(provider, CAPABILITIES).parse(text, requested_as_of=1_700_000_000)
     assert result.status == "READY"
     assert json.loads(provider.request["messages"][1]["content"]) == {"untrusted_text": text}
-    system = json.loads(provider.request["messages"][0]["content"])
+    system_message = provider.request["messages"][0]["content"]
+    assert system_message.startswith("Return only one JSON object. ")
+    system = json.loads(system_message.removeprefix("Return only one JSON object. "))
     assert all(item["code"] != "CVD" for item in system["features"])
 
 
@@ -213,7 +215,8 @@ def test_bilingual_real_prompt_corpus_is_safe_to_embed_as_untrusted_data(text):
     request = provider_request(text, CAPABILITIES)
     assert json.loads(request["messages"][1]["content"])["untrusted_text"] == text
     assert "CVD" not in {item["code"] for item in
-                         json.loads(request["messages"][0]["content"])["features"]}
+                         json.loads(request["messages"][0]["content"].removeprefix(
+                             "Return only one JSON object. "))["features"]}
 
 
 def test_provider_cannot_substitute_whale_claim_with_breakout_preset():

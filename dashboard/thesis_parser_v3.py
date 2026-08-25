@@ -131,7 +131,10 @@ def provider_request(text: str, capabilities: Mapping[str, Any]) -> dict[str, An
         raise ThesisParserV3Error("text is required and must not exceed 2000 characters")
     return {
         "messages": [
-            {"role": "system", "content": json.dumps(parser_context(capabilities), ensure_ascii=False)},
+            # The provider's JSON-object mode requires this explicit protocol
+            # token; the deterministic validator below remains the authority.
+            {"role": "system", "content": "Return only one JSON object. " + json.dumps(
+                parser_context(capabilities), ensure_ascii=False)},
             {"role": "user", "content": json.dumps({"untrusted_text": text.strip()}, ensure_ascii=False)},
         ],
         "temperature": 0.0,

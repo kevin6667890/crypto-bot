@@ -66,7 +66,7 @@ def test_explicit_number_cannot_be_overridden_by_preset():
     raw = output(condition("ROLLING_HIGH_BREAKOUT_CONFIRMED", "eq", True, {"lookback_bars": 20}),
                  recognized_clauses=["previous 50 candles high"],
                  assumptions=[{"preset_id": "previous-high-standard", "source_text": "previous 50 candles high"}])
-    with pytest.raises(ThesisParserV3Error, match="explicit user number"):
+    with pytest.raises(ThesisParserV3Error, match="parameter lookback_bars"):
         validate_provider_output(text, raw, CAPABILITIES, requested_as_of=1_700_000_000)
 
 

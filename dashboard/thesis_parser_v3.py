@@ -248,7 +248,10 @@ def _parse_assumptions(raw: Any, text: str,
         if not source or source.casefold() not in text.casefold():
             raise ThesisParserV3Error("assumption source_text is not grounded in user text")
         if _contains_explicit_number(source):
-            raise ThesisParserV3Error("semantic preset cannot override an explicit user number")
+            # A model may redundantly attach a preset to an already explicit
+            # clause.  It is not an assumption: numeric grounding below still
+            # verifies the AST against the user's value, fail-closed.
+            continue
         phrases = tuple(str(phrase).casefold()
                         for values in preset.phrases.values() for phrase in values)
         if not any(phrase and phrase in source.casefold() for phrase in phrases):

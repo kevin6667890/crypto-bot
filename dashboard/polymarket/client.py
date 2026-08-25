@@ -18,6 +18,7 @@ GAMMA_PAGINATION_POLICY_VERSION = "gamma-keyset-after-cursor-id-ascending-v1"
 # active universe to be traversed without silently truncating it.
 GAMMA_MAX_PAGE_SIZE = 100
 GAMMA_MAX_PAGES = 10_000
+GAMMA_PAGE_INTERVAL_SECONDS = 0.35
 
 
 class PolymarketClient:
@@ -34,17 +35,17 @@ class PolymarketClient:
         # transient public-read responses, respecting Retry-After when given;
         # never turn a collection failure into partial universe success.
         response: requests.Response | None = None
-        for attempt in range(4):
+        for attempt in range(7):
             response = self.session.get(url, params=params, timeout=self.timeout)
             # Test doubles deliberately implement only raise_for_status/json.
             if getattr(response, "status_code", 200) not in {403, 429, 500, 502, 503, 504}:
                 response.raise_for_status()
                 return response.json()
-            if attempt < 3:
+            if attempt < 6:
                 retry_after = response.headers.get("Retry-After")
                 try:
-                    delay = min(max(float(retry_after or 0), 1.0), 30.0)
-                except ValueError:
+                    delay = min(max(float(retry_after), 1.0), 30.0) if retry_after else min(2.0 ** attempt, 30.0)
+                except (TypeError, ValueError):
                     delay = min(2.0 ** attempt, 8.0)
                 time.sleep(delay)
         assert response is not None
@@ -97,6 +98,11 @@ class PolymarketClient:
             seen_cursors.add(next_cursor)
             cursor = next_cursor
             page_number += 1
+            # The full universe is more than 1,500 pages. Keep the production
+            # walk below Gamma's sustained public-read edge limit instead of
+            # relying on burst retries after a long cursor chain.
+            if isinstance(self.session, requests.Session):
+                time.sleep(GAMMA_PAGE_INTERVAL_SECONDS)
         # Gamma ordering is not a causal selection rule; canonical ordering is.
         return sorted(result, key=lambda item: str(item["id"]))
 

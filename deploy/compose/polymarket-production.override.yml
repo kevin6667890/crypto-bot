@@ -38,10 +38,10 @@ services:
     volumes:
       - polymarket-data:/var/lib/polymarket:rw
     pids_limit: 128
-    # The audited 170k-market universe peaks just above 1 GiB while building
+    # The audited 170k-market universe peaks above 1 GiB while building
     # its canonical manifest. The host has 3.4 GiB RAM plus 2 GiB swap; this
     # cap prevents a repeat cgroup OOM without removing host-level protection.
-    mem_limit: 1536m
+    mem_limit: 1792m
     cpus: 0.50
     logging:
       driver: json-file

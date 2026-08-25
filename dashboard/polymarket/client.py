@@ -12,7 +12,7 @@ from .models import decimal_text, parse_json_field
 
 GAMMA_URL = "https://gamma-api.polymarket.com"
 CLOB_URL = "https://clob.polymarket.com"
-GAMMA_PAGINATION_POLICY_VERSION = "gamma-keyset-after-cursor-id-ascending-v1"
+GAMMA_PAGINATION_POLICY_VERSION = "gamma-keyset-after-cursor-enddate-id-ascending-v2"
 # The legacy offset endpoint hard-stops around offset 2,000. The keyset endpoint
 # uses `after_cursor` and returns an explicit `next_cursor`, allowing the full
 # active universe to be traversed without silently truncating it.
@@ -65,7 +65,11 @@ class PolymarketClient:
             size = page_size if wanted is None else min(page_size, wanted - len(result))
             params: dict[str, Any] = {
                 "active": "true", "closed": "false", "limit": size,
-                "order": "id", "ascending": "true", "end_date_min": prospective_as_of,
+                # endDate plus id is a stable total order and avoids Gamma's
+                # deterministic 403 cursor defect at the current id-only
+                # boundary after market 3721243. Results remain canonically
+                # sorted by market id before returning.
+                "order": "endDate,id", "ascending": "true", "end_date_min": prospective_as_of,
             }
             if cursor is not None:
                 params["after_cursor"] = cursor

@@ -120,6 +120,7 @@ def parser_context(capabilities: Mapping[str, Any]) -> dict[str, Any]:
         "rules": [
             "Never invent a feature, operator, parameter, number, or preset.",
             "Explicit user numbers override presets.",
+            "When a clause contains an explicit number, use that number and do not emit a preset assumption for that clause.",
             "Return every unrecognized clause; never silently omit a clause.",
             "BETWEEN compiles to an ALL containing inclusive gte and lte leaves.",
         ],

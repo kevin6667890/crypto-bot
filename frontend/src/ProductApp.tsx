@@ -12,6 +12,7 @@ const TrackDetailPage = lazy(() => import("./tracking/TrackDetailPage"));
 const WhatChangedPage = lazy(() => import("./tracking/WhatChangedPage"));
 const AdvancedLanding = lazy(() => import("./product/AdvancedLanding"));
 const PredictionMarkets = lazy(() => import("./PredictionMarkets"));
+const FRONTEND_BUILD_ID = "2026-08-25T08:42:00Z";
 
 type PredictionMarketsView = "overview" | "markets" | "forecasts" | "scoreboard";
 
@@ -62,6 +63,7 @@ function Deferred({ children }: { children: React.ReactNode }) {
 export default function ProductApp() {
   const [, setLocationVersion] = useState(0);
   useEffect(() => {
+    document.documentElement.dataset.frontendBuild = FRONTEND_BUILD_ID;
     const sync = () => setLocationVersion((value) => value + 1);
     window.addEventListener("hashchange", sync); window.addEventListener("popstate", sync);
     return () => { window.removeEventListener("hashchange", sync); window.removeEventListener("popstate", sync); };

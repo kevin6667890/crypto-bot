@@ -36,6 +36,10 @@ describe("prediction markets research vertical", () => {
     expect(page).toContain("/forecasts/${encodeURIComponent(selected)}");
     expect(page).toContain("AbortController");
     expect(page).toContain("useDebounced(query)");
+    expect(page).toContain('asRow(val(item, "frozen_market_snapshot"))');
+    expect(page).toContain('asRow(val(item, "audit"))');
+    expect(page).toContain('val(item, "evidence") ?? val(embedded, "evidence")');
+    expect(page).toContain('text(item, "question", "market_question")');
   });
 
   it("uses the same-origin production API by default and contains no provider secret", () => {

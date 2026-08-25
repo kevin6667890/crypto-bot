@@ -113,9 +113,12 @@ the lease must become recoverable, and the ledger must record failure/timeout.
 ## Backup and restore
 
 The daily job uses SQLite online backup, SHA-256, and `integrity_check`, then
-retention. On the actual 170 GiB host it keeps three daily dates plus one backup
-from each of two ISO weeks (at most five full DBs). It first requires free space of at least current
-DB size plus 1 GiB. On the audited disk this schedule must remain disabled.
+retention. On the actual 170 GiB host it keeps two daily dates plus one backup
+from one ISO week (at most three full DBs). At the current 4.55 GB DB size this
+caps the Polymarket backup set near 13.7 GB and leaves the collection disk guard
+above its required reserve. The job first requires free space of at least the
+current DB size plus 1 GiB; keep the timer enabled only while that invariant and
+the collection reserve both remain satisfied.
 
 ```bash
 systemctl start polymarket-backup.service

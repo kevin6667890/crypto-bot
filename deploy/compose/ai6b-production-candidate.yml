@@ -4,7 +4,7 @@ x-app-security: &app-security
   read_only: true
   tmpfs:
     - /tmp:rw,noexec,nosuid,size=64m
-    - /app/logs:rw,noexec,nosuid,size=32m
+    - /app/logs:rw,noexec,nosuid,size=32m,uid=10001,gid=10001,mode=700
   cap_drop: [ALL]
   security_opt: [no-new-privileges:true]
   restart: "on-failure:3"
@@ -59,6 +59,9 @@ services:
     environment:
       <<: [*ai-disabled, *ai-budget]
       PAPER_API_HOST: 0.0.0.0
+      LIVE_TRADING_ENABLED: "false"
+      AI_REPORT_SCHEDULER_CADENCE_SECONDS: "14400"
+      AI_REPORT_SCHEDULER_CONFIRMATION_GRACE_SECONDS: "120"
       GIT_COMMIT: ${FACTOR_PROGRAM_GIT_COMMIT:?Factor Program source commit is required}
       PAPER_DB_PATH: /var/lib/paper/paper_trades.db
       MICROSTRUCTURE_DB_PATH: /var/lib/microstructure/market_microstructure.db
@@ -69,12 +72,17 @@ services:
     secrets: [admin_token, legacy_deepseek_key]
     volumes:
       - paper-data:/var/lib/paper:rw
-      - microstructure-data:/var/lib/microstructure:ro
+      # SQLite WAL readers must be able to open/update the shared-memory sidecar.
+      # The application remains query_only; the collector is the sole data writer.
+      - microstructure-data:/var/lib/microstructure:rw
       - ai-report-data:/var/lib/ai-report:rw
     expose: ["8765"]
     pids_limit: 128
-    mem_limit: 640m
-    cpus: 0.55
+    # Canonical snapshot assembly and the 4 GiB Paper ledger can peak above
+    # 640 MiB while a collector cycle and public read overlap.  Keep a bounded
+    # cgroup, with enough headroom to avoid killing the scheduler/API process.
+    mem_limit: 896m
+    cpus: 0.50
     healthcheck:
       test: [CMD, python, -c, "from urllib.request import urlopen; urlopen('http://127.0.0.1:8765/api/paper/flow/health',timeout=3)"]
       interval: 30s
@@ -92,6 +100,7 @@ services:
       PAPER_DB_PATH: /var/lib/paper/paper_trades.db
       GIT_COMMIT: ${FACTOR_PROGRAM_GIT_COMMIT:?Factor Program source commit is required}
       RESEARCH_JOB_WORKER_ENABLED: "true"
+      LIVE_TRADING_ENABLED: "false"
       AUTO_RESEARCH_ENABLED: "false"
       AUTO_RESEARCH_INTERVAL_HOURS: "168"
       AUTO_RESEARCH_LOOKBACK_DAYS: "730"
@@ -111,12 +120,13 @@ services:
       MICROSTRUCTURE_DB_PATH: /var/lib/microstructure/market_microstructure.db
       CANONICAL_MICROSTRUCTURE_HISTORY_DB_PATH: /var/lib/microstructure/canonical_microstructure_history_v1.db
       MICROSTRUCTURE_MAINTENANCE_ENABLED: "false"
+      LIVE_TRADING_ENABLED: "false"
       MICROSTRUCTURE_REALTIME_AGGREGATION_ENABLED: "true"
     volumes:
       - microstructure-data:/var/lib/microstructure:rw
     pids_limit: 128
     mem_limit: 768m
-    cpus: 0.65
+    cpus: 0.60
     healthcheck:
       test: [CMD, python, -c, "from urllib.request import urlopen; urlopen('http://127.0.0.1:8770/health',timeout=12)"]
       interval: 30s

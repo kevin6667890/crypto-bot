@@ -1,5 +1,6 @@
 import type { UTCTimestamp } from "lightweight-charts";
 import { PUBLIC_MARKET_INSTRUMENTS } from "./marketInstruments";
+import type { MarketDataProvenance } from "./marketProvenance";
 
 export type Metric = {
   label: string;
@@ -218,13 +219,15 @@ export type Candle = {
 
 export type MarketSnapshot = {
   price: number;
-  changePct: number;
-  high24: number;
-  low24: number;
-  volume: number;
+  changePct: number | null;
+  high24: number | null;
+  low24: number | null;
+  volume: number | null;
   ema20: number | null;
   updatedAt: string;
-  source: "Binance" | "OKX" | "Demo";
+  source: "Binance" | "OKX" | "Demo" | "Canonical";
+  provenance: MarketDataProvenance;
+  fallbackReason?: string;
 };
 
 export type SignalCondition = {
@@ -478,7 +481,7 @@ export type AuditedAiBrief = {
   // Optional display projection of registered deterministic intelligence.
   // It is absent on historical reports created before this closure.
   intelligence?: Record<string, unknown>;
-  scheduler?: { enabled?: boolean; cadence_seconds?: number; next_tick?: string | null; last_tick?: string | null; last_queued?: string | null; last_error?: string | null };
+  scheduler?: { enabled?: boolean; cadence_seconds?: number; next_tick?: string | null; last_tick?: string | null; last_queued?: string | null; last_error?: string | null; last_evaluation_outcome?: string | null; last_evaluation_at?: string | null; facts_as_of?: string | null };
 };
 
 export type AuditedAiReportDetail = {
@@ -1153,7 +1156,43 @@ async function fetchBinanceCandles(
 export async function fetchEthSnapshot(
   instrument = "ETH-USDT"
 ): Promise<MarketSnapshot> {
-  return fetchOkxSnapshot(instrument);
+  return fetchCanonicalSnapshot(instrument);
+}
+
+type CanonicalSnapshotResponse = {
+  causal_cutoff: number;
+  price?: {
+    value?: number | null;
+    source_timestamp?: number | null;
+    quality?: string;
+    identity?: { product_type?: string };
+  };
+  timeframes?: Array<{
+    timeframe?: string;
+    confirmed?: boolean;
+    last_volume?: number | null;
+  }>;
+};
+
+async function fetchCanonicalSnapshot(instrument: string): Promise<MarketSnapshot> {
+  const marketInstrument = instrument.endsWith("-SWAP") ? instrument : instrument.replace("-USDT", "-USDT-SWAP");
+  const response = await fetch(`${paperApiBase}/api/market/snapshot?instrument=${encodeURIComponent(marketInstrument)}&execution_timeframe=15m`);
+  if (!response.ok) throw new Error(`Canonical market snapshot failed: ${response.status}`);
+  const payload = await response.json() as CanonicalSnapshotResponse;
+  const price = payload.price;
+  const execution = payload.timeframes?.find(item => item.timeframe === "15m");
+  if (
+    price?.quality !== "AVAILABLE" || !execution?.confirmed || price.identity?.product_type !== "SWAP"
+    || !Number.isFinite(price.value) || !Number.isFinite(price.source_timestamp)
+    || Number(price.source_timestamp) > Number(payload.causal_cutoff)
+  ) throw new Error("Canonical market snapshot is unavailable or unconfirmed");
+  return {
+    price: Number(price.value), changePct: null,
+    // The canonical endpoint does not claim 24h extrema. Do not borrow browser values.
+    high24: null, low24: null, volume: execution.last_volume ?? null,
+    ema20: null, updatedAt: formatTime(Number(price.source_timestamp) * 1000),
+    source: "Canonical", provenance: "CANONICAL",
+  };
 }
 
 async function fetchBinanceSnapshot(): Promise<MarketSnapshot> {
@@ -1181,11 +1220,11 @@ async function fetchBinanceSnapshot(): Promise<MarketSnapshot> {
     volume: Number(data.volume),
     ema20,
     updatedAt: formatTime(Date.now()),
-    source: "Binance",
+    source: "Binance", provenance: "BROWSER_FALLBACK",
   };
 }
 
-async function fetchOkxSnapshot(
+export async function fetchBrowserOkxSnapshot(
   instrument = "ETH-USDT"
 ): Promise<MarketSnapshot> {
   const marketInstrument = instrument.endsWith("-SWAP") ? instrument : instrument.replace("-USDT", "-USDT-SWAP");
@@ -1219,7 +1258,7 @@ async function fetchOkxSnapshot(
     volume: Number(data.vol24h),
     ema20: closes.length >= 20 ? calculateEma(closes, 20) : null,
     updatedAt: formatTime(Number(data.ts)),
-    source: "OKX",
+    source: "OKX", provenance: "BROWSER_FALLBACK",
   };
 }
 
@@ -1272,7 +1311,7 @@ export function demoSnapshot(): MarketSnapshot {
     volume: 384211.8,
     ema20: 2431.42,
     updatedAt: formatTime(Date.now()),
-    source: "Demo",
+    source: "Demo", provenance: "DEMO_FALLBACK", fallbackReason: "Canonical backend unavailable",
   };
 }
 

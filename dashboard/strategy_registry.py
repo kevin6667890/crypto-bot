@@ -56,6 +56,41 @@ def _decode(row: Mapping[str, Any]) -> dict[str, Any]:
     return item
 
 
+REGISTRY_SNAPSHOT_FIELDS = (
+    "registry_id", "candidate_identity", "configuration_hash", "strategy_version",
+    "engine_version", "policy_version", "source_dataset_fingerprint", "timeframe",
+    "instrument_scope", "serialized_definition", "parameters", "active_at",
+)
+
+
+def registry_snapshot_identity(item: Mapping[str, Any]) -> str:
+    return canonical_hash({key: item.get(key) for key in REGISTRY_SNAPSHOT_FIELDS})
+
+
+def freeze_registry_snapshot(item: Mapping[str, Any]) -> dict[str, Any]:
+    """Return a detached ACTIVE row whose identity covers every runtime input."""
+    snapshot = json.loads(_json(dict(item)))
+    if snapshot.get("status") != "ACTIVE":
+        raise ValueError("strategy registry snapshot is not ACTIVE")
+    snapshot["registry_snapshot_identity"] = registry_snapshot_identity(snapshot)
+    return snapshot
+
+
+def active_snapshot_matches(connection: Any, snapshot: Mapping[str, Any]) -> bool:
+    row = connection.execute(
+        "SELECT * FROM approved_strategy_registry WHERE registry_id=? AND status='ACTIVE'",
+        (snapshot.get("registry_id"),),
+    ).fetchone()
+    if not row:
+        return False
+    current = _decode(row)
+    return (
+        current.get("candidate_identity") == snapshot.get("candidate_identity")
+        and current.get("configuration_hash") == snapshot.get("configuration_hash")
+        and registry_snapshot_identity(current) == snapshot.get("registry_snapshot_identity")
+    )
+
+
 @dataclass(frozen=True)
 class ApprovalDecision:
     approved: bool
@@ -98,6 +133,17 @@ class StrategyApprovalPolicy:
             reasons.append("PARAMETER_SNAPSHOT_MISMATCH")
         if definition and identity.get("configuration_hash") != canonical_hash(definition):
             reasons.append("FROZEN_DEFINITION_HASH_MISMATCH")
+        if definition.get("runtime_adapter_version") != RUNTIME_VERSION:
+            reasons.append("RUNTIME_ADAPTER_VERSION_MISMATCH")
+        if definition.get("timeframe") != candidate.get("timeframe"):
+            reasons.append("TIMEFRAME_SNAPSHOT_MISMATCH")
+        validation = definition.get("validation_status") or {}
+        if any(validation.get(key) != "PASS" for key in (
+            "development", "walk_forward", "holdout", "oot", "cross_asset", "robustness"
+        )):
+            reasons.append("FROZEN_VALIDATION_CONTRACT_INCOMPLETE")
+        if not isinstance(definition.get("execution_assumptions"), Mapping):
+            reasons.append("EXECUTION_ASSUMPTIONS_MISSING")
         scope = definition.get("activation_scope") or {}
         if scope.get("mode") != "GLOBAL_CROSS_ASSET" or scope.get("policy_version") != ACTIVE_SCOPE_POLICY_VERSION:
             reasons.append("ACTIVE_SCOPE_POLICY_INCOMPATIBLE")
@@ -123,6 +169,10 @@ class ApprovedStrategyRegistry:
                 "SELECT * FROM approved_strategy_registry WHERE status='ACTIVE' ORDER BY active_at DESC LIMIT 1"
             ).fetchone()
         return _decode(row) if row else None
+
+    def active_snapshot(self) -> dict[str, Any] | None:
+        active = self.active()
+        return freeze_registry_snapshot(active) if active else None
 
     def approved(self, limit: int = 50) -> list[dict[str, Any]]:
         with self.repository.connect() as connection:
@@ -276,7 +326,7 @@ class StrategyRegistryAdapter:
     @staticmethod
     def provenance(item: Mapping[str, Any] | None) -> dict[str, Any]:
         if not item:
-            return {"source": "LEGACY_BASELINE", "registry_status": None}
+            return {"source": "NO_ACTIVE_REGISTRY", "registry_status": None}
         definition = item["serialized_definition"]
         return {
             "source": "APPROVED_REGISTRY", "registry_id": item["registry_id"],
@@ -290,10 +340,28 @@ class StrategyRegistryAdapter:
         }
 
     def route(self, router: Any, context: Mapping[str, Any], state: Mapping[str, Any], *,
-              candles: list[dict[str, Any]] | None = None, **kwargs: Any) -> dict[str, Any]:
-        active = self.registry.active()
+              candles: list[dict[str, Any]] | None = None, allow_legacy: bool = False,
+              snapshot_identity: str | None = None, decision_timestamp: str | None = None,
+              **kwargs: Any) -> dict[str, Any]:
+        active = self.registry.active_snapshot()
         if not active:
-            result = router.route(context, state, **kwargs)
+            if allow_legacy:
+                result = router.route(context, state, **kwargs)
+                result["strategy_provenance"] = {"source": "LEGACY_BASELINE", "registry_status": None}
+                result["approved_strategy"] = None
+                return result
+            result = {
+                "version": "strategy-registry-adapter-v1", "instrument": context.get("instrument"),
+                "as_of": context.get("as_of"), "primary_route": None, "alternatives": (),
+                "candidates": (), "transitions": (),
+                "no_trade": {"active": True, "strategy_version": "approved-registry-required-v1",
+                    "reasons": ({"code": "NO_ACTIVE_APPROVED_STRATEGY", "timeframe": "15m",
+                        "evidence": ("canonical execution requires one ACTIVE registry snapshot",),
+                        "temporary": True, "release_condition": "an approved strategy becomes ACTIVE"},)},
+                "quality": {"degraded": True, "routing_compute_only": True},
+                "execution_decision": {"runtime_version": RUNTIME_VERSION, "action": "WAIT",
+                    "authoritative": True, "error": "NO_ACTIVE_APPROVED_STRATEGY"},
+            }
         else:
             definition = active["serialized_definition"]
             directions = ("LONG", "SHORT") if definition["direction"] == "BOTH" else (definition["direction"],)
@@ -310,6 +378,8 @@ class StrategyRegistryAdapter:
                     active, str(context["instrument"]),
                     candles if candles is not None else self._confirmed_candles(str(context["instrument"]), int(context["as_of"])),
                     as_of=int(context["as_of"]),
+                    decision_timestamp=decision_timestamp or context.get("decision_timestamp"),
+                    snapshot_identity=snapshot_identity or context.get("snapshot_identity"),
                 )
             except ValueError as error:
                 runtime = {

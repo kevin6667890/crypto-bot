@@ -497,10 +497,10 @@ def test_coverage_survives_before_archive_schema_migration(
 @pytest.mark.parametrize(
     ("free", "days85", "days90", "level"),
     (
-        (50, None, None, "NORMAL"),
+        (25, None, None, "NORMAL"),
         (19, None, None, "WARNING"),
         (30, 10, None, "WARNING"),
-        (11, None, None, "CRITICAL"),
+        (9, None, None, "CRITICAL"),
         (30, None, 5, "CRITICAL"),
         (4, None, None, "EMERGENCY"),
     ),

@@ -3,9 +3,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+from datetime import datetime, timezone
 from typing import Any, Mapping
 
 from .discovery_features import build_features
+from .discovery_execution import DiscoveryExecutionConfig
 from .strategy_v2_1 import StrategyV21Evaluator
 
 
@@ -28,52 +30,141 @@ def canonical_instrument(instrument: str) -> str:
     return instrument[:-5] if instrument.endswith("-SWAP") else instrument
 
 
+def _decision_timestamp(value: str | None, fallback_as_of: int) -> str:
+    if value is None:
+        return datetime.fromtimestamp(int(fallback_as_of), timezone.utc).isoformat()
+    parsed = datetime.fromisoformat(str(value))
+    if parsed.tzinfo is None:
+        raise ValueError("approved strategy decision timestamp must be timezone-aware")
+    return parsed.isoformat()
+
+
+def _validate_frozen_registry(registry: Mapping[str, Any], requested: str) -> tuple[dict[str, Any], dict[str, Any], str]:
+    definition = dict(registry.get("serialized_definition") or {})
+    parameters = dict(registry.get("parameters") or {})
+    if definition.get("parameters") != parameters:
+        raise ValueError("approved strategy parameter snapshots disagree")
+    if canonical_hash(definition) != registry.get("configuration_hash"):
+        raise ValueError("approved strategy configuration hash mismatch")
+    if definition.get("runtime_adapter_version") != RUNTIME_VERSION:
+        raise ValueError("approved strategy runtime adapter version mismatch")
+    validation = definition.get("validation_status") or {}
+    if any(validation.get(key) != "PASS" for key in (
+        "development", "walk_forward", "holdout", "oot", "cross_asset", "robustness"
+    )):
+        raise ValueError("approved strategy frozen validation contract is incomplete")
+    scope = {canonical_instrument(str(value)) for value in registry.get("instrument_scope", [])}
+    activation = definition.get("activation_scope") or {}
+    definition_scope = {canonical_instrument(str(value)) for value in activation.get("instruments", [])}
+    if activation.get("mode") != "GLOBAL_CROSS_ASSET" or definition_scope != scope:
+        raise ValueError("approved strategy activation scope snapshots disagree")
+    if requested not in scope:
+        raise ValueError("instrument is outside the ACTIVE global strategy scope")
+    timeframe = str(registry.get("timeframe") or "")
+    if timeframe != "15m" or str(definition.get("timeframe") or "") != timeframe:
+        raise ValueError("approved strategy timeframe snapshots disagree or are unsupported")
+    assumptions = definition.get("execution_assumptions")
+    if not isinstance(assumptions, Mapping):
+        raise ValueError("approved strategy execution assumptions are missing")
+    try:
+        DiscoveryExecutionConfig(**dict(assumptions)).validate()
+    except (TypeError, ValueError) as error:
+        raise ValueError("approved strategy execution assumptions are invalid") from error
+    return definition, parameters, timeframe
+
+
+def _visible_candles(candles: list[dict[str, Any]], timeframe: str, as_of: int | None) -> list[dict[str, Any]]:
+    seconds = 900 if timeframe == "15m" else 0
+    visible = []
+    for source in candles:
+        row = dict(source)
+        close_ts = int(row.get("candle_close_ts", int(row["ts"]) + seconds))
+        if bool(row.get("confirmed", True)) and (as_of is None or close_ts <= int(as_of)):
+            row["candle_close_ts"] = close_ts
+            visible.append(row)
+    visible.sort(key=lambda row: int(row["ts"]))
+    return visible
+
+
+def _execution_envelope(
+    registry: Mapping[str, Any], *, requested: str, timeframe: str,
+    visible: list[dict[str, Any]], features: Any, decision_timestamp: str,
+    snapshot_identity: str,
+) -> dict[str, Any]:
+    registry_identity = registry.get("registry_snapshot_identity")
+    if not isinstance(registry_identity, str) or not registry_identity:
+        registry_identity = canonical_hash({
+            key: registry.get(key) for key in (
+                "registry_id", "candidate_identity", "configuration_hash", "strategy_version",
+                "engine_version", "policy_version", "source_dataset_fingerprint", "timeframe",
+                "instrument_scope", "serialized_definition", "parameters", "active_at",
+            )
+        })
+    candle_payload = [
+        {key: row.get(key) for key in ("ts", "candle_close_ts", "open", "high", "low", "close", "volume")}
+        for row in visible
+    ]
+    return {
+        "registry_id": registry["registry_id"],
+        "candidate_identity": registry["candidate_identity"],
+        "configuration_hash": registry["configuration_hash"],
+        "runtime_version": RUNTIME_VERSION,
+        "registry_snapshot_identity": registry_identity,
+        "snapshot_identity": snapshot_identity,
+        "decision_timestamp": decision_timestamp,
+        "input_fingerprint": canonical_hash({
+            "instrument": requested, "timeframe": timeframe, "candles": candle_payload,
+        }),
+        "factor_fingerprint": canonical_hash({
+            "feature_config": FEATURE_CONFIG,
+            "factor_versions": (registry.get("serialized_definition") or {}).get("factor_versions", {}),
+            "features": features,
+        }),
+        "instrument": requested,
+        "timeframe": timeframe,
+        "candle_close_ts": int(visible[-1]["candle_close_ts"]),
+    }
+
+
 def evaluate_frozen_candidate(
-    registry: Mapping[str, Any], instrument: str, candles: list[dict[str, Any]], *, as_of: int | None = None,
+    registry: Mapping[str, Any], instrument: str, candles: list[dict[str, Any]], *,
+    as_of: int | None = None, decision_timestamp: str | None = None,
+    snapshot_identity: str | None = None,
 ) -> dict[str, Any]:
     """Evaluate exactly the serialized candidate used by research and Paper.
 
     The function is state-free between calls: state is deterministically replayed
     over confirmed candles, so Router and Paper cannot drift through adapters.
     """
-    definition = dict(registry["serialized_definition"])
     requested = canonical_instrument(instrument)
+    definition, parameters, timeframe = _validate_frozen_registry(registry, requested)
+    visible = _visible_candles(candles, timeframe, as_of)
+    if not visible:
+        raise ValueError("confirmed candles unavailable for approved strategy")
+    stamp = _decision_timestamp(
+        decision_timestamp,
+        int(as_of) if as_of is not None else int(visible[-1]["candle_close_ts"]),
+    )
+    if not isinstance(snapshot_identity, str) or not snapshot_identity.strip():
+        raise ValueError("canonical market snapshot identity is required")
     # Program ASTs use this same public canonical entrypoint.  Router and Paper
     # therefore cannot select a different evaluator for an ACTIVE program.
     if definition.get("program_ast"):
         program = deserialize_program(definition["program_ast"])
+        if program.timeframe != timeframe:
+            raise ValueError("frozen program timeframe does not match the registry")
+        if definition.get("program_version") != program.grammar_version:
+            raise ValueError("frozen program version does not match its AST")
+        if definition.get("factor_versions") != program.factor_versions:
+            raise ValueError("frozen program factor versions do not match its AST")
         evaluator = FrozenProgramEvaluator(program, registry_id=registry.get("registry_id"), configuration_hash=registry.get("configuration_hash"))
-        visible = [row for row in candles if as_of is None or int(row.get("ts", row.get("candle_close_ts", 0))) <= int(as_of)]
-        if not visible: raise ValueError("no confirmed candles for frozen program")
         result = evaluator.evaluate(visible, len(visible) - 1)
-        return {"runtime_version": RUNTIME_VERSION, "action": result["action"], "warmed": result["warmed"], "state": "TRIGGERED" if result["action"] != "WAIT" else "WATCH", "evidence": {"program_ast": definition["program_ast"], "factor_versions": definition.get("factor_versions", {}), "program_version": definition.get("program_version")}, "stop_price": None, "target_price": None, "candle_close_ts": int(visible[-1].get("candle_close_ts", visible[-1]["ts"])), "last_close": float(visible[-1]["close"]), "strategy_registry_id": registry["registry_id"], "candidate_identity": registry["candidate_identity"], "strategy_version": registry["strategy_version"], "configuration_hash": registry["configuration_hash"], "parameters": definition["parameters"], "instrument": requested, "timeframe": definition.get("timeframe", "15m")}
-    parameters = dict(registry["parameters"])
-    if definition.get("parameters") != parameters:
-        raise ValueError("approved strategy parameter snapshots disagree")
-    if canonical_hash(definition) != registry.get("configuration_hash"):
-        raise ValueError("approved strategy configuration hash mismatch")
-    scope = {canonical_instrument(str(value)) for value in registry.get("instrument_scope", [])}
-    definition_scope = {
-        canonical_instrument(str(value))
-        for value in (definition.get("activation_scope") or {}).get("instruments", [])
-    }
-    if (definition.get("activation_scope") or {}).get("mode") != "GLOBAL_CROSS_ASSET" or definition_scope != scope:
-        raise ValueError("approved strategy activation scope snapshots disagree")
-    if requested not in scope:
-        raise ValueError("instrument is outside the ACTIVE global strategy scope")
-    timeframe = str(registry.get("timeframe") or "15m")
-    if timeframe != "15m":
-        raise ValueError("approved strategy runtime currently requires 15m")
-    visible = [
-        dict(row) for row in candles
-        if bool(row.get("confirmed", True))
-        and (as_of is None or int(row.get("candle_close_ts", int(row["ts"]) + 900)) <= int(as_of))
-    ]
-    visible.sort(key=lambda row: int(row["ts"]))
-    if not visible:
-        raise ValueError("confirmed candles unavailable for approved strategy")
-    for row in visible:
-        row.setdefault("candle_close_ts", int(row["ts"]) + 900)
+        features = evaluator.features
+        envelope = _execution_envelope(
+            registry, requested=requested, timeframe=timeframe, visible=visible,
+            features=features, decision_timestamp=stamp, snapshot_identity=snapshot_identity,
+        )
+        return {"runtime_version": RUNTIME_VERSION, "action": result["action"] if result["action"] in {"LONG", "SHORT"} else "WAIT", "warmed": result["warmed"], "state": "TRIGGERED" if result["action"] != "WAIT" else "WATCH", "evidence": {"program_ast": definition["program_ast"], "factor_versions": definition.get("factor_versions", {}), "program_version": definition.get("program_version")}, "stop_price": None, "target_price": None, "candle_close_ts": int(visible[-1]["candle_close_ts"]), "last_close": float(visible[-1]["close"]), "strategy_registry_id": registry["registry_id"], "candidate_identity": registry["candidate_identity"], "strategy_version": registry["strategy_version"], "configuration_hash": registry["configuration_hash"], "parameters": parameters, "instrument": requested, "timeframe": timeframe, "execution_envelope": envelope, **{key: envelope[key] for key in ("registry_snapshot_identity", "snapshot_identity", "decision_timestamp", "input_fingerprint", "factor_fingerprint")}}
     features = build_features(visible, FEATURE_CONFIG)
     evaluator = StrategyV21Evaluator(
         str(definition["template"]), parameters, requested, timeframe,
@@ -85,6 +176,10 @@ def evaluate_frozen_candidate(
         result = evaluator.evaluate(visible, features, index)
     action = str(result.get("action") or "WAIT")
     evidence = dict(result.get("evidence") or {})
+    envelope = _execution_envelope(
+            registry, requested=requested, timeframe=timeframe, visible=visible,
+        features=features, decision_timestamp=stamp, snapshot_identity=snapshot_identity,
+    )
     return {
         "runtime_version": RUNTIME_VERSION,
         "action": action if action in {"LONG", "SHORT"} else "WAIT",
@@ -102,6 +197,10 @@ def evaluate_frozen_candidate(
         "parameters": parameters,
         "instrument": requested,
         "timeframe": timeframe,
+        "execution_envelope": envelope,
+        **{key: envelope[key] for key in (
+            "registry_snapshot_identity", "snapshot_identity", "decision_timestamp", "input_fingerprint", "factor_fingerprint"
+        )},
     }
 
 

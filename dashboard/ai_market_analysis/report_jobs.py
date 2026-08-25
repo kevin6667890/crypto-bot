@@ -1,6 +1,6 @@
 """Persistent independent AI report worker with bounded retries and single flight."""
 from __future__ import annotations
-import json, os, threading
+import json, os, threading, uuid
 from decimal import Decimal
 from datetime import datetime, timezone
 from typing import Any, Callable
@@ -82,18 +82,29 @@ class TokenBudget:
 class ReportWorker:
     def __init__(self,repository:ReportRepository,provider_factory:Callable[[dict[str,Any]],AIReportProvider],*,gate:ConcurrencyGate|None=None,budget:TokenBudget|None=None):
         self.repository=repository;self.provider_factory=provider_factory;self.gate=gate or ConcurrencyGate();self.budget=budget or TokenBudget();self.running=False
-    def recover(self)->int:return self.repository.interrupt_running()
+        self.worker_id=f"report-worker-{uuid.uuid4()}"
+        self.lease_seconds=max(300,min(3600,int(os.getenv("AI_REPORT_WORKER_LEASE_SECONDS","1800"))))
+    def recover(self)->int:return self.repository.interrupt_expired_running()
     def run_once(self)->bool:
-        queued=self.repository.queued(1)
-        if not queued:return False
-        request=queued[0]
-        if request["provider"]!="fake" and self.repository.status(request["request_id"])["status"]=="INTERRUPTED":
+        self.recover()
+        request=self.repository.claim_queued(
+            self.worker_id,lease_seconds=self.lease_seconds,
+            global_limit=self.gate.global_limit,
+        )
+        if not request:return False
+        if (request["provider"]!="fake" and
+                self.repository.status(request["request_id"])["status"]=="INTERRUPTED"):
             trip_if_armed("DUPLICATE_PROVIDER_CHARGE",evidence_id=request["request_id"])
             self._record_interrupted_attempt(request)
-            self.repository.event(request["request_id"],"FAILED_FINAL",{"code":INTERRUPTED_LIVE_CALL_CODE});return True
-        if not self.gate.acquire(request["request_id"],request["instrument"]):return False
+            self.repository.event(request["request_id"],"FAILED_FINAL",{"code":INTERRUPTED_LIVE_CALL_CODE})
+            self.repository.release_claim(request["request_id"],self.worker_id)
+            return True
+        if not self.gate.acquire(request["request_id"],request["instrument"]):
+            self.repository.release_claim(request["request_id"],self.worker_id);return False
         try:self._run(request)
-        finally:self.gate.release(request["request_id"],request["instrument"])
+        finally:
+            self.gate.release(request["request_id"],request["instrument"])
+            self.repository.release_claim(request["request_id"],self.worker_id)
         return True
     def _attempt_count(self,request_id:str)->int:
         with self.repository.connect() as c:return int(c.execute("SELECT COUNT(*) FROM ai_report_attempts WHERE request_id=?",(request_id,)).fetchone()[0])
@@ -196,6 +207,8 @@ class ReportWorker:
         def on_transport(event:str)->None:
             if event in ATTEMPT_LIFECYCLE_EVENTS:
                 self.repository.update_attempt(attempt_id,{"lifecycle_state":event})
+                self.repository.renew_claim(request["request_id"],self.worker_id,
+                                            lease_seconds=self.lease_seconds)
         provider_request["on_transport_event"]=on_transport
         try:result=provider.generate(provider_request)
         except ProviderError as error:

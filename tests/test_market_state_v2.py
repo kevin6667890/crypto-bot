@@ -219,6 +219,35 @@ def test_breakout_requires_expansion_and_prior_touch():
     assert result["level_interactions"][0]["current_stage"] == "BOUNDARY_BREACH_OBSERVED"
 
 
+def test_local_breakout_does_not_override_mixed_higher_timeframes_or_weekly_down():
+    value = context({"1W": "down", "1D": "up", "4H": "up", "1H": "up", "15m": "up"})
+    add_level(value, level_type="SWING_HIGH", timeframe="15m")
+    value["price"]["value"] = 102
+    result = ENGINE.evaluate(value)
+    assert result["level_interactions"][0]["current_stage"] == "BREAKOUT_CANDIDATE"
+    assert "15m:BREAKOUT_CANDIDATE" in result["overlays"]
+    assert result["primary_state_code"] != "BREAKOUT_DEVELOPING"
+
+
+def test_local_breakout_can_compose_globally_when_higher_frames_corroborate():
+    value = add_level(context(price=102), level_type="SWING_HIGH", timeframe="15m")
+    result = ENGINE.evaluate(value)
+    assert result["primary_state_code"] == "BREAKOUT_DEVELOPING"
+
+
+@pytest.mark.parametrize("quality", ["PARTIAL", "STALE", "MISSING"])
+def test_degraded_boundary_evidence_cannot_create_global_breakout(quality):
+    value = add_level(context(price=102), level_type="SWING_HIGH", timeframe="4H")
+    frame_quality = value["timeframes"]["4H"]["quality"]
+    frame_quality["status"] = quality
+    frame_quality["partial"] = quality == "PARTIAL"
+    frame_quality["stale"] = quality == "STALE"
+    frame_quality["missing"] = quality == "MISSING"
+    result = ENGINE.evaluate(value)
+    assert result["level_interactions"][0]["current_stage"] == "BOUNDARY_BREACH_OBSERVED"
+    assert result["primary_state_code"] != "BREAKOUT_DEVELOPING"
+
+
 def test_two_confirmed_closes_confirm_breakout():
     previous = add_level(context(price=102), level_type="SWING_HIGH")
     current = advance(previous); current["price"]["value"] = 103

@@ -18,6 +18,7 @@ describe("responsive microstructure information architecture", () => {
     expect(component).toContain('data-testid="all-sources-details"');
     expect(component).toContain('data-testid="funding-validation-details"');
     expect(component).toContain('data-testid="basis-validation-details"');
+    expect(component).toContain('data-testid="storage-diagnostics"');
     expect(component).not.toMatch(/<details[^>]*\sopen(?:=|>)/);
   });
 
@@ -32,6 +33,14 @@ describe("responsive microstructure information architecture", () => {
     expect(component).toContain('type ResearchChart = "funding" | "basis" | "cvd" | "oi"');
     expect(component).toContain("chartData[activeChart]");
     expect(component.match(/<SimpleLineChart/g)).toHaveLength(1);
+    expect(component).toContain("NO_CONFIRMED_DATA");
+  });
+
+  it("keeps product-specific CVD, OI, funding, basis and liquidation health visible", () => {
+    for (const label of ["CVD · SWAP trades", "OI · SWAP", "Funding", "Basis · mark", "Basis · index", "Liquidations"]) {
+      expect(component).toContain(label);
+    }
+    expect(component).toContain("SPOT and SWAP observations are not interchangeable.");
   });
 
   it("prevents page-level horizontal scrolling while keeping wide tables internally scrollable", () => {

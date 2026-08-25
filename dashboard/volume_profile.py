@@ -48,7 +48,12 @@ def calculate_volume_profile(candles: list[dict[str, Any]], bins: int = 48, valu
         for index, volume in enumerate(volumes)
     ]
     return {
-        "available": True, "method": "ohlcv_uniform_range_v1", "lookback_bars": len(rows), "bins": bins,
+        # This is deliberately an approximation: candle volume has no executed
+        # price distribution.  Consumers must not present it as trade VPVR.
+        "available": True, "method": "ohlcv_uniform_range_v1",
+        "method_version": "ohlcv_uniform_range_v1",
+        "price_attribution": "OHLCV_APPROXIMATE", "exact_trade_prices": False,
+        "lookback_bars": len(rows), "bins": bins,
         "poc": price(poc_index), "vah": round(low + (upper + 1) * width, 6), "val": round(low + lower * width, 6),
         "value_area_pct": round(covered / total * 100, 2), "profile_low": round(low, 6), "profile_high": round(high, 6),
         "total_volume": round(total, 6), "start_ts": int(rows[0].get("ts") or 0),
@@ -91,4 +96,7 @@ def calculate_trade_volume_profile(rows: list[dict[str, Any]], bins: int = 80, v
     display = []
     for index, item in enumerate(profile):
         display.append({"price_low": round(low + index * width, 6), "price_high": round(low + (index + 1) * width, 6), "volume": round(volumes[index], 2), "delta": round(item["buy"] - item["sell"], 2), "trades": item["trades"]})
-    return {"available": True, "method": "trade_price_notional_v1", "bins": bins, "poc": round(low + (poc_index + 0.5) * width, 6), "vah": round(low + (upper + 1) * width, 6), "val": round(low + lower * width, 6), "value_area_pct": round(covered / total * 100, 2), "profile_low": round(low, 6), "profile_high": round(high, 6), "total_notional": round(total, 2), "profile": display}
+    return {"available": True, "method": "trade_price_notional_v1",
+            "method_version": "trade_price_notional_v1",
+            "price_attribution": "TRADE_PRICE_EXACT", "exact_trade_prices": True,
+            "bins": bins, "poc": round(low + (poc_index + 0.5) * width, 6), "vah": round(low + (upper + 1) * width, 6), "val": round(low + lower * width, 6), "value_area_pct": round(covered / total * 100, 2), "profile_low": round(low, 6), "profile_high": round(high, 6), "total_notional": round(total, 2), "profile": display}

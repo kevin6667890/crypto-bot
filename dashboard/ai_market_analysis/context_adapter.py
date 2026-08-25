@@ -203,7 +203,15 @@ def _schema_event(event: dict[str, Any], tf_index: int) -> dict[str, Any]:
 def build_market_analysis_context(datasets: dict[str, list[dict[str, Any]]], instrument: str,
                                   decision_time: int, mode: str = "FULL", *,
                                   orderflow: dict[str, Any] | None = None,
-                                  auxiliary: dict[str, Any] | None = None) -> dict[str, Any]:
+                                  auxiliary: dict[str, Any] | None = None,
+                                  canonical_snapshot: dict[str, Any] | None = None) -> dict[str, Any]:
+    if canonical_snapshot is not None:
+        if canonical_snapshot.get("instrument") != instrument:
+            raise ValueError("canonical snapshot instrument mismatch")
+        if int(canonical_snapshot.get("causal_cutoff") or 0) != int(decision_time):
+            raise ValueError("canonical snapshot causal cutoff mismatch")
+        if not canonical_snapshot.get("snapshot_identity"):
+            raise ValueError("canonical snapshot identity missing")
     facts = build_multi_timeframe_facts(datasets, instrument, decision_time)
     structures, timelines, all_swings = [], {}, {}
     for index, timeframe in enumerate(SUPPORTED_TIMEFRAMES):
@@ -233,6 +241,8 @@ def build_market_analysis_context(datasets: dict[str, list[dict[str, Any]]], ins
         "deterministic_intelligence": AI_DETERMINISTIC_INTELLIGENCE_VERSION,
         "context_orderflow_adapter": AI_CONTEXT_ORDERFLOW_ADAPTER_VERSION,
     }
+    if canonical_snapshot is not None:
+        source_versions["canonical_market_snapshot"] = str(canonical_snapshot.get("version"))
     ai3 = build_ai3_facts(facts=facts, timelines=timelines, swings=all_swings, dominant=dominant,
                           instrument=instrument, decision_time=decision_time,
                           orderflow=orderflow, auxiliary=auxiliary)
@@ -244,7 +254,10 @@ def build_market_analysis_context(datasets: dict[str, list[dict[str, Any]]], ins
                       "phase_window_identities": [p["window_fingerprint"] for p in ai3["order_flow_phases"]],
                       "key_level_identities": [l["level_id"] for l in ai3["key_levels"]],
                       "scenario_identities": [s["scenario_id"] for s in ai3["scenario_tree"]["scenarios"]],
-                      "ai3_quality": ai3["quality"]}
+                      "ai3_quality": ai3["quality"],
+                      "canonical_snapshot_identity": (
+                          canonical_snapshot.get("snapshot_identity") if canonical_snapshot else None
+                      )}
     context_id = identity("ctx", identity_input)
     quality_values = set(qualities.values())
     overall = "MISSING" if quality_values == {"MISSING"} else "PARTIAL" if any(
@@ -328,8 +341,21 @@ def build_market_analysis_context(datasets: dict[str, list[dict[str, Any]]], ins
                                 "AI prose generation:NOT_IMPLEMENTED"]),
         "provenance": {"builder": "dashboard.ai_market_analysis.context_adapter",
                        "builder_version": AI_CONTEXT_ORDERFLOW_ADAPTER_VERSION if ai3_requested else AI_CONTEXT_ADAPTER_VERSION,
-                       "input_snapshot_ids": [*[fingerprints[tf] for tf in SUPPORTED_TIMEFRAMES],
+                       "input_snapshot_ids": [*([canonical_snapshot["snapshot_identity"]]
+                                                if canonical_snapshot else []),
+                                              *[fingerprints[tf] for tf in SUPPORTED_TIMEFRAMES],
                                               *[ai3["source_fingerprints"][k] for k in sorted(ai3["source_fingerprints"])]],
                        "causal_cutoff": iso(decision_time), "content_hash": stable_hash(identity_input)},
     }
+    if canonical_snapshot is not None:
+        context["canonical_market_snapshot"] = {
+            "version": canonical_snapshot["version"],
+            "snapshot_identity": canonical_snapshot["snapshot_identity"],
+            "instrument": canonical_snapshot["instrument"],
+            "as_of": canonical_snapshot["as_of"],
+            "causal_cutoff": canonical_snapshot["causal_cutoff"],
+            "quality": canonical_snapshot.get("quality", {}),
+            "fact_count": len(canonical_snapshot.get("facts", [])),
+            "provenance": "CanonicalMarketSnapshot immutable factual input",
+        }
     return context

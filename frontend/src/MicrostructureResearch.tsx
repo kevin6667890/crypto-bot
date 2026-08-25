@@ -175,7 +175,9 @@ function SimpleLineChart({ data, title }: { data: ChartPoint[]; title: string })
   return (
     <div className="micro-chart-panel">
       <div className="micro-chart-title">{title}</div>
-      <div className="micro-chart-canvas" ref={containerRef} />
+      <div className="micro-chart-canvas" ref={containerRef}>
+        {!data.length && <div className="micro-chart-empty" data-state="NO_CONFIRMED_DATA">NO_CONFIRMED_DATA · No confirmed observations for this series.</div>}
+      </div>
     </div>
   );
 }
@@ -372,10 +374,15 @@ export default function MicrostructureResearch() {
   const basisValidation = validation?.studies?.basis?.instruments?.["BTC-USDT-SWAP"];
   const fundingHeadline = validationHeadline(fundingValidation);
   const basisHeadline = validationHeadline(basisValidation);
+  const sourceLabel: Record<CoverageSource, string> = {
+    trades: "CVD · SWAP trades", oi: "OI · SWAP", funding_settled: "Settled funding",
+    funding_predicted: "Funding", mark: "Basis · mark", index: "Basis · index", liquidations: "Liquidations",
+  };
 
   return (
     <div className="microstructure-workspace" id="microstructure">
       <div className="micro-disclaimer">{t("micro.disclaimer")}</div>
+      <div className="micro-provenance"><span className="eyebrow">{language === "zh" ? "派生证据 · 高级微观结构" : "DERIVED EVIDENCE · ADVANCED MICROSTRUCTURE"}</span><p>{language === "zh" ? "按产品显示来源覆盖与质量；SPOT 和 SWAP 观测不可互换。" : "Product-specific evidence is shown with its source coverage and quality. SPOT and SWAP observations are not interchangeable."}</p></div>
       <div className="micro-resource-states" aria-live="polite">
         {([
           ["Health", healthResource],
@@ -399,19 +406,24 @@ export default function MicrostructureResearch() {
         </div>
         <div className="micro-metrics">
           <article><span>{t("micro.serviceStatus")}</span><strong>{health?.service_status || "--"}</strong></article>
-          <article><span>{t("micro.databaseSize")}</span><strong>{health ? formatBytes(health.database_size_bytes) : "--"}</strong></article>
-          <article><span>{t("micro.rawRows")}</span><strong>{health?.raw_rows?.toLocaleString() ?? "--"}</strong></article>
-          <article><span>{t("micro.aggregateRows")}</span><strong>{health?.aggregate_rows?.toLocaleString() ?? "--"}</strong></article>
           <article className={(health?.gap_summary?.critical_live_gaps?.length || 0) > 0 ? "critical" : ""}>
             <span>{copy.critical}</span><strong>{health?.gap_summary?.critical_live_gaps?.length ?? "--"}</strong>
           </article>
           <article><span>{t("micro.sampleStatus")}</span><strong>{health?.sample_status || "--"}</strong></article>
         </div>
-        <div className="micro-gap-categories">
-          {gapSummary.map(([label, count, kind]) => (
-            <div className={kind} key={kind}><span>{label}</span><strong>{count}</strong></div>
-          ))}
-        </div>
+        <details className="micro-details storage-diagnostics" data-testid="storage-diagnostics">
+          <summary>Storage & historical diagnostics</summary>
+          <div className="micro-metrics micro-storage-metrics">
+            <article><span>{t("micro.databaseSize")}</span><strong>{health ? formatBytes(health.database_size_bytes) : "--"}</strong></article>
+            <article><span>{t("micro.rawRows")}</span><strong>{health?.raw_rows?.toLocaleString() ?? "--"}</strong></article>
+            <article><span>{t("micro.aggregateRows")}</span><strong>{health?.aggregate_rows?.toLocaleString() ?? "--"}</strong></article>
+          </div>
+          <div className="micro-gap-categories">
+            {gapSummary.map(([label, count, kind]) => (
+              <div className={kind} key={kind}><span>{label}</span><strong>{count}</strong></div>
+            ))}
+          </div>
+        </details>
         {!!health?.collector_warnings?.length && (
           <details className="micro-details">
             <summary>{copy.warnings} <span>{health.collector_warnings.length}</span></summary>
@@ -447,7 +459,7 @@ export default function MicrostructureResearch() {
               : lag === undefined ? "--" : lag <= 60_000 ? "LIVE" : `${Math.round(lag / 1000)}s`;
             return (
               <article key={source}>
-                <div><strong>{source.replace("funding_predicted", "predicted funding")}</strong><StatusPill value={state} className={statusClass(state)} /></div>
+                <div><strong>{sourceLabel[source]}</strong><StatusPill value={state} className={statusClass(state)} /></div>
                 <span>{item ? `${item.rows.toLocaleString()} ${copy.rows.toLowerCase()}` : "--"}</span>
                 <small>{copy.latest}: {formatTime(item?.latest_ms)}</small>
               </article>

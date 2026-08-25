@@ -37,6 +37,9 @@ services:
     command: python -m dashboard.paper_api
     environment:
       PAPER_API_HOST: 0.0.0.0
+      LIVE_TRADING_ENABLED: "false"
+      AI_REPORT_SCHEDULER_CADENCE_SECONDS: "14400"
+      AI_REPORT_SCHEDULER_CONFIRMATION_GRACE_SECONDS: "120"
       GIT_COMMIT: ${GIT_COMMIT:-unknown}
       MICROSTRUCTURE_DB_PATH: /app/data_cache/market_microstructure.db
       CANONICAL_MICROSTRUCTURE_HISTORY_DB_PATH: /app/data_cache/canonical_microstructure_history_v1.db
@@ -61,6 +64,7 @@ services:
     environment:
       PAPER_DB_PATH: /app/data_cache/paper_trades.db
       RESEARCH_JOB_WORKER_ENABLED: "true"
+      LIVE_TRADING_ENABLED: "false"
       AUTO_RESEARCH_ENABLED: ${AUTO_RESEARCH_ENABLED:-false}
       AUTO_RESEARCH_INTERVAL_HOURS: ${AUTO_RESEARCH_INTERVAL_HOURS:-24}
       AUTO_RESEARCH_LOOKBACK_DAYS: ${AUTO_RESEARCH_LOOKBACK_DAYS:-730}

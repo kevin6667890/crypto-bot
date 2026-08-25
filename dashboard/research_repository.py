@@ -343,6 +343,82 @@ class ResearchRepository:
         if column not in {row[1] for row in connection.execute(f"PRAGMA table_info({table})")}:
             connection.execute(f"ALTER TABLE {table} ADD COLUMN {column} {declaration}")
 
+    DISCOVERY_REJECTION_DESCRIPTIONS = {
+        "INSUFFICIENT_FOLDS_WITH_TRADES": "Too few Development folds produced trades.",
+        "INSUFFICIENT_TOTAL_TRADES": "The total Development trade count was below the minimum.",
+        "INSUFFICIENT_MEDIAN_TRADES": "The median trades per Development fold was below the minimum.",
+        "INSUFFICIENT_PROFITABLE_FOLDS": "Too few Development folds had a positive return.",
+        "INSUFFICIENT_BENCHMARK_BEATING_FOLDS": "Too few Development folds beat the benchmark.",
+        "NONPOSITIVE_MEDIAN_EXCESS_RETURN": "Median excess return relative to the benchmark was not positive.",
+        "WORST_FOLD_RETURN_TOO_LOW": "The worst Development-fold return was below the allowed limit.",
+        "WORST_EXCESS_RETURN_TOO_LOW": "The worst Development-fold excess return was below the allowed limit.",
+        "MAXIMUM_DRAWDOWN_TOO_HIGH": "The worst Development-fold drawdown exceeded the allowed limit.",
+    }
+
+    @staticmethod
+    def _diagnostic_json(value: Any, fallback: Any) -> Any:
+        try:
+            return json.loads(value) if value else fallback
+        except (TypeError, json.JSONDecodeError):
+            return fallback
+
+    def automatic_research_diagnostics(self, cycle_id: int, *, page: int = 1, page_size: int = 25,
+                                       reason: str | None = None, eligibility: str | None = None,
+                                       search: str | None = None) -> dict[str, Any] | None:
+        page, page_size = max(1, page), min(max(1, page_size), 100)
+        with self.connect() as connection:
+            cycle = connection.execute("SELECT discovery_run_id FROM automatic_research_cycles WHERE id=?", (cycle_id,)).fetchone()
+            if not cycle:
+                return None
+            if not cycle["discovery_run_id"]:
+                return {"cycle_id": cycle_id, "diagnostics_available": False}
+            rows = [dict(row) for row in connection.execute(
+                "SELECT id,candidate_number,template,program_version,candidate_identity,parameter_hash,parameters,direction,complexity,eligibility_status,development_score,elimination_reasons,aggregate_metrics FROM strategy_discovery_candidates WHERE discovery_run_id=? ORDER BY candidate_number",
+                (cycle["discovery_run_id"],),
+            )]
+        if not rows or not any(row.get("eligibility_status") for row in rows):
+            return {"cycle_id": cycle_id, "diagnostics_available": False}
+        prepared, counts = [], {}
+        for row in rows:
+            reasons = self._diagnostic_json(row["elimination_reasons"], [])
+            reasons = reasons if isinstance(reasons, list) else []
+            aggregate = self._diagnostic_json(row["aggregate_metrics"], {})
+            parameters = self._diagnostic_json(row["parameters"], {})
+            prepared.append({**row, "reasons": reasons, "aggregate": aggregate if isinstance(aggregate, dict) else {}, "params": parameters if isinstance(parameters, dict) else {}})
+            for code in reasons:
+                counts[code] = counts.get(code, 0) + 1
+        total = len(rows)
+        eligible_count = sum(row["eligibility_status"] == "ELIGIBLE" for row in rows)
+        filtered = [row for row in prepared if (not reason or reason in row["reasons"]) and (not eligibility or row["eligibility_status"] == eligibility) and (not search or search.lower() in f"{row['id']} {row['candidate_number']} {row['template']} {row.get('candidate_identity') or row['parameter_hash']}".lower())]
+        filtered.sort(key=lambda row: (row["development_score"] is None, -(row["development_score"] or 0), row["candidate_number"]))
+        start = (page - 1) * page_size
+        items = [{"candidate_id": row["id"], "candidate_number": row["candidate_number"], "candidate_identity": row.get("candidate_identity") or row["aggregate"].get("candidate_config_hash") or row["parameter_hash"], "program_id": row["parameter_hash"], "strategy_type": row["template"], "description": row["template"].replace("_", " ").title(), "direction": row.get("direction") or "BOTH", "complexity": row["complexity"], "development_score": row["development_score"], "eligibility_status": row["eligibility_status"], "rejection_reasons": row["reasons"]} for row in filtered[start:start + page_size]]
+        summary = [{"code": code, "count": count, "percentage": round(100 * count / total, 1), "description": self.DISCOVERY_REJECTION_DESCRIPTIONS.get(code, "Development eligibility condition was not met.")} for code, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))]
+        return {"cycle_id": cycle_id, "diagnostics_available": True, "cycle_summary": {"total_candidates": total, "eligible_candidates": eligible_count, "rejected_candidates": total - eligible_count}, "rejection_summary": summary, "items": items, "page": page, "page_size": page_size, "total_items": len(filtered)}
+
+    def automatic_research_candidate_diagnostics(self, candidate_id: int) -> dict[str, Any] | None:
+        with self.connect() as connection:
+            row = connection.execute("SELECT * FROM strategy_discovery_candidates WHERE id=?", (candidate_id,)).fetchone()
+            if not row:
+                return None
+            folds = [dict(item) for item in connection.execute("SELECT * FROM strategy_discovery_folds WHERE candidate_id=? ORDER BY fold_number", (candidate_id,))]
+        candidate = dict(row)
+        aggregate = self._diagnostic_json(candidate.get("aggregate_metrics"), {})
+        reasons = self._diagnostic_json(candidate.get("elimination_reasons"), [])
+        specs = {"INSUFFICIENT_FOLDS_WITH_TRADES": ("folds_with_trades", ">= 4"), "INSUFFICIENT_TOTAL_TRADES": ("total_trades", ">= 40"), "INSUFFICIENT_MEDIAN_TRADES": ("median_trades_per_fold", ">= 8"), "NONPOSITIVE_MEDIAN_EXCESS_RETURN": ("median_excess_return", "> 0%"), "WORST_FOLD_RETURN_TOO_LOW": ("worst_validation_return", ">= -10%"), "WORST_EXCESS_RETURN_TOO_LOW": ("worst_excess_return", ">= -10%"), "MAXIMUM_DRAWDOWN_TOO_HIGH": ("worst_maximum_drawdown", "<= 20%")}
+        gates = []
+        for code in reasons if isinstance(reasons, list) else []:
+            metric, required = specs.get(code, (None, None)); observed = aggregate.get(metric) if metric else None
+            if code in {"INSUFFICIENT_PROFITABLE_FOLDS", "INSUFFICIENT_BENCHMARK_BEATING_FOLDS"}:
+                metric = "profitable_fold_count" if code == "INSUFFICIENT_PROFITABLE_FOLDS" else "benchmark_beating_fold_count"
+                observed = f"{aggregate.get(metric, '—')}/{aggregate.get('completed_fold_count', '—')}"; required = ">= 3/5"
+            gates.append({"code": code, "description": self.DISCOVERY_REJECTION_DESCRIPTIONS.get(code, "Development eligibility condition was not met."), "metric": metric, "observed": observed, "required": required})
+        fold_items = []
+        for fold in folds:
+            metrics, benchmark = self._diagnostic_json(fold["metrics"], {}), self._diagnostic_json(fold["buy_hold_metrics"], {})
+            fold_items.append({"fold": fold["fold_number"], "status": fold["status"], "trades": metrics.get("total_trades"), "return": metrics.get("total_return"), "benchmark": benchmark.get("total_return"), "excess": benchmark.get("strategy_minus_benchmark_return"), "max_drawdown": metrics.get("maximum_drawdown"), "eligibility_notes": fold.get("error")})
+        return {"candidate_id": candidate_id, "candidate_identity": candidate.get("candidate_identity") or aggregate.get("candidate_config_hash") or candidate.get("parameter_hash"), "strategy_type": candidate.get("template"), "direction": candidate.get("direction") or "BOTH", "complexity": candidate.get("complexity"), "development_score": candidate.get("development_score"), "eligibility_status": candidate.get("eligibility_status"), "rejection_reasons": reasons, "failed_gates": gates, "aggregate_metrics": aggregate, "parameters": self._diagnostic_json(candidate.get("parameters"), {}), "program_ast": self._diagnostic_json(candidate.get("program_ast"), None), "folds": fold_items}
+
     @staticmethod
     def fingerprint(payload: dict[str, Any]) -> str:
         return hashlib.sha256(json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()).hexdigest()

@@ -38,7 +38,7 @@ export function parseThesis(input: { text: string; language?: "en" | "zh"; reque
 }
 
 export function testThesis(spec: ThesisSpecV1, signal?: AbortSignal) {
-  return request<ThesisTestResult>("/api/research/thesis/test", { method: "POST", signal, body: JSON.stringify(spec) }, 12_000);
+  return request<ThesisTestResult>("/api/research/thesis/test", { method: "POST", signal, body: JSON.stringify(spec) }, 45_000);
 }
 
 export function fetchThesisEventContext(result: ThesisTestResult, event: ThesisEventRecord, signal?: AbortSignal) {

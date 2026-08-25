@@ -3,7 +3,7 @@ import ReactDOM from "react-dom/client";
 import { LanguageProvider } from "./i18n";
 import "./styles.css";
 
-const App = lazy(() => import("./App"));
+const App = lazy(() => import("./ProductApp"));
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>

@@ -29,6 +29,7 @@ const copy = {
     evidenceDetails: "Evidence details", resultId: "Result ID", definitionHash: "Definition hash", dataset: "Dataset", engine: "Engine",
     coveragePolicy: "Coverage policy", independencePolicy: "Event independence policy", featureVersions: "Feature versions",
     sourceVersion: "Source version", selectionPolicy: "Data selection policy",
+    track: "Track this thesis", tracking: "Starting tracking…", trackingStarted: "Tracking started", viewTracking: "View tracking", trackError: "Tracking could not be started.",
   },
   zh: {
     title: "测试一个想法", subtitle: "把市场假设转化为可复现的历史检验。",
@@ -58,6 +59,7 @@ const copy = {
     evidenceDetails: "证据详情", resultId: "结果 ID", definitionHash: "定义哈希", dataset: "数据集", engine: "引擎",
     coveragePolicy: "覆盖策略", independencePolicy: "事件独立策略", featureVersions: "特征版本",
     sourceVersion: "数据源版本", selectionPolicy: "数据选择策略",
+    track: "跟踪这个想法", tracking: "正在开始跟踪…", trackingStarted: "已开始跟踪", viewTracking: "查看跟踪", trackError: "无法开始跟踪。",
   },
 } as const;
 

@@ -3,12 +3,14 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 const app = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
+const productApp = readFileSync(new URL("./ProductApp.tsx", import.meta.url), "utf8");
 const main = readFileSync(new URL("./main.tsx", import.meta.url), "utf8");
 const vite = readFileSync(new URL("../vite.config.ts", import.meta.url), "utf8");
 
 describe("route splitting", () => {
   it("lazy loads the initial market application with a loading boundary", () => {
-    expect(main).toContain('lazy(() => import("./App"))');
+    expect(main).toContain('lazy(() => import("./ProductApp"))');
+    expect(productApp).toContain('lazy(() => import("./App"))');
     expect(main).toContain("LOADING · Market Analysis");
   });
 

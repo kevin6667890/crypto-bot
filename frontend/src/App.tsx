@@ -893,6 +893,7 @@ function Workspace() {
           <strong>Crypto-Bot</strong>
           <span>{t("app.workspace")}</span>
           <div className="page-switch">
+            <button onClick={() => window.location.assign("/")}>{language === "zh" ? "首页" : "Home"}</button>
             <button className="test-idea-nav" onClick={() => window.location.assign("/test-an-idea")}>
               {language === "zh" ? "测试一个想法" : "Test an idea"}
             </button>

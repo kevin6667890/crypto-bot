@@ -118,4 +118,14 @@ describe("test-an-idea deterministic UI state", () => {
     expect(source).toContain("explanation.status === \"FALLBACK\"");
     expect(source).not.toMatch(/useEffect\([\s\S]{0,400}testThesis\(/);
   });
+
+  it("tracks only a server-validated result and never submits client historical metrics", () => {
+    const source = readFileSync(new URL("./TestAnIdeaPage.tsx", import.meta.url), "utf8");
+    expect(source).toContain('result.status !== "COMPLETED"');
+    expect(source).toContain("!result.coverage.testable");
+    expect(source).toContain("trackPendingRef.current");
+    expect(source).toContain("result_hash: result.result_hash");
+    expect(source).toContain("thesis_spec: result.thesis_spec");
+    expect(source).not.toMatch(/createTrackedThesis\([^)]*(independent_event_count|aggregates|sample_quality)/s);
+  });
 });

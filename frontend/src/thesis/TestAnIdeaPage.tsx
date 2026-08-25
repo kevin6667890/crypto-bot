@@ -1,6 +1,8 @@
-import { ArrowLeft, BrainCircuit, CheckCircle2, FlaskConical, Plus, ShieldAlert, Trash2 } from "lucide-react";
+import { BrainCircuit, CheckCircle2, FlaskConical, Plus, ShieldAlert, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useLanguage } from "../i18n";
+import { createTrackedThesis } from "../tracking/api";
+import type { TrackMutation } from "../tracking/types";
 import { explainThesis, fetchThesisCapabilities, fetchThesisEventContext, parseThesis, testThesis } from "./api";
 import EvidenceCandlestickChart from "./EvidenceCandlestickChart";
 import { thesisText } from "./i18n";
@@ -45,7 +47,7 @@ function definitionFromParse(value: ThesisParseResult): EditableDefinition {
 }
 
 export default function TestAnIdeaPage() {
-  const { language, setLanguage } = useLanguage();
+  const { language } = useLanguage();
   const labels = thesisText(language);
   const [capabilities, setCapabilities] = useState<ThesisCapabilities | null>(null);
   const [capabilityError, setCapabilityError] = useState(false);
@@ -66,6 +68,10 @@ export default function TestAnIdeaPage() {
   const [explanation, setExplanation] = useState<EvidenceExplanation | null>(null);
   const [explanationLoading, setExplanationLoading] = useState(false);
   const explanationSequence = useRef(0);
+  const [tracked, setTracked] = useState<TrackMutation | null>(null);
+  const [trackError, setTrackError] = useState(false);
+  const [trackPending, setTrackPending] = useState(false);
+  const trackPendingRef = useRef(false);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -97,7 +103,7 @@ export default function TestAnIdeaPage() {
   async function interpret() {
     if (!text.trim() || phase !== "idle") return;
     const current = ++sequence.current;
-    setPhase("parsing"); setError(""); setResult(null); setRemoved(false); setManual(false);
+    setPhase("parsing"); setError(""); setResult(null); setTracked(null); setTrackError(false); setRemoved(false); setManual(false);
     const controller = new AbortController();
     try {
       const parsed = await parseThesis({ text: text.trim(), language }, controller.signal);
@@ -114,7 +120,7 @@ export default function TestAnIdeaPage() {
   }
 
   function startManual() {
-    setManual(true); setParseResult(null); setResult(null); setError("");
+    setManual(true); setParseResult(null); setResult(null); setTracked(null); setTrackError(false); setError("");
     setDefinition((current) => ({ ...current,
       instrument: current.instrument || capabilities?.instruments[0] || "",
       timeframe: current.timeframe || capabilities?.timeframes[0] || "",
@@ -139,7 +145,7 @@ export default function TestAnIdeaPage() {
     if (!capabilities || !runnable) return;
     eventContextController.current?.abort();
     setSelectedEvent(null); setEventContext(null); setEventContextState("idle");
-    setPhase("testing"); setError(""); setResult(null);
+    setPhase("testing"); setError(""); setResult(null); setTracked(null); setTrackError(false);
     try {
       const submitted = executableSpec(definition, capabilities);
       const tested = await testThesis(submitted);
@@ -171,19 +177,20 @@ export default function TestAnIdeaPage() {
     }
   }
 
+  async function trackThesis() {
+    if (!result || result.status !== "COMPLETED" || !result.coverage.testable || trackPendingRef.current) return;
+    trackPendingRef.current = true; setTrackPending(true); setTrackError(false);
+    try {
+      setTracked(await createTrackedThesis({ result_hash: result.result_hash, thesis_spec: result.thesis_spec,
+        language, ...(text.trim() ? { original_text: text.trim() } : {}) }));
+    } catch { setTrackError(true); }
+    finally { trackPendingRef.current = false; setTrackPending(false); }
+  }
+
   const topQuality = result?.aggregates["24H"]?.sample_quality || result && Object.values(result.aggregates)[0]?.sample_quality;
   const recentEvents = result?.event_records.slice(-20).reverse() || [];
 
   return <main className="thesis-page">
-    <header className="thesis-topbar">
-      <a href="/#workspace"><ArrowLeft size={16} /> {labels.back}</a>
-      <strong>Crypto-Bot</strong>
-      <div className="language-switch" role="group" aria-label={language === "zh" ? "语言" : "Language"}>
-        <button className={language === "en" ? "active" : ""} onClick={() => setLanguage("en")}>EN</button>
-        <button className={language === "zh" ? "active" : ""} onClick={() => setLanguage("zh")}>中文</button>
-      </div>
-    </header>
-
     <section className="thesis-hero">
       <div className="thesis-eyebrow"><FlaskConical size={15} /> AI interprets. The deterministic engine measures.</div>
       <h1>{labels.title}</h1><p>{labels.subtitle}</p>
@@ -262,6 +269,11 @@ export default function TestAnIdeaPage() {
         {!result.coverage.testable && <div className="thesis-alert error" role="alert">{labels.notTestable}{result.coverage.reason ? ` ${result.coverage.reason}` : ""}</div>}
         {result.independent_event_count === 0 && result.status === "COMPLETED" && <div className="thesis-alert warning">{labels.noMatches}</div>}
         {topQuality && <div className="thesis-sample-note"><strong>{topQuality}</strong> · {sampleExplanation(topQuality, language)}</div>}
+        <div className="thesis-track-action">
+          <button className="primary-btn" disabled={trackPending || !!tracked || result.status !== "COMPLETED" || !result.coverage.testable} onClick={trackThesis}>{trackPending ? labels.tracking : tracked ? labels.trackingStarted : labels.track}</button>
+          {tracked && <a href={`/tracking/${encodeURIComponent(tracked.track.track_id)}`}>{labels.viewTracking}</a>}
+          {trackError && <span role="alert">{labels.trackError}</span>}
+        </div>
       </div>
 
       <section className="thesis-card"><h2>{labels.evidence}</h2><div className="thesis-table-scroll"><table className="thesis-table"><thead><tr>

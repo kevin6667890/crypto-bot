@@ -7,8 +7,8 @@ import pytest
 from dashboard.ai_market_analysis.report_provider import ProviderError
 from dashboard.thesis_event_engine import FEATURE_REGISTRY, thesis_capabilities
 from dashboard.thesis_parser import (
-    ThesisParseContractError, ThesisParseRequestV1, ThesisParserServiceV1,
-    validate_provider_output,
+    DeepSeekResponsesThesisParserProvider, ThesisParseContractError,
+    ThesisParseRequestV1, ThesisParserServiceV1, _prompt, validate_provider_output,
 )
 
 
@@ -46,6 +46,77 @@ def clause(source="volume ratio >= 1.2", feature="VOLUME_RATIO", operator="gte",
 
 def parse(text, provider_output):
     return ThesisParserServiceV1(Provider([provider_output])).parse({"text": text})
+
+
+class HttpResponse:
+    status = 200
+
+    def __init__(self, payload):
+        self.payload = json.dumps(payload).encode()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_args):
+        return False
+
+    def read(self, _limit):
+        return self.payload
+
+
+def test_responses_provider_uses_json_schema_and_extracts_only_output_text(monkeypatch):
+    request = ThesisParseRequestV1.from_dict({
+        "text": "BTC 4H volume ratio >= 1.2 and price above MA200", "language": "en"})
+    parsed = output(clauses=[
+        clause(), clause("price above MA200", "PRICE_ABOVE_MA200", "eq", True, False)])
+    response = {"id": "response-1", "model": "deepseek-v4-flash", "status": "completed",
+                "usage": {"input_tokens": 100, "output_tokens": 40},
+                "output": [{"type": "message", "content": [
+                    {"type": "output_text", "text": json.dumps(parsed)}]}]}
+    sent = {}
+
+    def fake_urlopen(http_request, timeout):
+        sent["url"], sent["timeout"] = http_request.full_url, timeout
+        sent["body"] = json.loads(http_request.data)
+        return HttpResponse(response)
+
+    monkeypatch.setattr("dashboard.thesis_parser.urlopen", fake_urlopen)
+    provider = DeepSeekResponsesThesisParserProvider(
+        model="deepseek-v4-flash", timeout=9, api_key="configured-test-key")
+    result = provider.generate(_prompt(request))
+
+    assert json.loads(result.raw_text) == parsed
+    assert result.model == "deepseek-v4-flash"
+    assert sent["url"] == "https://api.deepseek.com/responses"
+    assert sent["timeout"] == 9
+    assert sent["body"]["reasoning"] == {"effort": "none"}
+    assert sent["body"]["text"]["format"]["type"] == "json_schema"
+    assert sent["body"]["text"]["format"]["schema"]["additionalProperties"] is False
+
+
+def test_responses_prompt_separates_schema_from_untrusted_input():
+    prompt = _prompt(ThesisParseRequestV1.from_dict({"text": "BTC 4H RSI > 70"}))
+    user_data = json.loads(prompt["messages"][1]["content"])
+    assert "contract" not in user_data
+    assert user_data["untrusted_text"] == "BTC 4H RSI > 70"
+    assert set(prompt["response_schema"]["required"]) == {
+        "detected_language", "instrument", "timeframe", "forward_horizons",
+        "recognized_clauses", "unsupported_clauses", "warnings",
+    }
+
+
+def test_responses_provider_rejects_completed_response_without_output_text(monkeypatch):
+    monkeypatch.setattr("dashboard.thesis_parser.urlopen", lambda *_args, **_kwargs: HttpResponse({
+        "id": "response-1", "model": "deepseek-v4-flash", "status": "completed", "output": []}))
+    provider = DeepSeekResponsesThesisParserProvider(
+        model="deepseek-v4-flash", timeout=9, api_key="configured-test-key")
+    with pytest.raises(ProviderError, match="INVALID_PROVIDER_RESPONSE"):
+        provider.generate(_prompt(ThesisParseRequestV1.from_dict({"text": "BTC 4H RSI > 70"})))
+
+
+def test_responses_provider_rejects_non_flash_model():
+    with pytest.raises(ValueError, match="UNAPPROVED_THESIS_RESPONSES_MODEL"):
+        DeepSeekResponsesThesisParserProvider(model="deepseek-v4-pro", timeout=9, api_key="test")
 
 
 def test_parse_valid_english_explicit_threshold_and_boolean():

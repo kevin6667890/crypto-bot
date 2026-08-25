@@ -75,8 +75,8 @@ def test_full_pagination_is_canonical_and_explicitly_ordered():
     result = PolymarketClient(session=session).fetch_active_markets(page_size=2)
     assert [market["id"] for market in result] == ["10", "20", "3"]
     assert [call.get("after_cursor") for call in session.calls] == [None, "cursor-1"]
-    assert all(call["order"] == "id" and call["ascending"] == "true" for call in session.calls)
-    assert GAMMA_PAGINATION_POLICY_VERSION == "gamma-keyset-after-cursor-id-ascending-v1"
+    assert all(call["order"] == "endDate,id" and call["ascending"] == "true" for call in session.calls)
+    assert GAMMA_PAGINATION_POLICY_VERSION == "gamma-keyset-after-cursor-enddate-id-ascending-v2"
 
 
 def test_production_pagination_paces_only_between_pages(monkeypatch):

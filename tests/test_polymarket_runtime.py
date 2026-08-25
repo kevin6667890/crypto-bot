@@ -49,7 +49,7 @@ def test_formal_two_stage_pipeline_fetches_clob_only_after_prefilter(tmp_path):
     assert client.book_calls == ["yes-1", "no-1"]
     with repo.connect() as connection:
         universe = connection.execute("SELECT market_count,pagination_policy_version FROM universe_snapshots WHERE universe_snapshot_id=?", (universe_id,)).fetchone()
-        assert tuple(universe) == (2, "gamma-keyset-after-cursor-id-ascending-v1")
+        assert tuple(universe) == (2, "gamma-keyset-after-cursor-enddate-id-ascending-v2")
         assert connection.execute("SELECT COUNT(*) FROM market_snapshots").fetchone()[0] == 2
 
 

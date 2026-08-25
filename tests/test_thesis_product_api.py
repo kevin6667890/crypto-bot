@@ -83,7 +83,7 @@ def test_list_detail_and_changes_are_repository_reads(monkeypatch: pytest.Monkey
         "changes": lambda self, since_epoch, limit: [{"track": {"track_id": "a"}}],
     })()
     monkeypatch.setattr(paper_api, "THESIS_TRACKING_REPOSITORY_V1", repository)
-    monkeypatch.setattr(paper_api, "recent_market_state_changes", lambda: [])
+    monkeypatch.setattr(paper_api, "recent_market_state_changes", lambda **_kwargs: [])
     instance, sent = get_handler("/api/research/thesis/tracks")
     instance.do_GET()
     assert sent[0][0]["tracks"][0]["track"]["track_id"] == "a"
@@ -141,3 +141,45 @@ def test_historical_block_is_503_but_current_track_refresh_remains_available(
     instance, sent = post_handler("/api/research/thesis/tracks/saved/evaluate", {})
     instance.do_POST()
     assert sent == [({"track_id": "saved", "outcome": "NO_CHANGE"}, HTTPStatus.OK)]
+
+
+def test_production_container_defaults_historical_evidence_to_fail_closed() -> None:
+    compose = (paper_api.ROOT / "docker-compose.yml").read_text(encoding="utf-8")
+    example = (paper_api.ROOT / ".env.example").read_text(encoding="utf-8")
+    assert "THESIS_HISTORICAL_REQUIRE_IMMUTABLE: ${THESIS_HISTORICAL_REQUIRE_IMMUTABLE:-true}" in compose
+    assert "THESIS_HISTORICAL_REQUIRE_IMMUTABLE=true" in example
+
+
+def test_market_state_changes_use_only_recent_confirmed_live_candles(
+        monkeypatch: pytest.MonkeyPatch) -> None:
+    now, width = 1_800_000_000, 14_400
+    rows = [
+        {"ts": now - width * 2, "candle_close_ts": now - width,
+         "confirmed": True, "_source_store": "market_candles"},
+        {"ts": now - width, "candle_close_ts": now,
+         "confirmed": True, "_source_store": "market_candles"},
+        {"ts": now, "candle_close_ts": now + width,
+         "confirmed": True, "_source_store": "market_candles"},
+    ]
+    reader = type("Reader", (), {"candles": lambda *_args: rows})()
+    calls: list[int] = []
+    context = type("Context", (), {"context": lambda _self, _instrument, **kwargs:
+                    calls.append(kwargs["as_of"]) or {"as_of": kwargs["as_of"]}})()
+    engine = type("Engine", (), {"compare": lambda _self, _previous, current: {
+        "transitions": [{"transition_timestamp": current["as_of"]}]}})()
+    monkeypatch.setattr(paper_api.time, "time", lambda: now)
+    monkeypatch.setattr(paper_api, "MARKET_DATA_READER_V2", reader)
+    monkeypatch.setattr(paper_api, "MARKET_CONTEXT_V2", context)
+    monkeypatch.setattr(paper_api, "MARKET_STATE_ENGINE_V2", engine)
+    changes = paper_api.recent_market_state_changes(hours=24)
+    assert calls == [now - width, now]
+    assert changes[0]["current_as_of"] == now
+
+    rows[-2]["_source_store"] = "historical_candles"
+    assert paper_api.recent_market_state_changes(hours=24) == []
+
+    rows[-2].update({"_source_store": "market_candles", "ts": now - width * 20,
+                     "candle_close_ts": now - width * 19})
+    rows[-3].update({"ts": now - width * 21, "candle_close_ts": now - width * 20})
+    rows.pop()
+    assert paper_api.recent_market_state_changes(hours=24) == []

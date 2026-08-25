@@ -41,6 +41,7 @@ services:
       MICROSTRUCTURE_DB_PATH: /app/data_cache/market_microstructure.db
       CANONICAL_MICROSTRUCTURE_HISTORY_DB_PATH: /app/data_cache/canonical_microstructure_history_v1.db
       THESIS_TRACKING_DB_PATH: /app/data_cache/thesis_tracking.db
+      THESIS_HISTORICAL_REQUIRE_IMMUTABLE: ${THESIS_HISTORICAL_REQUIRE_IMMUTABLE:-true}
       RESEARCH_JOB_WORKER_ENABLED: "false"
     volumes:
       - ./data_cache:/app/data_cache

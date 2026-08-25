@@ -55,7 +55,8 @@ try:
         write_compact_snapshot,
     )
     from storage_guard import storage_operations_summary
-    from market_context_v2 import BoundedMarketDataReaderV2, MarketContextServiceV2
+    from market_context_v2 import (TIMEFRAME_SECONDS, BoundedMarketDataReaderV2,
+        MarketContextServiceV2, confirmed_candles_as_of)
     from market_state_v2 import MarketStateEngineV2
     from thesis_event_engine import ThesisTestServiceV1, ThesisValidationError, thesis_capabilities
     from thesis_historical_data import HistoricalDataSelectionPolicyV1, HistoricalStoreV1
@@ -105,7 +106,8 @@ except ImportError:
         write_compact_snapshot,
     )
     from .storage_guard import storage_operations_summary
-    from .market_context_v2 import BoundedMarketDataReaderV2, MarketContextServiceV2
+    from .market_context_v2 import (TIMEFRAME_SECONDS, BoundedMarketDataReaderV2,
+        MarketContextServiceV2, confirmed_candles_as_of)
     from .market_state_v2 import MarketStateEngineV2
     from .thesis_event_engine import ThesisTestServiceV1, ThesisValidationError, thesis_capabilities
     from .thesis_historical_data import HistoricalDataSelectionPolicyV1, HistoricalStoreV1
@@ -1402,14 +1404,22 @@ def thesis_product_readiness() -> dict[str, Any]:
     }
 
 
-def recent_market_state_changes() -> list[dict[str, Any]]:
+def recent_market_state_changes(*, hours: int = 72) -> list[dict[str, Any]]:
     """Reuse the existing semantic compare engine for one bounded current flow."""
     now = int(time.time())
-    rows = MARKET_DATA_READER_V2.candles("BTC-USDT", "4H", now, 3)
+    rows = confirmed_candles_as_of(
+        MARKET_DATA_READER_V2.candles("BTC-USDT", "4H", now, 3), "4H", now)
     if len(rows) < 2:
+        return []
+    previous_row, current_row = rows[-2], rows[-1]
+    if any(row.get("_source_store") != "market_candles"
+           for row in (previous_row, current_row)):
         return []
     previous_as_of = int(rows[-2]["candle_close_ts"])
     current_as_of = int(rows[-1]["candle_close_ts"])
+    width = TIMEFRAME_SECONDS["4H"]
+    if now - current_as_of > width * 2 or current_as_of < now - max(1, min(int(hours), 168)) * 3600:
+        return []
     previous = MARKET_CONTEXT_V2.context("BTC-USDT", as_of=previous_as_of, execution_timeframe="4H")
     current = MARKET_CONTEXT_V2.context("BTC-USDT", as_of=current_as_of, execution_timeframe="4H")
     compared = MARKET_STATE_ENGINE_V2.compare(previous, current)
@@ -1625,7 +1635,7 @@ class Handler(BaseHTTPRequestHandler):
             changes = THESIS_TRACKING_REPOSITORY_V1.changes(
                 since_epoch=int(time.time()) - hours * 3600, limit=limit)
             try:
-                market_changes = recent_market_state_changes()
+                market_changes = recent_market_state_changes(hours=hours)
             except (OSError, sqlite3.Error, TypeError, ValueError, KeyError):
                 market_changes = []
             self._send({"version": "evidence-changes-feed-v1", "hours": hours,

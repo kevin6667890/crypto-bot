@@ -39,7 +39,7 @@ CURRENT_EVALUATION_VERSION = "current-thesis-evaluation-v1"
 CURRENT_EVALUATION_POLICY_VERSION = "current-thesis-evaluation-policy-v1"
 CURRENT_DATASET_IDENTITY_VERSION = "current-canonical-dataset-v1"
 DELTA_VERSION = "thesis-evaluation-delta-v1"
-TRACKING_SCHEMA_MIGRATION_VERSION = 1
+TRACKING_SCHEMA_MIGRATION_VERSION = 2
 TRACK_CREATE_REQUEST_VERSION = "track-thesis-request-v1"
 TRACK_ARCHIVE_VERSION = "track-thesis-archive-v1"
 CURRENT_READER_LIMIT = 320
@@ -207,6 +207,10 @@ class CurrentFeatureEvaluatorV1:
 
     def evaluate(self, track: Mapping[str, Any], *, now: int | None = None) -> dict[str, Any]:
         current_time = int(self.clock() if now is None else now)
+        if (track.get("schema_version") != TRACK_SCHEMA_VERSION or
+                track.get("current_evaluation_policy_version") != self.version):
+            return self._blocked(track, current_time, "TRACK_OR_EVALUATION_POLICY_VERSION_MISMATCH",
+                                 status="BLOCKED_VERSION_MISMATCH")
         try:
             spec = ThesisSpecV1.from_dict(track["thesis_spec"])
             definition = compile_thesis(spec)
@@ -305,7 +309,14 @@ class ThesisTrackingRepositoryV1:
     def __init__(self, path: Path | str) -> None:
         self.path = Path(path)
         self._init_lock = threading.Lock()
+        self._schema_version: int | None = None
         self.initialize()
+
+    def _require_supported_schema(self) -> None:
+        if self._schema_version != TRACKING_SCHEMA_MIGRATION_VERSION:
+            raise TrackingError(
+                f"unsupported thesis tracking database schema version: {self._schema_version}"
+            )
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(self.path, timeout=10, isolation_level=None)
@@ -318,6 +329,18 @@ class ThesisTrackingRepositoryV1:
         with self._init_lock:
             self.path.parent.mkdir(parents=True, exist_ok=True)
             with closing(self._connect()) as connection:
+                schema_table = connection.execute(
+                    "SELECT 1 FROM sqlite_master WHERE type='table' AND name='thesis_tracking_schema'"
+                ).fetchone()
+                if schema_table:
+                    existing = connection.execute(
+                        "SELECT version FROM thesis_tracking_schema WHERE singleton=1"
+                    ).fetchone()
+                    existing_version = int(existing[0]) if existing else None
+                    if (existing_version is not None and
+                            existing_version > TRACKING_SCHEMA_MIGRATION_VERSION):
+                        self._schema_version = existing_version
+                        return
                 connection.execute("PRAGMA journal_mode=WAL")
                 connection.executescript("""
                     CREATE TABLE IF NOT EXISTS tracked_theses (
@@ -357,12 +380,24 @@ class ThesisTrackingRepositoryV1:
                         ON thesis_current_evaluations(track_id,evaluated_at_epoch DESC);
                     CREATE INDEX IF NOT EXISTS idx_thesis_evaluations_changes
                         ON thesis_current_evaluations(material_change,evaluated_at_epoch DESC);
+                    CREATE TABLE IF NOT EXISTS thesis_current_snapshots (
+                        track_id TEXT PRIMARY KEY REFERENCES tracked_theses(track_id),
+                        idempotency_key TEXT NOT NULL UNIQUE,
+                        source_candle_timestamp INTEGER,
+                        evaluated_at_epoch INTEGER NOT NULL,
+                        evaluation_json TEXT NOT NULL,
+                        delta_json TEXT NOT NULL
+                    );
                     CREATE TABLE IF NOT EXISTS thesis_tracking_schema (
                         singleton INTEGER PRIMARY KEY CHECK(singleton=1), version INTEGER NOT NULL
                     );
-                    INSERT INTO thesis_tracking_schema(singleton,version) VALUES(1,1)
+                    INSERT INTO thesis_tracking_schema(singleton,version) VALUES(1,2)
                         ON CONFLICT(singleton) DO UPDATE SET version=MAX(version,excluded.version);
                 """)
+                row = connection.execute(
+                    "SELECT version FROM thesis_tracking_schema WHERE singleton=1"
+                ).fetchone()
+                self._schema_version = int(row[0]) if row else None
 
     @staticmethod
     def _track(row: sqlite3.Row) -> dict[str, Any]:
@@ -377,6 +412,7 @@ class ThesisTrackingRepositoryV1:
         return value
 
     def create(self, artifact: Mapping[str, Any]) -> tuple[dict[str, Any], bool]:
+        self._require_supported_schema()
         now = int(time.time())
         with closing(self._connect()) as connection:
             connection.execute("BEGIN IMMEDIATE")
@@ -408,6 +444,7 @@ class ThesisTrackingRepositoryV1:
             return stored, True
 
     def get(self, track_id: str, *, include_archived: bool = False) -> dict[str, Any] | None:
+        self._require_supported_schema()
         with closing(self._connect()) as connection:
             clause = "" if include_archived else " AND is_active=1"
             row = connection.execute(
@@ -416,6 +453,7 @@ class ThesisTrackingRepositoryV1:
             return _decode(str(row["artifact_json"])) if row else None
 
     def list(self, *, active_only: bool = True, limit: int = 100) -> list[dict[str, Any]]:
+        self._require_supported_schema()
         with closing(self._connect()) as connection:
             clause = "WHERE is_active=1" if active_only else ""
             rows = connection.execute(
@@ -426,27 +464,31 @@ class ThesisTrackingRepositoryV1:
             for row in rows:
                 track = self._track(row)
                 latest = connection.execute(
-                    """SELECT * FROM thesis_current_evaluations WHERE track_id=?
-                       ORDER BY evaluated_at_epoch DESC,rowid DESC LIMIT 1""", (track["track_id"],)
+                    "SELECT * FROM thesis_current_snapshots WHERE track_id=?", (track["track_id"],)
                 ).fetchone()
                 output.append({"track": track, "latest_evaluation": self._evaluation(latest)})
             return output
 
     def detail(self, track_id: str, *, history_limit: int = 50) -> dict[str, Any] | None:
+        self._require_supported_schema()
         track = self.get(track_id, include_archived=True)
         if track is None:
             return None
         with closing(self._connect()) as connection:
+            latest = connection.execute(
+                "SELECT * FROM thesis_current_snapshots WHERE track_id=?", (track_id,)
+            ).fetchone()
             rows = connection.execute(
                 """SELECT * FROM thesis_current_evaluations WHERE track_id=?
                    ORDER BY evaluated_at_epoch DESC,rowid DESC LIMIT ?""",
                 (track_id, max(1, min(int(history_limit), 100))),
             ).fetchall()
         history = [self._evaluation(row) for row in rows]
-        return {"track": track, "latest_evaluation": history[0] if history else None,
+        return {"track": track, "latest_evaluation": self._evaluation(latest),
                 "evaluation_history": history}
 
     def archive(self, track_id: str) -> dict[str, Any] | None:
+        self._require_supported_schema()
         now = int(time.time())
         with closing(self._connect()) as connection:
             connection.execute("BEGIN IMMEDIATE")
@@ -465,6 +507,7 @@ class ThesisTrackingRepositoryV1:
             return artifact
 
     def record_evaluation(self, evaluation: Mapping[str, Any]) -> tuple[dict[str, Any], bool]:
+        self._require_supported_schema()
         source_timestamp = evaluation.get("source_candle_timestamp")
         freshness = evaluation.get("freshness")
         freshness_state = (freshness.get("state") if isinstance(freshness, Mapping)
@@ -486,7 +529,7 @@ class ThesisTrackingRepositoryV1:
         with closing(self._connect()) as connection:
             connection.execute("BEGIN IMMEDIATE")
             existing = connection.execute(
-                "SELECT * FROM thesis_current_evaluations WHERE idempotency_key=?", (idempotency_key,)
+                "SELECT * FROM thesis_current_snapshots WHERE idempotency_key=?", (idempotency_key,)
             ).fetchone()
             if existing:
                 existing_value = self._evaluation(existing) or {}
@@ -502,23 +545,39 @@ class ThesisTrackingRepositoryV1:
                 connection.commit()
                 return existing_value, False
             previous_row = connection.execute(
-                """SELECT * FROM thesis_current_evaluations WHERE track_id=?
-                   ORDER BY evaluated_at_epoch DESC,rowid DESC LIMIT 1""", (evaluation["track_id"],)
+                "SELECT * FROM thesis_current_snapshots WHERE track_id=?", (evaluation["track_id"],)
             ).fetchone()
             previous = self._evaluation(previous_row)
             delta = evaluation_delta(previous, evaluation)
             evaluation_id = _hash({"idempotency_key": idempotency_key, "evaluation": evaluation})
             current_identity = evaluation.get("current_dataset_identity")
             current_dataset_id = current_identity.get("dataset_id") if isinstance(current_identity, Mapping) else None
+            stored_evaluation = canonical_json({**evaluation, "evaluation_id": evaluation_id})
+            stored_delta = canonical_json(delta)
+            history_created = previous is None or bool(delta["material_change"])
+            if history_created:
+                connection.execute(
+                    """INSERT INTO thesis_current_evaluations(evaluation_id,track_id,idempotency_key,
+                           definition_hash,overall_status,source_candle_timestamp,current_dataset_id,
+                           evaluated_at_epoch,material_change,evaluation_json,delta_json)
+                       VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
+                    (evaluation_id, evaluation["track_id"], idempotency_key,
+                     evaluation["definition_hash"], evaluation["overall_status"], source_timestamp,
+                     current_dataset_id, evaluation["evaluated_at_epoch"], int(delta["material_change"]),
+                     stored_evaluation, stored_delta),
+                )
             connection.execute(
-                """INSERT INTO thesis_current_evaluations(evaluation_id,track_id,idempotency_key,
-                       definition_hash,overall_status,source_candle_timestamp,current_dataset_id,
-                       evaluated_at_epoch,material_change,evaluation_json,delta_json)
-                   VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
-                (evaluation_id, evaluation["track_id"], idempotency_key,
-                 evaluation["definition_hash"], evaluation["overall_status"], source_timestamp,
-                 current_dataset_id, evaluation["evaluated_at_epoch"], int(delta["material_change"]),
-                 canonical_json({**evaluation, "evaluation_id": evaluation_id}), canonical_json(delta)),
+                """INSERT INTO thesis_current_snapshots(track_id,idempotency_key,
+                       source_candle_timestamp,evaluated_at_epoch,evaluation_json,delta_json)
+                   VALUES(?,?,?,?,?,?)
+                   ON CONFLICT(track_id) DO UPDATE SET
+                       idempotency_key=excluded.idempotency_key,
+                       source_candle_timestamp=excluded.source_candle_timestamp,
+                       evaluated_at_epoch=excluded.evaluated_at_epoch,
+                       evaluation_json=excluded.evaluation_json,
+                       delta_json=excluded.delta_json""",
+                (evaluation["track_id"], idempotency_key, source_timestamp,
+                 evaluation["evaluated_at_epoch"], stored_evaluation, stored_delta),
             )
             now = int(evaluation["evaluated_at_epoch"])
             track_row = connection.execute(
@@ -536,9 +595,10 @@ class ThesisTrackingRepositoryV1:
                 (evaluation["overall_status"], now, canonical_json(track), evaluation["track_id"]),
             )
             connection.commit()
-            return {**evaluation, "evaluation_id": evaluation_id, "delta": delta}, True
+            return {**evaluation, "evaluation_id": evaluation_id, "delta": delta}, history_created
 
     def changes(self, *, since_epoch: int, limit: int = 50) -> list[dict[str, Any]]:
+        self._require_supported_schema()
         with closing(self._connect()) as connection:
             rows = connection.execute(
                 """SELECT e.*,t.artifact_json FROM thesis_current_evaluations e
@@ -556,9 +616,14 @@ class ThesisTrackingRepositoryV1:
                 version = connection.execute("SELECT version FROM thesis_tracking_schema WHERE singleton=1").fetchone()
                 connection.execute("BEGIN IMMEDIATE")
                 connection.rollback()
-            return {"status": "READY", "schema_version": int(version[0]) if version else None}
+            schema_version = int(version[0]) if version else None
+            if schema_version != TRACKING_SCHEMA_MIGRATION_VERSION:
+                return {"status": "BLOCKED", "schema_version": schema_version,
+                        "reason": "TRACKING_SCHEMA_VERSION_UNSUPPORTED"}
+            return {"status": "READY", "schema_version": schema_version, "reason": None}
         except (OSError, sqlite3.Error):
-            return {"status": "BLOCKED", "schema_version": None}
+            return {"status": "BLOCKED", "schema_version": None,
+                    "reason": "TRACKING_DATABASE_UNAVAILABLE"}
 
 
 class ThesisTrackingServiceV1:

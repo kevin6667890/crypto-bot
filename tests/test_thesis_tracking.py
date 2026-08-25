@@ -146,6 +146,22 @@ def test_feature_version_mismatch_blocks_without_silent_upgrade() -> None:
     assert result["conditions"] == []
 
 
+@pytest.mark.parametrize("field,value", [
+    ("current_evaluation_policy_version", "future-policy-v99"),
+    ("schema_version", "tracked-thesis-v99"),
+])
+def test_track_or_evaluation_policy_version_mismatch_blocks(
+        field: str, value: str) -> None:
+    tracked = track()
+    tracked[field] = value
+    rows = candles()
+    result = CurrentFeatureEvaluatorV1(Reader(rows)).evaluate(
+        tracked, now=rows[-1]["candle_close_ts"] + 1)
+    assert result["overall_status"] == "BLOCKED_VERSION_MISMATCH"
+    assert result["conditions"] == []
+    assert result["limitations"] == ["TRACK_OR_EVALUATION_POLICY_VERSION_MISMATCH"]
+
+
 def test_repository_create_is_idempotent_and_historical_identity_is_immutable(tmp_path: Path) -> None:
     path = tmp_path / "tracking.sqlite3"
     repository = ThesisTrackingRepositoryV1(path)
@@ -185,6 +201,61 @@ def test_same_candle_is_noop_but_fresh_to_stale_is_one_material_transition(tmp_p
     assert stale_stored["delta"]["quality_changes"][0] == {
         "feature": "VOLUME_RATIO", "from": "AVAILABLE", "to": "STALE"}
     assert repository.get("track-1")["status"] == "STALE"
+
+
+def test_new_candle_without_material_change_updates_snapshot_not_history(tmp_path: Path) -> None:
+    repository = ThesisTrackingRepositoryV1(tmp_path / "tracking.sqlite3")
+    stored_track, _ = repository.create(track())
+    rows = candles(latest_volume=200.0)
+    evaluator = CurrentFeatureEvaluatorV1(Reader(rows))
+    first = evaluator.evaluate(stored_track, now=rows[-1]["candle_close_ts"] + 1)
+    assert repository.record_evaluation(first)[1] is True
+
+    prior = rows[-1]
+    next_open = prior["ts"] + WIDTH
+    rows.append({**prior, "ts": next_open, "candle_close_ts": next_open + WIDTH})
+    second = CurrentFeatureEvaluatorV1(Reader(rows)).evaluate(
+        stored_track, now=next_open + WIDTH + 1)
+    latest, history_created = repository.record_evaluation(second)
+    assert history_created is False
+    assert latest["source_candle_timestamp"] == next_open + WIDTH
+    detail = repository.detail("track-1")
+    assert detail["latest_evaluation"]["source_candle_timestamp"] == next_open + WIDTH
+    assert len(detail["evaluation_history"]) == 1
+
+
+def test_future_tracking_database_schema_is_blocked(tmp_path: Path) -> None:
+    path = tmp_path / "tracking.sqlite3"
+    import sqlite3
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            "CREATE TABLE thesis_tracking_schema(singleton INTEGER PRIMARY KEY, version INTEGER NOT NULL)"
+        )
+        connection.execute("INSERT INTO thesis_tracking_schema VALUES(1,99)")
+    reopened = ThesisTrackingRepositoryV1(path)
+    assert reopened.readiness() == {
+        "status": "BLOCKED", "schema_version": 99,
+        "reason": "TRACKING_SCHEMA_VERSION_UNSUPPORTED",
+    }
+    with pytest.raises(TrackingError, match="unsupported thesis tracking database schema"):
+        reopened.list()
+
+
+def test_version_one_tracking_database_migrates_idempotently(tmp_path: Path) -> None:
+    path = tmp_path / "tracking.sqlite3"
+    import sqlite3
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            "CREATE TABLE thesis_tracking_schema(singleton INTEGER PRIMARY KEY, version INTEGER NOT NULL)"
+        )
+        connection.execute("INSERT INTO thesis_tracking_schema VALUES(1,1)")
+    migrated = ThesisTrackingRepositoryV1(path)
+    assert migrated.readiness()["status"] == "READY"
+    assert migrated.readiness()["schema_version"] == 2
+    with migrated._connect() as connection:
+        assert connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='thesis_current_snapshots'"
+        ).fetchone()
 
 
 def test_manual_scheduler_race_writes_one_logical_evaluation(tmp_path: Path) -> None:

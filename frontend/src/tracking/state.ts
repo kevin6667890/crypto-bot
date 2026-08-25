@@ -10,6 +10,14 @@ const zhLabels: Record<string, string> = {
   TRUE: "满足", FALSE: "不满足", UNKNOWN: "未知", REQUIRED: "必要", OPTIONAL: "可选",
   AVAILABLE: "可用", MISSING: "缺失", VOLATILITY_COMPRESSION: "波动压缩", VOLATILITY_EXPANSION: "波动扩张",
   TREND_UP: "上升趋势", TREND_DOWN: "下降趋势", RANGE: "区间震荡", CONFLICTED: "证据分歧",
+  RANGE_LOW_VOLATILITY: "低波动区间", RANGE_HIGH_VOLATILITY: "高波动区间",
+  TRANSITION_UP: "向上过渡", TRANSITION_DOWN: "向下过渡", TRANSITION_MIXED: "混合过渡",
+  HTF_UPTREND_CONTINUATION: "高周期上涨延续", HTF_DOWNTREND_CONTINUATION: "高周期下跌延续",
+  HTF_UPTREND_PULLBACK: "高周期上涨回撤", HTF_DOWNTREND_BOUNCE: "高周期下跌反弹",
+  MAJOR_SUPPORT_TEST: "重要支撑测试", MAJOR_RESISTANCE_TEST: "重要压力测试",
+  RANGE_ROTATION: "区间轮动", BREAKOUT_DEVELOPING: "突破正在形成", BREAKDOWN_DEVELOPING: "跌破正在形成",
+  FAILED_BREAKOUT_DEVELOPING: "突破失败正在形成", VOLATILITY_TRANSITION: "波动状态过渡",
+  NO_CLEAR_STATE: "暂无明确状态", INSUFFICIENT_DATA: "数据不足",
 };
 export function formatCode(value: string | null | undefined, language: Language = "en") {
   if (!value) return "—";

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 // @ts-expect-error source contract test runs in Node.
 import { readFileSync } from "node:fs";
-import { conditionExpression, conditionTone, formatObserved, formatStatus, requiredConditionSummary, statusTone } from "./state";
+import { conditionExpression, conditionTone, formatObserved, formatSemanticState, formatStatus, requiredConditionSummary, statusTone } from "./state";
 
 describe("tracked thesis presentation semantics", () => {
   it("formats the saved definition without evaluating it", () => {
@@ -45,6 +45,11 @@ describe("tracked thesis presentation semantics", () => {
     expect(statusTone("STALE")).toBe("warning");
     expect(statusTone("BLOCKED_VERSION_MISMATCH")).toBe("blocked");
     expect(formatObserved(null)).toBe("—");
+  });
+
+  it("localizes production MarketState transition titles", () => {
+    expect(formatSemanticState("MAJOR_RESISTANCE_TEST", "zh")).toBe("重要压力测试");
+    expect(formatSemanticState("BREAKOUT_DEVELOPING", "zh")).toBe("突破正在形成");
   });
 
   it("uses one domain API for manual evaluation and consumes real MarketState transitions", () => {

@@ -404,7 +404,13 @@ def _prompt(request: ThesisParseRequestV1) -> dict[str, Any]:
         "untrusted_text, or schema. Example result shape: "
         '{"detected_language":"en","instrument":"BTC","timeframe":"4H",'
         '"forward_horizons":["4H","12H","24H"],"recognized_clauses":[],'
-        '"unsupported_clauses":[],"warnings":[]}.'
+        '"unsupported_clauses":[],"warnings":[]}. '
+        'For input "BTC 4H volume surged", VOLUME_RATIO is a supported but incomplete condition. Return '
+        '{"detected_language":"en","instrument":"BTC","timeframe":"4H",'
+        '"forward_horizons":["4H","12H","24H"],"recognized_clauses":['
+        '{"source_text":"volume surged","feature":"VOLUME_RATIO","operator":"gte",'
+        '"value":null,"value_explicit":false,"required":true}],'
+        '"unsupported_clauses":[],"warnings":[]}. The deterministic validator will request the missing threshold.'
     )
     user_data = {
         "capabilities": capabilities,

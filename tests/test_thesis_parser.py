@@ -99,6 +99,7 @@ def test_responses_prompt_separates_schema_from_untrusted_input():
     user_data = json.loads(prompt["messages"][1]["content"])
     assert "contract" not in user_data
     assert user_data["untrusted_text"] == "BTC 4H RSI > 70"
+    assert '"value":null,"value_explicit":false' in prompt["messages"][0]["content"]
     assert set(prompt["response_schema"]["required"]) == {
         "detected_language", "instrument", "timeframe", "forward_horizons",
         "recognized_clauses", "unsupported_clauses", "warnings",

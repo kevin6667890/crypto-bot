@@ -11,7 +11,7 @@ const operations = readFileSync(new URL("./Operations.tsx", import.meta.url), "u
 describe("canonical convergence UX contracts", () => {
   it("preserves the five primary navigation destinations", () => {
     for (const page of ["workspace", "market", "research", "microstructure", "operations"]) {
-      expect(app).toContain(`selectPage("${page}")`);
+      expect(app).toContain(`${page}: "/advanced#${page}"`);
     }
   });
 
@@ -39,9 +39,9 @@ describe("canonical convergence UX contracts", () => {
 
   it("keeps AI, automatic research, registry evidence, and advanced tools distinct", () => {
     expect(route).toContain("AI INTERPRETATION · AI DEEP CENTER");
-    expect(route).toContain("Advanced Research Tools");
+    expect(route).toContain("Advanced manual research");
     expect(route).toContain("Advanced Strategy Router");
-    for (const label of ["Automatic Research", "Latest Validation", "ACTIVE NONE", "Recent Research"]) {
+    for (const label of ["autoResearch.title", "autoResearch.latestCycle", "autoResearch.noApprovedCandidate", "local.recent"]) {
       expect(research).toContain(label);
     }
     expect(research).toContain("advanced-rejection-diagnostics");

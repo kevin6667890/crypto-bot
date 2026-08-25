@@ -48,6 +48,7 @@ class PolymarketRepository:
               first_seen_at TEXT NOT NULL, market_identity_hash TEXT NOT NULL UNIQUE,
               first_metadata_json TEXT NOT NULL
             );
+            CREATE INDEX IF NOT EXISTS idx_pm_markets_first_seen ON markets(first_seen_at,market_id);
             CREATE TABLE IF NOT EXISTS universe_manifests (
               manifest_hash TEXT PRIMARY KEY, schema_version TEXT NOT NULL,
               encoding TEXT NOT NULL, compressed_payload BLOB NOT NULL,

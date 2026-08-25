@@ -1,0 +1,49 @@
+{
+  "version": "thesis-phase4-real-current-smoke-v1",
+  "captured_at_utc": "2026-08-24T18:37:11Z",
+  "instrument": "BTC",
+  "timeframe": "4H",
+  "source": "project canonical OKX confirmed-candle materializer in an isolated temporary SQLite store",
+  "confirmed_rows": 299,
+  "historical_baseline": {
+    "lifecycle": "FROZEN_CANONICAL_HISTORICAL_TEST",
+    "declared_dataset_id": "okx-btc-usdt-4h-20230301-20260101-v1",
+    "historical_dataset_identity": "72053c1c445357d4d22efe9e26e9ec4088a8017b695b3533069834cb7008d193",
+    "database_sha256": "b8eb0ea4a7247b627e8ccddcab38e8b3bcc5934a7ab1f76434470690f7cc87e3",
+    "result_hash": "67bc00ece884179f351c8ebb8bc23c11751175fa9269d419dbb987efe36e2323",
+    "raw_range": {"start": 1677643200, "end": 1767225600},
+    "evaluable_range": {"start": 1680508800, "end": 1767225600},
+    "independent_event_count": 346,
+    "sample_quality": "ADEQUATE",
+    "runtime_ms": 292.954,
+    "note": "Frozen OKX BTC-USDT 4H evidence was independently reconstructed for the documented Phase 3 range and reproduced N=346. Tracking preserves this baseline without recalculation."
+  },
+  "current_evidence": {
+    "current_dataset_id": "3a3a319ace263b2780e78773cba22dcc424cd36da64203d8ab2533a3873ebc9e",
+    "content_sha256": "7bc6baa7f128811dea3b705bae59ddfa6f7c9ef7471eb69191c99fb5cf5b2009",
+    "latest_confirmed_candle": 1787587200,
+    "freshness": "FRESH",
+    "age_seconds": 9431,
+    "status": "MATCHING",
+    "required_match_count": 2,
+    "required_condition_count": 2,
+    "conditions": [
+      {
+        "feature": "PRICE_ABOVE_MA200",
+        "observed_value": true,
+        "state": "TRUE",
+        "feature_version": "market-indicator-registry-v2"
+      },
+      {
+        "feature": "VOLUME_RATIO",
+        "operator": "gte",
+        "configured_value": 1.2,
+        "observed_value": 2.551880659968777,
+        "state": "TRUE",
+        "feature_version": "discovery-features-v1"
+      }
+    ]
+  },
+  "evaluation_runtime_ms": 12.306,
+  "identity_separation": "72053c1c... is the frozen historical identity; 3a3a319a... is the bounded live current identity. They are stored and displayed separately."
+}

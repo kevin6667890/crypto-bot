@@ -1,143 +1,144 @@
-# Crypto-Bot Research Platform
+# Crypto-Bot — Evidence, not predictions
 
-A production-style crypto strategy research and paper-trading platform focused on causal evaluation, reproducible experiments, and out-of-time validation.
+An evidence-driven crypto research system that turns market hypotheses into reproducible historical tests and tracks how current evidence changes.
 
-[![CI](https://github.com/kevin6667890/crypto-bot/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/kevin6667890/crypto-bot/actions/workflows/ci.yml) ![Python](https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white) ![React](https://img.shields.io/badge/React-18-149ECA?logo=react&logoColor=white) ![TypeScript](https://img.shields.io/badge/TypeScript-5-3178C6?logo=typescript&logoColor=white) ![Docker](https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white) ![Paper only](https://img.shields.io/badge/Execution-Research%20%2F%20Paper%20Only-16856B)
+**Live Demo: [bitcoinbot.uk](https://bitcoinbot.uk)**
 
-**[Live Demo](https://bitcoinbot.uk)** · [Architecture](#architecture) · [Documentation](#documentation)
-
-Public research and paper-trading interface. No exchange account, API key, or live trading is required.
+**Product flow:** Test → Evidence → Track → Change → Revisit
 
 ![Crypto-Bot product overview](docs/assets/portfolio/crypto-bot-overview.gif)
 
-Crypto-Bot combines real OKX market data, deterministic decision logic, causal historical research, governed strategy discovery, evidence-grounded AI analysis, and paper execution in one auditable workspace. It is a full-stack engineering project—not a live trading service—and it never sends orders to an exchange.
+Crypto-Bot is a production-deployed research product, not a prediction engine or a live trading service. It uses real market data, deterministic statistics, immutable historical evidence, and confirmed current candles. No exchange account or API key is required for the public product.
 
-## Why this is more than a backtester
+## What it does
 
-1. **Causal evaluation.** Signals are confirmed at candle close and executed at the next candle open, after complete indicator warm-up and without future-bar leakage.
-2. **Research governance.** Experiment families separate development, walk-forward validation, hidden holdout, final out-of-time (OOT), and cross-asset transfer evidence. Search-space changes after a reveal mark the family as contaminated.
-3. **Reproducible lineage.** Canonical configuration hashes, SHA-256 signal identities, persisted evidence, and exact Paper/Research reconciliation make results traceable across processes and restarts.
-4. **Production-style operations.** The system combines a React UI, Python services, persistent jobs, SQLite evidence stores, public market-data ingestion, health checks, alerts, and Docker/Nginx deployment.
-5. **Explainable decisions.** Market Structure and Decision Trace show what the deterministic engine observed, which rule blocked action, and what confirmation would be needed next.
+- Turns a plain-language or manually constructed thesis into an auditable definition.
+- Measures independent historical events over 4H, 12H, and 24H forward horizons.
+- Shows coverage, sample quality, return distributions, event provenance, and K-line context.
+- Saves the exact historical baseline and reevaluates the same definition against current confirmed evidence.
+- Records only material changes so a thesis can be revisited without treating every market tick as a new signal.
 
-## At a glance
+Supported thesis assets are **BTC, ETH, and SOL**. The primary thesis timeframes are **1H and 4H**.
 
-| | |
-|---|---|
-| Live demo | [bitcoinbot.uk](https://bitcoinbot.uk) |
-| Frontend | React, TypeScript, Vite, lightweight-charts |
-| Backend | Python Paper API, research services, and background workers |
-| Storage | SQLite stores for jobs, evidence lineage, AI reports, and the paper ledger |
-| Market data | Real OKX public candles, trades, ticker, and perpetual open interest |
-| Assets | BTC, ETH, and SOL |
-| Research | Causal backtesting, walk-forward, hidden holdout, final OOT, and transfer tests |
-| Execution | Paper only; no exchange credentials or live order path |
-| AI role | Audited explanation of persisted evidence; never a strategy or execution authority |
-| Deployment | Docker Compose with an Nginx-served React frontend and same-origin API |
+## Product flow
+
+```mermaid
+flowchart LR
+    T[Test an idea] --> E[Historical evidence]
+    E --> K[Inspect event K-line]
+    E --> R[Track exact thesis]
+    R --> C[Current confirmed evidence]
+    C --> D[Material change]
+    D --> V[Revisit]
+```
+
+The historical baseline never moves after tracking. Current evaluation has a separate dataset identity and uses the latest confirmed candle; `UNKNOWN` is never silently treated as `FALSE`.
+
+## Test an idea
+
+The deterministic thesis engine owns the definition and all statistics. A successful test exposes the raw and evaluable ranges, independent sample count, sample-quality classification, horizon aggregates, exclusions, feature versions, and reproducible evidence identifiers.
+
+![Historical thesis result](docs/assets/portfolio/test-result.webp)
+
+The production example shown here tests BTC 4H with `VOLUME_RATIO >= 1.2` and `PRICE_ABOVE_MA200 == true`. The displayed values come from the deployed immutable historical dataset, not hardcoded demo data.
+
+## Evidence integrity
+
+Every included event can be opened as a K-line view with the actual condition values and forward outcomes.
+
+![Historical event evidence](docs/assets/portfolio/evidence-chart.webp)
+
+Research integrity is enforced by design:
+
+- Historical thesis tests require a configured immutable database and matching SHA-256; they fail closed on identity mismatch.
+- Historical tests cannot fall back to the recent live candle cache.
+- Indicators use confirmed candles with complete warm-up and no future-bar leakage.
+- Independent-event spacing and exclusions are explicit and versioned.
+- The frontend renders backend results; it does not recompute research statistics.
+- AI may interpret an idea or explain evidence, but it does not generate sample counts, returns, or research claims.
+
+## Track a thesis
+
+Tracking preserves the original definition and historical result as an immutable baseline. A background worker and manual refresh share the same deterministic current-evaluation semantics, and the tracking database persists across container restarts.
+
+![Tracked thesis with historical and current evidence](docs/assets/portfolio/tracking.webp)
+
+Historical and current evidence identities remain visibly separate. A current status can be `MATCHING`, `NOT_MATCHING`, or `UNKNOWN`; it is evidence state, not a trade instruction.
+
+## What changed
+
+The change feed contains only material condition, quality, status, or dataset-identity changes. A real empty state is shown when nothing material changed—there are no hardcoded events.
+
+![What Changed empty state](docs/assets/portfolio/what-changed.webp)
+
+## Product home and mobile
+
+The bilingual product shell exposes three direct entry points—What changed, Test an idea, and What am I tracking—with the Advanced research system kept available for deeper work.
+
+<table>
+  <tr>
+    <td><img src="docs/assets/portfolio/home.webp" alt="Crypto-Bot evidence research home at 1440 pixels"></td>
+    <td width="28%"><img src="docs/assets/portfolio/home-mobile-en.webp" alt="Crypto-Bot evidence research home at 390 pixels"></td>
+  </tr>
+</table>
 
 ## Architecture
 
 ```mermaid
 flowchart TD
-    OKX[OKX public observations] --> DATA[Confirmed price plus dedicated microstructure collection]
-    DATA --> SNAP[CanonicalMarketSnapshot: versioned causal evidence]
-    SNAP --> STATE[MarketStateV2: general regime lens]
-    SNAP --> AI[AI6B: independent tactical interpretation]
-    SNAP --> RESEARCH[Factor Program hybrid search plane]
-    RESEARCH --> VALIDATE[Development, walk-forward, holdout, OOT, cross-asset, robustness]
-    VALIDATE --> REGISTRY[Approved Strategy Registry]
-    REGISTRY --> RUNTIME[Exact frozen ACTIVE runtime]
-    SNAP --> RUNTIME
-    RUNTIME --> RISK[Risk gate]
-    RISK --> PAPER[Paper-only ledger]
-    STATE --> STORE[(Persisted evidence and lineage)]
-    AI --> STORE
-    VALIDATE --> STORE
-    PAPER --> STORE
-    STORE --> API[Python API]
-    API --> UI[React and TypeScript product UI]
+    OKX[OKX public market data] --> LIVE[Confirmed live data]
+    FROZEN[Immutable historical DB + SHA-256 identity] --> TEST[Deterministic thesis test]
+    TEST --> RESULT[Persisted result + event evidence]
+    RESULT --> TRACK[(Persistent tracking DB)]
+    LIVE --> EVAL[Canonical current evaluator]
+    TRACK --> EVAL
+    EVAL --> CHANGE[Material change history]
+    TEST --> API[Python API]
+    EVAL --> API
+    CHANGE --> API
+    API --> UI[React + TypeScript product UI]
+    WORKER[Tracking worker] --> EVAL
 ```
 
-In one sentence: OKX observations become canonical versioned evidence; deterministic, AI, and strategy lenses interpret that evidence independently; only an ACTIVE validated frozen strategy may pass through the risk gate into Paper. AI, MarketStateV2, Research, and StrategyRouterV2 have no execution-control edge. `LIVE_TRADING_ENABLED=false` is a non-negotiable deployment invariant.
+The deployment uses Docker Compose, an Nginx-served React frontend, Python API services, a dedicated thesis tracking worker, and persistent SQLite stores. Production readiness reports historical, current, tracking, parser, explanation, and scheduler status independently.
 
-`CanonicalMarketSnapshot` is not a regime or strategy God Object. It freezes identity, causal cutoff, confirmed OHLCV, product-qualified CVD/OI/funding/basis evidence, explicit quality/missing reasons, and a deterministic hash. `MarketContextV2` derives evidence with provenance; `MarketStateV2` and AI6B remain separate interpretation lenses. Exact trade-price VPVR and confirmed-OHLCV approximate VPVR are intentionally different, versioned contracts.
+## AI vs deterministic boundary
 
-## Research lifecycle
+AI is optional. It can parse natural language into a draft definition and produce a grounded explanation from deterministic facts. If the provider is unavailable, the manual builder and deterministic explanation remain usable.
 
-```mermaid
-flowchart LR
-    D[Factor Program search plus Template V2.1 controls] --> W[Development folds and walk-forward]
-    W -->|freeze candidate| H[Primary holdout]
-    H --> O[Final OOT]
-    O --> X[Cross-asset transfer]
-    X --> B[Robustness]
-    B --> A[Approval decision]
-    A --> G[Approved Registry]
-    G --> F[Singleton ACTIVE frozen runtime]
-    F --> P[Paper risk gate]
-    H --> E[(Persisted evidence lineage)]
-    O --> E
-    X --> E
-    N[Holdout, OOT and transfer never feed back into ranking] -.-> H
-    N -.-> O
-    N -.-> X
-```
-
-Only development evidence can affect search/ranking. Holdout and OOT never tune or rank a candidate. Factor Program is the extensible representation; Template V2.1 remains a benchmark, regression oracle, grammar seed, and safe baseline. Phase6 temporal ideas are inputs to Factor Program evolution, not a parallel product. The Registry may legitimately have no ACTIVE strategy; canonical Paper then returns `WAIT` and never falls back to the legacy engine.
-
-## Product tour
-
-<table>
-  <tr>
-    <td><img src="docs/assets/portfolio/workspace.webp" alt="Decision Workspace with real OKX chart and paper decision"></td>
-    <td><img src="docs/assets/portfolio/market.webp" alt="Market Structure with timeframe and coverage diagnostics"></td>
-  </tr>
-  <tr>
-    <td><strong>Workspace</strong><br>Live market context, a deterministic paper decision, rule evidence, risk state, and the latest eligible AI analysis.</td>
-    <td><strong>Market Structure</strong><br>Multi-timeframe state, key-level interaction, data lineage, freshness, and explicit coverage gaps.</td>
-  </tr>
-  <tr>
-    <td><img src="docs/assets/portfolio/research.webp" alt="Optimization Lab with persisted experiment evidence"></td>
-    <td><img src="docs/assets/portfolio/ai-report.webp" alt="Audited AI analysis with persisted report history"></td>
-  </tr>
-  <tr>
-    <td><strong>Research</strong><br>Persisted experiment families, locked holdouts, validation suites, and contamination tracking.</td>
-    <td><strong>AI Analysis</strong><br>Audit-eligible explanation, source-state freshness, persisted history, and reopenable report deep links.</td>
-  </tr>
-</table>
-
-## Evidence-grounded AI analysis
-
-The AI report layer consumes a frozen, read-only package of deterministic market and research evidence. Depending on report mode, that package can include confirmed multi-timeframe state, data-quality and lineage flags, order-flow observations, key levels, scenarios, and bounded paper-position context.
-
-Reports are structured, persisted, and tied to their source context, prompt/model versions, evidence registry, and deterministic audit. The UI exposes the latest eligible analysis plus report history and `report_id` deep links. Older reports remain inspectable with freshness labeling; pending or failed-audit reports never expose their generated body as a valid market explanation.
-
-AI can summarize evidence, surface uncertainty and counterevidence, and explain scenarios. It cannot change deterministic signals, choose optimization parameters, influence research ranking, modify risk controls, activate a strategy, or create an order.
-
-## Engineering highlights
-
-- One canonical decision path shared by paper execution and historical research.
-- Canonical JSON configuration hashes and deterministic signal identities.
-- Restart-safe SQLite job queues with limits, deduplication, cancellation, and retries.
-- Real OKX ingestion with confirmation filtering, symbol normalization, pagination, gap reporting, and caching.
-- Explicit UTC candle lineage across BTC, ETH, and SOL.
-- Causal next-bar execution with fees, adverse slippage, and conservative intrabar collision handling.
-- Durable experiment-family lineage, holdout reveal, OOT suites, transfer tests, and contamination flags.
-- Exact Paper/Research reconciliation instead of inferred matches.
-- AI report identity, immutable evidence registries, deterministic claim audits, retention controls, and kill-switch protection.
-- Dockerized Python services and an Nginx-served React production architecture.
+AI cannot calculate or alter research statistics, change condition truth values, select a strategy, modify risk controls, activate execution, or create an order. Statistical outputs, dataset identities, and current evaluation remain deterministic.
 
 ## Research integrity
 
-- Confirmed candles only, causal indicators, complete slow-moving-average warm-up, and next-candle-open execution.
-- Fees and adverse slippage are applied; a same-bar stop/target collision records the stop first.
-- Historical cumulative volume delta (CVD) and open interest (OI) are never fabricated. Missing or partial coverage remains visible and cannot silently become zero.
-- Primary holdouts stay hidden until an explicit, durable reveal. Final OOT and cross-asset evidence never affect ranking.
-- Strategy activation is an audited Registry lifecycle operation. Discovery never controls Paper, an empty Registry means `WAIT`, and there is no online self-learning or live exchange order path.
+- Confirmed-candle evaluation and causal feature computation.
+- Versioned dataset, feature, engine, coverage, and independence policies.
+- Immutable tracked historical baselines and idempotent scheduler evaluation.
+- Explicit missing-data states; `UNKNOWN != FALSE`.
+- No fabricated historical CVD or open-interest values.
+- Paper-only execution architecture; no public live-order path.
 
-## Quick start
+## Current limitations
 
-For a no-install walkthrough, open the **[Live Demo](https://bitcoinbot.uk)**.
+Canonical confirmed/failed breakout thesis tests and historical OI/CVD conditions are intentionally deferred. The product reports these clauses as unsupported and does not substitute easier conditions.
+
+## Advanced research system
+
+The legacy Advanced workspace remains available at [/advanced](https://bitcoinbot.uk/advanced), including Workspace, Market, Research, Microstructure, and Operations. It contains the broader research platform: causal backtesting, experiment governance, walk-forward/holdout/OOT evaluation, strategy registry, MarketStateV2, paper execution, microstructure evidence, and audited AI reports.
+
+The thesis product does not alter MarketState definitions, strategy logic, risk controls, or trading behavior.
+
+## Tech stack
+
+| Layer | Technology |
+|---|---|
+| Frontend | React, TypeScript, Vite, lightweight-charts |
+| Backend | Python API and background workers |
+| Storage | SQLite evidence, tracking, research, and paper stores |
+| Data | Real OKX public market data |
+| Deployment | Docker Compose, Nginx, health/readiness gates |
+| Testing | pytest, Vitest, Playwright |
+
+## Run locally
 
 ```bash
 # Backend
@@ -150,42 +151,41 @@ npm ci
 npm run dev
 ```
 
-Open `http://127.0.0.1:5173` for local development.
+Open `http://127.0.0.1:5173`. For a production-like thesis deployment, configure an immutable historical database, its SHA-256 and dataset ID, plus a persistent tracking database; see [operations documentation](docs/OPERATIONS.md).
 
 ```bash
-# Docker
 docker compose up -d --build paper-api frontend
 ```
-
-## Reproduce the portfolio assets
-
-The screenshots, looping README GIF, and approximately 41-second H.264 demo are generated from the application with Playwright and ffmpeg:
-
-```bash
-# Capture the deployed product shown in this README (PowerShell)
-$env:PORTFOLIO_BASE_URL="https://bitcoinbot.uk"
-python scripts/build_portfolio_assets.py
-```
-
-The workflow captures fixed viewports, converts and verifies the media, performs visible-text privacy checks, and shuts down only processes it created. Without `PORTFOLIO_BASE_URL`, local capture requires an existing real `data_cache/paper_trades.db`; it never synthesizes profitable results. The MP4 is written to `artifacts/portfolio-demo/crypto-bot-demo.mp4` and intentionally ignored by Git.
-
-## Documentation
-
-- [AI analysis architecture and safety boundary](docs/ai_market_analysis/README.md)
-- [Research and strategy discovery architecture](docs/strategy_discovery_architecture.md)
-- [Research API](docs/API.md)
-- [Operations and deployment](docs/OPERATIONS.md)
-- [Market state engine](docs/market_state_engine_v2.md)
-- [Strategy router](docs/strategy_router_v2.md)
-- [Microstructure research readiness](docs/microstructure_research_readiness.md)
-- [Storage lifecycle](docs/storage_lifecycle_v2.md)
 
 ## Verification
 
 ```bash
 pytest -q
 python -m compileall dashboard tests scripts
-cd frontend && npm run api:check && npm test && npm run build
+cd frontend
+npm run api:check
+npm test
+npm run build
 ```
+
+Portfolio media can be reproduced from the accepted deployment without synthetic returns:
+
+```powershell
+$env:PORTFOLIO_BASE_URL="https://bitcoinbot.uk"
+python scripts/build_portfolio_assets.py
+```
+
+The capture validates 1440px and 390px viewports, English and Chinese layouts, image dimensions, real tracking persistence, automatic smoke-track archival, and visible-text privacy boundaries.
+
+## Documentation
+
+- [Operations and deployment](docs/OPERATIONS.md)
+- [Research API](docs/API.md)
+- [Research and strategy discovery architecture](docs/strategy_discovery_architecture.md)
+- [AI analysis architecture and safety boundary](docs/ai_market_analysis/README.md)
+- [Market state engine](docs/market_state_engine_v2.md)
+- [Strategy router](docs/strategy_router_v2.md)
+- [Microstructure readiness](docs/microstructure_research_readiness.md)
+- [Storage lifecycle](docs/storage_lifecycle_v2.md)
 
 For educational and research purposes only. Historical, paper, or backtest results do not predict future performance and are not financial advice.

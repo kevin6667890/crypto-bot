@@ -815,5 +815,17 @@ class ThesisParserServiceV3:
                 response = json.loads(raw_text)
             except json.JSONDecodeError as error:
                 raise ThesisParserV3Error("provider returned invalid JSON") from error
-        return validate_provider_output(text.strip(), response, self.capabilities,
+        return validate_provider_output(text.strip(), _normalize_provider_ast_node_key(response), self.capabilities,
                                         requested_as_of=requested_as_of)
+
+
+def _normalize_provider_ast_node_key(value: Any) -> Any:
+    """Accept the sole documented provider spelling variant before strict validation."""
+    if isinstance(value, list):
+        return [_normalize_provider_ast_node_key(item) for item in value]
+    if not isinstance(value, Mapping):
+        return value
+    normalized = {key: _normalize_provider_ast_node_key(item) for key, item in value.items()}
+    if "node_type" not in normalized and normalized.get("type") in {"CONDITION", "ALL", "ANY", "NOT"}:
+        normalized["node_type"] = normalized.pop("type")
+    return normalized

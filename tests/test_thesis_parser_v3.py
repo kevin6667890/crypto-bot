@@ -5,7 +5,7 @@ import json
 import pytest
 
 from dashboard.thesis_parser_v3 import (
-    ThesisParserServiceV3, ThesisParserV3Error, parser_context, validate_provider_output,
+    ThesisParserServiceV3, ThesisParserV3Error, _normalize_provider_ast_node_key, parser_context, validate_provider_output,
 )
 from tests.test_thesis_expression_v2 import CAPABILITIES, condition
 
@@ -27,6 +27,12 @@ def test_context_is_built_from_capabilities_and_exposes_presets():
         "RSI", "VOLUME_PERCENTILE", "ROLLING_HIGH_BREAKOUT_CONFIRMED"}
     assert context["semantic_presets"]["version"] == "semantic-preset-registry-v1"
     assert "OI_CHANGE_PERCENTILE" not in {item["code"] for item in context["features"]}
+
+
+def test_documented_provider_type_alias_is_normalized_before_validation():
+    raw = {"expression": {"type": "ANY", "children": [{"type": "CONDITION", "feature": "RSI"}]}}
+    assert _normalize_provider_ast_node_key(raw)["expression"]["node_type"] == "ANY"
+    assert "type" not in _normalize_provider_ast_node_key(raw)["expression"]["children"][0]
 
 
 def test_between_compiles_to_inclusive_all():

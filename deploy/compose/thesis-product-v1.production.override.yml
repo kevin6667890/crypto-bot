@@ -22,6 +22,12 @@ services:
     read_only: true
     tmpfs:
       - /tmp:rw,noexec,nosuid,size=64m,uid=10001,gid=10001,mode=700
+      # Importing the shared thesis runtime configures structured logging.
+      # Keep that side effect writable without weakening the read-only rootfs.
+      - /app/logs:rw,noexec,nosuid,size=16m,uid=10001,gid=10001,mode=700
+    depends_on:
+      paper-api:
+        condition: service_healthy
     cap_drop: [ALL]
     security_opt: [no-new-privileges:true]
     restart: "on-failure:3"

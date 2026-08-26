@@ -219,6 +219,18 @@ def test_unsupported_clause_is_never_silently_dropped_or_executable():
     assert result.thesis_spec is None
 
 
+def test_cvd_unsupported_clause_exposes_the_native_history_data_gate():
+    text = "BTC 4H CVD confirms"
+    raw = output(None, recognized_clauses=[], unsupported_clauses=[{
+        "source_text": "CVD confirms", "reason_code": "FEATURE_NOT_SUPPORTED",
+        "category": "SEMANTIC_UNSUPPORTED",
+    }])
+    result = validate_provider_output(text, raw, CAPABILITIES, requested_as_of=1_700_000_000)
+    assert result.status == "UNSUPPORTED"
+    assert result.unsupported_clauses[0].reason_code == "CVD_HISTORICAL_NATIVE_SOURCE_UNAVAILABLE"
+    assert result.unsupported_clauses[0].category == "CAPABILITY_DISABLED"
+
+
 def test_provider_cannot_silently_drop_an_unknown_clause():
     text = "BTC 4H RSI above 70 and whales are accumulating"
     raw = output(condition("RSI", "gt", 70), recognized_clauses=["RSI above 70"])

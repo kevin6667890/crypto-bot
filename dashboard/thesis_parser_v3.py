@@ -324,7 +324,15 @@ def _parse_unsupported(raw: Any, text: str) -> tuple[UnsupportedClauseV2, ...]:
         # unknown provider label to the conservative user-visible category.
         if category not in allowed_categories:
             category = "SEMANTIC_UNSUPPORTED"
-        output.append(UnsupportedClauseV2(source, str(item.get("reason_code", "UNSUPPORTED_CONCEPT")),
+        reason_code = str(item.get("reason_code", "UNSUPPORTED_CONCEPT"))
+        # Native CVD is a deliberately disabled conditional capability: it
+        # must never be presented as a vague parser limitation.  This narrow,
+        # text-grounded normalization keeps provider wording from hiding the
+        # audited data gate; it does not make CVD executable or substitute it.
+        if re.search(r"\bCVD\b", source, re.I):
+            reason_code = "CVD_HISTORICAL_NATIVE_SOURCE_UNAVAILABLE"
+            category = "CAPABILITY_DISABLED"
+        output.append(UnsupportedClauseV2(source, reason_code,
                                           category, tuple(map(str, item.get("suggestions", ())))))
     return tuple(output)
 

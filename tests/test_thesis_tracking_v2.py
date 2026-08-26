@@ -332,3 +332,19 @@ def test_standalone_runtime_builds_without_importing_api_application(tmp_path, m
     service = build_tracking_service_from_environment()
     assert isinstance(service, MixedVersionThesisTrackingService)
     assert service.repository.path == tmp_path / "tracking.sqlite3"
+
+
+def test_standalone_runtime_qualifies_verified_oi_coverage():
+    from dashboard.thesis_tracking_runtime import _derivative_readiness
+
+    instruments = [{"instrument": item} for item in
+                   ("BTC-USDT-SWAP", "ETH-USDT-SWAP", "SOL-USDT-SWAP")]
+    reader = type("Reader", (), {"readiness": lambda _self: {"coverage": {
+        "OPEN_INTEREST_USD": {"start_ms": 0, "end_ms": 200 * 86_400_000,
+                              "rows": 600, "cadence_ms": 86_400_000,
+                              "max_gap_ms": 86_400_000, "instruments": instruments},
+    }}})()
+    state = _derivative_readiness(reader)
+    assert state["OI"]["status"] == "READY"
+    assert state["OI"]["supported_timeframes"] == ["1D"]
+    assert state["FUNDING"]["status"] == "LIMITED"

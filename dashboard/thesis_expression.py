@@ -494,6 +494,23 @@ def parse_thesis_spec_v2(payload: Mapping[str, Any], registry: Mapping[str, Feat
         if canonical_json(raw) != canonical_json(expected.to_dict()):
             raise ExpressionValidationError("assumption does not match the preset registry")
         assumptions.append(expected)
+    def leaves(node: ExpressionNode) -> tuple[ConditionNode, ...]:
+        if isinstance(node, ConditionNode):
+            return (node,)
+        if isinstance(node, NotNode):
+            return leaves(node.child)
+        return tuple(leaf for child in node.children for leaf in leaves(child))
+    for assumption in assumptions:
+        applied = assumption.applied
+        if not any(
+            leaf.feature == assumption.feature
+            and leaf.operator == applied["operator"]
+            and leaf.value == applied["value"]
+            and all(leaf.parameters.get(name) == value
+                    for name, value in dict(applied["parameters"]).items())
+            for leaf in leaves(expression)
+        ):
+            raise ExpressionValidationError("assumption is not represented by the expression")
     metadata = payload.get("metadata", {})
     if not isinstance(metadata, Mapping):
         raise ExpressionValidationError("metadata must be an object")

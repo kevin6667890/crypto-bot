@@ -65,6 +65,19 @@ function applyAssumption(expression: ThesisExpressionV2, assumption: ThesisSpecV
   return { ...expression, children: expression.children.map((child) => applyAssumption(child, assumption)) };
 }
 
+function expressionLeaves(node: ThesisExpressionV2): Array<Extract<ThesisExpressionV2, { node_type: "CONDITION" }>> {
+  if (node.node_type === "CONDITION") return [node];
+  if (node.node_type === "NOT") return expressionLeaves(node.child);
+  return node.children.flatMap(expressionLeaves);
+}
+
+function compatibleAssumptions(expression: ThesisExpressionV2, assumptions: ThesisSpecV2["assumptions"]) {
+  const leaves = expressionLeaves(expression);
+  return assumptions.filter((assumption) => leaves.some((leaf) => leaf.feature === assumption.feature
+    && leaf.operator === assumption.applied.operator && leaf.value === assumption.applied.value
+    && Object.entries(assumption.applied.parameters).every(([name, value]) => leaf.parameters?.[name] === value)));
+}
+
 export default function TestAnIdeaPage() {
   const { language } = useLanguage();
   const labels = thesisText(language);
@@ -267,7 +280,7 @@ export default function TestAnIdeaPage() {
       {parseResult?.status === "NEEDS_INPUT" && <div className="thesis-alert warning">{labels.needs}</div>}
       <div className="thesis-definition-meta"><label>Instrument<select value={v2Spec.instrument} onChange={(event) => setV2Spec({ ...v2Spec, instrument: event.target.value })}>{capabilities.instruments.map((item) => <option key={item}>{item}</option>)}</select></label>
         <label>Timeframe<select value={v2Spec.timeframe} onChange={(event) => setV2Spec({ ...v2Spec, timeframe: event.target.value })}>{capabilities.timeframes.map((item) => <option key={item}>{item}</option>)}</select></label></div>
-      <ExpressionTree node={v2Spec.expression} capabilities={capabilities} language={language} timeframe={v2Spec.timeframe} editable onChange={(expression) => setV2Spec({ ...v2Spec, expression })} />
+      <ExpressionTree node={v2Spec.expression} capabilities={capabilities} language={language} timeframe={v2Spec.timeframe} editable onChange={(expression) => setV2Spec((current) => current ? { ...current, expression, assumptions: compatibleAssumptions(expression, current.assumptions) } : current)} />
       <div className="expression-root-actions"><button className="secondary-btn compact" disabled={v2Spec.expression.node_type !== "CONDITION"} onClick={() => setV2Spec({ ...v2Spec, expression: { node_type: "ALL", children: [v2Spec.expression, defaultCondition(capabilities.features, v2Spec.timeframe)] } })}><Plus size={14} />AND</button>
         <button className="secondary-btn compact" disabled={v2Spec.expression.node_type !== "CONDITION"} onClick={() => setV2Spec({ ...v2Spec, expression: { node_type: "ANY", children: [v2Spec.expression, defaultCondition(capabilities.features, v2Spec.timeframe)] } })}><Plus size={14} />OR</button></div>
       <AssumptionEditor assumptions={v2Spec.assumptions} language={language} onChange={(assumptions) => {

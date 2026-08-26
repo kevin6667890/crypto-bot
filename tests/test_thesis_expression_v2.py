@@ -146,6 +146,12 @@ def test_spec_definition_hash_includes_visible_preset_but_not_run_timestamp(regi
         parse_thesis_spec_v2(changed, registry, supported_instruments=CAPABILITIES["instruments"],
                              supported_timeframes=CAPABILITIES["timeframes"],
                              supported_horizons=CAPABILITIES["horizons"])
+    orphaned = copy.deepcopy(payload)
+    orphaned["expression"] = condition("RSI", "gte", 70)
+    with pytest.raises(ExpressionValidationError, match="not represented"):
+        parse_thesis_spec_v2(orphaned, registry, supported_instruments=CAPABILITIES["instruments"],
+                             supported_timeframes=CAPABILITIES["timeframes"],
+                             supported_horizons=CAPABILITIES["horizons"])
 
 
 def test_explicit_v1_adapter_preserves_v1_and_marks_compatibility():

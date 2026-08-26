@@ -325,6 +325,20 @@ def _explicit_horizons_from_text(text: str, supported: Sequence[str], *, exclude
     return tuple(matches)
 
 
+def _canonical_horizon(value: str, supported: Sequence[str]) -> str:
+    compact = re.sub(r"\s+", "", value).upper()
+    aliases = {str(item).upper(): str(item) for item in supported}
+    if compact in aliases:
+        return aliases[compact]
+    match = re.fullmatch(r"(\d+)(?:HR|HRS|HOUR|HOURS)", compact)
+    if match and f"{match.group(1)}H" in aliases:
+        return aliases[f"{match.group(1)}H"]
+    match = re.fullmatch(r"(\d+)(?:DAY|DAYS)", compact)
+    if match and f"{match.group(1)}D" in aliases:
+        return aliases[f"{match.group(1)}D"]
+    return value
+
+
 def _walk_expression(node: ExpressionNode) -> tuple[ConditionNode, ...]:
     if isinstance(node, ConditionNode):
         return (node,)
@@ -785,10 +799,11 @@ def validate_provider_output(text: str, raw: Mapping[str, Any], capabilities: Ma
         raw_timeframe.upper(), raw_timeframe)
     supported_instruments = set(map(str, capabilities.get("instruments", ())))
     supported_timeframes = set(map(str, capabilities.get("timeframes", ())))
-    horizons = tuple(map(str, raw.get("forward_horizons", ())))
+    supported_horizons = tuple(map(str, capabilities.get("horizons", ())))
+    horizons = tuple(_canonical_horizon(str(item), supported_horizons)
+                     for item in raw.get("forward_horizons", ()))
     if instrument not in supported_instruments or timeframe not in supported_timeframes:
         missing.append(MissingParameterV2("", "THESIS", "instrument_or_timeframe"))
-    supported_horizons = tuple(map(str, capabilities.get("horizons", ())))
     if not horizons:
         horizons = _explicit_horizons_from_text(text, supported_horizons, exclude=(timeframe,))
         if not horizons:

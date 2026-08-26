@@ -3,26 +3,19 @@ from __future__ import annotations
 
 import logging
 import os
-from pathlib import Path
 import signal
 import threading
 
-from dashboard.market_context_v2 import BoundedMarketDataReaderV2
-from dashboard.thesis_tracking import (
-    CurrentFeatureEvaluatorV1, ThesisTrackingRepositoryV1,
-    ThesisTrackingSchedulerV1, ThesisTrackingServiceV1,
-)
+from dashboard.thesis_tracking import ThesisTrackingSchedulerV1
 
 
 def main() -> int:
     if os.getenv("THESIS_TRACKING_SCHEDULER_ENABLED", "false").lower() != "true":
         logging.getLogger(__name__).info("thesis tracking scheduler is disabled")
         return 0
-    paper_db = Path(os.environ["PAPER_DB_PATH"])
-    tracking_db = Path(os.environ["THESIS_TRACKING_DB_PATH"])
-    repository = ThesisTrackingRepositoryV1(tracking_db)
-    evaluator = CurrentFeatureEvaluatorV1(BoundedMarketDataReaderV2(paper_db))
-    service = ThesisTrackingServiceV1(repository, None, evaluator)
+    # Import the fully configured, version-dispatching service lazily so the
+    # standalone worker uses exactly the same V1/V2 evaluators as the API.
+    from dashboard.paper_api import THESIS_TRACKING_SERVICE as service
     scheduler = ThesisTrackingSchedulerV1(
         service, cadence_seconds=int(os.getenv("THESIS_TRACKING_SCHEDULER_CADENCE_SECONDS", "900")))
     stopped = threading.Event()

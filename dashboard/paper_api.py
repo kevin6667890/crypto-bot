@@ -71,7 +71,7 @@ try:
     from thesis_parser_v3 import ThesisParserServiceV3, ThesisParserV3Error
     from thesis_tracking import (CurrentFeatureEvaluatorV1, ThesisTrackingRepositoryV1,
         ThesisTrackingSchedulerV1, ThesisTrackingServiceV1, TrackingError)
-    from thesis_tracking_v2 import CurrentExpressionEvaluatorV2, ThesisTrackingServiceV2
+    from thesis_tracking_v2 import CurrentExpressionEvaluatorV2, MixedVersionThesisTrackingService, ThesisTrackingServiceV2
     from strategy_router_v2 import StrategyRouterV2
     from polymarket.api import PolymarketReadModel
     from strategy_registry import StrategyRegistryAdapter, active_snapshot_matches
@@ -130,7 +130,7 @@ except ImportError:
     from .thesis_parser_v3 import ThesisParserServiceV3, ThesisParserV3Error
     from .thesis_tracking import (CurrentFeatureEvaluatorV1, ThesisTrackingRepositoryV1,
         ThesisTrackingSchedulerV1, ThesisTrackingServiceV1, TrackingError)
-    from .thesis_tracking_v2 import CurrentExpressionEvaluatorV2, ThesisTrackingServiceV2
+    from .thesis_tracking_v2 import CurrentExpressionEvaluatorV2, MixedVersionThesisTrackingService, ThesisTrackingServiceV2
     from .strategy_router_v2 import StrategyRouterV2
     from .polymarket.api import PolymarketReadModel
     from .strategy_registry import StrategyRegistryAdapter, active_snapshot_matches
@@ -1531,26 +1531,8 @@ THESIS_TRACKING_SERVICE_V2 = ThesisTrackingServiceV2(
                         if item.get("current_availability") == "AVAILABLE"])
 
 
-class _CombinedThesisTrackingService:
-    def evaluate(self, track_id: str, *, now: int | None = None) -> dict[str, Any]:
-        track = THESIS_TRACKING_REPOSITORY_V1.get(track_id)
-        if track and track.get("schema_version") == "tracked-thesis-v2":
-            return THESIS_TRACKING_SERVICE_V2.evaluate(track_id, now=now)
-        return (THESIS_TRACKING_SERVICE_V1.evaluate(track_id)
-                if now is None else THESIS_TRACKING_SERVICE_V1.evaluate(track_id, now=now))
-
-    def evaluate_active(self, *, now: int | None = None) -> dict[str, int]:
-        summary = {"evaluated": 0, "no_change": 0, "failed": 0}
-        for bundle in THESIS_TRACKING_REPOSITORY_V1.list(limit=100):
-            try:
-                result = self.evaluate(bundle["track"]["track_id"], now=now)
-                summary["evaluated" if result["evaluation_created"] else "no_change"] += 1
-            except (TrackingError, sqlite3.Error, OSError):
-                summary["failed"] += 1
-        return summary
-
-
-THESIS_TRACKING_SERVICE = _CombinedThesisTrackingService()
+THESIS_TRACKING_SERVICE = MixedVersionThesisTrackingService(
+    THESIS_TRACKING_REPOSITORY_V1, THESIS_TRACKING_SERVICE_V1, THESIS_TRACKING_SERVICE_V2)
 THESIS_TRACKING_SCHEDULER_V1 = ThesisTrackingSchedulerV1(
     THESIS_TRACKING_SERVICE,
     cadence_seconds=int(os.getenv("THESIS_TRACKING_SCHEDULER_CADENCE_SECONDS", "900")),

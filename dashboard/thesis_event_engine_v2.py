@@ -117,7 +117,8 @@ def _semantic_terms(code: str, label: Mapping[str, str]) -> dict[str, list[str]]
         "BASIS_PERCENTILE": {"en": ["basis percentile", "perpetual basis percentile"],
                              "zh": ["基差百分位", "永续基差百分位"]},
         ROLLING_HIGH_BREAKOUT_CONFIRMED: {
-            "en": ["breakout", "breaks", "previous high", "rolling high"],
+            "en": ["breakout", "breaks above", "breaks the previous", "breaks previous",
+                   "previous high", "rolling high"],
             "zh": ["突破", "前高", "最高点", "滚动高点"],
         },
         ROLLING_LOW_BREAKDOWN_CONFIRMED: {

@@ -594,3 +594,27 @@ class ThesisTrackingServiceV2:
         return {"track": self.repository.get(track_id), "latest_evaluation": stored,
                 "evaluation_created": created,
                 "outcome": "EVALUATED" if created else "NO_CHANGE"}
+
+
+class MixedVersionThesisTrackingService:
+    """Dispatch stored tracks by their immutable schema version."""
+
+    def __init__(self, repository: ThesisTrackingRepositoryV1, v1_service: Any,
+                 v2_service: ThesisTrackingServiceV2) -> None:
+        self.repository, self.v1_service, self.v2_service = repository, v1_service, v2_service
+
+    def evaluate(self, track_id: str, *, now: int | None = None) -> dict[str, Any]:
+        track = self.repository.get(track_id)
+        if track and track.get("schema_version") == TRACK_SCHEMA_VERSION_V2:
+            return self.v2_service.evaluate(track_id, now=now)
+        return self.v1_service.evaluate(track_id, now=now)
+
+    def evaluate_active(self, *, now: int | None = None) -> dict[str, int]:
+        summary = {"evaluated": 0, "no_change": 0, "failed": 0}
+        for bundle in self.repository.list(limit=100):
+            try:
+                result = self.evaluate(bundle["track"]["track_id"], now=now)
+                summary["evaluated" if result["evaluation_created"] else "no_change"] += 1
+            except (TrackingError, sqlite3.Error, OSError):
+                summary["failed"] += 1
+        return summary

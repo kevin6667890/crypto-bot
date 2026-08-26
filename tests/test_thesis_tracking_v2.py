@@ -10,7 +10,8 @@ from dashboard.thesis_expression import (
 )
 from dashboard.thesis_tracking_v2 import (
     CURRENT_EVALUATION_POLICY_VERSION_V2, CurrentExpressionEvaluatorV2,
-    ThesisTrackingServiceV2, expression_evaluation_delta, tracked_thesis_v2_artifact,
+    MixedVersionThesisTrackingService, ThesisTrackingServiceV2,
+    expression_evaluation_delta, tracked_thesis_v2_artifact,
 )
 from dashboard.thesis_tracking import ThesisTrackingRepositoryV1, TrackingError
 from dashboard.thesis_event_engine_v2 import compile_thesis_v2
@@ -285,3 +286,34 @@ def test_track_creation_fails_closed_for_historical_only_feature(tmp_path):
             "thesis_spec": spec.to_dict(), "language": "en",
         })
     assert repository.list() == []
+
+
+def test_mixed_scheduler_dispatches_v1_and_v2_without_version_mismatch():
+    tracks = {
+        "legacy": {"track_id": "legacy", "schema_version": "tracked-thesis-v1"},
+        "modern": {"track_id": "modern", "schema_version": "tracked-thesis-v2"},
+    }
+
+    class Repository:
+        def get(self, track_id):
+            return tracks.get(track_id)
+
+        def list(self, limit=100):
+            return [{"track": value} for value in tracks.values()][:limit]
+
+    calls = []
+
+    class Service:
+        def __init__(self, version):
+            self.version = version
+
+        def evaluate(self, track_id, now=None):
+            calls.append((self.version, track_id, now))
+            return {"evaluation_created": True}
+
+    mixed = MixedVersionThesisTrackingService(
+        Repository(), Service("v1"), Service("v2"))
+    assert mixed.evaluate_active(now=1_700_000_000) == {
+        "evaluated": 2, "no_change": 0, "failed": 0}
+    assert calls == [("v1", "legacy", 1_700_000_000),
+                     ("v2", "modern", 1_700_000_000)]

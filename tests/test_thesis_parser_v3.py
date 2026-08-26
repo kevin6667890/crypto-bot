@@ -43,6 +43,25 @@ def test_responses_provider_condition_wrapper_preserves_strict_source_semantics(
     assert normalized["expression"] == {"node_type": "CONDITION", "feature": "RSI", "operator": "gt", "value": 70, "parameters": {}}
 
 
+def test_known_leaf_and_forward_return_transport_scaffolding_is_normalized():
+    raw = output({"type": "CONDITION", "condition": {
+        "type": "LEAF", "feature": "RSI", "operator": "lte", "value": 80,
+        "parameters": {}}, "then": {"type": "LEAF", "feature": "FORWARD_RETURN",
+                                      "operator": "exists", "value": True,
+                                      "parameters": {"horizon": "24h"}}},
+        recognized_clauses=["RSI at most 80"])
+    assert _normalize_provider_transport(raw, CAPABILITIES)["expression"] == {
+        "node_type": "CONDITION", "feature": "RSI", "operator": "lte",
+        "value": 80, "parameters": {}}
+
+
+def test_single_child_transport_group_collapses_without_logic_change():
+    raw = output({"type": "ALL", "children": [{"type": "CONDITION", "feature": "RSI",
+        "operator": "gt", "value": 70, "parameters": {}}]},
+        recognized_clauses=["RSI above 70"])
+    assert _normalize_provider_transport(raw, CAPABILITIES)["expression"]["node_type"] == "CONDITION"
+
+
 def test_empty_provider_horizons_recover_only_explicit_user_horizon():
     raw = output(condition("RSI", "gt", 70), forward_horizons=[],
                  recognized_clauses=["RSI above 70"])
@@ -52,6 +71,16 @@ def test_empty_provider_horizons_recover_only_explicit_user_horizon():
     assert result.thesis_spec.forward_horizons == ("24H",)
     assert _explicit_horizons_from_text("24小时和3 days", ("24H", "3D")) == ("24H", "3D")
     assert _canonical_horizon("24 hours", ("24H", "3D")) == "24H"
+
+
+def test_explicit_metadata_recovers_null_instrument_and_numeric_horizon_transport():
+    raw = output(condition("RSI", "gt", 70), instrument=None, forward_horizons=[3],
+                 recognized_clauses=["RSI above 70"])
+    result = validate_provider_output("BTC 4H RSI above 70 after 3 days", raw, CAPABILITIES,
+                                      requested_as_of=1_700_000_000)
+    assert result.status == "READY"
+    assert result.thesis_spec.instrument == "BTC"
+    assert result.thesis_spec.forward_horizons == ("3D",)
 
 
 def test_provider_header_tokens_are_not_treated_as_expression_clauses():
@@ -267,14 +296,6 @@ def test_forward_return_question_is_not_an_unsupported_condition():
                                    CAPABILITIES, requested_as_of=1_700_000_000).status == "READY"
 
 
-def test_breakout_bar_unit_fragment_is_accounted_after_grounding():
-    raw = output(condition("ROLLING_HIGH_BREAKOUT_CONFIRMED", "eq", True, {"lookback_bars": 20}),
-                 recognized_clauses=["breakout above previous high 20"])
-    result = validate_provider_output("BTC 4H breakout above previous high 20 K", raw, CAPABILITIES,
-                                      requested_as_of=1_700_000_000)
-    assert result.status == "READY"
-
-
 @pytest.mark.parametrize("text", [
     "BTC 4H RSI超过70后怎么样", "BTC 4H RSI不高于80", "RSI在40到60之间",
     "BTC 4H突破过去20根K线高点", "BTC 4H突破前高", "BTC 4H OI大幅增加",
@@ -330,6 +351,22 @@ def test_provider_cannot_substitute_whale_claim_with_breakout_preset():
     with pytest.raises(ThesisParserV3Error, match="ungrounded semantic text"):
         validate_provider_output(mixed, mixed_raw, CAPABILITIES,
                                  requested_as_of=1_700_000_000)
+
+
+@pytest.mark.parametrize("trailing", ["relative strength", "RSI"])
+def test_unrecognized_second_feature_fragment_cannot_be_erased(trailing):
+    text = f"BTC 4H RSI above 70, {trailing}"
+    raw = output(condition("RSI", "gt", 70), recognized_clauses=["RSI above 70"])
+    with pytest.raises(ThesisParserV3Error, match="unaccounted clause text"):
+        validate_provider_output(text, raw, CAPABILITIES, requested_as_of=1_700_000_000)
+
+
+def test_breakdown_language_cannot_be_substituted_with_breakout_feature():
+    text = "BTC 4H breaks below previous 20 candles low"
+    raw = output(condition("ROLLING_HIGH_BREAKOUT_CONFIRMED", "eq", True,
+                           {"lookback_bars": 20}), recognized_clauses=[text])
+    with pytest.raises(ThesisParserV3Error, match="unaccounted|not grounded"):
+        validate_provider_output(text, raw, CAPABILITIES, requested_as_of=1_700_000_000)
 
 
 def test_related_volume_features_cannot_substitute_for_each_other():

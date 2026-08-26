@@ -307,7 +307,7 @@ def _parse_unsupported(raw: Any, text: str) -> tuple[UnsupportedClauseV2, ...]:
         # A forward-return question supplies the study horizon; it is not an
         # event-condition clause.  Some models nevertheless label it as an
         # unsupported query type, so handle this closed, syntax-only case here.
-        if (str(item.get("reason_code", "")) == "UNSUPPORTED_QUERY_TYPE"
+        if (str(item.get("reason_code", "")) in {"UNSUPPORTED_QUERY_TYPE", "FORWARD_HORIZON_NOT_SUPPORTED"}
                 and re.search(r"(?:what|usually|happens?|after|historical|之后|以後|通常|怎么样|怎樣)", source, re.I)
                 and re.search(r"\d+\s*(?:H|D|hours?|days?|小时|天)", source, re.I)):
             continue
@@ -325,10 +325,7 @@ def _parse_unsupported(raw: Any, text: str) -> tuple[UnsupportedClauseV2, ...]:
     return tuple(output)
 
 
-def _assert_clause_accounting(text: str, sources: Sequence[str], *,
-                              represented_terms: Sequence[str] = (),
-                              represented_numbers: Sequence[float] = (),
-                              allow_bar_unit: bool = False) -> None:
+def _assert_clause_accounting(text: str, sources: Sequence[str]) -> None:
     """Reject semantic content that the provider silently dropped.
 
     This is vocabulary-neutral: capabilities decide what is executable while
@@ -338,11 +335,6 @@ def _assert_clause_accounting(text: str, sources: Sequence[str], *,
     remaining = text
     for source in sorted((item for item in sources if item), key=len, reverse=True):
         remaining = re.sub(re.escape(source), " ", remaining, count=1, flags=re.I)
-    for term in sorted((item for item in represented_terms if item), key=len, reverse=True):
-        remaining = re.sub(re.escape(term), " ", remaining, flags=re.I)
-    for number in represented_numbers:
-        remaining = re.sub(rf"(?<![0-9.]){re.escape(format(float(number), 'g'))}(?![0-9.])", " ", remaining)
-    remaining = re.sub(r"(?:根|K线|K|k)(?=\s|$|OI)", " ", remaining, flags=re.I)
     # Non-semantic thesis scaffolding is allowed outside clause source spans.
     remaining = re.sub(r"\b(?:BTC|ETH|SOL|1H|4H|1D|15M|when|if|then|after|historically|"
                        r"what|usually|happens?|and|or|either|with|while|but|not)\b", " ", remaining, flags=re.I)
@@ -353,8 +345,6 @@ def _assert_clause_accounting(text: str, sources: Sequence[str], *,
     remaining = re.sub(r"(?:并且|同时|而且|或者|任一|但)", " ", remaining)
     remaining = re.sub(r"(?:之后|以后|通常|怎么样|会怎样|并且|同时|而且|或者|任一|但|当|如果)", " ", remaining)
     remaining = re.sub(r"[\s,，。;；:：?!？()（）/]+", "", remaining)
-    if allow_bar_unit:
-        remaining = re.sub(r"(?:K|k)", "", remaining)
     if remaining:
         raise ThesisParserV3Error(f"provider left unaccounted clause text: {remaining[:80]}")
 
@@ -831,23 +821,10 @@ def validate_provider_output(text: str, raw: Mapping[str, Any], capabilities: Ma
             raise ThesisParserV3Error("missing parameter is not grounded in user text")
         missing.append(MissingParameterV2(source, str(item.get("feature", "")),
                                           str(item.get("parameter", ""))))
+    _assert_clause_accounting(text, [*recognized, *(item.source_text for item in unsupported),
+                                     *(item.source_text for item in missing)])
     expression_raw = raw.get("expression")
     expression = parse_expression(_compile_between(expression_raw), registry) if expression_raw else None
-    leaves = _walk_expression(expression) if expression is not None else ()
-    represented_features = {leaf.feature for leaf in leaves}
-    represented_terms = tuple(term for feature in capabilities.get("features", ()) if isinstance(feature, Mapping)
-                              and str(feature.get("code")) in represented_features
-                              for values in feature.get("semantic_terms", {}).values() for term in values)
-    if "OI_CHANGE_PERCENTILE" in represented_features or "OI_CHANGE_PCT" in represented_features:
-        represented_terms = (*represented_terms, "OI")
-    represented_numbers = tuple(float(value) for leaf in leaves
-                                for value in (leaf.value, *leaf.parameters.values())
-                                if isinstance(value, (int, float)) and not isinstance(value, bool))
-    _assert_clause_accounting(text, [*recognized, *(item.source_text for item in unsupported),
-                                     *(item.source_text for item in missing)], represented_terms=represented_terms,
-                              represented_numbers=represented_numbers,
-                              allow_bar_unit=any("BREAKOUT" in feature or "BREAKDOWN" in feature
-                                                 for feature in represented_features))
     if expression is not None and assumptions:
         for assumption in assumptions:
             if not any(_assumption_matches_leaf(assumption, leaf)
@@ -864,8 +841,21 @@ def validate_provider_output(text: str, raw: Mapping[str, Any], capabilities: Ma
     supported_instruments = set(map(str, capabilities.get("instruments", ())))
     supported_timeframes = set(map(str, capabilities.get("timeframes", ())))
     supported_horizons = tuple(map(str, capabilities.get("horizons", ())))
+    explicit_instruments = [item for item in supported_instruments
+                            if re.search(rf"(?<![A-Za-z]){re.escape(item)}(?![A-Za-z])", text, re.I)]
+    if instrument not in supported_instruments and len(explicit_instruments) == 1:
+        instrument = explicit_instruments[0]
+    explicit_timeframes = [item for item in supported_timeframes
+                           if re.search(rf"(?<![A-Za-z0-9]){re.escape(item)}(?![A-Za-z0-9])", text, re.I)]
+    if timeframe not in supported_timeframes and len(explicit_timeframes) == 1:
+        timeframe = explicit_timeframes[0]
     horizons = tuple(_canonical_horizon(str(item), supported_horizons)
-                     for item in raw.get("forward_horizons", ()))
+                     for item in raw.get("forward_horizons", ())
+                     if isinstance(item, str))
+    if horizons and any(item not in set(supported_horizons) for item in horizons):
+        explicit_horizons = _explicit_horizons_from_text(text, supported_horizons, exclude=(timeframe,))
+        if explicit_horizons:
+            horizons = explicit_horizons
     if instrument not in supported_instruments or timeframe not in supported_timeframes:
         missing.append(MissingParameterV2("", "THESIS", "instrument_or_timeframe"))
     if not horizons:
@@ -985,9 +975,17 @@ def _normalize_provider_transport(value: Any, capabilities: Mapping[str, Any]) -
             item.pop("type", None); item["node_type"] = kind
         if kind == "CONDITION" and isinstance(item.get("condition"), Mapping):
             condition = dict(item.pop("condition"))
+            if condition.get("type") == "LEAF":
+                condition.pop("type")
             item.update({key: value for key, value in condition.items() if key not in item})
+            then = item.get("then")
+            if (isinstance(then, Mapping) and (then.get("type") == "LEAF" or then.get("node_type") == "LEAF")
+                    and then.get("feature") == "FORWARD_RETURN"):
+                item.pop("then")
         if kind in {"ALL", "ANY"} and "children" not in item and isinstance(item.get("conditions"), list):
             item["children"] = item.pop("conditions")
+        if kind in {"ALL", "ANY"} and isinstance(item.get("children"), list) and len(item["children"]) == 1:
+            return item["children"][0]
         if kind == "NOT" and "child" not in item and isinstance(item.get("condition"), Mapping):
             item["child"] = item.pop("condition")
         if kind == "CONDITION":

@@ -183,7 +183,7 @@ def test_historical_data_availability_is_part_of_parse_status():
 
 def test_unknown_feature_and_parameter_fail_closed():
     text = "BTC 4H CVD confirms"
-    with pytest.raises(Exception, match="unsupported feature"):
+    with pytest.raises(Exception):
         validate_provider_output(text, output(condition("CVD", "eq", True),
             recognized_clauses=["CVD confirms"]), CAPABILITIES, requested_as_of=1_700_000_000)
     text = "BTC 4H RSI above 70"

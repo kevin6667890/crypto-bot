@@ -5,7 +5,7 @@ import json
 import pytest
 
 from dashboard.thesis_parser_v3 import (
-    ThesisParserServiceV3, ThesisParserV3Error, _canonical_horizon, _explicit_horizons_from_text, _normalize_provider_ast_node_key, _provider_response_schema, parser_context, validate_provider_output,
+    ThesisParserServiceV3, ThesisParserV3Error, _canonical_horizon, _explicit_horizons_from_text, _normalize_provider_ast_node_key, _normalize_provider_transport, _provider_response_schema, parser_context, validate_provider_output,
 )
 from tests.test_thesis_expression_v2 import CAPABILITIES, condition
 
@@ -34,6 +34,13 @@ def test_documented_provider_type_alias_is_normalized_before_validation():
     raw = {"expression": {"type": "ANY", "children": [{"type": "CONDITION", "feature": "RSI"}]}}
     assert _normalize_provider_ast_node_key(raw)["expression"]["node_type"] == "ANY"
     assert "type" not in _normalize_provider_ast_node_key(raw)["expression"]["children"][0]
+
+
+def test_responses_provider_condition_wrapper_preserves_strict_source_semantics():
+    raw = output({"type": "CONDITION", "condition": {"feature": "RSI", "operator": "gte", "value": 70}},
+                 recognized_clauses=["RSI above 70"])
+    normalized = _normalize_provider_transport(raw, CAPABILITIES)
+    assert normalized["expression"] == {"node_type": "CONDITION", "feature": "RSI", "operator": "gt", "value": 70, "parameters": {}}
 
 
 def test_empty_provider_horizons_recover_only_explicit_user_horizon():

@@ -885,7 +885,7 @@ class ThesisParserServiceV3:
                 response = json.loads(raw_text)
             except json.JSONDecodeError as error:
                 raise ThesisParserV3Error("provider returned invalid JSON") from error
-        return validate_provider_output(text.strip(), _normalize_provider_ast_node_key(response), self.capabilities,
+        return validate_provider_output(text.strip(), _normalize_provider_transport(response, self.capabilities), self.capabilities,
                                         requested_as_of=requested_as_of)
 
 
@@ -899,3 +899,51 @@ def _normalize_provider_ast_node_key(value: Any) -> Any:
     if "node_type" not in normalized and normalized.get("type") in {"CONDITION", "ALL", "ANY", "NOT"}:
         normalized["node_type"] = normalized.pop("type")
     return normalized
+
+
+def _normalize_provider_transport(value: Any, capabilities: Mapping[str, Any]) -> Any:
+    """Normalize the documented Responses AST wrapper using only source language."""
+    normalized = _normalize_provider_ast_node_key(value)
+    if not isinstance(normalized, Mapping):
+        return normalized
+    clauses = [str(item) for item in normalized.get("recognized_clauses", ()) if isinstance(item, str)]
+    terms = {
+        str(item.get("code")): tuple(str(term).casefold()
+                                      for values in item.get("semantic_terms", {}).values()
+                                      for term in values)
+        for item in capabilities.get("features", ()) if isinstance(item, Mapping)
+    }
+
+    def source_for(feature: str) -> str:
+        for clause in clauses:
+            if any(term and term in clause.casefold() for term in terms.get(feature, ())):
+                return clause
+        return ""
+
+    def walk(node: Any) -> Any:
+        if not isinstance(node, Mapping):
+            return node
+        item = {key: walk(value) for key, value in node.items()}
+        kind = str(item.get("node_type", item.get("type", ""))).upper()
+        if kind:
+            item.pop("type", None); item["node_type"] = kind
+        if kind == "CONDITION" and isinstance(item.get("condition"), Mapping):
+            condition = dict(item.pop("condition"))
+            item.update({key: value for key, value in condition.items() if key not in item})
+        if kind in {"ALL", "ANY"} and "children" not in item and isinstance(item.get("conditions"), list):
+            item["children"] = item.pop("conditions")
+        if kind == "NOT" and "child" not in item and isinstance(item.get("condition"), Mapping):
+            item["child"] = item.pop("condition")
+        if kind == "CONDITION":
+            item.setdefault("parameters", {})
+            source = source_for(str(item.get("feature", ""))).casefold()
+            operator = item.get("operator")
+            if operator == "gte" and re.search(r"\b(?:above|over|greater than)\b|超过|高于", source) and not re.search(r"at least|至少|不低于", source):
+                item["operator"] = "gt"
+            elif operator == "lte" and re.search(r"\b(?:below|under|less than)\b|低于", source) and not re.search(r"at most|不高于", source):
+                item["operator"] = "lt"
+        return item
+
+    output = dict(normalized)
+    output["expression"] = walk(output.get("expression"))
+    return output

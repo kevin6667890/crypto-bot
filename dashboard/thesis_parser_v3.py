@@ -325,7 +325,9 @@ def _parse_unsupported(raw: Any, text: str) -> tuple[UnsupportedClauseV2, ...]:
     return tuple(output)
 
 
-def _assert_clause_accounting(text: str, sources: Sequence[str]) -> None:
+def _assert_clause_accounting(text: str, sources: Sequence[str], *,
+                              represented_terms: Sequence[str] = (),
+                              represented_numbers: Sequence[float] = ()) -> None:
     """Reject semantic content that the provider silently dropped.
 
     This is vocabulary-neutral: capabilities decide what is executable while
@@ -335,6 +337,11 @@ def _assert_clause_accounting(text: str, sources: Sequence[str]) -> None:
     remaining = text
     for source in sorted((item for item in sources if item), key=len, reverse=True):
         remaining = re.sub(re.escape(source), " ", remaining, count=1, flags=re.I)
+    for term in sorted((item for item in represented_terms if item), key=len, reverse=True):
+        remaining = re.sub(re.escape(term), " ", remaining, flags=re.I)
+    for number in represented_numbers:
+        remaining = re.sub(rf"(?<![0-9.]){re.escape(format(float(number), 'g'))}(?![0-9.])", " ", remaining)
+    remaining = re.sub(r"(?:根|K|k)(?=\s|$)", " ", remaining)
     # Non-semantic thesis scaffolding is allowed outside clause source spans.
     remaining = re.sub(r"\b(?:BTC|ETH|SOL|1H|4H|1D|15M|when|if|then|after|historically|"
                        r"what|usually|happens?|and|or|either|with|while|but|not)\b", " ", remaining, flags=re.I)
@@ -821,10 +828,19 @@ def validate_provider_output(text: str, raw: Mapping[str, Any], capabilities: Ma
             raise ThesisParserV3Error("missing parameter is not grounded in user text")
         missing.append(MissingParameterV2(source, str(item.get("feature", "")),
                                           str(item.get("parameter", ""))))
-    _assert_clause_accounting(text, [*recognized, *(item.source_text for item in unsupported),
-                                     *(item.source_text for item in missing)])
     expression_raw = raw.get("expression")
     expression = parse_expression(_compile_between(expression_raw), registry) if expression_raw else None
+    leaves = _walk_expression(expression) if expression is not None else ()
+    represented_features = {leaf.feature for leaf in leaves}
+    represented_terms = tuple(term for feature in capabilities.get("features", ()) if isinstance(feature, Mapping)
+                              and str(feature.get("code")) in represented_features
+                              for values in feature.get("semantic_terms", {}).values() for term in values)
+    represented_numbers = tuple(float(value) for leaf in leaves
+                                for value in (leaf.value, *leaf.parameters.values())
+                                if isinstance(value, (int, float)) and not isinstance(value, bool))
+    _assert_clause_accounting(text, [*recognized, *(item.source_text for item in unsupported),
+                                     *(item.source_text for item in missing)], represented_terms=represented_terms,
+                              represented_numbers=represented_numbers)
     if expression is not None and assumptions:
         for assumption in assumptions:
             if not any(_assumption_matches_leaf(assumption, leaf)

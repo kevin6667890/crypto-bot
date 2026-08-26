@@ -62,6 +62,16 @@ def test_single_child_transport_group_collapses_without_logic_change():
     assert _normalize_provider_transport(raw, CAPABILITIES)["expression"]["node_type"] == "CONDITION"
 
 
+def test_leaf_alias_and_single_child_not_transport_are_normalized():
+    raw = output({"type": "NOT", "children": [{"type": "LEAF", "feature": "RSI",
+        "operator": "gt", "value": 80, "parameters": {}}]},
+        recognized_clauses=["RSI not above 80"])
+    expression = _normalize_provider_transport(raw, CAPABILITIES)["expression"]
+    assert expression == {"node_type": "NOT", "child": {
+        "node_type": "CONDITION", "feature": "RSI", "operator": "gt",
+        "value": 80, "parameters": {}}}
+
+
 def test_empty_provider_horizons_recover_only_explicit_user_horizon():
     raw = output(condition("RSI", "gt", 70), forward_horizons=[],
                  recognized_clauses=["RSI above 70"])
@@ -272,6 +282,16 @@ def test_service_uses_capability_context_and_separates_untrusted_text():
 def test_service_retries_only_invalid_provider_transport_json():
     provider = SequencedProvider("not-json", json.dumps(output(condition("RSI", "gt", 70),
         recognized_clauses=["RSI above 70"])))
+    result = ThesisParserServiceV3(provider, CAPABILITIES).parse(
+        "BTC 4H RSI above 70", requested_as_of=1_700_000_000)
+    assert result.status == "READY"
+    assert provider.calls == 2
+
+
+def test_service_retries_provider_output_that_fails_deterministic_validation():
+    invalid = output(condition("UNKNOWN", "gt", 70), recognized_clauses=["RSI above 70"])
+    valid = output(condition("RSI", "gt", 70), recognized_clauses=["RSI above 70"])
+    provider = SequencedProvider(invalid, valid)
     result = ThesisParserServiceV3(provider, CAPABILITIES).parse(
         "BTC 4H RSI above 70", requested_as_of=1_700_000_000)
     assert result.status == "READY"

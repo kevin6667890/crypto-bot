@@ -128,6 +128,10 @@ def parser_context(capabilities: Mapping[str, Any]) -> dict[str, Any]:
             "When a clause contains an explicit number, use that number and do not emit a preset assumption for that clause.",
             "Return every unrecognized clause; never silently omit a clause.",
             "BETWEEN compiles to an ALL containing inclusive gte and lte leaves.",
+            "Use only CONDITION, ALL, ANY, and NOT node_type values; CONDITION fields are feature, operator, value, parameters.",
+            "Normalize numeric negation into the comparator: not above X is lte X and not below X is gte X; do not wrap it in NOT.",
+            "Preserve every AND/OR group exactly; AND binds more tightly than OR unless the user groups otherwise.",
+            "A forward-return question sets forward_horizons only; it is not an expression node or unsupported clause.",
         ],
     }
 
@@ -907,6 +911,7 @@ class ThesisParserServiceV3:
 
     def parse(self, text: str, *, requested_as_of: int) -> ThesisParseResultV2:
         request = provider_request(text, self.capabilities)
+        last_validation_error: Exception | None = None
         for attempt in range(MAX_PROVIDER_TRANSPORT_ATTEMPTS):
             try:
                 response = self.provider.generate(request)
@@ -915,9 +920,13 @@ class ThesisParserServiceV3:
                     continue
                 raise ThesisParserV3Error("parser provider unavailable") from error
             if isinstance(response, Mapping):
-                return validate_provider_output(
-                    text.strip(), _normalize_provider_transport(response, self.capabilities), self.capabilities,
-                    requested_as_of=requested_as_of)
+                try:
+                    return validate_provider_output(
+                        text.strip(), _normalize_provider_transport(response, self.capabilities), self.capabilities,
+                        requested_as_of=requested_as_of)
+                except (ThesisParserV3Error, ExpressionValidationError) as error:
+                    last_validation_error = error
+                    continue
             raw_text = response if isinstance(response, str) else getattr(response, "raw_text", None)
             if not isinstance(raw_text, str):
                 if attempt + 1 < MAX_PROVIDER_TRANSPORT_ATTEMPTS:
@@ -929,10 +938,13 @@ class ThesisParserServiceV3:
                 if attempt + 1 < MAX_PROVIDER_TRANSPORT_ATTEMPTS:
                     continue
                 raise ThesisParserV3Error("provider returned invalid JSON") from error
-            return validate_provider_output(
-                text.strip(), _normalize_provider_transport(response, self.capabilities), self.capabilities,
-                requested_as_of=requested_as_of)
-        raise AssertionError("bounded parser transport retry loop exhausted")
+            try:
+                return validate_provider_output(
+                    text.strip(), _normalize_provider_transport(response, self.capabilities), self.capabilities,
+                    requested_as_of=requested_as_of)
+            except (ThesisParserV3Error, ExpressionValidationError) as error:
+                last_validation_error = error
+        raise ThesisParserV3Error("provider output failed deterministic validation") from last_validation_error
 
 
 def _normalize_provider_ast_node_key(value: Any) -> Any:
@@ -967,10 +979,14 @@ def _normalize_provider_transport(value: Any, capabilities: Mapping[str, Any]) -
         return ""
 
     def walk(node: Any) -> Any:
+        if isinstance(node, list):
+            return [walk(value) for value in node]
         if not isinstance(node, Mapping):
             return node
         item = {key: walk(value) for key, value in node.items()}
         kind = str(item.get("node_type", item.get("type", ""))).upper()
+        if kind == "LEAF":
+            kind = "CONDITION"
         if kind:
             item.pop("type", None); item["node_type"] = kind
         if kind == "CONDITION" and isinstance(item.get("condition"), Mapping):
@@ -979,7 +995,7 @@ def _normalize_provider_transport(value: Any, capabilities: Mapping[str, Any]) -
                 condition.pop("type")
             item.update({key: value for key, value in condition.items() if key not in item})
             then = item.get("then")
-            if (isinstance(then, Mapping) and (then.get("type") == "LEAF" or then.get("node_type") == "LEAF")
+            if (isinstance(then, Mapping) and then.get("node_type") in {"LEAF", "CONDITION"}
                     and then.get("feature") == "FORWARD_RETURN"):
                 item.pop("then")
         if kind in {"ALL", "ANY"} and "children" not in item and isinstance(item.get("conditions"), list):
@@ -988,6 +1004,8 @@ def _normalize_provider_transport(value: Any, capabilities: Mapping[str, Any]) -
             return item["children"][0]
         if kind == "NOT" and "child" not in item and isinstance(item.get("condition"), Mapping):
             item["child"] = item.pop("condition")
+        if kind == "NOT" and "child" not in item and isinstance(item.get("children"), list) and len(item["children"]) == 1:
+            item["child"] = item.pop("children")[0]
         if kind == "CONDITION":
             item.setdefault("parameters", {})
             source = source_for(str(item.get("feature", ""))).casefold()

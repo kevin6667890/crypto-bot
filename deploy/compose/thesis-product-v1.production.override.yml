@@ -36,7 +36,10 @@ services:
       GIT_COMMIT: ${FACTOR_PROGRAM_GIT_COMMIT:?Factor Program source commit is required}
       LIVE_TRADING_ENABLED: "false"
       REAL_TRADING_ENABLED: "false"
-      PAPER_DB_PATH: /var/lib/paper/paper_trades.db
+      # The scheduler imports shared API wiring to obtain the mixed V1/V2
+      # tracking service. Its unrelated PaperService bootstrap must never
+      # contend with or mutate the production paper ledger.
+      PAPER_DB_PATH: /tmp/thesis-tracking-paper-bootstrap.db
       THESIS_HISTORICAL_REQUIRE_IMMUTABLE: "true"
       THESIS_HISTORICAL_DB_PATH: /var/lib/paper/thesis_historical.db
       THESIS_HISTORICAL_DB_SHA256: ${THESIS_HISTORICAL_DB_SHA256:?Immutable thesis database SHA-256 is required}

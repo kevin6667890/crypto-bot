@@ -22,6 +22,13 @@ def _verified_derivative_reader() -> DerivativeSnapshotReaderV1 | None:
     manifest_path = os.getenv("THESIS_DERIVATIVES_MANIFEST_PATH")
     if not all((path, expected_sha, dataset_id, manifest_path)):
         return None
+    try:
+        manifest: dict[str, Any] = json.loads(Path(manifest_path).read_text(encoding="utf-8"))
+        reader = DerivativeSnapshotReaderV1(
+            Path(path), expected_sha256=expected_sha, dataset_id=dataset_id, manifest=manifest)
+        return reader if reader.readiness().get("status") == "READY" else None
+    except (OSError, ValueError, json.JSONDecodeError):
+        return None
 
 
 def _derivative_readiness(reader: DerivativeSnapshotReaderV1 | None) -> dict[str, dict[str, Any]]:
@@ -57,13 +64,6 @@ def _derivative_readiness(reader: DerivativeSnapshotReaderV1 | None) -> dict[str
             "span_days": span_days, "rows": rows, "supported_timeframes": supported,
         }
     return output
-    try:
-        manifest: dict[str, Any] = json.loads(Path(manifest_path).read_text(encoding="utf-8"))
-        reader = DerivativeSnapshotReaderV1(
-            Path(path), expected_sha256=expected_sha, dataset_id=dataset_id, manifest=manifest)
-        return reader if reader.readiness().get("status") == "READY" else None
-    except (OSError, ValueError, json.JSONDecodeError):
-        return None
 
 
 def build_tracking_service_from_environment() -> MixedVersionThesisTrackingService:

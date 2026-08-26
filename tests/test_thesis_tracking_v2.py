@@ -348,3 +348,21 @@ def test_standalone_runtime_qualifies_verified_oi_coverage():
     assert state["OI"]["status"] == "READY"
     assert state["OI"]["supported_timeframes"] == ["1D"]
     assert state["FUNDING"]["status"] == "LIMITED"
+
+
+def test_standalone_runtime_returns_verified_derivative_reader(tmp_path, monkeypatch):
+    import json
+    import dashboard.thesis_tracking_runtime as runtime
+
+    manifest = tmp_path / "manifest.json"
+    manifest.write_text(json.dumps({"version": "fixture"}), encoding="utf-8")
+    for name, value in {
+        "THESIS_DERIVATIVES_DB_PATH": str(tmp_path / "derivatives.sqlite3"),
+        "THESIS_DERIVATIVES_DB_SHA256": "a" * 64,
+        "THESIS_DERIVATIVES_DATASET_ID": "fixture",
+        "THESIS_DERIVATIVES_MANIFEST_PATH": str(manifest),
+    }.items():
+        monkeypatch.setenv(name, value)
+    fake = type("Reader", (), {"readiness": lambda _self: {"status": "READY"}})
+    monkeypatch.setattr(runtime, "DerivativeSnapshotReaderV1", lambda *_args, **_kwargs: fake())
+    assert isinstance(runtime._verified_derivative_reader(), fake)

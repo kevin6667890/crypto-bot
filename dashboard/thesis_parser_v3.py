@@ -742,8 +742,13 @@ def validate_provider_output(text: str, raw: Mapping[str, Any], capabilities: Ma
     # their dedicated fields below; never treat them as silently removed logic.
     header_tokens = {str(item).casefold() for item in capabilities.get("instruments", ())}
     header_tokens.update(str(item).casefold() for item in capabilities.get("timeframes", ()))
+    feature_terms = tuple(str(term).casefold()
+                          for feature in capabilities.get("features", []) if isinstance(feature, Mapping)
+                          for values in feature.get("semantic_terms", {}).values()
+                          for term in values)
     recognized = tuple(item.strip() for item in recognized_raw
-                       if item.strip().casefold() not in header_tokens)
+                       if item.strip().casefold() not in header_tokens
+                       and any(term and term in item.casefold() for term in feature_terms))
     if any(not item or item.casefold() not in text.casefold() for item in recognized):
         raise ThesisParserV3Error("recognized clause is not grounded in user text")
     assumptions = _parse_assumptions(raw.get("assumptions", []), text, capabilities)

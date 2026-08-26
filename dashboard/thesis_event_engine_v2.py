@@ -34,7 +34,7 @@ try:
     )
     from thesis_expression import (
         AllNode, AnyNode, ConditionNode, ExpressionNode, ExpressionValidationError,
-        FeatureContractV2, NotNode, ThesisSpecV2, TruthValue,
+        FeatureContractV2, NotNode, SequenceNodeV1, ThesisSpecV2, TruthValue,
         evaluate_expression, feature_contracts_from_capabilities,
         parse_thesis_spec_v2, semantic_presets_projection,
     )
@@ -58,7 +58,7 @@ except ImportError:
     )
     from .thesis_expression import (
         AllNode, AnyNode, ConditionNode, ExpressionNode, ExpressionValidationError,
-        FeatureContractV2, NotNode, ThesisSpecV2, TruthValue,
+        FeatureContractV2, NotNode, SequenceNodeV1, ThesisSpecV2, TruthValue,
         evaluate_expression, feature_contracts_from_capabilities,
         parse_thesis_spec_v2, semantic_presets_projection,
     )
@@ -101,6 +101,14 @@ def _semantic_terms(code: str, label: Mapping[str, str]) -> dict[str, list[str]]
     """Closed, user-visible vocabulary used to ground parser feature choices."""
     explicit = {
         "RSI": {"en": ["rsi", "relative strength"], "zh": ["RSI", "相对强弱"]},
+        "PRICE_ABOVE_MA200": {"en": ["above ma200", "reclaims ma200", "returns above ma200"],
+                              "zh": ["站上MA200", "重新站上MA200", "重新站回MA200"]},
+        "PRICE_BELOW_MA200": {"en": ["below ma200", "falls below ma200"],
+                              "zh": ["跌回MA200下方", "跌破MA200"]},
+        "DISTANCE_TO_MA200_PCT": {"en": ["distance to ma200", "far from ma200"],
+                                   "zh": ["远离MA200", "距离MA200"]},
+        "OI_CHANGE_PCT": {"en": ["oi change", "open interest change", "oi does not decline"],
+                          "zh": ["OI变化", "OI没有下降", "持仓量没有下降"]},
         "VOLUME_PERCENTILE": {"en": ["volume percentile", "volume surge", "significant volume"],
                               "zh": ["成交量百分位", "明显放量", "成交量大幅增加"]},
         "VOLUME_RATIO": {"en": ["volume ratio", "volume multiple"],
@@ -271,6 +279,8 @@ def _leaves(node: ExpressionNode) -> tuple[ConditionNode, ...]:
         return (node,)
     if isinstance(node, NotNode):
         return _leaves(node.child)
+    if isinstance(node, SequenceNodeV1):
+        return tuple(leaf for step in node.steps for leaf in _leaves(step))
     output: list[ConditionNode] = []
     for child in node.children:
         output.extend(_leaves(child))
@@ -353,7 +363,9 @@ def compile_thesis_v2(spec: ThesisSpecV2, registry: Mapping[str, FeatureContract
         "expression": spec.expression.to_dict(), "forward_horizons": list(spec.forward_horizons),
         "feature_versions": dict(sorted(versions.items())), "source_requirements": list(sources),
         "assumptions": [item.to_dict() for item in spec.assumptions],
-        "event_transition_semantics": "QUALIFIED_EXPRESSION_NON_TRUE_TO_TRUE_CONFIRMED_CLOSE_V2",
+        "event_transition_semantics": ("SEQUENCE_STEP_N_CONFIRMED_CLOSE_V1"
+                                       if isinstance(spec.expression, SequenceNodeV1)
+                                       else "QUALIFIED_EXPRESSION_NON_TRUE_TO_TRUE_CONFIRMED_CLOSE_V2"),
         "independence_policy": {"version": INDEPENDENCE_POLICY_VERSION,
                                 "exclude_overlapping_forward_windows": True},
     }
@@ -452,6 +464,11 @@ def _tree_result(node: ExpressionNode, row: Mapping[str, Any]) -> dict[str, Any]
         child = _tree_result(node.child, row)
         state = {"TRUE": "FALSE", "FALSE": "TRUE", "UNKNOWN": "UNKNOWN"}[child["state"]]
         return {"node_type": "NOT", "state": state, "child": child}
+    if isinstance(node, SequenceNodeV1):
+        # A single row cannot prove ordering. The state machine below is the
+        # sole evaluator and never feeds future rows back into this timestamp.
+        return {"node_type": "SEQUENCE", "state": "UNKNOWN", "steps": [
+            _tree_result(step, row) for step in node.steps], "max_gap_bars": node.max_gap_bars}
     children = [_tree_result(child, row) for child in node.children]
     states = [TruthValue(child["state"]) for child in children]
     state = evaluate_expression(node, lambda leaf: TruthValue(_tree_result(leaf, row)["state"]))
@@ -464,6 +481,8 @@ def _all_leaves_known(tree: Mapping[str, Any]) -> bool:
         return tree.get("state") != "UNKNOWN"
     if tree.get("node_type") == "NOT":
         return _all_leaves_known(tree["child"])
+    if tree.get("node_type") == "SEQUENCE":
+        return all(_all_leaves_known(item) for item in tree.get("steps", []))
     return all(_all_leaves_known(item) for item in tree.get("children", []))
 
 
@@ -582,23 +601,51 @@ class ThesisEventEngineV2:
             result["result_hash"] = self._result_hash(result)
             return result
         candidates: list[dict[str, Any]] = []
-        previous_state: str | None = None
-        previous_qualified = False
-        for row, tree, row_qualified in zip(scoped, trees, qualified):
-            current_state = tree["state"]
-            # UNKNOWN caused by missing coverage must never manufacture an event.
-            if row_qualified and previous_qualified and current_state == "TRUE" and previous_state != "TRUE":
-                event_ts = int(row["candle_close_ts"])
-                contexts = list((row.get("_v2_contexts") or {}).values())
-                candidates.append({
-                    "event_id": _hash({"definition_hash": definition.definition_hash,
-                                       "event_timestamp": event_ts}),
-                    "timestamp": event_ts, "reference_close": float(row["close"]),
-                    "expression_result": tree, "event_context": contexts,
-                    "source_timestamps": [event_ts], "exclusion_status": "INCLUDED",
-                    "exclusion_reason": None, "outcomes": {},
-                })
-            previous_state, previous_qualified = current_state, row_qualified
+        if isinstance(spec.expression, SequenceNodeV1):
+            # Deterministic policy: first A owns the active window; later A
+            # observations are ignored until B confirms or the window expires.
+            active_start: int | None = None
+            active_steps: list[int] = []
+            for index, (row, tree, row_qualified) in enumerate(zip(scoped, trees, qualified)):
+                if not row_qualified:
+                    continue
+                step_trees = tree["steps"]
+                if active_start is None:
+                    if step_trees[0]["state"] == "TRUE":
+                        active_start, active_steps = index, [int(row["candle_close_ts"])]
+                    continue
+                # B must be strictly after A; expiry occurs before evaluating
+                # that later candle, so no future knowledge can create an event.
+                if index - active_start > spec.expression.max_gap_bars:
+                    active_start, active_steps = None, []
+                    if step_trees[0]["state"] == "TRUE":
+                        active_start, active_steps = index, [int(row["candle_close_ts"])]
+                    continue
+                step_number = len(active_steps)
+                if step_trees[step_number]["state"] == "TRUE":
+                    active_steps.append(int(row["candle_close_ts"]))
+                    if len(active_steps) == len(spec.expression.steps):
+                        event_ts = int(row["candle_close_ts"])
+                        contexts = list((row.get("_v2_contexts") or {}).values())
+                        candidates.append({"event_id": _hash({"definition_hash": definition.definition_hash,
+                            "event_timestamp": event_ts}), "timestamp": event_ts,
+                            "reference_close": float(row["close"]), "expression_result": tree,
+                            "event_context": contexts, "source_timestamps": active_steps,
+                            "exclusion_status": "INCLUDED", "exclusion_reason": None, "outcomes": {}})
+                        active_start, active_steps = None, []
+        else:
+            previous_state: str | None = None
+            previous_qualified = False
+            for row, tree, row_qualified in zip(scoped, trees, qualified):
+                current_state = tree["state"]
+                if row_qualified and previous_qualified and current_state == "TRUE" and previous_state != "TRUE":
+                    event_ts = int(row["candle_close_ts"])
+                    contexts = list((row.get("_v2_contexts") or {}).values())
+                    candidates.append({"event_id": _hash({"definition_hash": definition.definition_hash,
+                        "event_timestamp": event_ts}), "timestamp": event_ts, "reference_close": float(row["close"]),
+                        "expression_result": tree, "event_context": contexts, "source_timestamps": [event_ts],
+                        "exclusion_status": "INCLUDED", "exclusion_reason": None, "outcomes": {}})
+                previous_state, previous_qualified = current_state, row_qualified
         max_horizon = max(HORIZON_SECONDS[item] for item in spec.forward_horizons)
         independent: list[dict[str, Any]] = []
         last_event: int | None = None

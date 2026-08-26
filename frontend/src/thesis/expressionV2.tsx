@@ -15,22 +15,26 @@ export function featureAvailable(feature: ThesisFeatureCapability, mode: "histor
 export function expressionDepth(node: ThesisExpressionV2): number {
   if (node.node_type === "CONDITION") return 1;
   if (node.node_type === "NOT") return 1 + expressionDepth(node.child);
+  if (node.node_type === "SEQUENCE") return 1 + Math.max(...node.steps.map(expressionDepth));
   return 1 + Math.max(...node.children.map(expressionDepth));
 }
 
 export function expressionLeaves(node: ThesisExpressionV2): number {
   if (node.node_type === "CONDITION") return 1;
   if (node.node_type === "NOT") return expressionLeaves(node.child);
+  if (node.node_type === "SEQUENCE") return node.steps.reduce((total, step) => total + expressionLeaves(step), 0);
   return node.children.reduce((total, child) => total + expressionLeaves(child), 0);
 }
 
 export function expressionFeatures(node: ThesisExpressionV2): string[] {
   if (node.node_type === "CONDITION") return [node.feature];
   if (node.node_type === "NOT") return expressionFeatures(node.child);
+  if (node.node_type === "SEQUENCE") return [...new Set(node.steps.flatMap(expressionFeatures))];
   return [...new Set(node.children.flatMap(expressionFeatures))];
 }
 
 export function expressionIsTrackable(node: ThesisExpressionV2, capabilities: ThesisCapabilities): boolean {
+  if (node.node_type === "SEQUENCE") return false; // V3.1 ships historical-only sequence evaluation.
   return expressionFeatures(node).every((code) => {
     const feature = capabilities.features.find((item) => item.code === code);
     return !!feature && featureAvailable(feature, "current");
@@ -40,6 +44,9 @@ export function expressionIsTrackable(node: ThesisExpressionV2, capabilities: Th
 export function expressionIsValid(node: ThesisExpressionV2, capabilities: ThesisCapabilities, timeframe: string): boolean {
   if (expressionDepth(node) > EXPRESSION_MAX_DEPTH || expressionLeaves(node) > EXPRESSION_MAX_LEAVES) return false;
   if (node.node_type === "NOT") return expressionIsValid(node.child, capabilities, timeframe);
+  if (node.node_type === "SEQUENCE") return node.steps.length >= 2 && node.steps.length <= 3
+    && Number.isInteger(node.max_gap_bars) && node.max_gap_bars >= 1 && node.max_gap_bars <= 500
+    && node.steps.every((step) => step.node_type !== "SEQUENCE" && expressionIsValid(step, capabilities, timeframe));
   if (node.node_type !== "CONDITION") return node.children.length >= 2 && node.children.length <= 8
     && node.children.every((child) => expressionIsValid(child, capabilities, timeframe));
   const feature = capabilities.features.find((item) => item.code === node.feature);
@@ -70,6 +77,7 @@ export function expressionLabel(node: ThesisExpressionV2, capabilities: ThesisCa
   if (node.node_type === "ALL") return node.children.map((child) => expressionLabel(child, capabilities, language)).join(language === "zh" ? " 且 " : " AND ");
   if (node.node_type === "ANY") return `(${node.children.map((child) => expressionLabel(child, capabilities, language)).join(language === "zh" ? " 或 " : " OR ")})`;
   if (node.node_type === "NOT") return `${language === "zh" ? "非" : "NOT"} (${expressionLabel(node.child, capabilities, language)})`;
+  if (node.node_type === "SEQUENCE") return node.steps.map((step, index) => `${language === "zh" ? `步骤 ${index + 1}` : `Step ${index + 1}`}: ${expressionLabel(step, capabilities, language)}`).join(" → ");
   const feature = capabilities?.features.find((item) => item.code === node.feature);
   const params = Object.values(node.parameters || {}).length ? ` (${Object.entries(node.parameters || {}).map(([key, value]) => `${key}=${value}`).join(", ")})` : "";
   return `${feature?.label[language] || node.feature} ${operators[node.operator] || node.operator} ${String(node.value)}${params}`;
@@ -103,6 +111,10 @@ export function ExpressionTree({ node, capabilities, language, editable = false,
   }
   if (node.node_type === "NOT") return <div className="expression-group not" data-node="NOT"><header><strong>NOT</strong>{editable && <button type="button" className="secondary-btn compact" onClick={() => onChange?.(node.child)}>{zh ? "取消 NOT" : "Remove NOT"}</button>}</header>
     <ExpressionTree node={node.child} capabilities={capabilities} language={language} editable={editable} timeframe={timeframe} depth={depth + 1} onChange={(child) => onChange?.({ ...node, child })} /></div>;
+  if (node.node_type === "SEQUENCE") return <div className="expression-group sequence" data-node="SEQUENCE"><header><strong>{zh ? "顺序" : "SEQUENCE"}</strong></header>
+    {node.steps.map((step, index) => <div key={index}><small>{zh ? `步骤 ${index + 1}` : `Step ${index + 1}`}</small><ExpressionTree node={step} capabilities={capabilities} language={language} editable={editable} timeframe={timeframe} depth={depth + 1} onChange={(next) => onChange?.({ ...node, steps: node.steps.map((item, position) => position === index ? next : item) })} />{index < node.steps.length - 1 && <div aria-label="then">↓</div>}</div>)}
+    <label className="expression-parameter"><small>{zh ? "最大间隔（已确认 K 线）" : "Maximum gap (confirmed candles)"}</small><input disabled={!editable} type="number" min="1" max="500" value={node.max_gap_bars} onChange={(event) => onChange?.({ ...node, max_gap_bars: Number(event.target.value) })} /></label>
+    <small>{zh ? "事件时间：最后一步确认时" : "Event time: final step confirmation"}</small></div>;
   const canAdd = editable && depth < EXPRESSION_MAX_DEPTH && node.children.length < 8 && expressionLeaves(node) < EXPRESSION_MAX_LEAVES;
   const canAddGroup = canAdd && depth + 1 < EXPRESSION_MAX_DEPTH;
   return <div className={`expression-group ${node.node_type.toLowerCase()}`} data-node={node.node_type}><header><strong>{node.node_type === "ALL" ? (zh ? "全部满足" : "ALL") : (zh ? "至少一项满足" : "ANY")}</strong>

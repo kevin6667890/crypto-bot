@@ -5,7 +5,8 @@ export type ThesisExpressionV2 =
   | ({ node_type: "CONDITION" } & ThesisCondition)
   | { node_type: "ALL"; children: ThesisExpressionV2[] }
   | { node_type: "ANY"; children: ThesisExpressionV2[] }
-  | { node_type: "NOT"; child: ThesisExpressionV2 };
+  | { node_type: "NOT"; child: ThesisExpressionV2 }
+  | { node_type: "SEQUENCE"; steps: ThesisExpressionV2[]; max_gap_bars: number; window_version?: "sequence-default-window-v1" };
 
 export type ThesisPresetAssumption = {
   preset_id: string; preset_version: string; source_text: string; feature: string;

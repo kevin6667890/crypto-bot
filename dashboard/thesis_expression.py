@@ -21,6 +21,9 @@ except ImportError:
 
 THESIS_SPEC_V2_VERSION = "thesis-spec-v2"
 EXPRESSION_VERSION = "thesis-expression-v2"
+SEQUENCE_EXPRESSION_VERSION = "sequence-expression-v1"
+SEQUENCE_DEFAULT_WINDOW_VERSION = "sequence-default-window-v1"
+SEQUENCE_DEFAULT_MAX_GAP_BARS = 10
 EXPRESSION_LIMITS_VERSION = "thesis-expression-limits-v1"
 FEATURE_CONTRACTS_VERSION = "thesis-feature-contracts-v2"
 LEGACY_V1_ADAPTER_VERSION = "legacy-v1-expression-adapter-v1"
@@ -105,7 +108,20 @@ class NotNode:
         return {"node_type": self.node_type, "child": self.child.to_dict()}
 
 
-ExpressionNode: TypeAlias = ConditionNode | AllNode | AnyNode | NotNode
+@dataclass(frozen=True)
+class SequenceNodeV1:
+    """Ordered, confirmed-close sequence; order is deliberately non-commutative."""
+    steps: tuple["ExpressionNode", ...]
+    max_gap_bars: int = SEQUENCE_DEFAULT_MAX_GAP_BARS
+    node_type: str = field(default="SEQUENCE", init=False)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {"node_type": self.node_type, "steps": [item.to_dict() for item in self.steps],
+                "max_gap_bars": self.max_gap_bars,
+                "window_version": SEQUENCE_DEFAULT_WINDOW_VERSION}
+
+
+ExpressionNode: TypeAlias = ConditionNode | AllNode | AnyNode | NotNode | SequenceNodeV1
 
 
 @dataclass(frozen=True)
@@ -142,6 +158,16 @@ class SemanticPresetV1:
 # Values are product semantics, not model defaults.  They are versioned,
 # returned by capabilities, recorded in a spec, and therefore hash-visible.
 SEMANTIC_PRESETS: Mapping[str, SemanticPresetV1] = {
+    "failed-breakout-standard-zh-v31": SemanticPresetV1(
+        "failed-breakout-standard-zh-v31", "FAILED_BREAKOUT_CONFIRMED", "eq", True,
+        {"lookback_bars": 20, "failure_window_bars": 3},
+        {"en": (), "zh": ("假突破", "失败突破")},
+        {"en": "Failed breakout using the standard confirmed-candle definition",
+         "zh": "标准确认 K 线定义的假突破"}),
+    "rsi-oversold-zh-v31": SemanticPresetV1(
+        "rsi-oversold-zh-v31", "RSI", "lte", 30.0, {},
+        {"en": (), "zh": ("RSI超卖", "RSI 超卖")},
+        {"en": "RSI at most 30", "zh": "RSI 不高于 30"}),
     "previous-high-standard": SemanticPresetV1(
         "previous-high-standard", "ROLLING_HIGH_BREAKOUT_CONFIRMED", "eq", True,
         {"lookback_bars": 20},
@@ -350,6 +376,21 @@ def parse_expression(raw: Mapping[str, Any], registry: Mapping[str, FeatureContr
         if set(raw) != {"node_type", "child"}:
             raise ExpressionValidationError("NOT must contain only node_type and child")
         node = NotNode(parse_expression(raw.get("child"), registry, depth=depth + 1))
+    elif node_type == "SEQUENCE":
+        if set(raw) - {"node_type", "steps", "max_gap_bars", "window_version"}:
+            raise ExpressionValidationError("SEQUENCE contains unsupported fields")
+        if raw.get("window_version", SEQUENCE_DEFAULT_WINDOW_VERSION) != SEQUENCE_DEFAULT_WINDOW_VERSION:
+            raise ExpressionValidationError("unsupported SEQUENCE window version")
+        steps = raw.get("steps")
+        if not isinstance(steps, list) or not 2 <= len(steps) <= 3:
+            raise ExpressionValidationError("SEQUENCE steps must contain 2 to 3 nodes")
+        gap = raw.get("max_gap_bars", SEQUENCE_DEFAULT_MAX_GAP_BARS)
+        if isinstance(gap, bool) or not isinstance(gap, int) or not 1 <= gap <= 500:
+            raise ExpressionValidationError("SEQUENCE max_gap_bars must be an integer from 1 to 500")
+        parsed = tuple(parse_expression(item, registry, depth=depth + 1) for item in steps)
+        if any(isinstance(item, SequenceNodeV1) for item in parsed):
+            raise ExpressionValidationError("SEQUENCE nesting is not supported")
+        node = SequenceNodeV1(parsed, gap)
     else:
         raise ExpressionValidationError(f"unsupported expression node: {node_type}")
     if expression_leaf_count(node) > MAX_LEAF_CONDITIONS:
@@ -362,6 +403,8 @@ def expression_leaf_count(node: ExpressionNode) -> int:
         return 1
     if isinstance(node, NotNode):
         return expression_leaf_count(node.child)
+    if isinstance(node, SequenceNodeV1):
+        return sum(expression_leaf_count(item) for item in node.steps)
     return sum(expression_leaf_count(item) for item in node.children)
 
 
@@ -381,6 +424,8 @@ def canonicalize_expression(node: ExpressionNode) -> ExpressionNode:
             if child.operator == "eq" and isinstance(child.value, bool):
                 return ConditionNode(child.feature, "eq", not child.value, child.parameters)
         return NotNode(child)
+    if isinstance(node, SequenceNodeV1):
+        return SequenceNodeV1(tuple(canonicalize_expression(item) for item in node.steps), node.max_gap_bars)
     children = tuple(canonicalize_expression(item) for item in node.children)
     children = tuple(sorted(children, key=lambda item: canonical_json(item.to_dict())))
     return AllNode(children) if isinstance(node, AllNode) else AnyNode(children)
@@ -401,6 +446,8 @@ def evaluate_expression(node: ExpressionNode,
     if isinstance(node, NotNode):
         return {TruthValue.TRUE: TruthValue.FALSE, TruthValue.FALSE: TruthValue.TRUE,
                 TruthValue.UNKNOWN: TruthValue.UNKNOWN}[evaluate_expression(node.child, evaluate_leaf)]
+    if isinstance(node, SequenceNodeV1):
+        raise TypeError("SEQUENCE requires the historical sequence evaluator")
     results = tuple(evaluate_expression(item, evaluate_leaf) for item in node.children)
     if isinstance(node, AllNode):
         if TruthValue.FALSE in results:
@@ -467,6 +514,9 @@ def parse_thesis_spec_v2(payload: Mapping[str, Any], registry: Mapping[str, Feat
                 raise ExpressionValidationError(f"feature {node.feature} does not support {timeframe}")
         elif isinstance(node, NotNode):
             check_timeframe(node.child)
+        elif isinstance(node, SequenceNodeV1):
+            for step in node.steps:
+                check_timeframe(step)
         else:
             for child in node.children:
                 check_timeframe(child)
@@ -499,6 +549,8 @@ def parse_thesis_spec_v2(payload: Mapping[str, Any], registry: Mapping[str, Feat
             return (node,)
         if isinstance(node, NotNode):
             return leaves(node.child)
+        if isinstance(node, SequenceNodeV1):
+            return tuple(leaf for step in node.steps for leaf in leaves(step))
         return tuple(leaf for child in node.children for leaf in leaves(child))
     for assumption in assumptions:
         applied = assumption.applied

@@ -249,6 +249,15 @@ def test_service_retries_only_invalid_provider_transport_json():
     assert provider.calls == 2
 
 
+def test_unknown_provider_unsupported_category_is_mapped_to_closed_taxonomy():
+    raw = output(None, recognized_clauses=[], unsupported_clauses=[{
+        "source_text": "whales", "reason_code": "WHALE_UNSUPPORTED", "category": "OTHER",
+    }])
+    result = validate_provider_output("BTC 4H whales", raw, CAPABILITIES,
+                                      requested_as_of=1_700_000_000)
+    assert result.unsupported_clauses[0].category == "SEMANTIC_UNSUPPORTED"
+
+
 @pytest.mark.parametrize("text", [
     "BTC 4H RSI超过70后怎么样", "BTC 4H RSI不高于80", "RSI在40到60之间",
     "BTC 4H突破过去20根K线高点", "BTC 4H突破前高", "BTC 4H OI大幅增加",

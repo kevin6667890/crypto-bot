@@ -305,10 +305,14 @@ def _parse_unsupported(raw: Any, text: str) -> tuple[UnsupportedClauseV2, ...]:
         if not source or source.casefold() not in text.casefold():
             raise ThesisParserV3Error("unsupported clause is not grounded in user text")
         category = str(item.get("category", "SEMANTIC_UNSUPPORTED"))
-        if category not in {"SEMANTIC_UNSUPPORTED", "DATASET_UNAVAILABLE", "INSUFFICIENT_HISTORY",
-                            "NEEDS_PARAMETER", "CURRENT_ONLY", "HISTORICAL_ONLY", "SOURCE_STALE",
-                            "CAPABILITY_DISABLED"}:
-            raise ThesisParserV3Error("unsupported clause category is invalid")
+        allowed_categories = {"SEMANTIC_UNSUPPORTED", "DATASET_UNAVAILABLE", "INSUFFICIENT_HISTORY",
+                              "NEEDS_PARAMETER", "CURRENT_ONLY", "HISTORICAL_ONLY", "SOURCE_STALE",
+                              "CAPABILITY_DISABLED"}
+        # Categories are a closed product taxonomy, not a model-controlled
+        # field.  Preserve the grounded unsupported clause/reason but map an
+        # unknown provider label to the conservative user-visible category.
+        if category not in allowed_categories:
+            category = "SEMANTIC_UNSUPPORTED"
         output.append(UnsupportedClauseV2(source, str(item.get("reason_code", "UNSUPPORTED_CONCEPT")),
                                           category, tuple(map(str, item.get("suggestions", ())))))
     return tuple(output)

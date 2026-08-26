@@ -716,7 +716,8 @@ def _bind_leaf_clauses(expression: ExpressionNode, recognized: Sequence[str],
         residue = re.sub(
             r"\b(?:the|a|an|is|was|are|be|at|over|under|not|above|below|greater|less|than|"
             r"least|most|between|and|previous|past|last|confirmed|close|closes|candle|candles|"
-            r"bar|bars|within|after|then|historical|history|of|to|back|rate|high|low)\b", " ", residue,
+            r"bar|bars|within|after|then|historical|history|of|to|back|rate|high|low|"
+            r"btc|eth|sol|1h|4h|1d|15m)\b", " ", residue,
             flags=re.I)
         residue = re.sub(r"(?:不高于|不低于|至少|至多|介于|过去|此前|前|后|内|到|至|根|"
                          r"已确认|确认|收盘|重新|回到|跌回|涨回|突破位|跌破位|K线|百分位)",

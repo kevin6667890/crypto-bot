@@ -5,7 +5,7 @@ import json
 import pytest
 
 from dashboard.thesis_parser_v3 import (
-    ThesisParserServiceV3, ThesisParserV3Error, _normalize_provider_ast_node_key, parser_context, validate_provider_output,
+    ThesisParserServiceV3, ThesisParserV3Error, _explicit_horizons_from_text, _normalize_provider_ast_node_key, parser_context, validate_provider_output,
 )
 from tests.test_thesis_expression_v2 import CAPABILITIES, condition
 
@@ -33,6 +33,16 @@ def test_documented_provider_type_alias_is_normalized_before_validation():
     raw = {"expression": {"type": "ANY", "children": [{"type": "CONDITION", "feature": "RSI"}]}}
     assert _normalize_provider_ast_node_key(raw)["expression"]["node_type"] == "ANY"
     assert "type" not in _normalize_provider_ast_node_key(raw)["expression"]["children"][0]
+
+
+def test_empty_provider_horizons_recover_only_explicit_user_horizon():
+    raw = output(condition("RSI", "gt", 70), forward_horizons=[],
+                 recognized_clauses=["RSI above 70"])
+    result = validate_provider_output("BTC 4H RSI above 70, what happens after 24 hours?", raw,
+                                      CAPABILITIES, requested_as_of=1_700_000_000)
+    assert result.thesis_spec is not None
+    assert result.thesis_spec.forward_horizons == ("24H",)
+    assert _explicit_horizons_from_text("24小时和3 days", ("24H", "3D")) == ("24H", "3D")
 
 
 def test_between_compiles_to_inclusive_all():

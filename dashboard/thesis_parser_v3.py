@@ -309,6 +309,22 @@ def _assert_clause_accounting(text: str, sources: Sequence[str]) -> None:
         raise ThesisParserV3Error(f"provider left unaccounted clause text: {remaining[:80]}")
 
 
+def _explicit_horizons_from_text(text: str, supported: Sequence[str], *, exclude: Sequence[str] = ()) -> tuple[str, ...]:
+    """Recover only horizon values written explicitly by the user, never a model default."""
+    matches: list[str] = []
+    for horizon in supported:
+        if str(horizon) in set(map(str, exclude)):
+            continue
+        match = re.fullmatch(r"(\d+)([HD])", str(horizon), flags=re.I)
+        if not match:
+            continue
+        amount, unit = match.groups()
+        suffixes = (r"h|hr|hrs|hour|hours|小时") if unit.upper() == "H" else (r"d|day|days|天")
+        if re.search(rf"(?<![A-Za-z0-9]){amount}\s*(?:{'|'.join(suffixes)})(?![A-Za-z])", text, re.I):
+            matches.append(str(horizon))
+    return tuple(matches)
+
+
 def _walk_expression(node: ExpressionNode) -> tuple[ConditionNode, ...]:
     if isinstance(node, ConditionNode):
         return (node,)
@@ -761,7 +777,12 @@ def validate_provider_output(text: str, raw: Mapping[str, Any], capabilities: Ma
     horizons = tuple(map(str, raw.get("forward_horizons", ())))
     if instrument not in supported_instruments or timeframe not in supported_timeframes:
         missing.append(MissingParameterV2("", "THESIS", "instrument_or_timeframe"))
-    if not horizons or any(item not in set(map(str, capabilities.get("horizons", ()))) for item in horizons):
+    supported_horizons = tuple(map(str, capabilities.get("horizons", ())))
+    if not horizons:
+        horizons = _explicit_horizons_from_text(text, supported_horizons, exclude=(timeframe,))
+        if not horizons:
+            missing.append(MissingParameterV2(text, "THESIS", "forward_horizons"))
+    if horizons and any(item not in set(supported_horizons) for item in horizons):
         raise ThesisParserV3Error("forward_horizons contains unsupported value")
     warnings_raw = raw.get("warnings", [])
     if not isinstance(warnings_raw, list) or any(not isinstance(item, str) for item in warnings_raw):

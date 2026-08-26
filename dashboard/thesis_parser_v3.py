@@ -327,7 +327,8 @@ def _parse_unsupported(raw: Any, text: str) -> tuple[UnsupportedClauseV2, ...]:
 
 def _assert_clause_accounting(text: str, sources: Sequence[str], *,
                               represented_terms: Sequence[str] = (),
-                              represented_numbers: Sequence[float] = ()) -> None:
+                              represented_numbers: Sequence[float] = (),
+                              allow_bar_unit: bool = False) -> None:
     """Reject semantic content that the provider silently dropped.
 
     This is vocabulary-neutral: capabilities decide what is executable while
@@ -352,6 +353,8 @@ def _assert_clause_accounting(text: str, sources: Sequence[str], *,
     remaining = re.sub(r"(?:并且|同时|而且|或者|任一|但)", " ", remaining)
     remaining = re.sub(r"(?:之后|以后|通常|怎么样|会怎样|并且|同时|而且|或者|任一|但|当|如果)", " ", remaining)
     remaining = re.sub(r"[\s,，。;；:：?!？()（）/]+", "", remaining)
+    if allow_bar_unit:
+        remaining = re.sub(r"(?:K|k)", "", remaining)
     if remaining:
         raise ThesisParserV3Error(f"provider left unaccounted clause text: {remaining[:80]}")
 
@@ -842,7 +845,9 @@ def validate_provider_output(text: str, raw: Mapping[str, Any], capabilities: Ma
                                 if isinstance(value, (int, float)) and not isinstance(value, bool))
     _assert_clause_accounting(text, [*recognized, *(item.source_text for item in unsupported),
                                      *(item.source_text for item in missing)], represented_terms=represented_terms,
-                              represented_numbers=represented_numbers)
+                              represented_numbers=represented_numbers,
+                              allow_bar_unit=any("BREAKOUT" in feature or "BREAKDOWN" in feature
+                                                 for feature in represented_features))
     if expression is not None and assumptions:
         for assumption in assumptions:
             if not any(_assumption_matches_leaf(assumption, leaf)

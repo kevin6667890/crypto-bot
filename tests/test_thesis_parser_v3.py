@@ -267,6 +267,14 @@ def test_forward_return_question_is_not_an_unsupported_condition():
                                    CAPABILITIES, requested_as_of=1_700_000_000).status == "READY"
 
 
+def test_breakout_bar_unit_fragment_is_accounted_after_grounding():
+    raw = output(condition("ROLLING_HIGH_BREAKOUT_CONFIRMED", "eq", True, {"lookback_bars": 20}),
+                 recognized_clauses=["breakout above previous high 20"])
+    result = validate_provider_output("BTC 4H breakout above previous high 20 K", raw, CAPABILITIES,
+                                      requested_as_of=1_700_000_000)
+    assert result.status == "READY"
+
+
 @pytest.mark.parametrize("text", [
     "BTC 4H RSI超过70后怎么样", "BTC 4H RSI不高于80", "RSI在40到60之间",
     "BTC 4H突破过去20根K线高点", "BTC 4H突破前高", "BTC 4H OI大幅增加",

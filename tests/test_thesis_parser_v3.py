@@ -217,6 +217,16 @@ class Provider:
         return json.dumps(self.response)
 
 
+class SequencedProvider:
+    def __init__(self, *responses):
+        self.responses = list(responses)
+        self.calls = 0
+
+    def generate(self, request):
+        self.calls += 1
+        return self.responses.pop(0)
+
+
 def test_service_uses_capability_context_and_separates_untrusted_text():
     text = "BTC 4H RSI between 40 and 60"
     provider = Provider(output({"node_type": "CONDITION", "feature": "RSI",
@@ -228,6 +238,15 @@ def test_service_uses_capability_context_and_separates_untrusted_text():
     assert system_message.startswith("Return only one JSON object. ")
     system = json.loads(system_message.removeprefix("Return only one JSON object. "))
     assert all(item["code"] != "CVD" for item in system["features"])
+
+
+def test_service_retries_only_invalid_provider_transport_json():
+    provider = SequencedProvider("not-json", json.dumps(output(condition("RSI", "gt", 70),
+        recognized_clauses=["RSI above 70"])))
+    result = ThesisParserServiceV3(provider, CAPABILITIES).parse(
+        "BTC 4H RSI above 70", requested_as_of=1_700_000_000)
+    assert result.status == "READY"
+    assert provider.calls == 2
 
 
 @pytest.mark.parametrize("text", [

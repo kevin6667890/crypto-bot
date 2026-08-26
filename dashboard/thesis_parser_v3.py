@@ -32,6 +32,11 @@ PARSE_RESULT_V2_VERSION = "thesis-parse-result-v2"
 PARSE_STATUSES = {"READY", "READY_WITH_ASSUMPTIONS", "NEEDS_INPUT",
                   "PARTIALLY_SUPPORTED", "UNSUPPORTED", "ERROR"}
 MAX_TEXT_LENGTH = 2_000
+# A schema-constrained provider can still occasionally return an empty or
+# truncated transport payload.  Retrying that *transport* failure is safe: the
+# closed capability context and untrusted user text are identical on every
+# attempt, and semantic/contract failures are never retried or substituted.
+MAX_PROVIDER_TRANSPORT_ATTEMPTS = 2
 
 
 class ThesisParserV3Error(ValueError):
@@ -877,17 +882,27 @@ class ThesisParserServiceV3:
 
     def parse(self, text: str, *, requested_as_of: int) -> ThesisParseResultV2:
         request = provider_request(text, self.capabilities)
-        response = self.provider.generate(request)
-        if not isinstance(response, Mapping):
+        for attempt in range(MAX_PROVIDER_TRANSPORT_ATTEMPTS):
+            response = self.provider.generate(request)
+            if isinstance(response, Mapping):
+                return validate_provider_output(
+                    text.strip(), _normalize_provider_transport(response, self.capabilities), self.capabilities,
+                    requested_as_of=requested_as_of)
             raw_text = response if isinstance(response, str) else getattr(response, "raw_text", None)
             if not isinstance(raw_text, str):
+                if attempt + 1 < MAX_PROVIDER_TRANSPORT_ATTEMPTS:
+                    continue
                 raise ThesisParserV3Error("provider returned no JSON object")
             try:
                 response = json.loads(raw_text)
             except json.JSONDecodeError as error:
+                if attempt + 1 < MAX_PROVIDER_TRANSPORT_ATTEMPTS:
+                    continue
                 raise ThesisParserV3Error("provider returned invalid JSON") from error
-        return validate_provider_output(text.strip(), _normalize_provider_transport(response, self.capabilities), self.capabilities,
-                                        requested_as_of=requested_as_of)
+            return validate_provider_output(
+                text.strip(), _normalize_provider_transport(response, self.capabilities), self.capabilities,
+                requested_as_of=requested_as_of)
+        raise AssertionError("bounded parser transport retry loop exhausted")
 
 
 def _normalize_provider_ast_node_key(value: Any) -> Any:

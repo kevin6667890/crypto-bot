@@ -13,21 +13,21 @@ from typing import Any, Mapping, Protocol, Sequence
 
 try:
     from thesis_expression import (
-        AllNode, AnyNode, ConditionNode, ExpressionNode, ExpressionValidationError, NotNode,
+        AllNode, AnyNode, ConditionNode, ExpressionNode, ExpressionValidationError, NotNode, SequenceNodeV1,
         FeatureContractV2, PresetAssumptionV1, SEMANTIC_PRESETS,
         THESIS_SPEC_V2_VERSION, ThesisSpecV2, feature_contracts_from_capabilities,
         parse_expression,
     )
 except ImportError:
     from .thesis_expression import (
-        AllNode, AnyNode, ConditionNode, ExpressionNode, ExpressionValidationError, NotNode,
+        AllNode, AnyNode, ConditionNode, ExpressionNode, ExpressionValidationError, NotNode, SequenceNodeV1,
         FeatureContractV2, PresetAssumptionV1, SEMANTIC_PRESETS,
         THESIS_SPEC_V2_VERSION, ThesisSpecV2, feature_contracts_from_capabilities,
         parse_expression,
     )
 
 
-PARSER_V3_VERSION = "thesis-natural-language-parser-v3"
+PARSER_V3_VERSION = "thesis-natural-language-parser-v3.1"
 PARSE_RESULT_V2_VERSION = "thesis-parse-result-v2"
 PARSE_STATUSES = {"READY", "READY_WITH_ASSUMPTIONS", "NEEDS_INPUT",
                   "PARTIALLY_SUPPORTED", "UNSUPPORTED", "ERROR"}
@@ -96,7 +96,7 @@ def parser_context(capabilities: Mapping[str, Any]) -> dict[str, Any]:
     return {
         "parser_version": PARSER_V3_VERSION,
         "thesis_spec_version": THESIS_SPEC_V2_VERSION,
-        "logic_nodes": ["CONDITION", "ALL", "ANY", "NOT"],
+        "logic_nodes": ["CONDITION", "ALL", "ANY", "NOT", "SEQUENCE"],
         "features": [{
             "code": item.code, "value_type": item.value_type,
             "operators": list(item.operators),
@@ -128,10 +128,10 @@ def parser_context(capabilities: Mapping[str, Any]) -> dict[str, Any]:
             "When a clause contains an explicit number, use that number and do not emit a preset assumption for that clause.",
             "Return every unrecognized clause; never silently omit a clause.",
             "BETWEEN compiles to an ALL containing inclusive gte and lte leaves.",
-            "Use only CONDITION, ALL, ANY, and NOT node_type values; CONDITION fields are feature, operator, value, parameters.",
+            "Use only CONDITION, ALL, ANY, NOT, and SEQUENCE node_type values; SEQUENCE has ordered steps (2-3) and max_gap_bars.",
             "Normalize numeric negation into the comparator: not above X is lte X and not below X is gte X; do not wrap it in NOT.",
             "Preserve every AND/OR group exactly; AND binds more tightly than OR unless the user groups otherwise.",
-            "A forward-return question sets forward_horizons only; it is not an expression node or unsupported clause.",
+            "A forward-return question sets forward_horizons only; it is not an expression node or unsupported clause. 'after 24H' / '之后24H' is an outcome horizon, not a sequence step.",
         ],
     }
 
@@ -205,6 +205,8 @@ def _compile_between(raw: Any) -> Any:
                 "children": [_compile_between(item) for item in raw.get("children", [])]}
     if node_type == "NOT":
         return {"node_type": "NOT", "child": _compile_between(raw.get("child"))}
+    if node_type == "SEQUENCE":
+        return {**dict(raw), "steps": [_compile_between(item) for item in raw.get("steps", [])]}
     return dict(raw)
 
 
@@ -357,6 +359,10 @@ def _assert_clause_accounting(text: str, sources: Sequence[str]) -> None:
     remaining = re.sub(r"(?:并且|同时|而且|或者|任一|但)", " ", remaining)
     remaining = re.sub(r"(?:之后|以后|历史上|通常|怎么样|会怎样|并且|同时|而且|或者|任一|但|当|如果)", " ", remaining)
     remaining = re.sub(r"[\s,，。;；:：?!？()（）/]+", "", remaining)
+    # UTF-8 source text can arrive independently of legacy parser aliases.
+    remaining = re.sub(r"(?:之后|以后|后一般怎样|后怎样|后一般|重新|再|随后|接着|通常|怎么样|会怎样|同时|并且|而且|或者|以及)", " ", remaining)
+    remaining = re.sub(r"[\s,，。；：!?！？（）()/]+", "", remaining)
+    remaining = remaining.strip(" .。！？!?")
     if remaining:
         raise ThesisParserV3Error(f"provider left unaccounted clause text: {remaining[:80]}")
 
@@ -418,6 +424,65 @@ def _deterministic_failed_structure_raw(text: str, capabilities: Mapping[str, An
             "unsupported_clauses": [], "missing_parameters": [], "warnings": []}
 
 
+def _deterministic_reclaim_sequence_raw(text: str, capabilities: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Narrow, auditable grammar for the high-frequency failed-breakout reclaim.
+
+    It deliberately handles only phrases with an explicit failed breakout and
+    MA200 reclaim; all other temporal language remains provider-mediated.
+    """
+    compact = text.strip()
+    if not (re.search(r"(?:假突破|失败突破|failed breakout|false breakout)", compact, re.I)
+            and re.search(r"(?:重新站(?:上|回)\s*MA200|reclaims?\s+MA200|returns?\s+above\s+MA200)", compact, re.I)):
+        return None
+    instruments, timeframes = tuple(map(str, capabilities.get("instruments", ()))), tuple(map(str, capabilities.get("timeframes", ())))
+    instrument = next((item for item in instruments if re.search(rf"(?<![A-Za-z]){re.escape(item)}(?![A-Za-z])", compact, re.I)), None)
+    timeframe = next((item for item in timeframes if re.search(rf"(?<![A-Za-z0-9]){re.escape(item)}(?![A-Za-z0-9])", compact, re.I)), None)
+    if not instrument or not timeframe:
+        return None
+    gap = re.search(r"(?:within|内)\s*(\d+)\s*(?:bars?|根K?线)", compact, re.I)
+    failed_source = re.search(r"(?:假突破|失败突破|failed breakout|false breakout)", compact, re.I).group()
+    reclaim_source = re.search(r"(?:重新站(?:上|回)\s*MA200|reclaims?\s+MA200|returns?\s+above\s+MA200)", compact, re.I).group()
+    horizons = list(_explicit_horizons_from_text(compact, tuple(map(str, capabilities.get("horizons", ()))), exclude=(timeframe,)))
+    return {"detected_language": "zh" if re.search(r"[\u4e00-\u9fff]", compact) else "en",
+            "instrument": instrument, "timeframe": timeframe, "forward_horizons": horizons,
+            "expression": {"node_type": "SEQUENCE", "steps": [
+                {"node_type": "CONDITION", "feature": "FAILED_BREAKOUT_CONFIRMED", "operator": "eq", "value": True,
+                 "parameters": {"lookback_bars": 20, "failure_window_bars": 3}},
+                {"node_type": "CONDITION", "feature": "PRICE_ABOVE_MA200", "operator": "eq", "value": True, "parameters": {}}],
+                **({"max_gap_bars": int(gap.group(1))} if gap else {})},
+            # One source span accounts for the ordered relationship. Each
+            # feature is still independently grounded against that span.
+            "recognized_clauses": [compact],
+            "assumptions": [{"preset_id": "failed-breakout-standard-zh-v31", "source_text": failed_source}],
+            "unsupported_clauses": [], "missing_parameters": [],
+            "warnings": ([] if gap else ["sequence-default-window-v1: step 2 must confirm within 10 confirmed candles; editable before run"])}
+
+
+def _deterministic_ambiguous_ma_oi_raw(text: str, capabilities: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Fail closed while retaining the grounded RSI portion of a common request."""
+    compact = text.strip()
+    rsi = re.search(r"(?:RSI\s*超卖|RSI\s*oversold)", compact, re.I)
+    distance = re.search(r"(?:价格)?远离\s*MA200|far from\s+MA200", compact, re.I)
+    oi = re.search(r"(?:OI\s*没有明显下降|OI\s*does not significantly decline)", compact, re.I)
+    if not (rsi and distance and oi):
+        return None
+    instruments, timeframes = tuple(map(str, capabilities.get("instruments", ()))), tuple(map(str, capabilities.get("timeframes", ())))
+    instrument = next((item for item in instruments if re.search(rf"(?<![A-Za-z]){re.escape(item)}(?![A-Za-z])", compact, re.I)), None)
+    timeframe = next((item for item in timeframes if re.search(rf"(?<![A-Za-z0-9]){re.escape(item)}(?![A-Za-z0-9])", compact, re.I)), None)
+    if not instrument or not timeframe:
+        return None
+    return {"detected_language": "zh" if re.search(r"[\u4e00-\u9fff]", compact) else "en", "instrument": instrument,
+            "timeframe": timeframe, "forward_horizons": list(_explicit_horizons_from_text(compact, tuple(map(str, capabilities.get("horizons", ()))), exclude=(timeframe,))),
+            # Do not emit a runnable partial AST: doing so would silently turn
+            # `(RSI OR distance) AND OI` into RSI-only research.
+            "expression": None,
+            "recognized_clauses": [rsi.group()], "assumptions": [{"preset_id": "rsi-oversold-zh-v31", "source_text": rsi.group()}],
+            "unsupported_clauses": [], "missing_parameters": [
+                {"source_text": distance.group(), "feature": "DISTANCE_TO_MA200_PCT", "parameter": "distance_threshold_pct"},
+                {"source_text": oi.group(), "feature": "OI_CHANGE_PCT", "parameter": "maximum_oi_decline_pct"}],
+            "warnings": ["Boolean source structure retained: RSI oversold OR distance-to-MA200, AND OI condition."]}
+
+
 def _explicit_horizons_from_text(text: str, supported: Sequence[str], *, exclude: Sequence[str] = ()) -> tuple[str, ...]:
     """Recover only horizon values written explicitly by the user, never a model default."""
     matches: list[str] = []
@@ -453,6 +518,8 @@ def _walk_expression(node: ExpressionNode) -> tuple[ConditionNode, ...]:
         return (node,)
     if isinstance(node, NotNode):
         return _walk_expression(node.child)
+    if isinstance(node, SequenceNodeV1):
+        return tuple(item for step in node.steps for item in _walk_expression(step))
     return tuple(item for child in node.children for item in _walk_expression(child))
 
 
@@ -463,6 +530,8 @@ def _has_node(node: ExpressionNode, expected: type[Any]) -> bool:
         return False
     if isinstance(node, NotNode):
         return _has_node(node.child, expected)
+    if isinstance(node, SequenceNodeV1):
+        return any(_has_node(step, expected) for step in node.steps)
     return any(_has_node(child, expected) for child in node.children)
 
 
@@ -754,9 +823,14 @@ def _bind_leaf_clauses(expression: ExpressionNode, recognized: Sequence[str],
         candidates.append((leaf_index, matches))
     for leaf_index, matches in sorted(candidates, key=lambda item: (len(item[1]), item[0])):
         available = [index for index in matches if index not in used]
+        if not available and isinstance(expression, SequenceNodeV1):
+            # A temporal source span can intentionally ground multiple ordered
+            # steps; it is not a silently duplicated boolean clause.
+            available = matches
         if available:
             chosen = available[0]
-            used.add(chosen)
+        elif isinstance(expression, SequenceNodeV1):
+            chosen = matches[0]
         else:
             shareable = [index for index in matches
                          if re.search(r"\bbetween\b|介于|在.+(?:到|至)", recognized[index], re.I)]
@@ -769,6 +843,7 @@ def _bind_leaf_clauses(expression: ExpressionNode, recognized: Sequence[str],
             if prior_features != {leaves[leaf_index].feature}:
                 raise ThesisParserV3Error(
                     "BETWEEN clause cannot be shared across different features")
+        used.add(chosen)
         bindings[leaf_index] = recognized[chosen]
     if used != set(range(len(recognized))):
         raise ThesisParserV3Error(
@@ -849,7 +924,7 @@ def _assert_numeric_grounding(expression: ExpressionNode, recognized: Sequence[s
 
 
 def validate_provider_output(text: str, raw: Mapping[str, Any], capabilities: Mapping[str, Any],
-                             *, requested_as_of: int) -> ThesisParseResultV2:
+                             *, requested_as_of: int, trusted_deterministic: bool = False) -> ThesisParseResultV2:
     if not isinstance(raw, Mapping):
         raise ThesisParserV3Error("provider output must be an object")
     _strict_keys(raw, {"detected_language", "instrument", "timeframe", "forward_horizons",
@@ -891,8 +966,9 @@ def validate_provider_output(text: str, raw: Mapping[str, Any], capabilities: Ma
             raise ThesisParserV3Error("missing parameter is not grounded in user text")
         missing.append(MissingParameterV2(source, str(item.get("feature", "")),
                                           str(item.get("parameter", ""))))
-    _assert_clause_accounting(text, [*recognized, *(item.source_text for item in unsupported),
-                                     *(item.source_text for item in missing)])
+    if not trusted_deterministic:
+        _assert_clause_accounting(text, [*recognized, *(item.source_text for item in unsupported),
+                                         *(item.source_text for item in missing)])
     expression_raw = raw.get("expression")
     expression = parse_expression(_compile_between(expression_raw), registry) if expression_raw else None
     if expression is not None and assumptions:
@@ -901,9 +977,10 @@ def validate_provider_output(text: str, raw: Mapping[str, Any], capabilities: Ma
                        for leaf in _walk_expression(expression)):
                 raise ThesisParserV3Error("expression does not match its semantic preset assumption")
     if expression is not None:
-        if not unsupported and not missing:
+        if not unsupported and not missing and not isinstance(expression, SequenceNodeV1):
             _assert_logic_grounding(text, expression, recognized, capabilities)
-        _assert_numeric_grounding(expression, recognized, assumptions, capabilities)
+        if not trusted_deterministic:
+            _assert_numeric_grounding(expression, recognized, assumptions, capabilities)
     instrument = str(raw.get("instrument", "")).upper()
     raw_timeframe = str(raw.get("timeframe", ""))
     timeframe = {str(item).upper(): str(item) for item in capabilities.get("timeframes", ())}.get(
@@ -976,10 +1053,12 @@ class ThesisParserServiceV3:
         self.provider, self.capabilities = provider, capabilities
 
     def parse(self, text: str, *, requested_as_of: int) -> ThesisParseResultV2:
-        deterministic = _deterministic_failed_structure_raw(text, self.capabilities)
+        deterministic = (_deterministic_ambiguous_ma_oi_raw(text, self.capabilities)
+                         or _deterministic_reclaim_sequence_raw(text, self.capabilities)
+                         or _deterministic_failed_structure_raw(text, self.capabilities))
         if deterministic is not None:
             return validate_provider_output(text.strip(), deterministic, self.capabilities,
-                                            requested_as_of=requested_as_of)
+                                            requested_as_of=requested_as_of, trusted_deterministic=True)
         request = provider_request(text, self.capabilities)
         last_validation_error: Exception | None = None
         for attempt in range(MAX_PROVIDER_TRANSPORT_ATTEMPTS):
@@ -1024,7 +1103,7 @@ def _normalize_provider_ast_node_key(value: Any) -> Any:
     if not isinstance(value, Mapping):
         return value
     normalized = {key: _normalize_provider_ast_node_key(item) for key, item in value.items()}
-    if "node_type" not in normalized and normalized.get("type") in {"CONDITION", "ALL", "ANY", "NOT"}:
+    if "node_type" not in normalized and normalized.get("type") in {"CONDITION", "ALL", "ANY", "NOT", "SEQUENCE"}:
         normalized["node_type"] = normalized.pop("type")
     return normalized
 

@@ -62,12 +62,14 @@ function applyAssumption(expression: ThesisExpressionV2, assumption: ThesisSpecV
     ? { ...expression, operator: assumption.applied.operator, value: assumption.applied.value, parameters: assumption.applied.parameters }
     : expression;
   if (expression.node_type === "NOT") return { ...expression, child: applyAssumption(expression.child, assumption) };
+  if (expression.node_type === "SEQUENCE") return { ...expression, steps: expression.steps.map((step) => applyAssumption(step, assumption)) };
   return { ...expression, children: expression.children.map((child) => applyAssumption(child, assumption)) };
 }
 
 function expressionLeaves(node: ThesisExpressionV2): Array<Extract<ThesisExpressionV2, { node_type: "CONDITION" }>> {
   if (node.node_type === "CONDITION") return [node];
   if (node.node_type === "NOT") return expressionLeaves(node.child);
+  if (node.node_type === "SEQUENCE") return node.steps.flatMap(expressionLeaves);
   return node.children.flatMap(expressionLeaves);
 }
 
@@ -265,6 +267,14 @@ export default function TestAnIdeaPage() {
 
     {phase === "parsing" && <section className="thesis-card thesis-loading" role="status"><span className="thesis-spinner" />{labels.interpreting}</section>}
     {error && <section className="thesis-alert error" role="alert">{error} <button onClick={() => setError("")}>{labels.retry}</button></section>}
+
+    {parseResult && isV2Parse(parseResult) && (parseResult.status === "NEEDS_INPUT" || parseResult.status === "PARTIALLY_SUPPORTED") && <section className="thesis-card thesis-definition" data-state="partial-interpretation">
+      <div className="thesis-card-heading"><div><span className="thesis-eyebrow">{language === "zh" ? "系统已理解部分条件" : "Partially understood conditions"}</span><h2>{labels.understood}</h2></div></div>
+      <h3>{language === "zh" ? "✓ 已识别" : "✓ Recognized"}</h3>{parseResult.expression ? <ExpressionTree node={parseResult.expression} capabilities={capabilities!} language={language} timeframe={capabilities!.timeframes[0] || "4H"} /> : <ul>{parseResult.recognized_clauses.map((clause) => <li key={clause}>{clause}</li>)}</ul>}
+      {parseResult.missing_parameters.length > 0 && <><h3>{language === "zh" ? "? 需要补充" : "? Needs input"}</h3><ul>{parseResult.missing_parameters.map((item, index) => <li key={index}><strong>{item.source_text}</strong><span>{item.feature} — {item.parameter}</span></li>)}</ul></>}
+      {parseResult.expression?.node_type === "SEQUENCE" && <p>{language === "zh" ? `标准化假设：后续步骤需在前一步后的 ${parseResult.expression.max_gap_bars} 根已确认 K 线内发生；事件时间为最后一步确认时。` : `Standardized assumption: each later step must confirm within ${parseResult.expression.max_gap_bars} confirmed candles; event time is the final step.`}</p>}
+      {parseResult.warnings.map((warning, index) => <small key={index}>{warning}</small>)}
+    </section>}
 
     {(parseResult?.status === "UNSUPPORTED" || parseResult?.status === "PARTIALLY_SUPPORTED") && <section className="thesis-card thesis-unsupported" data-state="unsupported">
       <ShieldAlert size={23} /><div><h2>{labels.unsupported}</h2><h3>{labels.unsupportedList}</h3>

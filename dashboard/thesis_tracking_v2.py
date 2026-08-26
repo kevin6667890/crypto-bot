@@ -30,7 +30,7 @@ try:
     from thesis_event_engine_v2 import compile_thesis_v2
     from thesis_expression import (
         AllNode, AnyNode, ConditionNode, ExpressionNode, FeatureContractV2,
-        NotNode, ThesisSpecV2, TruthValue, parse_thesis_spec_v2,
+        NotNode, SequenceNodeV1, ThesisSpecV2, TruthValue, parse_thesis_spec_v2,
     )
     from thesis_tracking import ThesisTrackingRepositoryV1, TrackingError
 except ImportError:
@@ -46,7 +46,7 @@ except ImportError:
     from .thesis_event_engine_v2 import compile_thesis_v2
     from .thesis_expression import (
         AllNode, AnyNode, ConditionNode, ExpressionNode, FeatureContractV2,
-        NotNode, ThesisSpecV2, TruthValue, parse_thesis_spec_v2,
+        NotNode, SequenceNodeV1, ThesisSpecV2, TruthValue, parse_thesis_spec_v2,
     )
     from .thesis_tracking import ThesisTrackingRepositoryV1, TrackingError
 
@@ -571,6 +571,8 @@ class ThesisTrackingServiceV2:
                 supported_timeframes=(str(raw_spec.get("timeframe", "")),),
                 supported_horizons=tuple(map(str, raw_spec.get("forward_horizons", ()))),
             )
+            if isinstance(spec.expression, SequenceNodeV1):
+                raise TrackingError("HISTORICAL_ONLY:SEQUENCE")
             unavailable = sorted({leaf.feature for leaf in _walk_conditions(spec.expression)
                                   if leaf.feature not in self.trackable_features})
             if unavailable:

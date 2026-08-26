@@ -67,7 +67,7 @@ try:
     from thesis_historical_data import HistoricalDataSelectionPolicyV1, HistoricalStoreV1
     from thesis_evidence_explanation import (EvidenceExplanationError, EvidenceIdentityMismatch,
         ThesisEvidenceExplanationServiceV1)
-    from thesis_parser import DeepSeekThesisParserProvider, ThesisParseContractError, ThesisParserServiceV1
+    from thesis_parser import DeepSeekResponsesThesisParserProvider, DeepSeekThesisParserProvider, ThesisParseContractError, ThesisParserServiceV1
     from thesis_parser_v3 import ThesisParserServiceV3, ThesisParserV3Error
     from thesis_tracking import (CurrentFeatureEvaluatorV1, ThesisTrackingRepositoryV1,
         ThesisTrackingSchedulerV1, ThesisTrackingServiceV1, TrackingError)
@@ -126,7 +126,7 @@ except ImportError:
     from .thesis_historical_data import HistoricalDataSelectionPolicyV1, HistoricalStoreV1
     from .thesis_evidence_explanation import (EvidenceExplanationError, EvidenceIdentityMismatch,
         ThesisEvidenceExplanationServiceV1)
-    from .thesis_parser import DeepSeekThesisParserProvider, ThesisParseContractError, ThesisParserServiceV1
+    from .thesis_parser import DeepSeekResponsesThesisParserProvider, DeepSeekThesisParserProvider, ThesisParseContractError, ThesisParserServiceV1
     from .thesis_parser_v3 import ThesisParserServiceV3, ThesisParserV3Error
     from .thesis_tracking import (CurrentFeatureEvaluatorV1, ThesisTrackingRepositoryV1,
         ThesisTrackingSchedulerV1, ThesisTrackingServiceV1, TrackingError)
@@ -1478,8 +1478,8 @@ THESIS_TEST_SERVICE_V2 = ThesisTestServiceV2(
 
 class _LazyThesisParserProviderV3:
     def generate(self, request: dict[str, Any]) -> Any:
-        provider = DeepSeekThesisParserProvider(
-            model=os.getenv("THESIS_PARSER_MODEL") or "deepseek-chat",
+        provider = DeepSeekResponsesThesisParserProvider(
+            model=os.getenv("THESIS_PARSER_MODEL") or "deepseek-v4-flash",
             timeout=int(os.getenv("THESIS_PARSER_TIMEOUT_SECONDS", "8")),
             # Production mounts the shared provider secret under this legacy name.
             # Keep the parser-specific settings first, but accept that audited mount

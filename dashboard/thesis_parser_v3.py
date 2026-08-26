@@ -138,9 +138,32 @@ def provider_request(text: str, capabilities: Mapping[str, Any]) -> dict[str, An
                 parser_context(capabilities), ensure_ascii=False)},
             {"role": "user", "content": json.dumps({"untrusted_text": text.strip()}, ensure_ascii=False)},
         ],
-        "temperature": 0.0,
-        "response_format": "json",
+        "response_schema": _provider_response_schema(capabilities),
         "max_output_tokens": 1_800,
+    }
+
+
+def _provider_response_schema(capabilities: Mapping[str, Any]) -> dict[str, Any]:
+    """Provider transport schema; domain validation remains below this boundary."""
+    instruments = list(map(str, capabilities.get("instruments", ())))
+    timeframes = list(map(str, capabilities.get("timeframes", ())))
+    horizons = list(map(str, capabilities.get("horizons", ())))
+    nullable = lambda values: {"anyOf": [{"type": "string", "enum": values}, {"type": "null"}]}
+    return {
+        "type": "object", "additionalProperties": False,
+        "required": ["detected_language", "instrument", "timeframe", "forward_horizons", "expression",
+                     "recognized_clauses", "assumptions", "unsupported_clauses", "missing_parameters", "warnings"],
+        "properties": {
+            "detected_language": {"type": "string", "enum": ["en", "zh"]},
+            "instrument": nullable(instruments), "timeframe": nullable(timeframes),
+            "forward_horizons": {"type": "array", "items": {"type": "string", "enum": horizons}, "maxItems": len(horizons)},
+            "expression": {"anyOf": [{"type": "object"}, {"type": "null"}]},
+            "recognized_clauses": {"type": "array", "items": {"type": "string"}, "maxItems": 12},
+            "assumptions": {"type": "array", "items": {"type": "object"}, "maxItems": 12},
+            "unsupported_clauses": {"type": "array", "items": {"type": "object"}, "maxItems": 12},
+            "missing_parameters": {"type": "array", "items": {"type": "object"}, "maxItems": 12},
+            "warnings": {"type": "array", "items": {"type": "string"}, "maxItems": 12},
+        },
     }
 
 

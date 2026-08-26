@@ -5,7 +5,7 @@ import json
 import pytest
 
 from dashboard.thesis_parser_v3 import (
-    ThesisParserServiceV3, ThesisParserV3Error, _canonical_horizon, _explicit_horizons_from_text, _normalize_provider_ast_node_key, parser_context, validate_provider_output,
+    ThesisParserServiceV3, ThesisParserV3Error, _canonical_horizon, _explicit_horizons_from_text, _normalize_provider_ast_node_key, _provider_response_schema, parser_context, validate_provider_output,
 )
 from tests.test_thesis_expression_v2 import CAPABILITIES, condition
 
@@ -27,6 +27,7 @@ def test_context_is_built_from_capabilities_and_exposes_presets():
         "RSI", "VOLUME_PERCENTILE", "ROLLING_HIGH_BREAKOUT_CONFIRMED"}
     assert context["semantic_presets"]["version"] == "semantic-preset-registry-v1"
     assert "OI_CHANGE_PERCENTILE" not in {item["code"] for item in context["features"]}
+    assert _provider_response_schema(CAPABILITIES)["properties"]["forward_horizons"]["items"]["enum"] == ["4H", "12H", "24H", "3D"]
 
 
 def test_documented_provider_type_alias_is_normalized_before_validation():

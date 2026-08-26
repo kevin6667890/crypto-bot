@@ -203,6 +203,34 @@ def test_same_candle_is_noop_but_fresh_to_stale_is_one_material_transition(tmp_p
     assert repository.get("track-1")["status"] == "STALE"
 
 
+def test_existing_history_restores_snapshot_after_other_evaluator_replaced_it(tmp_path: Path) -> None:
+    import json
+    import sqlite3
+
+    path = tmp_path / "tracking.sqlite3"
+    repository = ThesisTrackingRepositoryV1(path)
+    stored_track, _ = repository.create(track())
+    rows = candles()
+    evaluator = CurrentFeatureEvaluatorV1(Reader(rows))
+    close = rows[-1]["candle_close_ts"]
+    first = evaluator.evaluate(stored_track, now=close + 1)
+    repository.record_evaluation(first)
+    replacement = {**first, "evaluation_version": "temporary-other-evaluator",
+                   "overall_status": "BLOCKED_VERSION_MISMATCH"}
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            "UPDATE thesis_current_snapshots SET idempotency_key=?,evaluation_json=?,delta_json=? WHERE track_id=?",
+            ("temporary-snapshot-key", json.dumps(replacement), "{}", "track-1"),
+        )
+    restored, created = repository.record_evaluation(
+        evaluator.evaluate(stored_track, now=close + 2))
+    assert created is False
+    assert restored["overall_status"] == first["overall_status"]
+    detail = repository.detail("track-1")
+    assert detail["latest_evaluation"]["overall_status"] == first["overall_status"]
+    assert len(detail["evaluation_history"]) == 1
+
+
 def test_new_candle_without_material_change_updates_snapshot_not_history(tmp_path: Path) -> None:
     repository = ThesisTrackingRepositoryV1(tmp_path / "tracking.sqlite3")
     stored_track, _ = repository.create(track())

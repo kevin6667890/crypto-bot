@@ -574,6 +574,27 @@ class ThesisTrackingRepositoryV1:
             stored_evaluation = canonical_json({**evaluation, "evaluation_id": evaluation_id})
             stored_delta = canonical_json(delta)
             history_created = previous is None or bool(delta["material_change"])
+            # A legacy evaluator may have temporarily replaced the latest
+            # snapshot while an immutable V2 history row for this exact PIT
+            # identity already exists. Restore the authoritative snapshot
+            # without duplicating or rewriting that history row.
+            history_existing = connection.execute(
+                "SELECT * FROM thesis_current_evaluations WHERE idempotency_key=?",
+                (idempotency_key,),
+            ).fetchone()
+            if history_existing:
+                history_value = self._evaluation(history_existing) or {}
+                if history_value.get("current_dataset_identity") != evaluation.get("current_dataset_identity"):
+                    connection.rollback()
+                    raise TrackingError("current canonical dataset identity changed for historical idempotency key")
+                stable_fields = ("overall_status", "conditions", "source_candle_timestamp",
+                                 "definition_hash", "evaluation_policy_version")
+                if is_v2:
+                    stable_fields += ("tree_result", "leaf_results", "expression_state")
+                if any(history_value.get(key) != evaluation.get(key) for key in stable_fields):
+                    connection.rollback()
+                    raise TrackingError("current evaluation semantics changed for historical idempotency key")
+                history_created = False
             if history_created:
                 connection.execute(
                     """INSERT INTO thesis_current_evaluations(evaluation_id,track_id,idempotency_key,

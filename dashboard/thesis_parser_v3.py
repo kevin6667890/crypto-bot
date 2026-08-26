@@ -341,7 +341,7 @@ def _assert_clause_accounting(text: str, sources: Sequence[str], *,
         remaining = re.sub(re.escape(term), " ", remaining, flags=re.I)
     for number in represented_numbers:
         remaining = re.sub(rf"(?<![0-9.]){re.escape(format(float(number), 'g'))}(?![0-9.])", " ", remaining)
-    remaining = re.sub(r"(?:根|K|k)(?=\s|$|OI)", " ", remaining)
+    remaining = re.sub(r"(?:根|K线|K|k)(?=\s|$|OI)", " ", remaining, flags=re.I)
     # Non-semantic thesis scaffolding is allowed outside clause source spans.
     remaining = re.sub(r"\b(?:BTC|ETH|SOL|1H|4H|1D|15M|when|if|then|after|historically|"
                        r"what|usually|happens?|and|or|either|with|while|but|not)\b", " ", remaining, flags=re.I)

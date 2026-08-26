@@ -317,3 +317,18 @@ def test_mixed_scheduler_dispatches_v1_and_v2_without_version_mismatch():
         "evaluated": 2, "no_change": 0, "failed": 0}
     assert calls == [("v1", "legacy", 1_700_000_000),
                      ("v2", "modern", 1_700_000_000)]
+
+
+def test_standalone_runtime_builds_without_importing_api_application(tmp_path, monkeypatch):
+    from dashboard.thesis_tracking_runtime import build_tracking_service_from_environment
+
+    monkeypatch.setenv("PAPER_DB_PATH", str(tmp_path / "paper.sqlite3"))
+    monkeypatch.setenv("MICROSTRUCTURE_DB_PATH", str(tmp_path / "micro.sqlite3"))
+    monkeypatch.setenv("THESIS_TRACKING_DB_PATH", str(tmp_path / "tracking.sqlite3"))
+    for name in ("THESIS_HISTORICAL_DB_PATH", "THESIS_DERIVATIVES_DB_PATH",
+                 "THESIS_DERIVATIVES_DB_SHA256", "THESIS_DERIVATIVES_DATASET_ID",
+                 "THESIS_DERIVATIVES_MANIFEST_PATH"):
+        monkeypatch.delenv(name, raising=False)
+    service = build_tracking_service_from_environment()
+    assert isinstance(service, MixedVersionThesisTrackingService)
+    assert service.repository.path == tmp_path / "tracking.sqlite3"

@@ -39,11 +39,8 @@ services:
       GIT_COMMIT: ${FACTOR_PROGRAM_GIT_COMMIT:?Factor Program source commit is required}
       LIVE_TRADING_ENABLED: "false"
       REAL_TRADING_ENABLED: "false"
-      # The scheduler imports shared API wiring to obtain the mixed V1/V2
-      # tracking service. Its unrelated PaperService bootstrap must never
-      # contend with or mutate the production paper ledger.
-      PAPER_DB_PATH: /tmp/thesis-tracking-paper-bootstrap.db
-      POLYMARKET_DB_PATH: /tmp/thesis-tracking-polymarket-bootstrap.db
+      PAPER_DB_PATH: /var/lib/paper/paper_trades.db
+      MICROSTRUCTURE_DB_PATH: /var/lib/microstructure/market_microstructure.db
       THESIS_HISTORICAL_REQUIRE_IMMUTABLE: "true"
       THESIS_HISTORICAL_DB_PATH: /var/lib/paper/thesis_historical.db
       THESIS_HISTORICAL_DB_SHA256: ${THESIS_HISTORICAL_DB_SHA256:?Immutable thesis database SHA-256 is required}
@@ -53,6 +50,7 @@ services:
       THESIS_TRACKING_SCHEDULER_CADENCE_SECONDS: ${THESIS_TRACKING_SCHEDULER_CADENCE_SECONDS:-900}
     volumes:
       - paper-data:/var/lib/paper:rw
+      - microstructure-data:/var/lib/microstructure:ro
     pids_limit: 64
     mem_limit: 256m
     cpus: 0.15

@@ -895,7 +895,12 @@ class ThesisParserServiceV3:
     def parse(self, text: str, *, requested_as_of: int) -> ThesisParseResultV2:
         request = provider_request(text, self.capabilities)
         for attempt in range(MAX_PROVIDER_TRANSPORT_ATTEMPTS):
-            response = self.provider.generate(request)
+            try:
+                response = self.provider.generate(request)
+            except Exception as error:
+                if attempt + 1 < MAX_PROVIDER_TRANSPORT_ATTEMPTS:
+                    continue
+                raise ThesisParserV3Error("parser provider unavailable") from error
             if isinstance(response, Mapping):
                 return validate_provider_output(
                     text.strip(), _normalize_provider_transport(response, self.capabilities), self.capabilities,

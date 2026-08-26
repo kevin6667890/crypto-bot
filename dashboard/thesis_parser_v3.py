@@ -325,6 +325,7 @@ def _assert_clause_accounting(text: str, sources: Sequence[str]) -> None:
     # Forward-horizon wording is research scaffolding, not an event clause.
     remaining = re.sub(r"\b\d+(?:\.\d+)?\s*(?:m|h|d|mins?|minutes?|hours?|days?)\b", " ",
                        remaining, flags=re.I)
+    remaining = re.sub(r"\d+(?:\.\d+)?\s*(?:小时|天)", " ", remaining)
     remaining = re.sub(r"(?:并且|同时|而且|或者|任一|但)", " ", remaining)
     remaining = re.sub(r"(?:之后|以后|通常|怎么样|会怎样|并且|同时|而且|或者|任一|但|当|如果)", " ", remaining)
     remaining = re.sub(r"[\s,，。;；:：?!？()（）/]+", "", remaining)

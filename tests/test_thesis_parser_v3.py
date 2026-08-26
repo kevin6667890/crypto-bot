@@ -69,6 +69,12 @@ def test_provider_question_echo_is_not_treated_as_expression_clause():
     assert result.recognized_clauses == ("RSI above 70",)
 
 
+def test_chinese_forward_horizon_is_scaffolding_not_a_missing_clause():
+    raw = output(condition("RSI", "gt", 70), forward_horizons=["24H"], recognized_clauses=["RSI above 70"])
+    assert validate_provider_output("BTC 4H RSI above 70，之后24小时通常怎么样？", raw, CAPABILITIES,
+                                    requested_as_of=1_700_000_000).status == "READY"
+
+
 def test_between_compiles_to_inclusive_all():
     text = "BTC 4H RSI between 40 and 60"
     raw = output({"node_type": "CONDITION", "feature": "RSI",

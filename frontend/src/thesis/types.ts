@@ -62,6 +62,7 @@ export type ThesisCapabilities = {
   timeframes: string[];
   horizons: string[];
   features: ThesisFeatureCapability[];
+  example_prompts?: Array<{ id: string; feature: string; text: { en: string; zh: string } }>;
   unsupported_concepts: string[];
   semantic_presets?: { version: string; presets: Array<{ preset_id: string; feature: string; operator: string;
     value: number | boolean; parameters: Record<string, number | boolean | string>; label: { en: string; zh: string } }> };

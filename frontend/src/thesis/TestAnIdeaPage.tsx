@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useLanguage } from "../i18n";
 import { createTrackedThesis } from "../tracking/api";
 import type { TrackMutation } from "../tracking/types";
-import { explainThesis, fetchThesisCapabilities, fetchThesisEventContext, parseThesis, testThesis } from "./api";
+import { explainThesis, fetchThesisCapabilities, fetchThesisEventContext, parseThesis, testThesis, ThesisApiError } from "./api";
 import EvidenceCandlestickChart from "./EvidenceCandlestickChart";
 import { AssumptionEditor, CapabilityBrowser, defaultCondition, ExpressionTree, expressionIsTrackable, expressionIsValid, featureAvailable, friendlyReason, friendlyStatus } from "./expressionV2";
 import { thesisText } from "./i18n";
@@ -25,13 +25,10 @@ const examples = {
 
 function capabilityExamples(capabilities: ThesisCapabilities | null, language: "en" | "zh") {
   if (!capabilities || capabilities.thesis_spec_version === "thesis-spec-v1") return examples[language];
-  const instrument = capabilities.instruments[0] || "BTC"; const timeframe = capabilities.timeframes.includes("4H") ? "4H" : capabilities.timeframes[0];
-  const horizon = capabilities.horizons.includes("24H") ? "24H" : capabilities.horizons[0];
-  const presets = capabilities.semantic_presets?.presets.filter((preset) => capabilities.features.some((feature) => feature.code === preset.feature && featureAvailable(feature, "historical"))) || [];
-  const phrases = presets.slice(0, 3).map((preset) => `${instrument} ${timeframe} ${preset.label[language]}${language === "zh" ? `，之后 ${horizon} 历史上怎么样？` : `. What happened over the next ${horizon} historically?`}`);
-  if (phrases.length) return phrases;
-  return capabilities.features.filter((feature) => feature.value_type === "boolean" && featureAvailable(feature, "historical")).slice(0, 3)
-    .map((feature) => `${instrument} ${timeframe} ${feature.label[language]} = true${language === "zh" ? `，之后 ${horizon} 历史上怎么样？` : `. What happened over the next ${horizon} historically?`}`);
+  const audited = capabilities.example_prompts?.filter((example) => capabilities.features.some(
+    (feature) => feature.code === example.feature && featureAvailable(feature, "historical")))
+    .map((example) => example.text[language]) || [];
+  return audited;
 }
 
 const emptyDefinition: EditableDefinition = { instrument: "", timeframe: "", required: [], optional: [], horizons: ["4H", "12H", "24H"] };
@@ -141,9 +138,18 @@ export default function TestAnIdeaPage() {
       if (isV2Parse(parsed)) setV2Spec(parsed.thesis_spec);
       else { setV2Spec(null); setDefinition(definitionFromParse(parsed)); }
       if (parsed.status === "ERROR") setManual(true);
-    } catch {
+    } catch (reason) {
       if (current !== sequence.current) return;
-      setError(labels.parseError); setManual(true); setParseResult(null);
+      const timeout = (reason as Error).name === "AbortError";
+      const unavailable = reason instanceof ThesisApiError && reason.status >= 500;
+      setError(timeout ? labels.parseTimeout : unavailable ? labels.parseUnavailable : labels.parseError);
+      setParseResult(null); setManual(true);
+      if (capabilities?.thesis_spec_version === "thesis-spec-v2") {
+        const timeframe = capabilities.timeframes[0] || "4H";
+        setV2Spec({ version: "thesis-spec-v2", instrument: capabilities.instruments[0] || "", timeframe,
+          expression: defaultCondition(capabilities.features, timeframe), forward_horizons: capabilities.horizons.slice(0, 3),
+          requested_as_of: Math.floor(Date.now() / 1000), assumptions: [], metadata: { source: "test-an-idea-manual-v2" } });
+      }
     } finally {
       if (current === sequence.current) setPhase("idle");
     }

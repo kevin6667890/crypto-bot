@@ -737,7 +737,13 @@ def validate_provider_output(text: str, raw: Mapping[str, Any], capabilities: Ma
     recognized_raw = raw.get("recognized_clauses", [])
     if not isinstance(recognized_raw, list) or any(not isinstance(item, str) for item in recognized_raw):
         raise ThesisParserV3Error("recognized_clauses must be an array of strings")
-    recognized = tuple(item.strip() for item in recognized_raw)
+    # Some provider variants echo the already structured instrument/timeframe
+    # header here.  They are not expression clauses and are validated through
+    # their dedicated fields below; never treat them as silently removed logic.
+    header_tokens = {str(item).casefold() for item in capabilities.get("instruments", ())}
+    header_tokens.update(str(item).casefold() for item in capabilities.get("timeframes", ()))
+    recognized = tuple(item.strip() for item in recognized_raw
+                       if item.strip().casefold() not in header_tokens)
     if any(not item or item.casefold() not in text.casefold() for item in recognized):
         raise ThesisParserV3Error("recognized clause is not grounded in user text")
     assumptions = _parse_assumptions(raw.get("assumptions", []), text, capabilities)

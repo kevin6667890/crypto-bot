@@ -45,6 +45,13 @@ def test_empty_provider_horizons_recover_only_explicit_user_horizon():
     assert _explicit_horizons_from_text("24小时和3 days", ("24H", "3D")) == ("24H", "3D")
 
 
+def test_provider_header_tokens_are_not_treated_as_expression_clauses():
+    raw = output(condition("RSI", "gt", 70), recognized_clauses=["BTC", "4H", "RSI above 70"])
+    result = validate_provider_output("BTC 4H RSI above 70", raw, CAPABILITIES,
+                                      requested_as_of=1_700_000_000)
+    assert result.recognized_clauses == ("RSI above 70",)
+
+
 def test_between_compiles_to_inclusive_all():
     text = "BTC 4H RSI between 40 and 60"
     raw = output({"node_type": "CONDITION", "feature": "RSI",

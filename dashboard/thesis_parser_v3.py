@@ -304,6 +304,13 @@ def _parse_unsupported(raw: Any, text: str) -> tuple[UnsupportedClauseV2, ...]:
         source = str(item.get("source_text", "")).strip()
         if not source or source.casefold() not in text.casefold():
             raise ThesisParserV3Error("unsupported clause is not grounded in user text")
+        # A forward-return question supplies the study horizon; it is not an
+        # event-condition clause.  Some models nevertheless label it as an
+        # unsupported query type, so handle this closed, syntax-only case here.
+        if (str(item.get("reason_code", "")) == "UNSUPPORTED_QUERY_TYPE"
+                and re.search(r"(?:what|usually|happens?|after|historical|之后|以後|通常|怎么样|怎樣)", source, re.I)
+                and re.search(r"\d+\s*(?:H|D|hours?|days?|小时|天)", source, re.I)):
+            continue
         category = str(item.get("category", "SEMANTIC_UNSUPPORTED"))
         allowed_categories = {"SEMANTIC_UNSUPPORTED", "DATASET_UNAVAILABLE", "INSUFFICIENT_HISTORY",
                               "NEEDS_PARAMETER", "CURRENT_ONLY", "HISTORICAL_ONLY", "SOURCE_STALE",

@@ -258,6 +258,15 @@ def test_unknown_provider_unsupported_category_is_mapped_to_closed_taxonomy():
     assert result.unsupported_clauses[0].category == "SEMANTIC_UNSUPPORTED"
 
 
+def test_forward_return_question_is_not_an_unsupported_condition():
+    raw = output(condition("RSI", "gt", 70), recognized_clauses=["RSI above 70"],
+                 unsupported_clauses=[{"source_text": "what usually happens after 24 hours",
+                                       "reason_code": "UNSUPPORTED_QUERY_TYPE",
+                                       "category": "SEMANTIC_UNSUPPORTED"}])
+    assert validate_provider_output("BTC 4H RSI above 70, what usually happens after 24 hours?", raw,
+                                   CAPABILITIES, requested_as_of=1_700_000_000).status == "READY"
+
+
 @pytest.mark.parametrize("text", [
     "BTC 4H RSI超过70后怎么样", "BTC 4H RSI不高于80", "RSI在40到60之间",
     "BTC 4H突破过去20根K线高点", "BTC 4H突破前高", "BTC 4H OI大幅增加",

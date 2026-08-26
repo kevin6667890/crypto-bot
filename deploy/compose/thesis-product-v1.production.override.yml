@@ -25,6 +25,9 @@ services:
       # Importing the shared thesis runtime configures structured logging.
       # Keep that side effect writable without weakening the read-only rootfs.
       - /app/logs:rw,noexec,nosuid,size=16m,uid=10001,gid=10001,mode=700
+      # Shared API module defaults are redirected here as a second isolation
+      # boundary; the scheduler has no authority over other product stores.
+      - /app/data_cache:rw,noexec,nosuid,size=16m,uid=10001,gid=10001,mode=700
     depends_on:
       paper-api:
         condition: service_healthy
@@ -40,6 +43,7 @@ services:
       # tracking service. Its unrelated PaperService bootstrap must never
       # contend with or mutate the production paper ledger.
       PAPER_DB_PATH: /tmp/thesis-tracking-paper-bootstrap.db
+      POLYMARKET_DB_PATH: /tmp/thesis-tracking-polymarket-bootstrap.db
       THESIS_HISTORICAL_REQUIRE_IMMUTABLE: "true"
       THESIS_HISTORICAL_DB_PATH: /var/lib/paper/thesis_historical.db
       THESIS_HISTORICAL_DB_SHA256: ${THESIS_HISTORICAL_DB_SHA256:?Immutable thesis database SHA-256 is required}

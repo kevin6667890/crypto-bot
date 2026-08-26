@@ -139,7 +139,7 @@ def test_v3_lazy_parser_accepts_shared_deepseek_secret_mount(monkeypatch):
     monkeypatch.delenv("THESIS_PARSER_API_KEY", raising=False)
     monkeypatch.delenv("DEEPSEEK_API_KEY", raising=False)
     monkeypatch.setenv("DEEPSEEK_API_KEY_FILE", "/run/secrets/legacy_deepseek_key")
-    monkeypatch.setattr(paper_api, "DeepSeekResponsesThesisParserProvider", Provider)
+    monkeypatch.setattr(paper_api, "DeepSeekThesisParserProvider", Provider)
     request = {"messages": [], "max_output_tokens": 1, "response_schema": {}}
     assert paper_api._LazyThesisParserProviderV3().generate(request) == request
     assert captured["api_key_file"] == "/run/secrets/legacy_deepseek_key"

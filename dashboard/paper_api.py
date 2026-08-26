@@ -1478,7 +1478,10 @@ THESIS_TEST_SERVICE_V2 = ThesisTestServiceV2(
 
 class _LazyThesisParserProviderV3:
     def generate(self, request: dict[str, Any]) -> Any:
-        provider = DeepSeekResponsesThesisParserProvider(
+        # The strict V3 validator remains the semantic boundary.  The mature
+        # JSON-object transport avoids intermittent non-JSON Responses output
+        # that otherwise turns a supported thesis into a spurious UI failure.
+        provider = DeepSeekThesisParserProvider(
             model=os.getenv("THESIS_PARSER_MODEL") or "deepseek-v4-flash",
             timeout=int(os.getenv("THESIS_PARSER_TIMEOUT_SECONDS", "8")),
             # Production mounts the shared provider secret under this legacy name.

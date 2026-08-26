@@ -114,6 +114,49 @@ def test_chinese_forward_horizon_is_scaffolding_not_a_missing_clause():
                                     requested_as_of=1_700_000_000).status == "READY"
 
 
+def test_chinese_historical_forward_question_is_scaffolding_not_a_missing_clause():
+    raw = output(condition("RSI", "gt", 70), forward_horizons=["24H"],
+                 recognized_clauses=["RSI above 70"])
+    assert validate_provider_output("BTC 4H RSI above 70，之后 24H 历史上怎么样？", raw, CAPABILITIES,
+                                    requested_as_of=1_700_000_000).status == "READY"
+
+
+@pytest.mark.parametrize(("text", "feature", "parameters", "assumptions"), [
+    ("BTC 4H 失败跌破参考过去 20 根已确认 K 线的最低点，之后 24H 历史上怎么样？",
+     "FAILED_BREAKDOWN_CONFIRMED", {"lookback_bars": 20, "failure_window_bars": 3},
+     {"failed-breakdown-window-standard"}),
+    ("BTC 4H 跌破后 3 根已确认 K 线内收盘重新回到跌破位上方，之后 24H 历史上怎么样？",
+     "FAILED_BREAKDOWN_CONFIRMED", {"lookback_bars": 20, "failure_window_bars": 3},
+     {"failed-breakdown-lookback-standard"}),
+    ("BTC 4H 失败突破参考过去 20 根已确认 K 线的最高点，之后 24H 历史上怎么样？",
+     "FAILED_BREAKOUT_CONFIRMED", {"lookback_bars": 20, "failure_window_bars": 3},
+     {"failed-breakout-window-standard"}),
+])
+def test_advertised_chinese_failed_structure_examples_are_deterministically_executable(
+        text, feature, parameters, assumptions):
+    from dashboard.thesis_event_engine_v2 import thesis_capabilities_v2
+
+    class NeverCallProvider:
+        def generate(self, request):
+            raise AssertionError("advertised deterministic example must not call provider")
+
+    result = ThesisParserServiceV3(NeverCallProvider(), thesis_capabilities_v2()).parse(
+        text, requested_as_of=1_700_000_000)
+    assert result.status == "READY_WITH_ASSUMPTIONS"
+    assert result.expression.feature == feature
+    assert result.expression.parameters == parameters
+    assert {item.preset_id for item in result.assumptions} == assumptions
+
+
+def test_failed_structure_deterministic_grammar_rejects_opposite_reference_direction():
+    from dashboard.thesis_event_engine_v2 import thesis_capabilities_v2
+    from dashboard.thesis_parser_v3 import _deterministic_failed_structure_raw
+
+    assert _deterministic_failed_structure_raw(
+        "BTC 4H 失败跌破参考过去20根K线最高点，之后24H历史上怎么样？",
+        thesis_capabilities_v2()) is None
+
+
 def test_between_compiles_to_inclusive_all():
     text = "BTC 4H RSI between 40 and 60"
     raw = output({"node_type": "CONDITION", "feature": "RSI",
@@ -174,6 +217,18 @@ def test_unsupported_clause_is_never_silently_dropped_or_executable():
     assert result.status == "PARTIALLY_SUPPORTED"
     assert result.expression is not None
     assert result.thesis_spec is None
+
+
+def test_cvd_unsupported_clause_exposes_the_native_history_data_gate():
+    text = "BTC 4H CVD confirms"
+    raw = output(None, recognized_clauses=[], unsupported_clauses=[{
+        "source_text": "CVD confirms", "reason_code": "FEATURE_NOT_SUPPORTED",
+        "category": "SEMANTIC_UNSUPPORTED",
+    }])
+    result = validate_provider_output(text, raw, CAPABILITIES, requested_as_of=1_700_000_000)
+    assert result.status == "UNSUPPORTED"
+    assert result.unsupported_clauses[0].reason_code == "CVD_HISTORICAL_NATIVE_SOURCE_UNAVAILABLE"
+    assert result.unsupported_clauses[0].category == "CAPABILITY_DISABLED"
 
 
 def test_provider_cannot_silently_drop_an_unknown_clause():

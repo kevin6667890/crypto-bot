@@ -181,7 +181,8 @@ SEMANTIC_PRESETS: Mapping[str, SemanticPresetV1] = {
     "failed-breakout-lookback-standard": SemanticPresetV1(
         "failed-breakout-lookback-standard", "FAILED_BREAKOUT_CONFIRMED", "eq", True,
         {"lookback_bars": 20},
-        {"en": ("previous high",), "zh": ("前高",)},
+        {"en": ("previous high", "failed breakout", "false breakout", "falls back below"),
+         "zh": ("前高", "失败突破", "假突破", "重新跌回突破位")},
         {"en": "Failure reference uses the previous 20 confirmed candles high",
          "zh": "失败突破参考过去 20 根已确认 K 线的最高点"}),
     "failed-breakdown-standard": SemanticPresetV1(
@@ -193,9 +194,22 @@ SEMANTIC_PRESETS: Mapping[str, SemanticPresetV1] = {
     "failed-breakdown-lookback-standard": SemanticPresetV1(
         "failed-breakdown-lookback-standard", "FAILED_BREAKDOWN_CONFIRMED", "eq", True,
         {"lookback_bars": 20},
-        {"en": ("previous low",), "zh": ("前低",)},
+        {"en": ("previous low", "failed breakdown", "false breakdown", "recovers above"),
+         "zh": ("前低", "失败跌破", "假跌破", "重新回到跌破位上方")},
         {"en": "Failure reference uses the previous 20 confirmed candles low",
          "zh": "失败跌破参考过去 20 根已确认 K 线的最低点"}),
+    "failed-breakout-window-standard": SemanticPresetV1(
+        "failed-breakout-window-standard", "FAILED_BREAKOUT_CONFIRMED", "eq", True,
+        {"failure_window_bars": 3},
+        {"en": ("failed breakout", "false breakout"), "zh": ("失败突破", "假突破")},
+        {"en": "Failure is confirmed within 3 confirmed candles",
+         "zh": "失败突破按 3 根已确认 K 线内收盘跌回突破位确认"}),
+    "failed-breakdown-window-standard": SemanticPresetV1(
+        "failed-breakdown-window-standard", "FAILED_BREAKDOWN_CONFIRMED", "eq", True,
+        {"failure_window_bars": 3},
+        {"en": ("failed breakdown", "false breakdown"), "zh": ("失败跌破", "假跌破")},
+        {"en": "Failure is confirmed within 3 confirmed candles",
+         "zh": "失败跌破按 3 根已确认 K 线内收盘回到跌破位上方确认"}),
 }
 
 
@@ -480,6 +494,23 @@ def parse_thesis_spec_v2(payload: Mapping[str, Any], registry: Mapping[str, Feat
         if canonical_json(raw) != canonical_json(expected.to_dict()):
             raise ExpressionValidationError("assumption does not match the preset registry")
         assumptions.append(expected)
+    def leaves(node: ExpressionNode) -> tuple[ConditionNode, ...]:
+        if isinstance(node, ConditionNode):
+            return (node,)
+        if isinstance(node, NotNode):
+            return leaves(node.child)
+        return tuple(leaf for child in node.children for leaf in leaves(child))
+    for assumption in assumptions:
+        applied = assumption.applied
+        if not any(
+            leaf.feature == assumption.feature
+            and leaf.operator == applied["operator"]
+            and leaf.value == applied["value"]
+            and all(leaf.parameters.get(name) == value
+                    for name, value in dict(applied["parameters"]).items())
+            for leaf in leaves(expression)
+        ):
+            raise ExpressionValidationError("assumption is not represented by the expression")
     metadata = payload.get("metadata", {})
     if not isinstance(metadata, Mapping):
         raise ExpressionValidationError("metadata must be an object")

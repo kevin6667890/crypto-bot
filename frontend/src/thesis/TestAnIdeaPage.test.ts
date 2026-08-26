@@ -85,6 +85,14 @@ describe("test-an-idea deterministic UI state", () => {
     expect(readFileSync(new URL("./TestAnIdeaPage.tsx", import.meta.url), "utf8")).toContain("startManual");
   });
 
+  it("uses only backend-audited V2 example prompts instead of composing preset labels", () => {
+    const source = readFileSync(new URL("./TestAnIdeaPage.tsx", import.meta.url), "utf8");
+    expect(source).toContain("capabilities.example_prompts");
+    expect(source).not.toContain("presets.slice(0, 3)");
+    expect(source).not.toContain("feature.label[language]");
+    expect(readFileSync(new URL("./api.ts", import.meta.url), "utf8")).toContain("}, 17_000)");
+  });
+
   it("renders raw and evaluable lineage, limited-span warning and audit identities", () => {
     const source = readFileSync(new URL("./TestAnIdeaPage.tsx", import.meta.url), "utf8");
     for (const field of ["historical_data.raw_range", "historical_data.evaluable_range", "breadth_qualification",

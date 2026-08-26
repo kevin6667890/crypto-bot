@@ -112,6 +112,9 @@ def test_capabilities_endpoint_is_v2_and_exposes_visible_presets() -> None:
     assert payload["semantic_presets"]["version"] == "semantic-preset-registry-v1"
     assert next(item for item in payload["features"]
                 if item["code"] == "ROLLING_HIGH_BREAKOUT_CONFIRMED")["parameters"]["lookback_bars"]["maximum"] == 500
+    assert [item["id"] for item in payload["example_prompts"]] == [
+        "failed-breakdown-reference-v1", "failed-breakdown-window-v1", "failed-breakout-reference-v1"]
+    assert all(item["text"]["zh"] for item in payload["example_prompts"])
 
 
 def test_track_create_rejects_client_statistics_before_verification(tmp_path: Path) -> None:

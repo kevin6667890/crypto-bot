@@ -35,7 +35,7 @@ export function fetchThesisCapabilities(signal?: AbortSignal) {
 export function parseThesis(input: { version?: "thesis-parse-request-v1" | "thesis-parse-request-v2"; text: string; language?: "en" | "zh"; requested_instrument?: string; requested_timeframe?: string }, signal?: AbortSignal) {
   const { version = "thesis-parse-request-v1", ...payload } = input;
   return request<ThesisParseResult>("/api/research/thesis/parse", { method: "POST", signal,
-    body: JSON.stringify({ version, ...payload }) }, 15_000);
+    body: JSON.stringify({ version, ...payload }) }, 17_000);
 }
 
 export function testThesis(spec: ThesisSpec, signal?: AbortSignal) {

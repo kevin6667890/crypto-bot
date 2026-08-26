@@ -127,11 +127,11 @@ def _semantic_terms(code: str, label: Mapping[str, str]) -> dict[str, list[str]]
         },
         FAILED_BREAKOUT_CONFIRMED: {
             "en": ["failed breakout", "false breakout", "falls back below"],
-            "zh": ["假突破", "失败突破", "跌回突破位", "跌回来"],
+            "zh": ["假突破", "失败突破", "跌回突破位", "跌回来", "突破后", "重新跌回突破位"],
         },
         FAILED_BREAKDOWN_CONFIRMED: {
             "en": ["failed breakdown", "false breakdown", "recovers above"],
-            "zh": ["假跌破", "失败跌破", "收回跌破位", "涨回来"],
+            "zh": ["假跌破", "失败跌破", "收回跌破位", "涨回来", "跌破后", "重新回到跌破位上方"],
         },
     }
     if code in explicit:
@@ -234,6 +234,21 @@ def thesis_capabilities_v2(
             "semantic_terms": _semantic_terms(code, labels),
         })
     features.sort(key=lambda item: item["code"])
+    # These are executable product examples, not labels assembled by the UI.
+    # Their wording is covered by parser-contract tests and uses only public,
+    # versioned feature semantics.  The client must never infer examples from
+    # a preset label because one label can omit another required parameter.
+    example_prompts = [
+        {"id": "failed-breakdown-reference-v1", "feature": FAILED_BREAKDOWN_CONFIRMED,
+         "text": {"en": "BTC 4H failed breakdown of the previous 20 confirmed candles low. What happened over the next 24H historically?",
+                  "zh": "BTC 4H 失败跌破参考过去 20 根已确认 K 线的最低点，之后 24H 历史上怎么样？"}},
+        {"id": "failed-breakdown-window-v1", "feature": FAILED_BREAKDOWN_CONFIRMED,
+         "text": {"en": "BTC 4H breakdown then closes back above the breakdown level within 3 confirmed candles. What happened over the next 24H historically?",
+                  "zh": "BTC 4H 跌破后 3 根已确认 K 线内收盘重新回到跌破位上方，之后 24H 历史上怎么样？"}},
+        {"id": "failed-breakout-reference-v1", "feature": FAILED_BREAKOUT_CONFIRMED,
+         "text": {"en": "BTC 4H failed breakout of the previous 20 confirmed candles high. What happened over the next 24H historically?",
+                  "zh": "BTC 4H 失败突破参考过去 20 根已确认 K 线的最高点，之后 24H 历史上怎么样？"}},
+    ]
     return {
         "version": CAPABILITIES_VERSION, "thesis_spec_versions": ["thesis-spec-v1", "thesis-spec-v2"],
         "thesis_spec_version": "thesis-spec-v2", "feature_registry_version": FEATURE_REGISTRY_VERSION,
@@ -241,6 +256,7 @@ def thesis_capabilities_v2(
                        "max_depth": 3, "max_leaf_conditions": 10, "max_group_children": 8},
         "instruments": sorted(SUPPORTED_INSTRUMENTS), "timeframes": list(SUPPORTED_TIMEFRAMES),
         "horizons": list(SUPPORTED_HORIZONS), "features": features,
+        "example_prompts": example_prompts,
         "semantic_presets": semantic_presets_projection(),
         "conditional_capabilities": {
             "CVD": {"status": "OPTIONAL_UNAVAILABLE", "reason": "CVD_HISTORICAL_NATIVE_SOURCE_UNAVAILABLE"},

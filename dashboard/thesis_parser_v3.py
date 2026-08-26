@@ -324,7 +324,15 @@ def _parse_unsupported(raw: Any, text: str) -> tuple[UnsupportedClauseV2, ...]:
         # unknown provider label to the conservative user-visible category.
         if category not in allowed_categories:
             category = "SEMANTIC_UNSUPPORTED"
-        output.append(UnsupportedClauseV2(source, str(item.get("reason_code", "UNSUPPORTED_CONCEPT")),
+        reason_code = str(item.get("reason_code", "UNSUPPORTED_CONCEPT"))
+        # Native CVD is a deliberately disabled conditional capability: it
+        # must never be presented as a vague parser limitation.  This narrow,
+        # text-grounded normalization keeps provider wording from hiding the
+        # audited data gate; it does not make CVD executable or substitute it.
+        if re.search(r"\bCVD\b", source, re.I):
+            reason_code = "CVD_HISTORICAL_NATIVE_SOURCE_UNAVAILABLE"
+            category = "CAPABILITY_DISABLED"
+        output.append(UnsupportedClauseV2(source, reason_code,
                                           category, tuple(map(str, item.get("suggestions", ())))))
     return tuple(output)
 
@@ -347,10 +355,67 @@ def _assert_clause_accounting(text: str, sources: Sequence[str]) -> None:
                        remaining, flags=re.I)
     remaining = re.sub(r"\d+(?:\.\d+)?\s*(?:小时|天)", " ", remaining)
     remaining = re.sub(r"(?:并且|同时|而且|或者|任一|但)", " ", remaining)
-    remaining = re.sub(r"(?:之后|以后|通常|怎么样|会怎样|并且|同时|而且|或者|任一|但|当|如果)", " ", remaining)
+    remaining = re.sub(r"(?:之后|以后|历史上|通常|怎么样|会怎样|并且|同时|而且|或者|任一|但|当|如果)", " ", remaining)
     remaining = re.sub(r"[\s,，。;；:：?!？()（）/]+", "", remaining)
     if remaining:
         raise ThesisParserV3Error(f"provider left unaccounted clause text: {remaining[:80]}")
+
+
+def _deterministic_failed_structure_raw(text: str, capabilities: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Compile the narrow, public failed-structure grammar without model guesswork.
+
+    This only accepts a single failed-breakout or failed-breakdown assertion.
+    It exists so the backend-advertised examples are executable even when an
+    upstream semantic provider chooses an invalid transport representation.
+    Other language continues through the capability-constrained provider.
+    """
+    compact = text.strip()
+    if re.search(r"\b(?:and|or|either|with|but)\b|(?:并且|同时|而且|或者|任一|但)", compact, re.I):
+        return None
+    breakdown = bool(re.search(r"(?:失败跌破|假跌破|跌破后.*?(?:重新)?回到跌破位上方)", compact, re.I))
+    breakout = bool(re.search(r"(?:失败突破|假突破|突破后.*?(?:重新)?跌回突破位)", compact, re.I))
+    if breakdown == breakout:
+        return None
+    feature = "FAILED_BREAKDOWN_CONFIRMED" if breakdown else "FAILED_BREAKOUT_CONFIRMED"
+    direction_level = r"(?:最低点|前低)" if breakdown else r"(?:最高点|前高)"
+    opposite_level = r"(?:最高点|前高)" if breakdown else r"(?:最低点|前低)"
+    if re.search(opposite_level, compact, re.I):
+        return None
+    lookback_match = re.search(rf"(?:参考)?过去\s*(\d+)\s*根.*?{direction_level}", compact, re.I)
+    window_match = re.search(r"(?:突破后|跌破后)\s*(\d+)\s*根.*?内", compact, re.I)
+    parameters = {
+        "lookback_bars": int(lookback_match.group(1)) if lookback_match else 20,
+        "failure_window_bars": int(window_match.group(1)) if window_match else 3,
+    }
+    prefix = re.sub(r"^\s*(?:BTC|ETH|SOL)\s+(?:15M|1H|4H|1D)\s*", "", compact, flags=re.I)
+    condition_source = re.split(r"(?:，|,|。|\.)\s*(?:之后|以后|after\b)", prefix, maxsplit=1,
+                                flags=re.I)[0].strip()
+    if not condition_source:
+        return None
+    marker = ("失败跌破" if "失败跌破" in condition_source else
+              "假跌破" if "假跌破" in condition_source else
+              "重新回到跌破位上方" if breakdown else
+              "失败突破" if "失败突破" in condition_source else "假突破")
+    assumptions: list[dict[str, str]] = []
+    if not lookback_match:
+        assumptions.append({"preset_id": "failed-breakdown-lookback-standard" if breakdown
+                            else "failed-breakout-lookback-standard", "source_text": marker})
+    if not window_match:
+        assumptions.append({"preset_id": "failed-breakdown-window-standard" if breakdown
+                            else "failed-breakout-window-standard", "source_text": marker})
+    instruments = tuple(map(str, capabilities.get("instruments", ())))
+    timeframes = tuple(map(str, capabilities.get("timeframes", ())))
+    instrument = next((item for item in instruments if re.search(rf"(?<![A-Za-z]){re.escape(item)}(?![A-Za-z])", compact, re.I)), None)
+    timeframe = next((item for item in timeframes if re.search(rf"(?<![A-Za-z0-9]){re.escape(item)}(?![A-Za-z0-9])", compact, re.I)), None)
+    if not instrument or not timeframe:
+        return None
+    horizons = list(_explicit_horizons_from_text(compact, tuple(map(str, capabilities.get("horizons", ()))), exclude=(timeframe,)))
+    return {"detected_language": "zh" if re.search(r"[\u4e00-\u9fff]", compact) else "en",
+            "instrument": instrument, "timeframe": timeframe, "forward_horizons": horizons,
+            "expression": {"node_type": "CONDITION", "feature": feature, "operator": "eq",
+                           "value": True, "parameters": parameters},
+            "recognized_clauses": [condition_source], "assumptions": assumptions,
+            "unsupported_clauses": [], "missing_parameters": [], "warnings": []}
 
 
 def _explicit_horizons_from_text(text: str, supported: Sequence[str], *, exclude: Sequence[str] = ()) -> tuple[str, ...]:
@@ -723,8 +788,9 @@ def _bind_leaf_clauses(expression: ExpressionNode, recognized: Sequence[str],
             r"bar|bars|within|after|then|historical|history|of|to|back|rate|high|low|"
             r"btc|eth|sol|1h|4h|1d|15m)\b", " ", residue,
             flags=re.I)
-        residue = re.sub(r"(?:不高于|不低于|至少|至多|介于|过去|此前|前|后|内|到|至|根|"
-                         r"已确认|确认|收盘|重新|回到|跌回|涨回|突破位|跌破位|K线|百分位)",
+        residue = re.sub(r"K\s*线", " ", residue, flags=re.I)
+        residue = re.sub(r"(?:不高于|不低于|至少|至多|介于|过去|此前|前|后|内|到|至|根|参考|的|"
+                         r"已确认|确认|收盘|重新|回到|跌回|涨回|突破位|跌破位|最高点|最低点|K线|线|百分位)",
                          " ", residue, flags=re.I)
         residue = re.sub(r"[^A-Za-z\u4e00-\u9fff]+", "", residue)
         if residue:
@@ -910,6 +976,10 @@ class ThesisParserServiceV3:
         self.provider, self.capabilities = provider, capabilities
 
     def parse(self, text: str, *, requested_as_of: int) -> ThesisParseResultV2:
+        deterministic = _deterministic_failed_structure_raw(text, self.capabilities)
+        if deterministic is not None:
+            return validate_provider_output(text.strip(), deterministic, self.capabilities,
+                                            requested_as_of=requested_as_of)
         request = provider_request(text, self.capabilities)
         last_validation_error: Exception | None = None
         for attempt in range(MAX_PROVIDER_TRANSPORT_ATTEMPTS):

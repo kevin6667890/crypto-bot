@@ -353,8 +353,9 @@ def _assert_clause_accounting(text: str, sources: Sequence[str]) -> None:
     remaining = re.sub(r"\b(?:BTC|ETH|SOL|1H|4H|1D|15M|when|if|then|after|historically|"
                        r"what|usually|happens?|and|or|either|with|while|but|not)\b", " ", remaining, flags=re.I)
     # Forward-horizon wording is research scaffolding, not an event clause.
-    remaining = re.sub(r"\b\d+(?:\.\d+)?\s*(?:m|h|d|mins?|minutes?|hours?|days?)\b", " ",
+    remaining = re.sub(r"\d+(?:\.\d+)?\s*(?:mins?|minutes?|hours?|days?|m|h|d)", " ",
                        remaining, flags=re.I)
+    remaining = re.sub(r"(?:\u600e\u6837)", " ", remaining)
     remaining = re.sub(r"\d+(?:\.\d+)?\s*(?:小时|天)", " ", remaining)
     remaining = re.sub(r"(?:并且|同时|而且|或者|任一|但)", " ", remaining)
     remaining = re.sub(r"(?:之后|以后|历史上|通常|怎么样|会怎样|并且|同时|而且|或者|任一|但|当|如果)", " ", remaining)

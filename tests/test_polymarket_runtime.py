@@ -41,7 +41,8 @@ def test_formal_two_stage_pipeline_fetches_clob_only_after_prefilter(tmp_path):
     repo = PolymarketRepository(tmp_path / "pm.sqlite")
     client = _Client()
     universe_id, rows, stats = sync_universe_v2(repo, client, None, 500, clob_workers=2)
-    assert [row["market_id"] for row in rows] == ["1", "2"]
+    # The collector must not return a universe-sized result list.
+    assert rows == []
     assert stats["full_universe_count"] == 2
     assert stats["metadata_candidate_count"] == 1
     assert stats["clob_request_count"] == 2

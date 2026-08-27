@@ -5,6 +5,8 @@ import sqlite3
 import uuid
 import json
 import zlib
+import hashlib
+import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator, Sequence
@@ -170,6 +172,16 @@ class PolymarketRepository:
               detail_json TEXT NOT NULL
             );
             CREATE INDEX IF NOT EXISTS idx_pm_observation_market ON collection_observations(market_id,observed_at);
+            CREATE TABLE IF NOT EXISTS universe_stages (
+              stage_id TEXT PRIMARY KEY, captured_at TEXT NOT NULL,
+              selection_policy_version TEXT NOT NULL, selection_policy_hash TEXT NOT NULL,
+              pagination_metadata_json TEXT NOT NULL, status TEXT NOT NULL,
+              failure_reason TEXT
+            );
+            CREATE TABLE IF NOT EXISTS universe_stage_refs (
+              stage_id TEXT NOT NULL REFERENCES universe_stages(stage_id), market_id TEXT NOT NULL,
+              market_payload_hash TEXT NOT NULL, PRIMARY KEY(stage_id,market_id)
+            );
             """)
             # Backward-compatible extensions for databases created by Phase 1A.
             for column in ("resolution_id TEXT", "brier_delta REAL", "log_loss_delta REAL", "executable_side TEXT", "executable_entry_ask REAL", "executable_gross_pnl REAL", "executable_net_pnl REAL", "fee_status TEXT", "fee_model_version TEXT"):
@@ -227,6 +239,119 @@ class PolymarketRepository:
             return None
         result = dict(row); result["reasons"] = json.loads(result.pop("reasons_json")); result["gamma_payload"] = json.loads(result.pop("gamma_payload_json"))
         return result
+
+    def latest_metadata_states(self, market_ids: Sequence[str]) -> dict[str, dict[str, Any]]:
+        """Bounded page lookup; never hydrate prior state for the universe."""
+        ids = [str(value) for value in market_ids]
+        if not ids:
+            return {}
+        placeholders = ",".join("?" for _ in ids)
+        with self.connect() as c:
+            rows = c.execute(f"""SELECT s.market_id,s.gamma_payload_hash,s.gamma_payload_json,s.captured_at,s.snapshot_id,
+                d.decision_id,d.eligible,d.reasons_json FROM market_snapshots s
+                JOIN eligibility_decisions d ON d.market_snapshot_id=s.snapshot_id
+                WHERE s.market_id IN ({placeholders})
+                AND s.captured_at=(SELECT MAX(s2.captured_at) FROM market_snapshots s2 WHERE s2.market_id=s.market_id)""", ids).fetchall()
+        result: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            item = dict(row)
+            item["reasons"] = json.loads(item.pop("reasons_json"))
+            item["gamma_payload"] = json.loads(item.pop("gamma_payload_json"))
+            result[str(item["market_id"])] = item
+        return result
+
+    def iter_latest_eligible_candidates(self, *, scan_limit: int) -> Iterator[dict[str, str]]:
+        """Deterministic DB-backed candidate source, bounded by caller policy."""
+        with self.connect() as c:
+            rows = c.execute("""SELECT d.market_id,d.market_snapshot_id,d.decision_id
+                FROM eligibility_decisions d
+                WHERE d.eligible=1
+                  AND d.evaluated_at=(SELECT MAX(d2.evaluated_at) FROM eligibility_decisions d2 WHERE d2.market_id=d.market_id)
+                ORDER BY d.market_id ASC LIMIT ?""", (int(scan_limit),)).fetchall()
+        for row in rows:
+            yield {"market_id": str(row["market_id"]), "snapshot_id": str(row["market_snapshot_id"]), "decision_id": str(row["decision_id"])}
+
+    def begin_universe(self, selection_policy_version: str, selection_policy_hash: str,
+                       captured_at: str, *, pagination_metadata: dict[str, Any] | None = None) -> str:
+        stage_id = str(uuid.uuid4())
+        with self.connect() as c:
+            c.execute("INSERT INTO universe_stages VALUES(?,?,?,?,?,?,?)", (stage_id, captured_at,
+                selection_policy_version, selection_policy_hash, canonical_json(dict(pagination_metadata or {})), "STAGING", None))
+        return stage_id
+
+    def append_universe_page(self, stage_id: str, markets: Sequence[dict[str, Any]],
+                             payload_hashes: Sequence[str]) -> None:
+        if len(markets) != len(payload_hashes):
+            raise ValueError("universe page/hash length mismatch")
+        rows = [(stage_id, str(market.get("id") or ""), str(payload_hash))
+                for market, payload_hash in zip(markets, payload_hashes)]
+        if any(not row[1] for row in rows):
+            raise ValueError("universe has missing market id")
+        with self.connect() as c:
+            active = c.execute("SELECT 1 FROM universe_stages WHERE stage_id=? AND status='STAGING'", (stage_id,)).fetchone()
+            if not active:
+                raise ValueError("universe stage is not writable")
+            try:
+                c.executemany("INSERT INTO universe_stage_refs VALUES(?,?,?)", rows)
+            except sqlite3.IntegrityError as exc:
+                raise ValueError("universe has duplicate market ids") from exc
+
+    def fail_universe(self, stage_id: str, reason: str) -> None:
+        with self.connect() as c:
+            c.execute("UPDATE universe_stages SET status='FAILED',failure_reason=? WHERE stage_id=? AND status='STAGING'", (reason[:500], stage_id))
+
+    def finalize_universe(self, stage_id: str) -> str:
+        """Create the immutable manifest from staged refs, streaming rows from SQLite.
+
+        The final compressed BLOB is bounded by manifest size, not source
+        payload size; no Gamma market object survives beyond its page.
+        """
+        with self.connect() as c:
+            stage = c.execute("SELECT * FROM universe_stages WHERE stage_id=? AND status='STAGING'", (stage_id,)).fetchone()
+            if not stage:
+                raise ValueError("universe stage is not finalizable")
+            # Match the legacy canonical JSON/hash byte-for-byte, but stream
+            # compact refs directly from SQLite rather than building 150k
+            # Python dicts/lists.  The compressed immutable artifact is spooled
+            # to disk until SQLite receives it.
+            source_digest, manifest_digest = hashlib.sha256(), hashlib.sha256()
+            compressor = zlib.compressobj(level=9)
+            canonical_size, count = 0, 0
+            with tempfile.SpooledTemporaryFile(max_size=0, mode="w+b") as spool:
+                def emit(chunk: bytes) -> None:
+                    nonlocal canonical_size
+                    manifest_digest.update(chunk); canonical_size += len(chunk)
+                    encoded = compressor.compress(chunk)
+                    if encoded:
+                        spool.write(encoded)
+                source_digest.update(b"[")
+                emit(b'{"markets":[')
+                first = True
+                for row in c.execute("SELECT market_id,market_payload_hash FROM universe_stage_refs WHERE stage_id=? ORDER BY market_id", (stage_id,)):
+                    market_id, payload_hash = str(row[0]), str(row[1])
+                    item = canonical_json({"market_id": market_id, "payload_hash": payload_hash}).encode("utf-8")
+                    pair = canonical_json([market_id, payload_hash]).encode("utf-8")
+                    if not first:
+                        source_digest.update(b","); emit(b",")
+                    source_digest.update(item); emit(pair)
+                    first = False; count += 1
+                source_digest.update(b"]")
+                emit(b'],"schema":' + canonical_json(UNIVERSE_MANIFEST_SCHEMA).encode("utf-8") + b"}")
+                tail = compressor.flush()
+                if tail:
+                    spool.write(tail)
+                spool.seek(0)
+                compressed_manifest = spool.read()
+            source_hash, manifest_hash = source_digest.hexdigest(), manifest_digest.hexdigest()
+            metadata = json.loads(stage["pagination_metadata_json"])
+            pagination_version = str(metadata.get("version") or "gamma-offset-pagination-v1")
+            pagination_hash = stable_hash({"version": pagination_version, "metadata": metadata})
+            universe_hash = stable_hash({"captured_at": stage["captured_at"], "selection_policy_version": stage["selection_policy_version"], "selection_policy_hash": stage["selection_policy_hash"], "pagination_policy_hash": pagination_hash, "payload_hash": source_hash})
+            universe_id = str(uuid.uuid4())
+            c.execute("INSERT OR IGNORE INTO universe_manifests(manifest_hash,schema_version,encoding,compressed_payload,canonical_size_bytes,market_count,first_seen_at) VALUES(?,?,?,?,?,?,?)", (manifest_hash, UNIVERSE_MANIFEST_SCHEMA, "zlib-json", compressed_manifest, canonical_size, count, stage["captured_at"]))
+            c.execute("INSERT INTO universe_snapshots(universe_snapshot_id,captured_at,selection_policy_version,selection_policy_hash,source_payload_json,source_payload_hash,universe_hash,pagination_policy_version,pagination_policy_hash,market_count,pagination_metadata_json,manifest_hash) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)", (universe_id, stage["captured_at"], stage["selection_policy_version"], stage["selection_policy_hash"], canonical_json({"storage": UNIVERSE_MANIFEST_SCHEMA, "manifest_hash": manifest_hash}), source_hash, universe_hash, pagination_version, pagination_hash, count, stage["pagination_metadata_json"], manifest_hash))
+            c.execute("UPDATE universe_stages SET status='COMPLETE' WHERE stage_id=?", (stage_id,))
+        return universe_id
 
     def record_observations(self, collection_run_id: str | None, rows: Sequence[dict[str, Any]]) -> None:
         if not rows:

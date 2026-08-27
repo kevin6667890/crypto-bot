@@ -15,3 +15,6 @@ artifacts/
 ai_report_backups/
 ai_report_data/
 backups/
+# Production runtime state must never be copied into image build contexts.
+polymarket/
+thesis-data/

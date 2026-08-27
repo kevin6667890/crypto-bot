@@ -48,7 +48,7 @@ describe("prediction markets research vertical", () => {
     expect(page).not.toContain("localhost");
     expect(page).not.toContain("127.0.0.1");
     expect(page).not.toContain("DEEPSEEK_API_KEY");
-    expect(productApp).toContain('FRONTEND_BUILD_ID = "thesis-capability-v2-production-rc-20260825"');
+    expect(productApp).toContain('FRONTEND_BUILD_ID = "main-f87d4d8-20260827"');
     expect(productApp).toContain("document.documentElement.dataset.frontendBuild = FRONTEND_BUILD_ID");
   });
 });

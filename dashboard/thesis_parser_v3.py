@@ -131,7 +131,7 @@ def parser_context(capabilities: Mapping[str, Any]) -> dict[str, Any]:
             "Use only CONDITION, ALL, ANY, NOT, and SEQUENCE node_type values; SEQUENCE has ordered steps (2-3) and max_gap_bars.",
             "Normalize numeric negation into the comparator: not above X is lte X and not below X is gte X; do not wrap it in NOT.",
             "Preserve every AND/OR group exactly; AND binds more tightly than OR unless the user groups otherwise.",
-            "A forward-return question sets forward_horizons only; it is not an expression node or unsupported clause. 'after 24H' / '之后24H' is an outcome horizon, not a sequence step.",
+            "A forward-return question sets forward_horizons only; it is not an expression node or unsupported clause. 'after 24H' / '??24H' is an outcome horizon, not a sequence step.",
         ],
     }
 
@@ -224,17 +224,17 @@ _ENGLISH_NUMBERS = {
 
 
 def _chinese_number(value: str) -> int | None:
-    digits = {"零": 0, "一": 1, "二": 2, "两": 2, "三": 3, "四": 4,
-              "五": 5, "六": 6, "七": 7, "八": 8, "九": 9}
+    digits = {"?": 0, "?": 1, "?": 2, "?": 2, "?": 3, "?": 4,
+              "?": 5, "?": 6, "?": 7, "?": 8, "?": 9}
     if all(item in digits for item in value):
         return int("".join(str(digits[item]) for item in value))
     total, current = 0, 0
     for item in value:
         if item in digits:
             current = digits[item]
-        elif item == "十":
+        elif item == "?":
             total += (current or 1) * 10; current = 0
-        elif item == "百":
+        elif item == "?":
             total += (current or 1) * 100; current = 0
         else:
             return None
@@ -246,7 +246,7 @@ def _explicit_numeric_values(source: str) -> set[float]:
         r"(?<![A-Za-z0-9_])(-?\d+(?:\.\d+)?)(?!\s*(?:m|h|d)\b)", source, flags=re.I)}
     values.update(float(number) for word, number in _ENGLISH_NUMBERS.items()
                   if re.search(rf"\b{word}\b", source, flags=re.I))
-    for item in re.findall(r"[零一二两三四五六七八九十百]+", source):
+    for item in re.findall(r"[?????????????]+", source):
         parsed = _chinese_number(item)
         if parsed is not None:
             values.add(float(parsed))
@@ -314,8 +314,8 @@ def _parse_unsupported(raw: Any, text: str) -> tuple[UnsupportedClauseV2, ...]:
         # event-condition clause.  Some models nevertheless label it as an
         # unsupported query type, so handle this closed, syntax-only case here.
         if (str(item.get("reason_code", "")) in {"UNSUPPORTED_QUERY_TYPE", "FORWARD_HORIZON_NOT_SUPPORTED"}
-                and re.search(r"(?:what|usually|happens?|after|historical|之后|以後|通常|怎么样|怎樣)", source, re.I)
-                and re.search(r"\d+\s*(?:H|D|hours?|days?|小时|天)", source, re.I)):
+                and re.search(r"(?:what|usually|happens?|after|historical|??|??|??|???|??)", source, re.I)
+                and re.search(r"\d+\s*(?:H|D|hours?|days?|??|?)", source, re.I)):
             continue
         category = str(item.get("category", "SEMANTIC_UNSUPPORTED"))
         allowed_categories = {"SEMANTIC_UNSUPPORTED", "DATASET_UNAVAILABLE", "INSUFFICIENT_HISTORY",
@@ -356,14 +356,14 @@ def _assert_clause_accounting(text: str, sources: Sequence[str]) -> None:
     remaining = re.sub(r"\d+(?:\.\d+)?\s*(?:mins?|minutes?|hours?|days?|m|h|d)", " ",
                        remaining, flags=re.I)
     remaining = re.sub(r"(?:\u600e\u6837)", " ", remaining)
-    remaining = re.sub(r"\d+(?:\.\d+)?\s*(?:小时|天)", " ", remaining)
-    remaining = re.sub(r"(?:并且|同时|而且|或者|任一|但)", " ", remaining)
-    remaining = re.sub(r"(?:之后|以后|历史上|通常|怎么样|会怎样|并且|同时|而且|或者|任一|但|当|如果)", " ", remaining)
-    remaining = re.sub(r"[\s,，。;；:：?!？()（）/]+", "", remaining)
+    remaining = re.sub(r"\d+(?:\.\d+)?\s*(?:??|?)", " ", remaining)
+    remaining = re.sub(r"(?:??|??|??|??|??|?)", " ", remaining)
+    remaining = re.sub(r"(?:??|??|???|??|???|???|??|??|??|??|??|?|?|??)", " ", remaining)
+    remaining = re.sub(r"[\s,??;?:??!?()??/]+", "", remaining)
     # UTF-8 source text can arrive independently of legacy parser aliases.
-    remaining = re.sub(r"(?:之后|以后|后一般怎样|后怎样|后一般|重新|再|随后|接着|通常|怎么样|会怎样|同时|并且|而且|或者|以及)", " ", remaining)
-    remaining = re.sub(r"[\s,，。；：!?！？（）()/]+", "", remaining)
-    remaining = remaining.strip(" .。！？!?")
+    remaining = re.sub(r"(?:??|??|?????|???|???|??|?|??|??|??|???|???|??|??|??|??|??)", " ", remaining)
+    remaining = re.sub(r"[\s,????!?????()/]+", "", remaining)
+    remaining = remaining.strip(" .???!?")
     if remaining:
         raise ThesisParserV3Error(f"provider left unaccounted clause text: {remaining[:80]}")
 
@@ -377,32 +377,32 @@ def _deterministic_failed_structure_raw(text: str, capabilities: Mapping[str, An
     Other language continues through the capability-constrained provider.
     """
     compact = text.strip()
-    if re.search(r"\b(?:and|or|either|with|but)\b|(?:并且|同时|而且|或者|任一|但)", compact, re.I):
+    if re.search(r"\b(?:and|or|either|with|but)\b|(?:??|??|??|??|??|?)", compact, re.I):
         return None
-    breakdown = bool(re.search(r"(?:失败跌破|假跌破|跌破后.*?(?:重新)?回到跌破位上方)", compact, re.I))
-    breakout = bool(re.search(r"(?:失败突破|假突破|突破后.*?(?:重新)?跌回突破位)", compact, re.I))
+    breakdown = bool(re.search(r"(?:????|???|???.*?(?:??)????????)", compact, re.I))
+    breakout = bool(re.search(r"(?:????|???|???.*?(?:??)??????)", compact, re.I))
     if breakdown == breakout:
         return None
     feature = "FAILED_BREAKDOWN_CONFIRMED" if breakdown else "FAILED_BREAKOUT_CONFIRMED"
-    direction_level = r"(?:最低点|前低)" if breakdown else r"(?:最高点|前高)"
-    opposite_level = r"(?:最高点|前高)" if breakdown else r"(?:最低点|前低)"
+    direction_level = r"(?:???|??)" if breakdown else r"(?:???|??)"
+    opposite_level = r"(?:???|??)" if breakdown else r"(?:???|??)"
     if re.search(opposite_level, compact, re.I):
         return None
-    lookback_match = re.search(rf"(?:参考)?过去\s*(\d+)\s*根.*?{direction_level}", compact, re.I)
-    window_match = re.search(r"(?:突破后|跌破后)\s*(\d+)\s*根.*?内", compact, re.I)
+    lookback_match = re.search(rf"(?:??)???\s*(\d+)\s*?.*?{direction_level}", compact, re.I)
+    window_match = re.search(r"(?:???|???)\s*(\d+)\s*?.*??", compact, re.I)
     parameters = {
         "lookback_bars": int(lookback_match.group(1)) if lookback_match else 20,
         "failure_window_bars": int(window_match.group(1)) if window_match else 3,
     }
     prefix = re.sub(r"^\s*(?:BTC|ETH|SOL)\s+(?:15M|1H|4H|1D)\s*", "", compact, flags=re.I)
-    condition_source = re.split(r"(?:，|,|。|\.)\s*(?:之后|以后|after\b)", prefix, maxsplit=1,
+    condition_source = re.split(r"(?:?|,|?|\.)\s*(?:??|??|after\b)", prefix, maxsplit=1,
                                 flags=re.I)[0].strip()
     if not condition_source:
         return None
-    marker = ("失败跌破" if "失败跌破" in condition_source else
-              "假跌破" if "假跌破" in condition_source else
-              "重新回到跌破位上方" if breakdown else
-              "失败突破" if "失败突破" in condition_source else "假突破")
+    marker = ("????" if "????" in condition_source else
+              "???" if "???" in condition_source else
+              "?????????" if breakdown else
+              "????" if "????" in condition_source else "???")
     assumptions: list[dict[str, str]] = []
     if not lookback_match:
         assumptions.append({"preset_id": "failed-breakdown-lookback-standard" if breakdown
@@ -425,6 +425,29 @@ def _deterministic_failed_structure_raw(text: str, capabilities: Mapping[str, An
             "unsupported_clauses": [], "missing_parameters": [], "warnings": []}
 
 
+def _deterministic_previous_high_breakout_raw(text: str, capabilities: Mapping[str, Any]) -> dict[str, Any] | None:
+    """Compile the unambiguous previous-high breakout grammar without a provider."""
+    compact = text.strip()
+    if re.search(r"\b(?:and|or|either|with|but)\b|(?:\u5e76\u4e14|\u540c\u65f6|\u800c\u4e14|\u6216\u8005|\u4efb\u4e00|\u4f46)", compact, re.I):
+        return None
+    breakout = re.search(r"(?:\u7a81\u7834\u524d\u9ad8|breaks?\s+(?:the\s+)?previous\s+high|previous\s+high\s+breakout)", compact, re.I)
+    if breakout is None:
+        return None
+    instruments, timeframes = tuple(map(str, capabilities.get("instruments", ()))), tuple(map(str, capabilities.get("timeframes", ())))
+    instrument = next((item for item in instruments if re.search(rf"(?<![A-Za-z]){re.escape(item)}(?![A-Za-z])", compact, re.I)), None)
+    timeframe = next((item for item in timeframes if re.search(rf"(?<![A-Za-z0-9]){re.escape(item)}(?![A-Za-z0-9])", compact, re.I)), None)
+    if not instrument or not timeframe:
+        return None
+    horizons = list(_explicit_horizons_from_text(compact, tuple(map(str, capabilities.get("horizons", ()))), exclude=(timeframe,)))
+    return {"detected_language": "zh" if re.search(r"[\u4e00-\u9fff]", compact) else "en",
+            "instrument": instrument, "timeframe": timeframe, "forward_horizons": horizons,
+            "expression": {"node_type": "CONDITION", "feature": "ROLLING_HIGH_BREAKOUT_CONFIRMED",
+                           "operator": "eq", "value": True, "parameters": {"lookback_bars": 20}},
+            "recognized_clauses": [breakout.group()],
+            "assumptions": [{"preset_id": "previous-high-standard", "source_text": "\u524d\u9ad8" if "\u524d\u9ad8" in compact else breakout.group()}],
+            "unsupported_clauses": [], "missing_parameters": [], "warnings": []}
+
+
 def _deterministic_reclaim_sequence_raw(text: str, capabilities: Mapping[str, Any]) -> dict[str, Any] | None:
     """Narrow, auditable grammar for the high-frequency failed-breakout reclaim.
 
@@ -432,17 +455,17 @@ def _deterministic_reclaim_sequence_raw(text: str, capabilities: Mapping[str, An
     MA200 reclaim; all other temporal language remains provider-mediated.
     """
     compact = text.strip()
-    if not (re.search(r"(?:假突破|失败突破|failed breakout|false breakout)", compact, re.I)
-            and re.search(r"(?:重新站(?:上|回)\s*MA200|reclaims?\s+MA200|returns?\s+above\s+MA200)", compact, re.I)):
+    if not (re.search(r"(?:???|????|failed breakout|false breakout)", compact, re.I)
+            and re.search(r"(?:???(?:?|?)\s*MA200|reclaims?\s+MA200|returns?\s+above\s+MA200)", compact, re.I)):
         return None
     instruments, timeframes = tuple(map(str, capabilities.get("instruments", ()))), tuple(map(str, capabilities.get("timeframes", ())))
     instrument = next((item for item in instruments if re.search(rf"(?<![A-Za-z]){re.escape(item)}(?![A-Za-z])", compact, re.I)), None)
     timeframe = next((item for item in timeframes if re.search(rf"(?<![A-Za-z0-9]){re.escape(item)}(?![A-Za-z0-9])", compact, re.I)), None)
     if not instrument or not timeframe:
         return None
-    gap = re.search(r"(?:within|内)\s*(\d+)\s*(?:bars?|根K?线)", compact, re.I)
-    failed_source = re.search(r"(?:假突破|失败突破|failed breakout|false breakout)", compact, re.I).group()
-    reclaim_source = re.search(r"(?:重新站(?:上|回)\s*MA200|reclaims?\s+MA200|returns?\s+above\s+MA200)", compact, re.I).group()
+    gap = re.search(r"(?:within|?)\s*(\d+)\s*(?:bars?|?K??)", compact, re.I)
+    failed_source = re.search(r"(?:???|????|failed breakout|false breakout)", compact, re.I).group()
+    reclaim_source = re.search(r"(?:???(?:?|?)\s*MA200|reclaims?\s+MA200|returns?\s+above\s+MA200)", compact, re.I).group()
     horizons = list(_explicit_horizons_from_text(compact, tuple(map(str, capabilities.get("horizons", ()))), exclude=(timeframe,)))
     return {"detected_language": "zh" if re.search(r"[\u4e00-\u9fff]", compact) else "en",
             "instrument": instrument, "timeframe": timeframe, "forward_horizons": horizons,
@@ -462,9 +485,9 @@ def _deterministic_reclaim_sequence_raw(text: str, capabilities: Mapping[str, An
 def _deterministic_ambiguous_ma_oi_raw(text: str, capabilities: Mapping[str, Any]) -> dict[str, Any] | None:
     """Fail closed while retaining the grounded RSI portion of a common request."""
     compact = text.strip()
-    rsi = re.search(r"(?:RSI\s*超卖|RSI\s*oversold)", compact, re.I)
-    distance = re.search(r"(?:价格)?远离\s*MA200|far from\s+MA200", compact, re.I)
-    oi = re.search(r"(?:OI\s*没有明显下降|OI\s*does not significantly decline)", compact, re.I)
+    rsi = re.search(r"(?:RSI\s*??|RSI\s*oversold)", compact, re.I)
+    distance = re.search(r"(?:??)???\s*MA200|far from\s+MA200", compact, re.I)
+    oi = re.search(r"(?:OI\s*??????|OI\s*does not significantly decline)", compact, re.I)
     if not (rsi and distance and oi):
         return None
     instruments, timeframes = tuple(map(str, capabilities.get("instruments", ()))), tuple(map(str, capabilities.get("timeframes", ())))
@@ -494,7 +517,7 @@ def _explicit_horizons_from_text(text: str, supported: Sequence[str], *, exclude
         if not match:
             continue
         amount, unit = match.groups()
-        suffixes = (r"h|hr|hrs|hour|hours|小时") if unit.upper() == "H" else (r"d|day|days|天")
+        suffixes = (r"h|hr|hrs|hour|hours|??") if unit.upper() == "H" else (r"d|day|days|?")
         if re.search(rf"(?<![A-Za-z0-9]){amount}\s*(?:{'|'.join(suffixes)})(?![A-Za-z])", text, re.I):
             matches.append(str(horizon))
     return tuple(matches)
@@ -538,10 +561,10 @@ def _has_node(node: ExpressionNode, expected: type[Any]) -> bool:
 
 def _standalone_not_count(source: str) -> int:
     comparator_removed = re.sub(
-        r"\bnot (?:above|below|greater than|less than)\b|不高于|不低于", " ", source,
+        r"\bnot (?:above|below|greater than|less than)\b|???|???", " ", source,
         flags=re.I)
     return (len(re.findall(r"\bnot\b", comparator_removed, re.I))
-            + len(re.findall(r"不是|不满足", comparator_removed)))
+            + len(re.findall(r"??|???", comparator_removed)))
 
 
 def _has_standalone_not(source: str) -> bool:
@@ -549,10 +572,10 @@ def _has_standalone_not(source: str) -> bool:
 
 
 def _assert_logic_presence(text: str, expression: ExpressionNode) -> None:
-    if re.search(r"\b(?:or|either)\b|或者|任一", text, flags=re.I) and not _has_node(expression, AnyNode):
+    if re.search(r"\b(?:or|either)\b|??|??", text, flags=re.I) and not _has_node(expression, AnyNode):
         raise ThesisParserV3Error("explicit OR is not represented by an ANY node")
-    if (re.search(r"\band\b|并且|同时|而且|但", text, flags=re.I)
-            and not re.search(r"\bbetween\b[^.;，。]*\band\b", text, flags=re.I)
+    if (re.search(r"\band\b|??|??|??|?", text, flags=re.I)
+            and not re.search(r"\bbetween\b[^.;??]*\band\b", text, flags=re.I)
             and not _has_node(expression, AllNode)):
         raise ThesisParserV3Error("explicit AND is not represented by an ALL node")
 
@@ -593,9 +616,9 @@ def _expected_logic_signature_heuristic(text: str, recognized: Sequence[str]) ->
     kinds: list[str] = []
     for left, right in zip(located, located[1:]):
         separator = text[left[1]:right[0]]
-        has_or = bool(re.search(r"\b(?:or|either)\b|或者|任一", separator, flags=re.I))
-        has_and = bool(re.search(r"\b(?:and|with|but)\b|并且|同时|而且|但", separator, flags=re.I))
-        boundary = bool(re.search(r"[,，;；]", separator))
+        has_or = bool(re.search(r"\b(?:or|either)\b|??|??", separator, flags=re.I))
+        has_and = bool(re.search(r"\b(?:and|with|but)\b|??|??|??|?", separator, flags=re.I))
+        boundary = bool(re.search(r"[,?;?]", separator))
         if not has_or and not has_and and boundary:
             kinds.append("TOP_AND")
             continue
@@ -638,7 +661,7 @@ def _expected_logic_signature_heuristic(text: str, recognized: Sequence[str]) ->
 
 def _expected_logic_signature(text: str, recognized: Sequence[str]) -> Any | None:
     """Parse the closed boolean grammar with parentheses and AND precedence."""
-    text = text.replace("（", "(").replace("）", ")")
+    text = text.replace("?", "(").replace("?", ")")
     if "(" not in text and ")" not in text:
         return _expected_logic_signature_heuristic(text, recognized)
     folded = text.casefold()
@@ -659,15 +682,15 @@ def _expected_logic_signature(text: str, recognized: Sequence[str]) -> Any | Non
 
     tokens: list[Any] = ["(" for _ in range(text[:located[0][0]].count("("))]
     tokens.append(clause_token(located[0][2]))
-    connector = re.compile(r"\b(?:and|with|but|or|either)\b|并且|同时|而且|但|或者|任一", re.I)
+    connector = re.compile(r"\b(?:and|with|but|or|either)\b|??|??|??|?|??|??", re.I)
     for left, right in zip(located, located[1:]):
         separator = text[left[1]:right[0]]
         match = connector.search(separator)
         if match:
             before, raw_operator, after = separator[:match.start()], match.group(), separator[match.end():]
-            is_or = bool(re.fullmatch(r"or|either|或者|任一", raw_operator, re.I))
+            is_or = bool(re.fullmatch(r"or|either|??|??", raw_operator, re.I))
             operator = "OR" if is_or else "AND"
-        elif re.search(r"[,，;；]", separator):
+        elif re.search(r"[,?;?]", separator):
             before, after, operator = separator, "", "AND"
         else:
             return None
@@ -745,19 +768,19 @@ def _assert_logic_grounding(text: str, expression: ExpressionNode,
 def _assert_operator_grounding(text: str, expression: ExpressionNode) -> None:
     operators = {leaf.operator for leaf in _walk_expression(expression)}
     checks = (
-        (r">=|\bat least\b|\bnot (?:below|less than)\b|至少|不低于", "gte"),
-        (r"<=|\bat most\b|\bnot (?:above|greater than)\b|至多|不高于", "lte"),
+        (r">=|\bat least\b|\bnot (?:below|less than)\b|??|???", "gte"),
+        (r"<=|\bat most\b|\bnot (?:above|greater than)\b|??|???", "lte"),
     )
     for pattern, expected in checks:
         if re.search(pattern, text, flags=re.I) and expected not in operators:
             raise ThesisParserV3Error(f"explicit comparison is not represented by {expected}")
     without_negated = re.sub(
-        r"\bnot (?:above|below|greater than|less than)\b|不高于|不低于", " ", text,
+        r"\bnot (?:above|below|greater than|less than)\b|???|???", " ", text,
         flags=re.I)
-    if re.search(r"(?<![<>=])>(?!=)|\b(?:above|greater than)\b|超过|高于|大于", without_negated, flags=re.I):
+    if re.search(r"(?<![<>=])>(?!=)|\b(?:above|greater than)\b|??|??|??", without_negated, flags=re.I):
         if "gt" not in operators:
             raise ThesisParserV3Error("explicit comparison is not represented by gt")
-    if re.search(r"(?<![<>=])<(?!=)|\b(?:below|less than)\b|低于|小于", without_negated, flags=re.I):
+    if re.search(r"(?<![<>=])<(?!=)|\b(?:below|less than)\b|??|??", without_negated, flags=re.I):
         if "lt" not in operators:
             raise ThesisParserV3Error("explicit comparison is not represented by lt")
 
@@ -834,7 +857,7 @@ def _bind_leaf_clauses(expression: ExpressionNode, recognized: Sequence[str],
             chosen = matches[0]
         else:
             shareable = [index for index in matches
-                         if re.search(r"\bbetween\b|介于|在.+(?:到|至)", recognized[index], re.I)]
+                         if re.search(r"\bbetween\b|??|?.+(?:?|?)", recognized[index], re.I)]
             if not shareable:
                 raise ThesisParserV3Error(
                     "multiple expression leaves are bound to the same clause")
@@ -864,9 +887,9 @@ def _bind_leaf_clauses(expression: ExpressionNode, recognized: Sequence[str],
             r"bar|bars|within|after|then|historical|history|of|to|back|rate|high|low|"
             r"btc|eth|sol|1h|4h|1d|15m)\b", " ", residue,
             flags=re.I)
-        residue = re.sub(r"K\s*线", " ", residue, flags=re.I)
-        residue = re.sub(r"(?:不高于|不低于|至少|至多|介于|过去|此前|前|后|内|到|至|根|参考|的|"
-                         r"已确认|确认|收盘|重新|回到|跌回|涨回|突破位|跌破位|最高点|最低点|K线|线|百分位)",
+        residue = re.sub(r"K\s*?", " ", residue, flags=re.I)
+        residue = re.sub(r"(?:???|???|??|??|??|??|??|?|?|?|?|?|?|??|?|"
+                         r"???|??|??|??|??|??|??|???|???|???|???|K?|?|???)",
                          " ", residue, flags=re.I)
         residue = re.sub(r"[^A-Za-z\u4e00-\u9fff]+", "", residue)
         if residue:
@@ -883,16 +906,16 @@ def _assert_numeric_grounding(expression: ExpressionNode, recognized: Sequence[s
         clause = bindings[leaf_index]
         if isinstance(leaf.value, bool):
             expected_operator = None
-        elif re.search(r">=|\bat least\b|\bnot (?:below|less than)\b|至少|不低于", clause, re.I):
+        elif re.search(r">=|\bat least\b|\bnot (?:below|less than)\b|??|???", clause, re.I):
             expected_operator = "gte"
-        elif re.search(r"<=|\bat most\b|\bnot (?:above|greater than)\b|至多|不高于", clause, re.I):
+        elif re.search(r"<=|\bat most\b|\bnot (?:above|greater than)\b|??|???", clause, re.I):
             expected_operator = "lte"
         else:
-            positive = re.sub(r"\bnot (?:above|below|greater than|less than)\b|不高于|不低于",
+            positive = re.sub(r"\bnot (?:above|below|greater than|less than)\b|???|???",
                               " ", clause, flags=re.I)
-            if re.search(r"(?<![<>=])>(?!=)|\b(?:above|greater than)\b|超过|高于|大于", positive, re.I):
+            if re.search(r"(?<![<>=])>(?!=)|\b(?:above|greater than)\b|??|??|??", positive, re.I):
                 expected_operator = "gt"
-            elif re.search(r"(?<![<>=])<(?!=)|\b(?:below|less than)\b|低于|小于", positive, re.I):
+            elif re.search(r"(?<![<>=])<(?!=)|\b(?:below|less than)\b|??|??", positive, re.I):
                 expected_operator = "lt"
             else:
                 expected_operator = None
@@ -1056,6 +1079,7 @@ class ThesisParserServiceV3:
     def parse(self, text: str, *, requested_as_of: int) -> ThesisParseResultV2:
         deterministic = (_deterministic_ambiguous_ma_oi_raw(text, self.capabilities)
                          or _deterministic_reclaim_sequence_raw(text, self.capabilities)
+                         or _deterministic_previous_high_breakout_raw(text, self.capabilities)
                          or _deterministic_failed_structure_raw(text, self.capabilities))
         if deterministic is not None:
             return validate_provider_output(text.strip(), deterministic, self.capabilities,
@@ -1160,9 +1184,9 @@ def _normalize_provider_transport(value: Any, capabilities: Mapping[str, Any]) -
             item.setdefault("parameters", {})
             source = source_for(str(item.get("feature", ""))).casefold()
             operator = item.get("operator")
-            if operator == "gte" and re.search(r"\b(?:above|over|greater than)\b|超过|高于", source) and not re.search(r"at least|至少|不低于", source):
+            if operator == "gte" and re.search(r"\b(?:above|over|greater than)\b|??|??", source) and not re.search(r"at least|??|???", source):
                 item["operator"] = "gt"
-            elif operator == "lte" and re.search(r"\b(?:below|under|less than)\b|低于", source) and not re.search(r"at most|不高于", source):
+            elif operator == "lte" and re.search(r"\b(?:below|under|less than)\b|??", source) and not re.search(r"at most|???", source):
                 item["operator"] = "lt"
         return item
 

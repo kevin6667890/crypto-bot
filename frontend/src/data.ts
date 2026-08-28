@@ -1156,7 +1156,7 @@ async function fetchBinanceCandles(
 export async function fetchEthSnapshot(
   instrument = "ETH-USDT"
 ): Promise<MarketSnapshot> {
-  return fetchCanonicalSnapshot(instrument);
+  return fetchBrowserOkxSnapshot(instrument);
 }
 
 type CanonicalSnapshotResponse = {

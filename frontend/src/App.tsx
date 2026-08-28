@@ -756,7 +756,7 @@ function Workspace() {
       const market = await fetchEthSnapshot(instrument);
       if (request === paperRequest.current) {
         setSnapshot(market);
-        setBrowserFallbackActive(false);
+        setBrowserFallbackActive(market.provenance === "BROWSER_FALLBACK");
       }
     } catch (error) {
       const fallbackReason = error instanceof Error && error.message.includes("unavailable or unconfirmed")

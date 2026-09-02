@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import bisect
+from contextlib import closing
 import hashlib
 import json
 import math
@@ -285,7 +286,11 @@ class _DerivativeReaderImplementations:
         if not self.path.exists():
             return []
         rows: list[tuple[Any, Any, Any]] = []
-        with sqlite3.connect(f"file:{self.path.resolve().as_posix()}?mode=ro", uri=True) as connection:
+        # sqlite3.Connection's context manager commits/rolls back but does not
+        # close.  Explicitly close the read handle before returning so a
+        # scheduler process cannot pin a WAL snapshot across ticks.
+        with closing(sqlite3.connect(
+                f"file:{self.path.resolve().as_posix()}?mode=ro", uri=True)) as connection:
             tables = self._tables(connection)
             # One confirmed observation in the reviewed five-minute window
             # ending at exactly 16:00 UTC. Availability, not source time alone,

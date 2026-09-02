@@ -162,6 +162,7 @@ def test_wal_limit_and_checkpoint_stay_out_of_live_queue(tmp_path):
             WAL_JOURNAL_SIZE_LIMIT_BYTES
         assert writer.passive_checkpoint(queue_depth=1) is False
         source = inspect.getsource(writer.passive_checkpoint).upper()
+        assert "WAL_FORCED_CHECKPOINT_BYTES" in source
         assert "PASSIVE" in source
         assert "RESTART" in source
         assert "TRUNCATE" not in source

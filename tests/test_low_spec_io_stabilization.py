@@ -151,7 +151,7 @@ def test_bounded_pruning_never_exceeds_limit(tmp_path):
             "SELECT COUNT(*) FROM trade_flow_observations").fetchone()[0] == 13
 
 
-def test_passive_checkpoint_defers_while_live_queue_busy(tmp_path):
+def test_passive_checkpoint_defers_small_wal_while_live_queue_busy(tmp_path):
     store = MicrostructureStore(tmp_path / "micro.db")
     store.initialize()
     writer = store.live_writer()

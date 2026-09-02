@@ -42,6 +42,10 @@ SQLITE_BUSY_TIMEOUT_MS = 5_000
 SQLITE_CACHE_KIB = 8_192
 WAL_CHECKPOINT_BYTES = 32 * 1024 * 1024
 WAL_JOURNAL_SIZE_LIMIT_BYTES = 128 * 1024 * 1024
+# A non-empty live queue should avoid small checkpoint I/O, but it must never
+# suppress checkpoints indefinitely.  Above this guard a bounded PASSIVE
+# checkpoint is required even under sustained ingestion pressure.
+WAL_FORCED_CHECKPOINT_BYTES = 1 * 1024 * 1024 * 1024
 LIVE_AGGREGATION_LOOKBACK_MS = 10 * 60_000
 SUMMARY_BOOTSTRAP_ROWS = 1_000
 
@@ -2585,7 +2589,8 @@ class MicrostructureLiveWriter:
         wal = Path(f"{self.store.path}-wal")
         wal_size = wal.stat().st_size if wal.exists() else 0
         self.store.update_operational_metrics(wal_size_bytes=wal_size)
-        if (queue_depth or wal_size < WAL_CHECKPOINT_BYTES
+        if (wal_size < WAL_CHECKPOINT_BYTES
+                or (queue_depth and wal_size < WAL_FORCED_CHECKPOINT_BYTES)
                 or time.monotonic() - self.last_checkpoint_at < 30):
             return False
         started = time.monotonic()

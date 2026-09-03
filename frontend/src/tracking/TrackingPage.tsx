@@ -4,6 +4,7 @@ import { useLanguage } from "../i18n";
 import { expressionLabel } from "../thesis/expressionV2";
 import { fetchTrackedTheses } from "./api";
 import { conditionExpression, formatStatus, formatUtc, requiredConditionSummary, statusTone } from "./state";
+import { baselineEventLabel, baselineSampleLabel } from "./baseline";
 import type { TrackBundle } from "./types";
 
 export default function TrackingPage() {
@@ -23,7 +24,7 @@ export default function TrackingPage() {
     {state === "error" && <section className="product-state error" role="alert">{zh ? "跟踪服务暂时不可用。" : "Tracking is temporarily unavailable."}</section>}
     {state === "ready" && !tracks.length && <section className="product-empty"><FlaskConical /><h2>{zh ? "尚未跟踪任何想法" : "No tracked theses yet"}</h2><p>{zh ? "先完成一次有效的历史检验，再保存同一个定义。" : "Complete a valid historical test, then save that exact definition."}</p><a className="product-button primary" href="/test-an-idea">{zh ? "测试一个想法" : "Test an idea"}</a></section>}
     <section className="tracking-grid">{tracks.map(({ track, latest_evaluation: evaluation }) => {
-      const baseline = track.historical_baseline.historical_summary;
+      const baseline = track.historical_baseline.historical_summary || {};
       return <a className="tracking-card" href={`/tracking/${encodeURIComponent(track.track_id)}`} key={track.track_id}>
         <header><div><span>{track.thesis_spec.instrument} · {track.thesis_spec.timeframe}</span><small>{zh ? "创建于" : "Created"} {formatUtc(track.created_at, language)}</small></div><ArrowRight /></header>
         <div className="tracking-definitions">{track.thesis_spec.version === "thesis-spec-v2"
@@ -32,7 +33,7 @@ export default function TrackingPage() {
         <section className="evidence-current"><span>{zh ? "当前证据" : "CURRENT EVIDENCE"}</span><strong className={`status-badge ${statusTone(evaluation?.overall_status)}`}>{formatStatus(evaluation?.overall_status, language)}</strong>
           <p>{requiredConditionSummary(evaluation, language)}</p>
           <small>{zh ? "最新已确认证据" : "Latest confirmed evidence"}: {formatUtc(evaluation?.as_of, language)}</small></section>
-        <section className="evidence-historical"><span>{zh ? "历史证据" : "HISTORICAL EVIDENCE"}</span><strong>{baseline.independent_event_count.toLocaleString()} {zh ? "个独立事件" : "independent events"}</strong><small>{baseline.sample_quality} · {formatUtc(track.historical_tested_range.end, language)}</small></section>
+        <section className="evidence-historical"><span>{zh ? "历史证据" : "HISTORICAL EVIDENCE"}</span><strong>{baselineEventLabel(baseline, zh)}</strong><small>{[baselineSampleLabel(baseline, zh), formatUtc(track.historical_tested_range.end, language)].filter(Boolean).join(" · ")}</small></section>
       </a>;
     })}</section>
   </main>;

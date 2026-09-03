@@ -35,7 +35,8 @@ describe("prediction markets research vertical", () => {
   it("loads immutable detail projections and avoids stale search responses", () => {
     expect(page).toContain("/markets/${encodeURIComponent(selected)}");
     expect(page).toContain("/forecasts/${encodeURIComponent(selected)}");
-    expect(page).toContain("AbortController");
+    expect(page).toContain("useAsyncResource<Row>");
+    expect(page).toContain("timeoutMs: 8_000");
     expect(page).toContain("useDebounced(query)");
     expect(page).toContain('asRow(val(item, "frozen_market_snapshot"))');
     expect(page).toContain('asRow(val(item, "audit"))');

@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { RefreshCw } from "lucide-react";
 import "./PredictionMarkets.css";
+import { useAsyncResource } from "./asyncResource";
 
 const apiBase = (window.__PAPER_API_URL__ || import.meta.env.VITE_PAPER_API_URL || "").replace(/\/$/, "");
 const copy = { research: "Prediction Markets Research", markets: "Markets", marketDetail: "Market detail", forecasts: "Forecasts", forecastDetail: "Forecast audit detail", scoreboard: "Scoreboard", searchMarkets: "Search prediction markets", search: "Search markets", filter: "Market filter", close: "Close detail" };
@@ -16,10 +17,10 @@ function rows(payload: Row | undefined) { const candidate = val(payload, "items"
 function useDebounced(value: string, delay = 300) { const [debounced, setDebounced] = useState(value); useEffect(() => { const timer = window.setTimeout(() => setDebounced(value), delay); return () => window.clearTimeout(timer); }, [value, delay]); return debounced; }
 
 function Resource({ path, children }: { path: string; children: (data: Row | undefined, loading: boolean, error: string | undefined, refresh: () => void) => React.ReactNode }) {
-  const [data, setData] = useState<Row>(); const [error, setError] = useState<string>(); const [loading, setLoading] = useState(true); const [refreshKey, setRefreshKey] = useState(0);
-  const refresh = () => setRefreshKey((key) => key + 1);
-  useEffect(() => { const controller = new AbortController(); setLoading(true); setError(undefined); fetch(`${apiBase}/api/polymarket${path}`, { cache: "no-store", signal: controller.signal }).then((response) => { if (!response.ok) throw new Error(`HTTP_${response.status}`); return response.json() as Promise<Row>; }).then(setData).catch((e: Error) => { if (e.name !== "AbortError") setError(e.message); }).finally(() => { if (!controller.signal.aborted) setLoading(false); }); return () => controller.abort(); }, [path, refreshKey]);
-  return <>{children(data, loading, error, refresh)}</>;
+  const resource = useAsyncResource<Row>(`polymarket:${path}`, `${apiBase}/api/polymarket${path}`, { timeoutMs: 8_000 });
+  const loading = resource.phase === "LOADING";
+  const error = resource.phase === "UNAVAILABLE" || resource.phase === "PERMISSION_REQUIRED" ? resource.errorType : undefined;
+  return <>{children(resource.data, loading, error, resource.refresh)}</>;
 }
 function State({ loading, error, retry, children }: { loading: boolean; error?: string; retry?: () => void; children: React.ReactNode }) { if (loading) return <div className="pm-state" role="status">Loading research data…</div>; if (error) return <div className="pm-state error" role="alert"><span>Prediction Markets API unavailable ({error}).</span>{retry && <button className="secondary-btn" onClick={retry}>Try again</button>}</div>; return <>{children}</>; }
 function Metric({ label, value, detail }: { label: string; value: string; detail?: string }) { return <article className="pm-metric"><span>{label}</span><b>{value}</b>{detail && <small>{detail}</small>}</article>; }

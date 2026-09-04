@@ -3,7 +3,7 @@ import type { Language } from "../i18n";
 const copy = {
   en: {
     crypto: "Crypto", predictionMarkets: "Prediction Markets",
-    brand: "Evidence workspace", navigation: "Product navigation", language: "Language",
+    brand: "Evidence workspace", navigation: "Product navigation", domainNavigation: "Research domain", workflowNavigation: "Crypto workflow", language: "Language",
     routeUnavailable: "This page is temporarily unavailable.", loadingEvidence: "Loading evidence…",
     home: "Home", test: "Test an idea", tracking: "Tracking", changed: "What changed", advanced: "Advanced",
     eyebrow: "Reproducible crypto market research", hero: "Evidence, not predictions.",
@@ -24,9 +24,9 @@ const copy = {
   },
   zh: {
     crypto: "Crypto", predictionMarkets: "Prediction Markets",
-    brand: "证据研究", navigation: "产品导航", language: "语言",
+    brand: "证据研究", navigation: "产品导航", domainNavigation: "研究领域", workflowNavigation: "加密研究流程", language: "语言",
     routeUnavailable: "页面暂时不可用。", loadingEvidence: "正在加载证据…",
-    home: "首页", test: "测试想法", tracking: "跟踪", changed: "发生了什么变化", advanced: "高级功能",
+    home: "首页", test: "测试想法", tracking: "跟踪", changed: "变化", advanced: "高级",
     eyebrow: "可复现的加密市场研究", hero: "用证据，而不是预测。",
     subtitle: "把市场假设变成可复现的历史检验，并在当前证据变化后回来复查。",
     start: "测试一个想法", seeChanges: "查看证据变化", entries: "从三个问题开始",

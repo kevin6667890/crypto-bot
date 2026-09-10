@@ -153,7 +153,7 @@ test("B: a new confirmed candle creates deterministic NOT_MATCHING to MATCHING c
   await expect(page.getByText("不匹配", { exact: true }).first()).toBeVisible();
   await page.getByRole("button", { name: "刷新" }).click();
   await expect(page.getByText("匹配", { exact: true }).first()).toBeVisible();
-  await page.getByRole("link", { name: "发生了什么变化" }).click();
+  await page.locator('a[href="/what-changed"]').click();
   await expect(page.getByRole("heading", { name: "发生了什么变化？" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "不匹配 → 匹配" })).toBeVisible();
   await expect(page.getByText("不满足 → 满足")).toBeVisible();

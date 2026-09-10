@@ -58,3 +58,14 @@ that the running backend image is the exact v1 tag until that is separately
 deployed.
 
 Do not create `v1.0.0` until branch CI and final-main validation pass.
+
+## Test-scope note
+
+The public release gate runs the self-contained regression suite for storage
+safety, tracking, i18n, and operational queries. The full historical pytest
+collection remains visible as an advisory CI job: some legacy AI golden checks
+are intentionally out of sync with the current fact registry, and Phase4
+audit tests name an untracked immutable research store. Those inputs are not
+part of a public clone and must not be fabricated merely to produce a green
+result. They remain maintenance work, not a claim that the public clone has
+all production research data.

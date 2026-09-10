@@ -25,6 +25,7 @@ frontend/test-results/
 frontend/playwright-report/
 *.tsbuildinfo
 *.pyc
+*.baiduyun.uploading.cfg
 .idea/
 trades_*.csv
 paper_trades.db

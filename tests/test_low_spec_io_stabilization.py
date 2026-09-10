@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import contextmanager
 import sqlite3
 import time
 
-from dashboard.microstructure import MicrostructureStore, now_ms
+from dashboard.microstructure import (MicrostructureStore, WAL_CHECKPOINT_BYTES,
+                                      WAL_FORCED_CHECKPOINT_BYTES, now_ms)
 from dashboard.microstructure_collector import BoundedPriorityQueue, Collector
 
 
@@ -156,6 +158,59 @@ def test_passive_checkpoint_defers_small_wal_while_live_queue_busy(tmp_path):
     store.initialize()
     writer = store.live_writer()
     assert writer.passive_checkpoint(queue_depth=1) is False
+    writer.close()
+
+
+def test_forced_checkpoint_cannot_starve_behind_busy_writer_queue(tmp_path, monkeypatch):
+    """A sustained queue may defer ordinary checkpoint I/O, never the WAL guard."""
+    store = MicrostructureStore(tmp_path / "micro.db")
+    store.initialize()
+    writer = store.live_writer()
+    wal = tmp_path / "micro.db-wal"
+    wal.touch()
+    wal.open("r+b").truncate(WAL_FORCED_CHECKPOINT_BYTES)
+    calls: list[str] = []
+
+    class Result:
+        def fetchone(self): return (0, 1, 1)
+
+    class Connection:
+        def execute(self, statement):
+            calls.append(statement)
+            return Result()
+
+    @contextmanager
+    def checkpoint_connection():
+        yield Connection()
+
+    monkeypatch.setattr(store, "connect", checkpoint_connection)
+    assert writer.passive_checkpoint(queue_depth=7) is True
+    assert any("wal_checkpoint(PASSIVE)" in statement for statement in calls)
+    writer.close()
+
+
+def test_checkpoint_queue_and_failure_paths_are_bounded(tmp_path, monkeypatch):
+    store = MicrostructureStore(tmp_path / "micro.db")
+    store.initialize()
+    writer = store.live_writer()
+    wal = tmp_path / "micro.db-wal"
+    wal.touch()
+    wal.open("r+b").truncate(WAL_CHECKPOINT_BYTES)
+    assert writer.passive_checkpoint(queue_depth=1) is False
+    wal.open("r+b").truncate(WAL_FORCED_CHECKPOINT_BYTES)
+
+    @contextmanager
+    def failed_connection():
+        raise sqlite3.OperationalError("checkpoint busy")
+        yield  # pragma: no cover
+
+    monkeypatch.setattr(store, "connect", failed_connection)
+    try:
+        writer.passive_checkpoint(queue_depth=1)
+    except sqlite3.OperationalError as error:
+        assert "checkpoint busy" in str(error)
+    else:  # pragma: no cover
+        raise AssertionError("checkpoint errors must remain visible to the caller")
     writer.close()
 
 

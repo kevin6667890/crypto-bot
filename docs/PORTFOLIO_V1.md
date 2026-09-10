@@ -1,6 +1,6 @@
 # Portfolio v1 handoff
 
-**Project state:** `PORTFOLIO_V1_COMPLETE` is pending source reconciliation.
+**Project state:** release candidate awaiting final CI and release publication.
 
 Crypto-Bot is an evidence-driven crypto research system. It turns a bounded
 market hypothesis into a reproducible historical test, preserves that evidence,
@@ -48,6 +48,13 @@ Recommended links:
 
 ## Release gate
 
-Do not create `v1.0.0` until the production backend and deployed frontend
-artifact each resolve to reviewed commits in the public source history, the
-release branch is tested, and the final production browser smoke passes.
+The historical production backend is `d1d02dc`; it is an ancestor of the v1
+candidate, not the same runtime revision. The production frontend recovery
+commit is `e30ec590`, with deployment pin `5e41a01`. Both are preserved in Git
+history and the reconciled source build reproduces the deployed entry asset
+name `index-Bgnf_8Kd.js`. The v1 tag is therefore a newer, reproducible source
+baseline that represents validated production behavior; it must not be claimed
+that the running backend image is the exact v1 tag until that is separately
+deployed.
+
+Do not create `v1.0.0` until branch CI and final-main validation pass.

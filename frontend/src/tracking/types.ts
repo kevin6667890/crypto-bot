@@ -7,7 +7,7 @@ export type HistoricalBaseline = {
   version: string; result_hash: string; definition_hash: string;
   historical_dataset_identity: string; historical_engine_version: string;
   historical_tested_range: { start: number | null; end: number | null };
-  historical_summary: { independent_event_count: number; sample_quality: string; horizon_aggregates: Record<string, unknown> };
+  historical_summary: { independent_event_count?: number | null; sample_quality?: string | null; horizon_aggregates?: Record<string, unknown> };
   captured_at: string;
 };
 

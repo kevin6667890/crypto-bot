@@ -7,7 +7,7 @@ const productShell = readFileSync(new URL("./product/ProductShell.tsx", import.m
 const landing = readFileSync(new URL("./product/AdvancedLanding.tsx", import.meta.url), "utf8");
 const secondary = readFileSync(new URL("./AdvancedSecondaryNav.tsx", import.meta.url), "utf8");
 const legacyApp = readFileSync(new URL("./App.tsx", import.meta.url), "utf8");
-const styles = readFileSync(new URL("./styles.css", import.meta.url), "utf8");
+const styles = readFileSync(new URL("./product.css", import.meta.url), "utf8");
 
 describe("advanced product shell", () => {
   it("keeps the landing and legacy workbench lazy at the product boundary", () => {
@@ -25,9 +25,10 @@ describe("advanced product shell", () => {
     expect(landing).toContain('href={`/advanced#${id}`}');
   });
 
-  it("separates global and advanced navigation while preserving hash navigation", () => {
-    expect(productShell).toContain("advanced-nav-accent");
-    expect(productShell).toContain('active === "advanced"');
+  it("keeps Advanced in the global navigation system while preserving hash navigation", () => {
+    expect(productShell).toContain('page: "advanced"');
+    expect(productShell).toContain("workflow-navigation");
+    expect(productShell).not.toContain("advanced-nav-accent");
     expect(secondary).toContain("advanced-secondary-nav");
     expect(secondary).toContain('href={`/advanced#${page}`}');
     expect(secondary).toContain('aria-current={active === page ? "page"');
@@ -36,10 +37,10 @@ describe("advanced product shell", () => {
     expect(legacyApp).toContain('route.includes("strategy-router-v2")');
   });
 
-  it("flows the rainbow along the ring without rotating the button", () => {
-    expect(styles).toContain("@keyframes advanced-ring-flow");
-    expect(styles).toContain("background-position: 240% 50%");
-    expect(styles).not.toContain("rotate(1turn)");
-    expect(styles).toContain("@media (prefers-reduced-motion: reduce)");
+  it("keeps the advanced visual treatment quiet", () => {
+    expect(styles).not.toContain("advanced-ring-flow");
+    expect(styles).not.toContain("background-position: 240% 50%");
+    expect(styles).toContain(".workflow-navigation a.active");
+    expect(styles).toContain(":focus-visible");
   });
 });

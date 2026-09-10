@@ -1,0 +1,1 @@
+function i(e,n){const t=e.independent_event_count;return typeof t=="number"&&Number.isFinite(t)?`${t.toLocaleString()} ${n?"个独立事件":"independent events"}`:n?"已保存的不可变历史基线":"Saved immutable historical baseline"}function a(e,n){return typeof e.sample_quality=="string"&&e.sample_quality.trim()?`${e.sample_quality} ${n?"样本":"sample"}`:null}export{a,i as b};

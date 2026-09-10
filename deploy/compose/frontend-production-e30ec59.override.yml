@@ -1,0 +1,3 @@
+services:
+  frontend:
+    image: crypto-bot-frontend:candidate-e30ec59

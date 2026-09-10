@@ -38,7 +38,7 @@ export default function MarketStateResearch({ instrument }: { instrument: string
   const conflicting = useMemo(() => state?.evidence.filter((item) => item.classification === "conflicting") ?? [], [state]);
   const levels = useMemo(() => (state?.level_interactions || []).filter((item) => filter === "ALL" || filter === "TESTING" && ["TOUCHING", "INSIDE_ZONE", "APPROACHING"].includes(item.interaction_type) || filter === "SUPPORT" && /LOW|VAL/.test(item.level_type) || filter === "RESISTANCE" && /HIGH|VAH/.test(item.level_type) || filter === "BREAKOUT" && ["BROKEN", "RECLAIMED"].includes(item.interaction_type) || filter === "INVALID" && item.interaction_type === "INVALIDATED"), [state, filter]);
   return <main className="market-state-research" data-market-state-page>
-    <header className="market-state-heading"><div><span className="eyebrow">{t("state.eyebrow")}</span><h1>{t("state.title")}</h1><p>{t("state.description")}</p></div><span className="state-disclaimer">{t("state.disclaimer")}</span></header>
+    <div className="market-state-heading"><div><span className="eyebrow">{t("state.eyebrow")}</span><h1>{t("state.title")}</h1><p>{t("state.description")}</p></div><span className="state-disclaimer">{t("state.disclaimer")}</span></div>
     {error && <section role="alert" className="degraded-notice"><strong>{t("state.temporarilyUnavailable")}</strong><span>{t("state.retryHint")}</span></section>}
     {!state && !error && <section className="degraded-notice" role="status"><strong>{t("state.loadingTitle")}</strong><span>{t("state.loadingHelp")}</span></section>}
     {state && <>

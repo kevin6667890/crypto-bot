@@ -69,5 +69,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      # Compose declares .env as a runtime env_file.  CI intentionally uses only
+      # the committed placeholder template; no production credentials are needed.
+      - run: cp .env.example .env
       - run: docker compose config
       - run: docker compose build paper-api frontend

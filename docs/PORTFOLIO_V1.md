@@ -1,6 +1,10 @@
 # Portfolio v1 handoff
 
-**Project state:** release candidate awaiting final CI and release publication.
+**Project state:** `PORTFOLIO_V1_COMPLETE`
+
+**Feature status:** `FROZEN`  
+**Production:** `MAINTENANCE`  
+**Research/product development:** `PAUSED`
 
 Crypto-Bot is an evidence-driven crypto research system. It turns a bounded
 market hypothesis into a reproducible historical test, preserves that evidence,

@@ -90,8 +90,15 @@ def test_templates_are_bounded_and_cannot_enable_unavailable_flow() -> None:
 
 def test_feature_library_exposes_required_causal_values() -> None:
     features = build_features(_rows())[-1]
-    for key in ("sma_6", "sma_20", "sma_60", "sma_200", "ema_6", "ema_20", "ema_200", "atr", "bb_mid", "bb_upper", "bb_lower", "bb_width", "rsi", "volume_ratio"):
+    for key in ("sma_6", "sma_20", "sma_60", "sma_200", "ema_6", "ema_20", "ema_200", "atr", "bb_mid", "bb_upper", "bb_lower", "bb_width", "rsi", "volume_ratio", "vpva_poc", "vpva_value_low", "vpva_value_high"):
         assert features[key] is not None
+
+
+def test_vpva_proxy_excludes_current_and_future_candles() -> None:
+    rows = _rows()
+    changed = [dict(row) for row in rows]
+    changed[-1].update({"high": 1_000_000.0, "low": 999_000.0, "close": 999_500.0, "volume": 1_000_000.0})
+    assert build_features(rows)[-2]["vpva_poc"] == build_features(changed)[-2]["vpva_poc"]
 
 
 def test_seeded_sampling_and_folds_are_deterministic_and_pre_holdout() -> None:

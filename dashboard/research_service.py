@@ -403,11 +403,12 @@ class ResearchService:
                 checkpoint(job_id,progress_value,"research.progress.running_backtest",params); self.repository.update_run(run_id,progress=progress_value,progress_message=f"Processing {processed} / {len(candles)} candles",message_code="research.progress.running_backtest",message_params=params)
             result = run_backtest(candles, request["instrument"], request["timeframe"], parameters, request["start_ts"], request["end_ts"], report, mtf_data)
             split_ts = request["start_ts"] + int((request["end_ts"] - request["start_ts"]) * request["validation_split"])
-            is_result = run_backtest(candles, request["instrument"], request["timeframe"], parameters, request["start_ts"], split_ts, timeframe_datasets=mtf_data)
-            oos_result = run_backtest(candles, request["instrument"], request["timeframe"], parameters, split_ts + 1, request["end_ts"], timeframe_datasets=mtf_data)
-            validation = {"split": request["validation_split"], "split_ts": split_ts, "in_sample": is_result["metrics"], "out_of_sample": oos_result["metrics"]}
-            is_pf, oos_pf = is_result["metrics"]["profit_factor"], oos_result["metrics"]["profit_factor"]
-            is_return, oos_return = is_result["metrics"]["total_return"], oos_result["metrics"]["total_return"]
+            is_result = run_backtest(candles, request["instrument"], request["timeframe"], parameters, request["start_ts"], split_ts, timeframe_datasets=mtf_data, include_details=False)
+            oos_result = run_backtest(candles, request["instrument"], request["timeframe"], parameters, split_ts + 1, request["end_ts"], timeframe_datasets=mtf_data, include_details=False)
+            is_metrics, oos_metrics = is_result["metrics"], oos_result["metrics"]
+            validation = {"split": request["validation_split"], "split_ts": split_ts, "in_sample": is_metrics, "out_of_sample": oos_metrics}
+            is_pf, oos_pf = is_metrics["profit_factor"], oos_metrics["profit_factor"]
+            is_return, oos_return = is_metrics["total_return"], oos_metrics["total_return"]
             degradation = (is_pf and oos_pf is not None and oos_pf < is_pf * 0.6) or (is_return > 0 and oos_return < 0)
             validation["overfitting_warning"] = bool(degradation)
             validation["message"] = "OOS performance materially degraded; review robustness before paper use." if degradation else "No material IS/OOS degradation detected by the simple threshold check."

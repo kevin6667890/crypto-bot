@@ -61,6 +61,7 @@ def run_execution_backtest(
     start_ts: int, end_ts: int, progress: Callable[[int, str], None] | None = None,
     timeframe_datasets: dict[str, list[dict[str, Any]]] | None = None,
     signal_provider: Callable[[dict[str, Any], int], dict[str, Any]] | None = None,
+    include_details: bool = True,
 ) -> dict[str, Any]:
     """Run the canonical execution model with an optional causal signal provider.
 
@@ -170,7 +171,10 @@ def run_execution_backtest(
             signal = {**signal, "action": "WAIT"}
         if signal.get("action") == "SHORT" and not parameters.enable_short:
             signal = {**signal, "action": "WAIT"}
-        if signal["warmed"]:
+        # WAIT rows are diagnostic noise, not executable evidence.  Retaining a
+        # full decision mapping for every warmed bar dominates memory on long
+        # research windows and is never persisted as a tradeable signal.
+        if include_details and signal["warmed"] and signal["action"] != "WAIT":
             decisions.append(signal)
         if signal["action"] != "WAIT" and signal.get("atr") is not None and float(signal["atr"]) > 0 and index + 1 < len(candles) and int(candles[index + 1]["ts"]) <= end_ts:
             signal_count += 1
@@ -194,6 +198,10 @@ def run_execution_backtest(
 
     metrics = calculate_metrics(parameters.initial_capital, equity, trades, TIMEFRAME_SECONDS[timeframe])
     drawdown = metrics.pop("drawdown_curve")
+    if not include_details:
+        # IS/OOS comparisons consume metrics only.  Do not retain another
+        # equity, drawdown, candle or decision object beside the primary run.
+        return {"metrics": metrics, "signal_count": signal_count}
     visible_candles = [{"ts": int(row["ts"]), "open": row["open"], "high": row["high"], "low": row["low"], "close": row["close"]} for row in candles if start_ts <= int(row["ts"]) <= end_ts]
     max_chart = 1500
     stride = max(1, len(visible_candles) // max_chart)
@@ -206,6 +214,7 @@ def run_backtest(
     candles: list[dict[str, Any]], instrument: str, timeframe: str, parameters: StrategyParameters,
     start_ts: int, end_ts: int, progress: Callable[[int, str], None] | None = None,
     timeframe_datasets: dict[str, list[dict[str, Any]]] | None = None,
+    include_details: bool = True,
 ) -> dict[str, Any]:
     """Backward-compatible normal-strategy adapter for the shared execution core."""
-    return run_execution_backtest(candles, instrument, timeframe, parameters, start_ts, end_ts, progress, timeframe_datasets)
+    return run_execution_backtest(candles, instrument, timeframe, parameters, start_ts, end_ts, progress, timeframe_datasets, include_details=include_details)

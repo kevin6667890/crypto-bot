@@ -36,6 +36,10 @@ def main():
  events=ledger.events();
  with (out/'experiment_ledger.csv').open('w',newline='',encoding='utf-8') as f:
   w=csv.DictWriter(f,fieldnames=['experiment_id','research_run_id','research_cycle_id','hypothesis_id','candidate_id','family','stage','status','rejection_reason','asset','timeframe','dataset_version','created_at']);w.writeheader();w.writerows([{k:x.get(k) for k in w.fieldnames} for x in events])
- for name,rows_out in {'candidate_metrics':events,'rejection_log':[x for x in events if x['status']!='PASS'],'holdout_access_log':[],'survivors':[]}.items():(out/(name+'.json')).write_text(json.dumps(rows_out,indent=2),encoding='utf-8')
+ artifacts={'candidate_metrics':events,'rejection_log':[x for x in events if x['status']!='PASS'],'budget_usage':summary['families'],'holdout_access_log':[],'survivors':[],
+   # Empty files are intentional evidence: Stage 1 had no survivors, so later
+   # stages were not run merely to populate attractive-looking artifacts.
+   'parameter_stability':[],'walkforward_results':[],'cross_asset_results':[],'cost_stress_results':[],'ablation_results':[],'bootstrap_results':[]}
+ for name,rows_out in artifacts.items():(out/(name+'.json')).write_text(json.dumps(rows_out,indent=2),encoding='utf-8')
  print(json.dumps(summary,indent=2))
 if __name__=='__main__':main()

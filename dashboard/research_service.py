@@ -44,6 +44,10 @@ def _date_ts(value: str, end: bool = False) -> int:
 
 
 class ResearchService:
+    # Legacy optimizer loads holdout candles before development ranking. It is
+    # retained for backwards compatibility only and is explicitly unsafe for
+    # the protected-data Research Engine; research_engine never imports it.
+    LEGACY_OPTIMIZER_UNSAFE_FOR_RESEARCH_ENGINE = True
     def __init__(self, db_path: Path) -> None:
         self.repository = ResearchRepository(db_path)
         self.history = OkxHistoryClient(self.repository)

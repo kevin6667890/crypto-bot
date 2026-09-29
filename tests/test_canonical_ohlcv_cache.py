@@ -22,6 +22,20 @@ def test_mocked_pagination_resumes_and_is_idempotent(tmp_path, monkeypatch) -> N
     assert len(repo.candles("BTC-USDT", "15m", START_TS, START_TS + 2 * 900)) == 2
 
 
+def test_daily_history_requests_explicit_utc_bars(tmp_path, monkeypatch) -> None:
+    repo = ResearchRepository(tmp_path / "cache.db")
+    client = OkxHistoryClient(repo)
+    observed = []
+
+    def request(params, *_args, **_kwargs):
+        observed.append(params["bar"])
+        return [candle(START_TS), candle(START_TS - 86400)]
+
+    monkeypatch.setattr(client, "_request", request)
+    client.get_candles("BTC-USDT", "1D", START_TS, START_TS + 86400, 0)
+    assert observed == ["1Dutc"]
+
+
 def test_quality_rejects_bad_rows_and_reports_gaps_without_fabrication() -> None:
     rows = [
         {"ts": START_TS, "open": 100, "high": 101, "low": 99, "close": 100, "volume": 1, "confirmed": 1},

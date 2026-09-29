@@ -1,0 +1,11 @@
+[Unit]
+Description=Refresh Crypto-Bot canonical OHLCV every 15 minutes
+
+[Timer]
+OnCalendar=*:0/15
+Persistent=true
+RandomizedDelaySec=45
+Unit=canonical-ohlcv-refresh.service
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,12 @@
+[Unit]
+Description=Crypto-Bot confirmed canonical OHLCV refresh
+After=docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=root
+ExecStart=/usr/local/sbin/crypto-bot-canonical-ohlcv-refresh
+Nice=10
+IOSchedulingClass=best-effort
+IOSchedulingPriority=7

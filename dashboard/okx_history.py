@@ -76,7 +76,12 @@ class OkxHistoryClient:
             oldest_seen: int | None = None
             for _page in range(5000):
                 if cancelled: cancelled()
-                rows = self._request({"instId": instrument, "bar": timeframe, "after": str(cursor_ms), "limit": "100"}, on_retry, cancelled)
+                # Research timestamps are UTC epoch boundaries.  OKX's plain
+                # `1D` bar is exchange-day (UTC+8), which creates 16:00 UTC
+                # rows that fail the canonical daily quality gate.  Request
+                # the explicit UTC daily series, matching materialize_partition.
+                bar = "1Dutc" if timeframe == "1D" else timeframe
+                rows = self._request({"instId": instrument, "bar": bar, "after": str(cursor_ms), "limit": "100"}, on_retry, cancelled)
                 if not rows:
                     break
                 parsed: dict[int, dict[str, Any]] = {}
